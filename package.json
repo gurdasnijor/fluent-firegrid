@@ -1,0 +1,37 @@
+{
+  "name": "fluent-firegrid",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.27.0",
+  "scripts": {
+    "lint": "eslint . --max-warnings 0 --cache --cache-location .eslintcache",
+    "format": "eslint . --fix",
+    "lint:dead": "knip --treat-config-hints-as-errors",
+    "lint:deps": "depcruise --config .dependency-cruiser.cjs packages",
+    "lint:dup": "jscpd packages/*/src",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "build": "turbo run build",
+    "diagnostics": "turbo run diagnostics"
+  },
+  "devDependencies": {
+    "@effect/eslint-plugin": "^0.3.2",
+    "@effect/language-service": "^0.86.2",
+    "@eslint/js": "^10.0.1",
+    "@stylistic/eslint-plugin": "^5.10.0",
+    "dependency-cruiser": "^17.4.0",
+    "eslint": "^10.3.0",
+    "globals": "^17.6.0",
+    "jscpd": "^4.0.9",
+    "knip": "^6.11.0",
+    "turbo": "^2.5.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.59.2"
+  },
+  "pnpm": {
+    "overrides": {
+      "@durable-streams/server": "github:gurdasnijor/durable-streams#c62791ed60555924cc4920a69e2534834275fa3c&path:/packages/server"
+    }
+  }
+}

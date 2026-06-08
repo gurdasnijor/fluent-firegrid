@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+.jscpd-report/
+.turbo/
+.eslintcache
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+*.tsbuildinfo

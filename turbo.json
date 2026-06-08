@@ -1,0 +1,41 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "cacheDir": ".turbo/cache",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "diagnostics": {
+      "dependsOn": ["^build"],
+      "inputs": ["src/**", "test/**", "tsconfig.json"],
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "check": {
+      "dependsOn": ["build"],
+      "outputs": []
+    },
+    "//#lint": {
+      "cache": false
+    },
+    "//#lint:dead": {
+      "cache": false
+    },
+    "//#lint:dup": {
+      "inputs": ["packages/*/src/**", ".jscpd.json"],
+      "outputs": []
+    },
+    "//#lint:deps": {
+      "inputs": ["packages/**", ".dependency-cruiser.cjs", "tsconfig.json", "tsconfig.eslint.json"],
+      "outputs": []
+    }
+  }
+}

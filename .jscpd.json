@@ -1,0 +1,28 @@
+{
+  "minTokens": 40,
+  "minLines": 5,
+  "format": [
+    "typescript",
+    "tsx"
+  ],
+  "ignore": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/.turbo/**",
+    "**/coverage/**",
+    "**/apps/*/dist/**",
+    "**/fixtures/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.test.mts",
+    "**/__tests__/**"
+  ],
+  "reporters": [
+    "console",
+    "json"
+  ],
+  "output": "./.jscpd-report",
+  "absolute": false,
+  "gitignore": true,
+  "threshold": 0
+}
