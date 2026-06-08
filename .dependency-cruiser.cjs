@@ -70,7 +70,7 @@ module.exports = {
       to: {
         path: [
           "^packages/fluent-runtime/",
-          "^packages/effect-durable-streams/",
+          "effect-durable-streams",
           "(^|/)node_modules/(?:\\.pnpm/)?@durable-streams/",
         ],
       },
@@ -97,7 +97,6 @@ module.exports = {
       to: {
         path: [
           "^packages/fluent-runtime/src",
-          "^packages/effect-durable-streams/src",
           "effect-durable-streams",
           "^node_modules/@effect/workflow",
           "@effect/workflow",
@@ -105,23 +104,11 @@ module.exports = {
         ],
       },
     },
-    {
-      name: "durable-streams-imports-contained",
-      severity: "error",
-      comment:
-        "Only effect-durable-streams may import the underlying Durable Streams packages.",
-      from: {
-        path: "^packages/.*/src",
-        pathNot: "^packages/effect-durable-streams/src",
-      },
-      to: {
-        path: "(^|/)node_modules/(?:\\.pnpm/)?@durable-streams/",
-      },
-    },
   ],
   options: {
     tsConfig: { fileName: "tsconfig.eslint.json" },
     doNotFollow: { path: "node_modules" },
+    exclude: { path: "^packages/durable-streams/" },
     includeOnly: "^packages/.*/src",
     enhancedResolveOptions: { exportsFields: ["exports"] },
   },

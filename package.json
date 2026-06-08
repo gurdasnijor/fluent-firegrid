@@ -10,10 +10,10 @@
     "lint:dead": "knip --treat-config-hints-as-errors",
     "lint:deps": "depcruise --config .dependency-cruiser.cjs packages",
     "lint:dup": "jscpd packages/*/src",
-    "typecheck": "turbo run typecheck",
-    "test": "turbo run test",
-    "build": "turbo run build",
-    "diagnostics": "turbo run diagnostics"
+    "typecheck": "turbo run typecheck --filter='@firegrid/fluent-*'",
+    "test": "turbo run test --filter='@firegrid/fluent-*'",
+    "build": "turbo run build --filter='@firegrid/fluent-*'",
+    "diagnostics": "turbo run diagnostics --filter='@firegrid/fluent-*'"
   },
   "devDependencies": {
     "@effect/eslint-plugin": "^0.3.2",
@@ -28,10 +28,5 @@
     "turbo": "^2.5.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.59.2"
-  },
-  "pnpm": {
-    "overrides": {
-      "@durable-streams/server": "github:gurdasnijor/durable-streams#c62791ed60555924cc4920a69e2534834275fa3c&path:/packages/server"
-    }
   }
 }

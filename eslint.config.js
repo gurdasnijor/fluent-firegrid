@@ -1197,6 +1197,7 @@ export default tseslint.config(
       "**/dist/**",
       ".eslintcache",
       "*.tsbuildinfo",
+      "packages/durable-streams/**",
     ],
   },
   js.configs.recommended,
@@ -1274,7 +1275,6 @@ export default tseslint.config(
   {
     files: ["packages/**/src/**/*.ts"],
     ignores: [
-      "packages/effect-durable-streams/src/**/*.ts",
       "packages/**/src/__tests__/**/*.ts",
       "packages/**/*.test.ts",
     ],

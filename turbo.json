@@ -7,16 +7,13 @@
       "outputs": ["dist/**"]
     },
     "typecheck": {
-      "dependsOn": ["^build"],
       "outputs": []
     },
     "diagnostics": {
-      "dependsOn": ["^build"],
       "inputs": ["src/**", "test/**", "tsconfig.json"],
       "outputs": []
     },
     "test": {
-      "dependsOn": ["^build"],
       "outputs": []
     },
     "check": {

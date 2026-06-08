@@ -1,0 +1,3 @@
+[submodule "packages/durable-streams"]
+	path = packages/durable-streams
+	url = https://github.com/gurdasnijor/durable-streams
