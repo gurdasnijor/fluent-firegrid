@@ -1,0 +1,55 @@
+feature:
+  name: coordination-substrate
+  product: durable-streams
+  description: Push generic durable coordination semantics into Durable Streams and expose them through Effect clients.
+
+components:
+  SUBSCRIPTIONS:
+    requirements:
+      1: "Canonical coordination subscription APIs live under the reserved `__ds/subscriptions` namespace."
+      2: "New coordination work must not expand or preserve older `/consumers` APIs."
+      3: Subscription create and reconfirmation include any filter configuration in the normalized idempotency hash.
+  FILTERS:
+    requirements:
+      1: Filtered subscriptions use the existing CEL library as the only filter language for the first slice.
+      2: "CEL evaluation receives `event`, `stream`, `offset`, and immutable `self` context."
+      3: Non-matching events do not wake the subscription.
+      4: A later matching event wakes through the same webhook or pull-wake path as an unfiltered subscription.
+      5: The public ack cursor advances only through callback or pull-wake ack.
+      6: The server may advance an internal evaluated cursor while scanning non-matching events.
+      7: Runtime CEL evaluation failure must not crash the subscription worker.
+  SCHEDULES:
+    requirements:
+      1: "Scheduled append APIs live under the reserved `__ds/schedules` namespace."
+      2: Schedule creation is idempotent by schedule id plus normalized schedule config.
+      3: "A schedule must not append before its `at` timestamp."
+      4: The fire path uses the normal append implementation, including producer fencing and subscription wake hooks.
+      5: Cancelling a pending schedule prevents the target append.
+      6: Deleting a fired or failed schedule must not mutate the target stream.
+      7: Deterministic target append rejection records failed schedule status instead of retrying forever.
+  CLIENT:
+    requirements:
+      1: "`effect-durable-streams` exposes typed Effect APIs for subscriptions, filtered subscriptions, schedules, and claim loops."
+      2: Effect client helpers must not import server internals.
+      3: Effect client helpers must not own a scheduler, predicate index, or dedupe store.
+  EXECUTION:
+    requirements:
+      1: "`effect-durable-execution` named steps replay from session stream facts and commit through producer fencing."
+      2: Durable sleep lowers to scheduled append plus subscription wait once schedule APIs exist.
+      3: Durable wait lowers to filtered subscriptions once filter APIs exist.
+      4: Durable child and attachment helpers lower to ordinary child streams plus subscriptions.
+      5: The execution package must not own durable substrate state machines.
+  CONFORMANCE:
+    requirements:
+      1: Portable server behavior coverage lives in `packages/server-conformance-tests`.
+      2: "Effect client conformance coverage lives in `packages/effect-durable-streams/test/conformance`."
+      3: Effect client conformance tests prove the public Effect API drives a real server correctly.
+      4: Effect client conformance tests must not duplicate every server edge case.
+
+constraints:
+  SCOPE:
+    requirements:
+      1: Capability discovery is not required for the first implementation slice.
+      2: Server/client package version coupling is acceptable before stabilization.
+      3: Product-specific webhook authentication and payload policy stay outside Durable Streams substrate packages.
+      4: A server-side unique step-key index is not part of the first slice.
