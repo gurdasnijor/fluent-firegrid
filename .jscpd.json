@@ -12,6 +12,7 @@
     "**/coverage/**",
     "**/apps/*/dist/**",
     "**/fixtures/**",
+    "**/firelab/src/simulations/**",
     "**/*.test.ts",
     "**/*.test.tsx",
     "**/*.test.mts",

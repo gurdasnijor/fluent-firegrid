@@ -31,6 +31,17 @@
         "bench/**/*.ts",
         "examples/**/*.ts"
       ]
+    },
+    "packages/firelab": {
+      "entry": [
+        "src/index.ts",
+        "src/bin/**/*.ts",
+        "src/simulations/*/index.ts",
+        "src/observability/index.ts"
+      ],
+      "project": [
+        "src/**/*.ts"
+      ]
     }
   },
   "ignore": [],

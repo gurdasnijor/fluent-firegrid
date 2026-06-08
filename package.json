@@ -10,9 +10,9 @@
     "lint:dead": "knip --treat-config-hints-as-errors",
     "lint:deps": "depcruise --config .dependency-cruiser.cjs packages",
     "lint:dup": "jscpd packages/*/src",
-    "typecheck": "turbo run typecheck --filter='@firegrid/fluent-*'",
+    "typecheck": "turbo run typecheck --filter='@firegrid/fluent-*' --filter=firelab",
     "test": "turbo run test --filter='@firegrid/fluent-*'",
-    "build": "turbo run build --filter='@firegrid/fluent-*'",
+    "build": "turbo run build --filter='@firegrid/fluent-*' --filter=firelab",
     "diagnostics": "turbo run diagnostics --filter='@firegrid/fluent-*'"
   },
   "devDependencies": {
