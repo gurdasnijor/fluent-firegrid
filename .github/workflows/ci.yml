@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CI: true
+  TURBO_TELEMETRY_DISABLED: 1
+
+jobs:
+  ci:
+    name: Lint + Typecheck + Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # durable-streams (client/server/state/effect-durable-streams) is a git
+      # submodule at packages/durable-streams; it MUST be checked out before
+      # install or the workspace packages won't resolve.
+      - name: Check out repository (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint (eslint)
+        run: pnpm run lint
+
+      - name: Dead-code (knip)
+        run: pnpm run lint:dead
+
+      - name: Dependency boundaries (dep-cruiser)
+        run: pnpm run lint:deps
+
+      - name: Duplication (jscpd)
+        run: pnpm run lint:dup
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Test
+        run: pnpm run test
