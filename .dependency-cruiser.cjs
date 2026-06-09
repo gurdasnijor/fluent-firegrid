@@ -89,11 +89,11 @@ module.exports = {
       },
     },
     {
-      name: "fluent-firegrid-scheduler-substrate-free",
+      name: "effect-durable-execution-no-server-substrate",
       severity: "error",
       comment:
-        "The fluent-firegrid scheduler is the substrate-free Operation/Future engine; durable streams stay behind execute/operations.",
-      from: { path: "^packages/fluent-firegrid/src/scheduler\\.ts$" },
+        "effect-durable-execution owns execution semantics and must stay above the server substrate; durable stream server internals stay behind the client package.",
+      from: { path: "^packages/effect-durable-execution/src/" },
       to: {
         path: [
           "^packages/fluent-runtime/src",
@@ -108,7 +108,6 @@ module.exports = {
   options: {
     tsConfig: { fileName: "tsconfig.eslint.json" },
     doNotFollow: { path: "node_modules" },
-    exclude: { path: "^packages/durable-streams/" },
     includeOnly: "^packages/.*/src",
     enhancedResolveOptions: { exportsFields: ["exports"] },
   },

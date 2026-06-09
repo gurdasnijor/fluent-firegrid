@@ -16,7 +16,9 @@
     "**/*.test.ts",
     "**/*.test.tsx",
     "**/*.test.mts",
-    "**/__tests__/**"
+    "**/__tests__/**",
+    "packages/firelab/**",
+    "packages/conformance/**"
   ],
   "reporters": [
     "console",

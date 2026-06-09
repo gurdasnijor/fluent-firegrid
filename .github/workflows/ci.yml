@@ -19,46 +19,126 @@ env:
   CI: true
   TURBO_TELEMETRY_DISABLED: 1
 
+# Per-job setup (pnpm + node + install) lives in the local composite action at
+# `.github/actions/setup`. Checkout stays per-job because the durable-streams
+# submodule must be checked out before install.
+#
+# Gating jobs run in parallel so a slow one (tests) stops gating the fast ones
+# (lint), and each persists its tool cache so unchanged work is skipped:
+#   lint               — eslint + dead-code (knip) + dup (jscpd) + dep boundaries
+#   typecheck          — turbo run typecheck
+#   effect-diagnostics — effect-language-service diagnostics
+#   tests              — turbo run test
+
 jobs:
-  ci:
-    name: Lint + Typecheck + Test
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
-      # durable-streams (client/server/state/effect-durable-streams) is a git
-      # submodule at packages/durable-streams; it MUST be checked out before
-      # install or the workspace packages won't resolve.
       - name: Check out repository (with submodules)
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+      - name: Setup pnpm + Node + install
+        uses: ./.github/actions/setup
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      # ESLint --cache (see the `lint` script) only re-lints files whose content
+      # or config changed. Persist it so a typical small-diff PR lints in ~1s.
+      # Keyed on the config so any rule change busts the cache.
+      - name: Restore ESLint cache
+        uses: actions/cache@v4
         with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
+          path: .eslintcache
+          key: eslint-${{ runner.os }}-${{ hashFiles('eslint.config.js', 'tsconfig.eslint.json', 'pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            eslint-${{ runner.os }}-${{ hashFiles('eslint.config.js', 'tsconfig.eslint.json', 'pnpm-lock.yaml') }}-
 
       - name: Lint (eslint)
         run: pnpm run lint
 
-      - name: Dead-code (knip)
+      - name: Dead-code (knip, strict-0)
         run: pnpm run lint:dead
 
       - name: Dependency boundaries (dep-cruiser)
         run: pnpm run lint:deps
 
-      - name: Duplication (jscpd)
+      - name: Duplication (jscpd, strict-0)
         run: pnpm run lint:dup
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup pnpm + Node + install
+        uses: ./.github/actions/setup
+
+      # Turbo content-hashes task inputs and caches the result; persisting the
+      # cache lets unchanged packages skip typecheck entirely. Unique per-job key
+      # with a shared restore prefix so typecheck/tests/diagnostics seed each
+      # other's cache without racing on the same save.
+      - name: Restore Turbo cache
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-typecheck-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
 
       - name: Typecheck
         run: pnpm run typecheck
+
+  effect-diagnostics:
+    name: Effect diagnostics
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup pnpm + Node + install
+        uses: ./.github/actions/setup
+
+      - name: Restore Turbo cache
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-diagnostics-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
+
+      - name: Effect diagnostics
+        run: pnpm run diagnostics
+
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup pnpm + Node + install
+        uses: ./.github/actions/setup
+
+      - name: Restore Turbo cache
+        uses: actions/cache@v4
+        with:
+          path: .turbo
+          key: turbo-${{ runner.os }}-tests-${{ github.sha }}
+          restore-keys: |
+            turbo-${{ runner.os }}-
 
       - name: Test
         run: pnpm run test

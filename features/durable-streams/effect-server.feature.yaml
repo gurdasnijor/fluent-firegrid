@@ -1,0 +1,28 @@
+feature:
+  name: effect-server
+  product: durable-streams
+  description: Effect-native Durable Streams server implementation.
+
+components:
+  PROTOCOL:
+    requirements:
+      1: Server packages expose a single shared Effect Schema module for Durable Streams protocol request, decision, and response shapes.
+      2: HTTP, stdio, SSE, long-poll, and future websocket transports consume the shared protocol schema instead of redefining operation payloads.
+      3: Protocol schema definitions use the terminology from PROTOCOL.md for streams, offsets, content type, closed streams, and idempotent producers.
+
+  SERVER:
+    requirements:
+      1: The server core is a transport-neutral Effect service exposing protocol operations over the domain store algebra.
+      2: HTTP server launch is an adapter layer over the transport-neutral server core.
+      3: Existing HTTP launcher imports remain backward compatible while the core service remains reusable by non-HTTP transports.
+
+  TELEMETRY:
+    requirements:
+      1: Durable Streams telemetry attributes are defined in one centralized module.
+      2: Protocol operation spans annotate operation name, stream identity, producer presence, closure, and protocol decision where available.
+
+constraints:
+  TOOLING:
+    requirements:
+      1: The protocol schema module must not import store implementations or transport adapters.
+      2: Transport adapters must not duplicate protocol decision-to-telemetry attribute names.

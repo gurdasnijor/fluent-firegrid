@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.22.0",
-    "@durable-streams/server": "workspace:*",
+    "@durable-streams/server": "0.3.7",
     "@effect/cli": "0.75.1",
     "@effect/opentelemetry": "0.63.0",
     "@effect/platform": "^0.96.1",

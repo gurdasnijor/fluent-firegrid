@@ -1,0 +1,92 @@
+name: Arch graph advisory
+
+# Advisory dependency-graph signal. Renders the modules affected by a PR
+# (dependency-cruiser's first-class `--affected <base.sha>`: changed modules
+# since base + everything that can reach them, changed ones highlighted) with
+# the native `mermaid` reporter, and surfaces it as a sticky PR comment + run
+# summary. `--affected` reads git directly, so no custom diff script and no
+# committed `.mmd` artifacts (those were a renumber-churn merge-conflict source).
+#
+# This is NOT a merge gate: it never fails the PR; it only surfaces the
+# architectural change for review.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: arch-graph-advisory-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  # Tests/build/coverage out of the graph.
+  ARCH_EXCLUDE: '(^|/)(.*\.test\.(ts|tsx|mts)|__tests__|dist|build|coverage)(/|$)'
+
+jobs:
+  advisory:
+    name: Dependency-graph delta
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out head (with submodules, full history)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup pnpm + Node + install
+        uses: ./.github/actions/setup
+
+      - name: Render affected dependency graph (depcruise --affected)
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          pnpm exec depcruise --config .dependency-cruiser.cjs --exclude "$ARCH_EXCLUDE" \
+            packages --affected "$BASE_SHA" --output-type mermaid > /tmp/affected.mmd || true
+          {
+            echo '<!-- fluent-firegrid-arch-graph-advisory -->'
+            echo '## 📐 Dependency-graph change (modules affected by this PR)'
+            echo
+            if [ "$(grep -c '\["' /tmp/affected.mmd 2>/dev/null || echo 0)" -gt 0 ]; then
+              echo 'Modules changed since base **and everything that can reach them** (changed ones highlighted), via `depcruise --affected`:'
+              echo
+              # GitHub's inline mermaid is hard to read for large graphs. Offer a
+              # one-click pan/zoom viewer (newmo-oss/mermaid-viewer): DEFLATE-
+              # compress the source (zlib, matching the viewer's
+              # CompressionStream("deflate")) + standard base64 into the URL hash.
+              VIEWER_HASH="$(python3 -c 'import zlib,base64,sys; sys.stdout.write(base64.b64encode(zlib.compress(sys.stdin.buffer.read())).decode())' < /tmp/affected.mmd)"
+              echo "🔍 **[Open in pan/zoom viewer](https://newmo-oss.github.io/mermaid-viewer/#${VIEWER_HASH})** — interactive zoom for large graphs."
+              echo
+              echo '```mermaid'
+              cat /tmp/affected.mmd
+              echo ''   # depcruise emits no trailing newline — keep the closing fence on its own line
+              echo '```'
+            else
+              echo 'No `packages/` module-dependency graph change is affected by this PR.'
+            fi
+            echo
+            echo '<sub>Advisory only — not a merge gate. Render a full graph locally with `pnpm exec depcruise --config .dependency-cruiser.cjs packages --output-type mermaid`.</sub>'
+          } > /tmp/arch-comment.md
+          cat /tmp/arch-comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upsert sticky PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('node:fs')
+            const body = fs.readFileSync('/tmp/arch-comment.md', 'utf8')
+            const marker = '<!-- fluent-firegrid-arch-graph-advisory -->'
+            const { owner, repo } = context.repo
+            const issue_number = context.payload.pull_request.number
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            })
+            const existing = comments.find((c) => c.body && c.body.includes(marker))
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body })
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body })
+            }

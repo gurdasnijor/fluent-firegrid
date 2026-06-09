@@ -19,7 +19,7 @@
   "scripts": {
     "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
     "build": "tsc",
-    "test": "vitest run",
+    "test": "vitest run --root ../.. --project fluent-acp-process",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

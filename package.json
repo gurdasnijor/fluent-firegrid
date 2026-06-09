@@ -13,13 +13,22 @@
     "typecheck": "turbo run typecheck --filter='@firegrid/fluent-*' --filter=firelab",
     "test": "turbo run test --filter='@firegrid/fluent-*'",
     "build": "turbo run build --filter='@firegrid/fluent-*' --filter=firelab",
-    "diagnostics": "turbo run diagnostics --filter='@firegrid/fluent-*'"
+    "diagnostics": "turbo run diagnostics --filter='@firegrid/fluent-*'",
+    "typespec:compile": "tsp compile ."
   },
   "devDependencies": {
     "@effect/eslint-plugin": "^0.3.2",
     "@effect/language-service": "^0.86.2",
     "@eslint/js": "^10.0.1",
     "@stylistic/eslint-plugin": "^5.10.0",
+    "@typespec/compiler": "^1.13.0",
+    "@typespec/events": "^0.83.0",
+    "@typespec/http": "^1.13.0",
+    "@typespec/openapi": "^1.13.0",
+    "@typespec/openapi3": "^1.13.0",
+    "@typespec/rest": "^0.83.0",
+    "@typespec/sse": "^0.83.0",
+    "@typespec/streams": "^0.83.0",
     "dependency-cruiser": "^17.4.0",
     "eslint": "^10.3.0",
     "globals": "^17.6.0",

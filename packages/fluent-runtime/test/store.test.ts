@@ -4,7 +4,7 @@
 import { FetchHttpClient, type HttpClient } from "@effect/platform"
 import { Effect, Layer, type Scope } from "effect"
 import { describe, expect, it } from "vitest"
-import { DurableStream } from "effect-durable-streams"
+import { DurableStream } from "effect-durable-client"
 import {
   FluentEventIngress,
   FluentEventIngressLive,
