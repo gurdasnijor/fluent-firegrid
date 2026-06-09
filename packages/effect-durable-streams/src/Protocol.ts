@@ -35,11 +35,6 @@ export const IdempotentProducer = Schema.Struct({
 })
 export type IdempotentProducer = typeof IdempotentProducer.Type
 
-/** @deprecated Prefer `IdempotentProducer`, matching PROTOCOL.md §5.2.1. */
-export const Producer = IdempotentProducer
-/** @deprecated Prefer `IdempotentProducer`, matching PROTOCOL.md §5.2.1. */
-export type Producer = IdempotentProducer
-
 /** PUT create-stream request. */
 export const CreateRequest = Schema.Struct({
   path: StreamPath,

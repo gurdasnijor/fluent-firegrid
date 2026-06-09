@@ -18,11 +18,29 @@ const PRODUCER_SEQ = "Producer-Seq"
 const PRODUCER_EXPECTED_SEQ = "Producer-Expected-Seq"
 const PRODUCER_RECEIVED_SEQ = "Producer-Received-Seq"
 
+type ProducerSuccessDecision = Extract<
+  Protocol.AppendDecision,
+  { readonly _tag: "ProducerAccepted" | "ProducerDuplicate" }
+>
+
 const normalizeContentType = (contentType: string): string =>
   contentType.split(";")[0]!.trim().toLowerCase()
 
 const isClosed = (value: string | undefined): boolean =>
   (value ?? "").toLowerCase() === "true"
+
+const producerSuccessResponse = (
+  status: 200 | 204,
+  decision: ProducerSuccessDecision,
+) =>
+  HttpServerResponse.empty({ status }).pipe(
+    HttpServerResponse.setHeaders({
+      [STREAM_NEXT_OFFSET]: decision.nextOffset,
+      [PRODUCER_EPOCH]: String(decision.producerEpoch),
+      [PRODUCER_SEQ]: String(decision.highestAcceptedSeq),
+      ...(decision.closed ? { [STREAM_CLOSED]: "true" } : {}),
+    }),
+  )
 
 const applicationStreamPath = (
   path: Protocol.StreamPath,
@@ -133,23 +151,9 @@ export const StreamApiLive = HttpApiBuilder.group(
                   }),
                 )
               case "ProducerAccepted":
-                return HttpServerResponse.empty({ status: 200 }).pipe(
-                  HttpServerResponse.setHeaders({
-                    [STREAM_NEXT_OFFSET]: result.append.nextOffset,
-                    [PRODUCER_EPOCH]: String(result.append.producerEpoch),
-                    [PRODUCER_SEQ]: String(result.append.highestAcceptedSeq),
-                    ...(result.append.closed ? { [STREAM_CLOSED]: "true" } : {}),
-                  }),
-                )
+                return producerSuccessResponse(200, result.append)
               case "ProducerDuplicate":
-                return HttpServerResponse.empty({ status: 204 }).pipe(
-                  HttpServerResponse.setHeaders({
-                    [STREAM_NEXT_OFFSET]: result.append.nextOffset,
-                    [PRODUCER_EPOCH]: String(result.append.producerEpoch),
-                    [PRODUCER_SEQ]: String(result.append.highestAcceptedSeq),
-                    ...(result.append.closed ? { [STREAM_CLOSED]: "true" } : {}),
-                  }),
-                )
+                return producerSuccessResponse(204, result.append)
               case "ProducerFenced":
                 return HttpServerResponse.empty({ status: 403 }).pipe(
                   HttpServerResponse.setHeader(

@@ -23,7 +23,7 @@ export interface ServerOptions {
   readonly server?: () => http.Server
 }
 
-export const layerHttp = (options: ServerOptions) => {
+export const layer = (options: ServerOptions) => {
   const ServerLive = NodeHttpServer.layer(
     options.server ?? (() => createServer()),
     { port: options.port },
@@ -37,12 +37,10 @@ export const layerHttp = (options: ServerOptions) => {
   )
 }
 
-export const layer = layerHttp
-
 /** Launch the server, reading the port from `Config`. */
 export const launch = Effect.gen(function* () {
   const port = yield* AppConfig.port
   return yield* Layer.launch(
-    layerHttp({ port }).pipe(Layer.provide(Store.withTracing(MemoryStore.layer))),
+    layer({ port }).pipe(Layer.provide(Store.withTracing(MemoryStore.layer))),
   )
 })
