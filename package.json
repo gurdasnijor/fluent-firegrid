@@ -15,7 +15,8 @@
     "build": "turbo run build --filter='@firegrid/fluent-*' --filter=firelab",
     "diagnostics": "turbo run diagnostics --filter='@firegrid/fluent-*'",
     "typespec:compile": "tsp compile .",
-    "preflight": "pnpm run lint && pnpm run lint:dead && pnpm run lint:deps && pnpm run lint:dup && pnpm run typecheck && pnpm run test && pnpm run typespec:compile"
+    "preflight": "turbo run lint lint:dead lint:dup lint:deps --continue --output-logs=errors-only; L=$?; pnpm run typecheck; T=$?; pnpm run test; E=$?; pnpm run diagnostics; D=$?; pnpm run typespec:compile; P=$?; exit $((L|T|E|D|P))",
+    "verify": "pnpm run preflight"
   },
   "devDependencies": {
     "@effect/eslint-plugin": "^0.3.2",
