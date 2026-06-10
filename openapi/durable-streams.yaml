@@ -6,6 +6,7 @@ info:
 tags:
   - name: Streams
   - name: Subscriptions
+  - name: Subscription Delivery
   - name: Schedules
 paths:
   /v1/stream/__ds/jwks.json:
@@ -265,7 +266,7 @@ paths:
         - Subscriptions
   /v1/stream/__ds/subscriptions/{id}/ack:
     post:
-      operationId: Subscriptions_ack
+      operationId: SubscriptionDelivery_ack
       summary: Acknowledge pull-wake progress
       description: Ack processed offsets and optionally release the current claim.
       parameters:
@@ -314,7 +315,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/GoneError'
       tags:
-        - Subscriptions
+        - Subscription Delivery
       requestBody:
         required: true
         content:
@@ -323,7 +324,7 @@ paths:
               $ref: '#/components/schemas/CallbackRequest'
   /v1/stream/__ds/subscriptions/{id}/callback:
     post:
-      operationId: Subscriptions_callback
+      operationId: SubscriptionDelivery_callback
       summary: Complete webhook delivery
       description: Webhook asynchronous completion callback.
       parameters:
@@ -372,7 +373,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/GoneError'
       tags:
-        - Subscriptions
+        - Subscription Delivery
       requestBody:
         required: true
         content:
@@ -381,7 +382,7 @@ paths:
               $ref: '#/components/schemas/CallbackRequest'
   /v1/stream/__ds/subscriptions/{id}/claim:
     post:
-      operationId: Subscriptions_claim
+      operationId: SubscriptionDelivery_claim
       summary: Claim pull-wake work
       description: Claim pending work for a pull-wake subscription.
       parameters:
@@ -430,7 +431,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/GoneError'
       tags:
-        - Subscriptions
+        - Subscription Delivery
       requestBody:
         required: true
         content:
@@ -439,7 +440,7 @@ paths:
               $ref: '#/components/schemas/ClaimRequest'
   /v1/stream/__ds/subscriptions/{id}/release:
     post:
-      operationId: Subscriptions_release
+      operationId: SubscriptionDelivery_release
       summary: Release pull-wake claim
       description: Release the current pull-wake claim without acking offsets.
       parameters:
@@ -484,7 +485,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/GoneError'
       tags:
-        - Subscriptions
+        - Subscription Delivery
       requestBody:
         required: true
         content:
@@ -667,15 +668,15 @@ paths:
                 enum:
                   - 'true'
             Producer-Epoch:
-              required: false
+              required: true
               schema:
                 $ref: '#/components/schemas/ProducerEpoch'
             Producer-Seq:
-              required: false
+              required: true
               schema:
                 $ref: '#/components/schemas/ProducerSeq'
         '204':
-          description: Append result, including idempotent producer metadata when supplied, or a documented protocol error.
+          description: No-content append result. Producer headers are present when this is an idempotent producer duplicate; otherwise this is a plain append or close-only success.
           headers:
             Stream-Next-Offset:
               required: true
@@ -724,21 +725,21 @@ paths:
           description: Append result, including idempotent producer metadata when supplied, or a documented protocol error.
           headers:
             Producer-Expected-Seq:
-              required: false
+              required: true
               schema:
                 $ref: '#/components/schemas/ProducerSeq'
             Producer-Received-Seq:
-              required: false
+              required: true
               schema:
                 $ref: '#/components/schemas/ProducerSeq'
             Stream-Closed:
-              required: false
+              required: true
               schema:
                 type: string
                 enum:
                   - 'true'
             Stream-Next-Offset:
-              required: false
+              required: true
               schema:
                 $ref: '#/components/schemas/Offset'
         '410':
