@@ -37,10 +37,9 @@ export interface StreamServer {
   readonly delete: (path: StreamPath) => Effect.Effect<DeleteStreamResult, DurableStreamLogError>
 }
 
-export class StreamServerTag extends Context.Tag("@firegrid/fluent-server/StreamServer")<
-  StreamServerTag,
-  StreamServer
->() {}
+export class StreamServerTag extends Context.Service<StreamServerTag, StreamServer>()(
+  "@firegrid/fluent-server/StreamServer",
+) {}
 
 export const makeStreamServer = (log: DurableStreamLog): StreamServer => ({
   create: (path, contentType, options) =>

@@ -1,10 +1,6 @@
-import { Schema } from "effect"
+import { Effect, Schema } from "effect"
 import { BeginningOffset, NowOffset, Offset, StreamPath } from "@firegrid/fluent-store"
-
-const SequenceNumber = Schema.Number.pipe(
-  Schema.int(),
-  Schema.between(0, Number.MAX_SAFE_INTEGER),
-)
+import { SequenceNumber } from "./schemaShared.ts"
 
 export class ProducerFence extends Schema.Class<ProducerFence>("ProducerFence")({
   producerId: Schema.NonEmptyString,
@@ -12,14 +8,17 @@ export class ProducerFence extends Schema.Class<ProducerFence>("ProducerFence")(
   seq: SequenceNumber,
 }) {}
 
-export const ReadOffsetSchema = Schema.Union(Offset, Schema.Literal(BeginningOffset, NowOffset))
+export const ReadOffsetSchema = Schema.Union([Offset, Schema.Literals([BeginningOffset, NowOffset])])
 export type ReadOffsetSchema = typeof ReadOffsetSchema.Type
 
 export class Append extends Schema.TaggedClass<Append>("Append")("Append", {
   path: StreamPath,
   contentType: Schema.String,
-  bytes: Schema.Uint8ArrayFromSelf,
-  close: Schema.optionalWith(Schema.Boolean, { default: () => false }),
+  bytes: Schema.Uint8Array,
+  close: Schema.Boolean.pipe(
+    Schema.withConstructorDefault(Effect.succeed(false)),
+    Schema.withDecodingDefaultTypeKey(Effect.succeed(false)),
+  ),
   producer: Schema.optional(ProducerFence),
   expectedTailOffset: Schema.optional(Offset),
 }) {}
@@ -27,7 +26,10 @@ export class Append extends Schema.TaggedClass<Append>("Append")("Append", {
 export class Create extends Schema.TaggedClass<Create>("Create")("Create", {
   path: StreamPath,
   contentType: Schema.String,
-  closed: Schema.optionalWith(Schema.Boolean, { default: () => false }),
+  closed: Schema.Boolean.pipe(
+    Schema.withConstructorDefault(Effect.succeed(false)),
+    Schema.withDecodingDefaultTypeKey(Effect.succeed(false)),
+  ),
 }) {}
 
 export class Read extends Schema.TaggedClass<Read>("Read")("Read", {
@@ -48,7 +50,7 @@ export class Delete extends Schema.TaggedClass<Delete>("Delete")("Delete", {
   path: StreamPath,
 }) {}
 
-export const Request = Schema.Union(Append, Create, Read, Close, Head, Delete)
+export const Request = Schema.Union([Append, Create, Read, Close, Head, Delete])
 export type Request = typeof Request.Type
 
 export class ReadLive extends Schema.TaggedClass<ReadLive>("ReadLive")("ReadLive", {

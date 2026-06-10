@@ -1,4 +1,4 @@
-import { Chunk, Effect, HashMap, Option, PubSub, Sink, Stream, SynchronizedRef, pipe, type Scope } from "effect"
+import { Effect, HashMap, Option, PubSub, Sink, Stream, SynchronizedRef, pipe, type Scope } from "effect"
 import {
   BeginningOffset,
   ContentTypeMismatchError,
@@ -26,13 +26,13 @@ import {
 } from "@firegrid/fluent-store"
 
 interface EventStream {
-  readonly records: Chunk.Chunk<StreamRecord>
+  readonly records: readonly StreamRecord[]
   readonly pubsub: PubSub.PubSub<StreamRecord>
   readonly metadata: StreamMetadata
 }
 
 interface Value {
-  readonly streamsByPath: HashMap.HashMap<StreamPath, EventStream>
+  readonly streamsByPath: ReadonlyMap<StreamPath, EventStream>
   readonly allTails: PubSub.PubSub<TailAdvanced>
   readonly producerStates: HashMap.HashMap<string, ProducerState>
 }
@@ -49,7 +49,7 @@ const pubSubCapacity = 256
 const emptyEventStream = (metadata: StreamMetadata): Effect.Effect<EventStream, never> =>
   PubSub.bounded<StreamRecord>(pubSubCapacity).pipe(
     Effect.map((pubsub) => ({
-      records: Chunk.empty<StreamRecord>(),
+      records: [],
       pubsub,
       metadata,
     })),
@@ -64,31 +64,26 @@ const metadataFor = (request: CreateStream): StreamMetadata => ({
 
 const createStream =
   (request: CreateStream) =>
-  (value: Value): Effect.Effect<Value, never> =>
-    pipe(
-      value.streamsByPath,
-      HashMap.get(request.path),
-      Option.match({
-        onSome: () => Effect.succeed(value),
-        onNone: () =>
-          emptyEventStream(metadataFor(request)).pipe(
-            Effect.map((stream) => ({
-              ...value,
-              streamsByPath: HashMap.set(value.streamsByPath, request.path, stream),
-            })),
-          ),
+  (value: Value): Effect.Effect<Value, never> => {
+    if (value.streamsByPath.has(request.path)) {
+      return Effect.succeed(value)
+    }
+    return emptyEventStream(metadataFor(request)).pipe(
+      Effect.map((stream) => {
+        const streamsByPath = new Map(value.streamsByPath)
+        streamsByPath.set(request.path, stream)
+        return {
+          ...value,
+          streamsByPath,
+        }
       }),
     )
+  }
 
 const createResult = (request: CreateStream, value: Value): CreateStreamResult =>
-  pipe(
-    value.streamsByPath,
-    HashMap.get(request.path),
-    Option.match({
-      onSome: (stream) => ({ _tag: "AlreadyExists", metadata: stream.metadata }),
-      onNone: () => ({ _tag: "Created", metadata: metadataFor(request) }),
-    }),
-  )
+  value.streamsByPath.has(request.path)
+    ? { _tag: "AlreadyExists", metadata: value.streamsByPath.get(request.path)!.metadata }
+    : { _tag: "Created", metadata: metadataFor(request) }
 
 const validateAppend = (
   request: AppendStream,
@@ -163,7 +158,7 @@ const appendRecords = (
     records.length > 0 ? records[records.length - 1]?.nextOffset : stream.metadata.tailOffset
   return {
     ...stream,
-    records: Chunk.appendAll(stream.records, Chunk.fromIterable(records)),
+    records: [...stream.records, ...records],
     metadata: {
       ...stream.metadata,
       tailOffset: tailOffset ?? stream.metadata.tailOffset,
@@ -234,7 +229,7 @@ const commitAppend = (
   }
   const updatedValue: Value = {
     ...value,
-    streamsByPath: HashMap.set(value.streamsByPath, request.path, updatedStream),
+    streamsByPath: new Map(value.streamsByPath).set(request.path, updatedStream),
   }
   const result: AppendResult = {
     _tag: "Appended",
@@ -247,7 +242,7 @@ const commitAppend = (
       result,
       publish: pipe(
         publishRecords(updatedStream, records),
-        Effect.zipRight(publishTail(value.allTails, tailAdvanced)),
+        Effect.andThen(publishTail(value.allTails, tailAdvanced)),
         Effect.asVoid,
       ),
     },
@@ -260,13 +255,14 @@ const appendCollected =
   (value: Value): Effect.Effect<readonly [AppendCommit, Value], DurableStreamLogError> =>
     pipe(
       value.streamsByPath,
-      HashMap.get(request.path),
+      (streams) => streams.get(request.path),
+      Option.fromUndefinedOr,
       Option.match({
         onNone: () => Effect.fail(new StreamNotFoundError({ path: request.path })),
         onSome: (stream) =>
           pipe(
             validateAppend(request, stream),
-            Effect.zipRight(validateProducer(request, value, stream)),
+            Effect.andThen(validateProducer(request, value, stream)),
             Effect.flatMap((producer) =>
               producer._tag === "Duplicate"
                 ? Effect.succeed([duplicateCommit(stream.metadata), value] as const)
@@ -339,11 +335,7 @@ const validateProducer = (
 }
 
 const collectChunks = (request: AppendStream, value: SynchronizedRef.SynchronizedRef<Value>) =>
-  Sink.foldChunksEffect<readonly Uint8Array[], Uint8Array, never, never>(
-    [] as readonly Uint8Array[],
-    () => true,
-    (chunks, chunk) => Effect.succeed([...chunks, ...Chunk.toReadonlyArray(chunk)]),
-  ).pipe(
+  Sink.collect<Uint8Array>().pipe(
     Sink.mapEffect((chunks) =>
       SynchronizedRef.modifyEffect(value, (current) => appendCollected(request, chunks)(current)).pipe(
         Effect.tap((commit) => commit.publish),
@@ -369,20 +361,16 @@ const indexFromOffset = (
     return Effect.succeed(stream.records.length)
   }
 
-  const index = Chunk.findFirstIndex(stream.records, (record) => record.fromOffset >= offset)
-  return pipe(
-    index,
-    Option.match({
-      onNone: () => Effect.fail(new InvalidOffsetError({ path: position.path, offset })),
-      onSome: Effect.succeed,
-    }),
-  )
+  const index = stream.records.findIndex((record) => record.fromOffset >= offset)
+  return index === -1
+    ? Effect.fail(new InvalidOffsetError({ path: position.path, offset }))
+    : Effect.succeed(index)
 }
 
 const historicalStreamFrom = (position: ReadPosition, stream: EventStream) =>
   pipe(
     indexFromOffset(position, stream),
-    Effect.map((index) => pipe(stream.records, Chunk.drop(index), Stream.fromChunk)),
+    Effect.map((index) => Stream.fromIterable(stream.records.slice(index))),
   )
 
 const createHistoricalOrEmpty = (
@@ -403,7 +391,8 @@ const streamForSubscribe = (
 ): Effect.Effect<EventStream, StreamNotFoundError> =>
   pipe(
     value.streamsByPath,
-    HashMap.get(position.path),
+    (streams) => streams.get(position.path),
+    Option.fromUndefinedOr,
     Option.match({
       onSome: Effect.succeed,
       onNone: () => Effect.fail(new StreamNotFoundError({ path: position.path })),
@@ -427,7 +416,7 @@ const subscribeFrom = (
       Effect.flatMap((current) => streamForSubscribe(from, current)),
     )
     const historical = yield* historicalStreamFrom(from, snapshot)
-    const live = Stream.fromQueue(liveQueue).pipe(
+    const live = Stream.fromSubscription(liveQueue).pipe(
       Stream.filter((record) => record.fromOffset >= snapshot.metadata.tailOffset),
     )
     return historical.pipe(Stream.concat(live))
@@ -439,7 +428,7 @@ const makeStore = (value: SynchronizedRef.SynchronizedRef<Value>): InMemoryStore
       value,
       SynchronizedRef.get,
       Effect.map((current) => createResult(request, current)),
-      Effect.zipLeft(SynchronizedRef.updateEffect(value, createStream(request))),
+      Effect.tap(() => SynchronizedRef.updateEffect(value, createStream(request))),
     ),
   append: (request) => collectChunks(request, value),
   read: (from) =>
@@ -447,7 +436,7 @@ const makeStore = (value: SynchronizedRef.SynchronizedRef<Value>): InMemoryStore
       value,
       SynchronizedRef.get,
       Effect.flatMap((current) =>
-        createHistoricalOrEmpty(from, pipe(current.streamsByPath, HashMap.get(from.path))),
+        createHistoricalOrEmpty(from, Option.fromUndefinedOr(current.streamsByPath.get(from.path))),
       ),
     ),
   subscribe: (from) =>
@@ -457,7 +446,7 @@ const makeStore = (value: SynchronizedRef.SynchronizedRef<Value>): InMemoryStore
       value,
       SynchronizedRef.get,
       Effect.flatMap((current) => PubSub.subscribe(current.allTails)),
-      Effect.map(Stream.fromQueue),
+      Effect.map(Stream.fromSubscription),
     ),
   head: (path) =>
     pipe(
@@ -466,7 +455,8 @@ const makeStore = (value: SynchronizedRef.SynchronizedRef<Value>): InMemoryStore
       Effect.flatMap((current) =>
         pipe(
           current.streamsByPath,
-          HashMap.get(path),
+          (streams) => streams.get(path),
+          Option.fromUndefinedOr,
           Option.match({
             onNone: () => Effect.fail(new StreamNotFoundError({ path })),
             onSome: (stream) => Effect.succeed(stream.metadata),
@@ -478,7 +468,8 @@ const makeStore = (value: SynchronizedRef.SynchronizedRef<Value>): InMemoryStore
     SynchronizedRef.modify(value, (current) => [
       pipe(
         current.streamsByPath,
-        HashMap.get(path),
+        (streams) => streams.get(path),
+        Option.fromUndefinedOr,
         Option.match({
           onNone: () => ({ _tag: "NotFound", path }) satisfies DeleteStreamResult,
           onSome: () => ({ _tag: "Deleted", path }) satisfies DeleteStreamResult,
@@ -486,7 +477,9 @@ const makeStore = (value: SynchronizedRef.SynchronizedRef<Value>): InMemoryStore
       ),
       {
         ...current,
-        streamsByPath: HashMap.remove(current.streamsByPath, path),
+        streamsByPath: new Map(
+          [...current.streamsByPath].filter(([streamPath]) => streamPath !== path),
+        ),
       },
     ]),
 })
@@ -495,7 +488,7 @@ export const make = (): Effect.Effect<InMemoryStore, never> =>
   PubSub.bounded<TailAdvanced>(pubSubCapacity).pipe(
     Effect.flatMap((allTails) =>
       SynchronizedRef.make<Value>({
-        streamsByPath: HashMap.empty<StreamPath, EventStream>(),
+        streamsByPath: new Map<StreamPath, EventStream>(),
         allTails,
         producerStates: HashMap.empty<string, ProducerState>(),
       }).pipe(

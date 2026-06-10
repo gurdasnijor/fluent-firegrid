@@ -726,65 +726,6 @@ const local = {
         }
       },
     },
-    "simulation-host-real-firegrid-host": {
-      meta: {
-        type: "problem",
-        docs: {
-          description:
-            "Require firelab simulation hosts to compose through the sanctioned published host-sdk runtime root so sim == prod and no per-sim layer assembly creeps back in.",
-        },
-        schema: [],
-        messages: {
-          missingFactoryImport:
-            "Simulation host.ts must compose through a published runtime root — import firegridHost/runFiregridHost from @firegrid/host-sdk or FluentRuntimeLive from @firegrid/fluent-runtime, not hand-assemble a runtime + ingress per sim.",
-          missingFactoryCall:
-            "Simulation host.ts imported a published runtime root but never called it.",
-        },
-      },
-      create(context) {
-        const factoryNamesBySource = new Map([
-          ["@firegrid/host-sdk", new Set(["firegridHost", "runFiregridHost"])],
-          ["@firegrid/fluent-runtime", new Set(["FluentRuntimeLive"])],
-        ])
-        let importedFactoryLocalName
-        let calledFactory = false
-
-        return {
-          ImportDeclaration(node) {
-            const factoryNames = factoryNamesBySource.get(node.source.value)
-            if (factoryNames === undefined) {
-              return
-            }
-
-            for (const specifier of node.specifiers) {
-              if (
-                specifier.type === "ImportSpecifier" &&
-                specifier.imported.type === "Identifier" &&
-                factoryNames.has(specifier.imported.name)
-              ) {
-                importedFactoryLocalName = specifier.local.name
-              }
-            }
-          },
-          CallExpression(node) {
-            if (
-              importedFactoryLocalName !== undefined &&
-              node.callee.type === "Identifier" &&
-              node.callee.name === importedFactoryLocalName
-            ) {
-              calledFactory = true
-            }
-          },
-          "Program:exit"(node) {
-            if (importedFactoryLocalName === undefined) {
-              context.report({ node, messageId: "missingFactoryImport" })
-            } else if (!calledFactory) {
-              context.report({ node, messageId: "missingFactoryCall" })
-            }
-          },
-        }
-      },
-    },
     // firegrid-remediation-hardening.STATIC_QUALITY.10
     // firegrid-remediation-hardening.EFFECT_CONSISTENCY.2
     "no-extends-error": {
@@ -1239,6 +1180,9 @@ export default tseslint.config(
       // repos/** contains pinned git submodules used as read-only design references.
       // They are not part of this repo's build graph.
       "repos/**",
+      // Firelab is retained as a legacy verification shell. It will be rebuilt
+      // on the fluent modules before returning to blocking lint/typecheck.
+      "packages/firelab/**",
     ],
   },
   js.configs.recommended,

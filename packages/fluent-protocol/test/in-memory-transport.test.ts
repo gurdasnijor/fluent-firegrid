@@ -1,4 +1,4 @@
-import { Chunk, Effect } from "effect"
+import { Effect, Queue } from "effect"
 import { describe, expect, it } from "vitest"
 import { decodeStreamPath } from "@firegrid/fluent-store"
 import * as InMemoryStreamLog from "@firegrid/fluent-store-inmemory"
@@ -150,8 +150,8 @@ describe("DurableTransport in-memory", () => {
     expect(result.fenced).toMatchObject({ _tag: "EpochFenced", currentEpoch: 1 })
   })
 
-  it("streams live reads through a Mailbox", async () => {
-    const events = await Effect.runPromise(
+  it("streams live reads through a Queue", async () => {
+    const event = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
           const path = yield* decodeStreamPath("protocol/live")
@@ -159,14 +159,13 @@ describe("DurableTransport in-memory", () => {
           const transport = yield* makeLocalTransport(log)
           yield* transport.call(new Create({ path, contentType: "text/plain" }))
 
-          const mailbox = yield* transport.stream(new ReadLive({ path, offset: "-1" }))
+          const queue = yield* transport.stream(new ReadLive({ path, offset: "-1" }))
           yield* transport.call(new Append({ path, contentType: "text/plain", bytes: enc.encode("live") }))
-          const [items] = yield* mailbox.takeAll
-          return Chunk.toReadonlyArray(items)
+          return yield* Queue.take(queue).pipe(Effect.orDie)
         }),
       ),
     )
 
-    expect(events.map((event) => event._tag)).toContain("RecordBatch")
+    expect(event._tag).toBe("RecordBatch")
   })
 })

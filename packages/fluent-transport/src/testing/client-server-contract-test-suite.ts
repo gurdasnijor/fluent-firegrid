@@ -1,5 +1,5 @@
 /* eslint-disable effect/no-runPromise -- Reusable Vitest contract suite runs Effects at test boundaries. */
-import { Chunk, Duration, Effect, Stream, type Scope } from "effect"
+import { Duration, Effect, Stream, type Scope } from "effect"
 import { describe, expect, it } from "vitest"
 import type { ClientTransport } from "../client.ts"
 import type { ClientConnection, ServerTransport } from "../server.ts"
@@ -28,9 +28,9 @@ const timeout = <A, E, R>(
   timeoutMs = 1_000,
 ): Effect.Effect<A, E | Error, R> =>
   effect.pipe(
-    Effect.timeoutFail({
+    Effect.timeoutOrElse({
       duration: Duration.millis(timeoutMs),
-      onTimeout: () => new Error(message),
+      orElse: () => Effect.fail(new Error(message)),
     }),
   )
 
@@ -41,7 +41,6 @@ const collectMessages = <E, R>(
   stream.pipe(
     Stream.take(count),
     Stream.runCollect,
-    Effect.map(Chunk.toReadonlyArray),
     (effect) => timeout(effect, `Timed out waiting for ${count} transport message(s)`),
   )
 
@@ -52,7 +51,6 @@ const collectConnections = (
   server.connections.pipe(
     Stream.take(count),
     Stream.runCollect,
-    Effect.map(Chunk.toReadonlyArray),
     (effect) => timeout(effect, `Timed out waiting for ${count} client connection(s)`),
   )
 
@@ -64,7 +62,7 @@ const waitForConnectionState = (
     Stream.filter((current) => current === state),
     Stream.take(1),
     Stream.runCollect,
-    Effect.map((states) => Chunk.toReadonlyArray(states)[0]),
+    Effect.map((states) => states[0]),
     Effect.flatMap((current) =>
       current === undefined ? Effect.fail(new Error(`Connection never reached ${state}`)) : Effect.succeed(current),
     ),
@@ -115,7 +113,7 @@ export const runClientServerTransportTestSuite = (
           makeContext,
           ({ client, server }) =>
             waitForConnectionState(client, "connected").pipe(
-              Effect.zipRight(collectConnections(server, 1)),
+              Effect.andThen(collectConnections(server, 1)),
             ),
         ),
       )
@@ -135,7 +133,7 @@ export const runClientServerTransportTestSuite = (
                   waitForConnectionState(client2, "connected"),
                 ]),
               ),
-              Effect.zipRight(collectConnections(server, 2)),
+              Effect.andThen(collectConnections(server, 2)),
             ),
         ),
       )

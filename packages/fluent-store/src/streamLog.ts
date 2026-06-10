@@ -36,7 +36,7 @@ export const readBytes = (log: DurableStreamLog, position: ReadPosition) =>
     log.read,
     Effect.flatMap((records) =>
       records.pipe(
-        Stream.runFold(new Uint8Array(), (acc, record) => {
+        Stream.runFold(() => new Uint8Array(), (acc, record) => {
           const out = new Uint8Array(acc.length + record.bytes.length)
           out.set(acc, 0)
           out.set(record.bytes, acc.length)

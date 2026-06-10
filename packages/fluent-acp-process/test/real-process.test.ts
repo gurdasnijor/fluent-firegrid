@@ -1,4 +1,4 @@
-import { NodeContext } from "@effect/platform-node"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 import { spawnAcpProcess } from "../src/process-owner.ts"
@@ -7,7 +7,7 @@ import { spawnAcpProcess } from "../src/process-owner.ts"
  * Real ACP process smoke test of the owner's surface: spawn a real ACP harness
  * and confirm the exposed `acp.Stream` carries a working ACP handshake (we send
  * `initialize`, the agent replies). The FULL binding acceptance (FiregridAcpClient
- * + fluent-runtime, Layer 1/2, resume, cancel) is a separate fluent lane.
+ * + fluent runtime, Layer 1/2, resume, cancel) is a separate fluent lane.
  *
  *   ACP_RUN_REAL=1 pnpm test
  *   ACP_RUN_REAL=1 ACP_AGENT=codex pnpm test
@@ -48,7 +48,7 @@ maybe(`spawnAcpProcess (real ${AGENT})`, () => {
             expect(response?.result).toBeDefined()
             reader.releaseLock()
           }),
-        ).pipe(Effect.provide(NodeContext.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
       ),
     90_000,
   )

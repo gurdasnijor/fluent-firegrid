@@ -1,6 +1,6 @@
 import { Context, Schema } from "effect"
+import type { Cause, Queue } from "effect"
 import type { Effect, Scope } from "effect"
-import type * as Mailbox from "effect/Mailbox"
 import { TransportError } from "@firegrid/fluent-transport"
 import { Offset } from "@firegrid/fluent-store"
 import type { Append, Close, Create, Delete, Head, Read, ReadLive, Request } from "./request.ts"
@@ -34,19 +34,19 @@ export class Control extends Schema.TaggedClass<Control>("Control")("Control", {
   cursor: Schema.optional(Schema.String),
 }) {}
 
-export const ReadEvent = Schema.Union(RecordBatch, Control)
+export const ReadEvent = Schema.Union([RecordBatch, Control])
 export type ReadEvent = typeof ReadEvent.Type
+export type ReadEventQueue = Queue.Dequeue<ReadEvent, TransportError | Cause.Done<void>>
 
 export interface DurableTransportService {
   readonly call: <R extends Request>(request: R) => Effect.Effect<ResponseOf<R>, TransportError>
   readonly stream: (
     request: ReadLive,
-  ) => Effect.Effect<Mailbox.ReadonlyMailbox<ReadEvent, TransportError>, TransportError, Scope.Scope>
+  ) => Effect.Effect<ReadEventQueue, TransportError, Scope.Scope>
 }
 
-export class DurableTransport extends Context.Tag("@firegrid/fluent-protocol/DurableTransport")<
-  DurableTransport,
-  DurableTransportService
->() {}
+export class DurableTransport extends Context.Service<DurableTransport, DurableTransportService>()(
+  "@firegrid/fluent-protocol/DurableTransport",
+) {}
 
 export { TransportError }

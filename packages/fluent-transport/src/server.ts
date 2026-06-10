@@ -17,12 +17,10 @@ export interface ServerAcceptor {
   readonly start: () => Effect.Effect<ServerTransport, ServerStartError, Scope.Scope>
 }
 
-export class ServerAcceptorTag extends Context.Tag("@firegrid/fluent-transport/ServerAcceptor")<
-  ServerAcceptorTag,
-  ServerAcceptor
->() {}
+export class ServerAcceptorTag extends Context.Service<ServerAcceptorTag, ServerAcceptor>()(
+  "@firegrid/fluent-transport/ServerAcceptor",
+) {}
 
-export class ServerTransportTag extends Context.Tag("@firegrid/fluent-transport/ServerTransport")<
-  ServerTransportTag,
-  ServerTransport
->() {}
+export class ServerTransportTag extends Context.Service<ServerTransportTag, ServerTransport>()(
+  "@firegrid/fluent-transport/ServerTransport",
+) {}

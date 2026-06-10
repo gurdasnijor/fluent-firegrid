@@ -146,7 +146,7 @@ export const makeProducer = (
             times: config.maxTransportRetries ?? 5,
             while: (error) => error._tag === "TransportError",
           }),
-          Effect.catchAll((cause) => Effect.fail(new ProducerTransportFailure({ cause }))),
+          Effect.catch((cause) => Effect.fail(new ProducerTransportFailure({ cause }))),
         )
 
       const handleResponse = (
