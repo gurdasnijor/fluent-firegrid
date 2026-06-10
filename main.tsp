@@ -222,10 +222,10 @@ model ProducerSuccessHeaders {
   streamClosed?: "true";
 
   @header("Producer-Epoch")
-  producerEpoch?: ProducerEpoch;
+  producerEpoch: ProducerEpoch;
 
   @header("Producer-Seq")
-  producerSeq?: ProducerSeq;
+  producerSeq: ProducerSeq;
 }
 
 model ProducerFencedHeaders {
@@ -235,18 +235,18 @@ model ProducerFencedHeaders {
 
 model ProducerGapHeaders {
   @header("Producer-Expected-Seq")
-  producerExpectedSeq?: ProducerSeq;
+  producerExpectedSeq: ProducerSeq;
 
   @header("Producer-Received-Seq")
-  producerReceivedSeq?: ProducerSeq;
+  producerReceivedSeq: ProducerSeq;
 }
 
 model ClosedConflictHeaders {
   @header("Stream-Closed")
-  streamClosed?: "true";
+  streamClosed: "true";
 
   @header("Stream-Next-Offset")
-  streamNextOffset?: Offset;
+  streamNextOffset: Offset;
 }
 
 model EmptyError {
@@ -409,7 +409,8 @@ model AppendStreamRequest {
   @body body?: bytes;
 }
 
-model PlainAppendAccepted {
+@doc("No-content append result. Producer headers are present when this is an idempotent producer duplicate; otherwise this is a plain append or close-only success.")
+model AppendNoContent {
   ...NoContentResponse;
 
   @header("Stream-Next-Offset")
@@ -417,15 +418,16 @@ model PlainAppendAccepted {
 
   @header("Stream-Closed")
   streamClosed?: "true";
+
+  @header("Producer-Epoch")
+  producerEpoch?: ProducerEpoch;
+
+  @header("Producer-Seq")
+  producerSeq?: ProducerSeq;
 }
 
 model ProducerAppendAccepted {
   ...OkResponse;
-  ...ProducerSuccessHeaders;
-}
-
-model ProducerAppendDuplicate {
-  ...NoContentResponse;
   ...ProducerSuccessHeaders;
 }
 
@@ -536,9 +538,8 @@ interface Streams {
   )
   @post
   appendToStream(...AppendStreamRequest):
-    | PlainAppendAccepted
+    | AppendNoContent
     | ProducerAppendAccepted
-    | ProducerAppendDuplicate
     | ProducerFenced
     | ProducerGap
     | ClosedStreamConflict

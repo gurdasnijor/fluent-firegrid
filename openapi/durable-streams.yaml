@@ -667,15 +667,15 @@ paths:
                 enum:
                   - 'true'
             Producer-Epoch:
-              required: false
+              required: true
               schema:
                 $ref: '#/components/schemas/ProducerEpoch'
             Producer-Seq:
-              required: false
+              required: true
               schema:
                 $ref: '#/components/schemas/ProducerSeq'
         '204':
-          description: Append result, including idempotent producer metadata when supplied, or a documented protocol error.
+          description: No-content append result. Producer headers are present when this is an idempotent producer duplicate; otherwise this is a plain append or close-only success.
           headers:
             Stream-Next-Offset:
               required: true
@@ -724,21 +724,21 @@ paths:
           description: Append result, including idempotent producer metadata when supplied, or a documented protocol error.
           headers:
             Producer-Expected-Seq:
-              required: false
+              required: true
               schema:
                 $ref: '#/components/schemas/ProducerSeq'
             Producer-Received-Seq:
-              required: false
+              required: true
               schema:
                 $ref: '#/components/schemas/ProducerSeq'
             Stream-Closed:
-              required: false
+              required: true
               schema:
                 type: string
                 enum:
                   - 'true'
             Stream-Next-Offset:
-              required: false
+              required: true
               schema:
                 $ref: '#/components/schemas/Offset'
         '410':

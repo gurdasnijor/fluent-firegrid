@@ -1,7 +1,9 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "ignoreDependencies": [
-    "@typespec/rest"
+    "@typespec/http-server-js",
+    "@typespec/rest",
+    "tslib"
   ],
   "workspaces": {
     "packages/fluent-runtime": {
