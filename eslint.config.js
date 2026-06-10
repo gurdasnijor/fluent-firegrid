@@ -1180,6 +1180,9 @@ export default tseslint.config(
       // repos/** contains pinned git submodules used as read-only design references.
       // They are not part of this repo's build graph.
       "repos/**",
+      // Firelab is retained as a legacy verification shell. It will be rebuilt
+      // on the fluent modules before returning to blocking lint/typecheck.
+      "packages/firelab/**",
     ],
   },
   js.configs.recommended,

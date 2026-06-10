@@ -55,5 +55,7 @@
   "ignore": [
     "repos/**"
   ],
-  "ignoreWorkspaces": []
+  "ignoreWorkspaces": [
+    "packages/firelab"
+  ]
 }
