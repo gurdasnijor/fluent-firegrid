@@ -915,9 +915,13 @@ paths:
                 enum:
                   - base64
           content:
-            '*/*':
+            application/json:
               schema:
-                contentMediaType: '*/*'
+                type: array
+                items: {}
+            text/plain:
+              schema:
+                type: string
             text/event-stream:
               schema:
                 type: string
@@ -1510,7 +1514,7 @@ components:
           $ref: '#/components/schemas/StreamRootRelativePath'
       allOf:
         - $ref: '#/components/schemas/SubscriptionConfigBase'
-    ReadHeaders:
+    ReadMetadataHeaders:
       type: object
     ReleaseRequest:
       type: object
