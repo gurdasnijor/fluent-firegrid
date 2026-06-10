@@ -1,0 +1,169 @@
+diff --git a/src/rules/no-effect-if-option-check.js b/src/rules/no-effect-if-option-check.js
+index 50d5b4fba67146e067c53c4235250e97ecd5e8dc..53b6105adcd0aa67ab1d54560bf2a6a372ca0c78 100644
+--- a/src/rules/no-effect-if-option-check.js
++++ b/src/rules/no-effect-if-option-check.js
+@@ -14,7 +14,7 @@ export default {
+   },
+ 
+   create(context) {
+-    const sourceCode = context.getSourceCode();
++    const sourceCode = context.sourceCode;
+ 
+     const isEffectIfCall = (node) => {
+       return (
+diff --git a/src/rules/no-unnecessary-function-alias.js b/src/rules/no-unnecessary-function-alias.js
+index 1726c29c594ab00067424ba8cbc84fdc3e34b2af..771509bb54092bfd537252f357214c0b6432c999 100644
+--- a/src/rules/no-unnecessary-function-alias.js
++++ b/src/rules/no-unnecessary-function-alias.js
+@@ -26,7 +26,7 @@ export default {
+ 
+   create(context) {
+     const maxReferences = context.options[0]?.maxReferences ?? 2;
+-    const sourceCode = context.getSourceCode();
++    const sourceCode = context.sourceCode;
+ 
+     const getOriginalName = (node) => {
+       if (node.type === 'Identifier') {
+diff --git a/src/rules/prefer-andThen.js b/src/rules/prefer-andThen.js
+index 8ce2f63d3d7abcc0af305e49aea5573efef5328c..c7aa420351e8d6b36b8de8268e878f4a0253d05f 100644
+--- a/src/rules/prefer-andThen.js
++++ b/src/rules/prefer-andThen.js
+@@ -16,7 +16,7 @@ export default {
+   },
+ 
+   create(context) {
+-    const sourceCode = context.getSourceCode();
++    const sourceCode = context.sourceCode;
+ 
+     const isFlatMapCall = (node) => {
+       return (
+diff --git a/src/rules/prefer-as.js b/src/rules/prefer-as.js
+index f7d003b4061c5298ef1e5689008087c81d6f9430..2d436ae76ebeb4f623751f098212de29c36444d4 100644
+--- a/src/rules/prefer-as.js
++++ b/src/rules/prefer-as.js
+@@ -27,7 +27,7 @@ export default {
+   },
+ 
+   create(context) {
+-    const sourceCode = context.getSourceCode();
++    const sourceCode = context.sourceCode;
+ 
+     const isMapCall = (node) => {
+       return (
+diff --git a/src/rules/prefer-flatten.js b/src/rules/prefer-flatten.js
+index a88f274b5c29323bb95c643fe2938d9c4910ad3e..038b9f094482b53cb6b919a55865aa70a49054bd 100644
+--- a/src/rules/prefer-flatten.js
++++ b/src/rules/prefer-flatten.js
+@@ -16,7 +16,7 @@ export default {
+   },
+ 
+   create(context) {
+-    const sourceCode = context.getSourceCode();
++    const sourceCode = context.sourceCode;
+ 
+     const isFlatMapCall = (node) => {
+       return (
+diff --git a/src/rules/prefer-from-nullable.js b/src/rules/prefer-from-nullable.js
+index c270e88825703008248fd6f384c269d49b00f7d1..c2136638eef276f3250b3fceeb43d9fd11bdb6bf 100644
+--- a/src/rules/prefer-from-nullable.js
++++ b/src/rules/prefer-from-nullable.js
+@@ -14,7 +14,7 @@ export default {
+   },
+ 
+   create(context) {
+-    const sourceCode = context.getSourceCode();
++    const sourceCode = context.sourceCode;
+ 
+     const isOptionSomeCall = (node) => {
+       return (
+diff --git a/src/rules/prefer-get-or-else.js b/src/rules/prefer-get-or-else.js
+index fbfafaffafba66fbe485a808e242bbef3061da6c..066acee5122add9d78735ec171b4fbdf35ad4655 100644
+--- a/src/rules/prefer-get-or-else.js
++++ b/src/rules/prefer-get-or-else.js
+@@ -14,7 +14,7 @@ export default {
+   },
+ 
+   create(context) {
+-    const sourceCode = context.getSourceCode();
++    const sourceCode = context.sourceCode;
+ 
+     const isOptionIsSomeCall = (node, expectedArg) => {
+       if (
+diff --git a/src/rules/prefer-ignore-logged.js b/src/rules/prefer-ignore-logged.js
+index a0a4db14ad933a1a1210e2d4c7246d6ee599ae6b..48e21be0196b2003c5f7004c5007ea53997eddaa 100644
+--- a/src/rules/prefer-ignore-logged.js
++++ b/src/rules/prefer-ignore-logged.js
+@@ -17,7 +17,7 @@ export default {
+   },
+ 
+   create(context) {
+-    const sourceCode = context.getSourceCode();
++    const sourceCode = context.sourceCode;
+ 
+     const isMatchCauseEffectCall = (node) => {
+       return (
+diff --git a/src/rules/prefer-ignore.js b/src/rules/prefer-ignore.js
+index 6eb45b88e526657efe9a2b6a8c14011dde03ec99..af9c90a270c22a2adb96787dd6cf2f0dec4240e6 100644
+--- a/src/rules/prefer-ignore.js
++++ b/src/rules/prefer-ignore.js
+@@ -19,7 +19,7 @@ export default {
+   },
+ 
+   create(context) {
+-    const sourceCode = context.getSourceCode();
++    const sourceCode = context.sourceCode;
+ 
+     return {
+       CallExpression(node) {
+diff --git a/src/rules/prefer-match-tag.js b/src/rules/prefer-match-tag.js
+index 9a40a59d7416520c723811e02a63f46eac9e728e..a27c891f5957269339bced1bd02f9bd98e6f2be7 100644
+--- a/src/rules/prefer-match-tag.js
++++ b/src/rules/prefer-match-tag.js
+@@ -52,7 +52,7 @@ export default {
+                   tagValue,
+                 },
+                 fix(fixer) {
+-                  const sourceCode = context.getSourceCode();
++                  const sourceCode = context.sourceCode;
+                   const tagString = sourceCode.getText(prop.value);
+                   const restArgs = node.arguments.slice(1);
+                   const restArgsText = restArgs.map((arg) => sourceCode.getText(arg)).join(', ');
+diff --git a/src/rules/prefer-zip-left.js b/src/rules/prefer-zip-left.js
+index a80a12eb4aeeb10132bd94bf72eaa76f64fbea43..71db614c9eea4a1f2aef58e8c3939f88b6a7d781 100644
+--- a/src/rules/prefer-zip-left.js
++++ b/src/rules/prefer-zip-left.js
+@@ -20,7 +20,7 @@ export default {
+   },
+ 
+   create(context) {
+-    const sourceCode = context.getSourceCode();
++    const sourceCode = context.sourceCode;
+ 
+     const isZipLeftPattern = (arrowFunc, effectType) => {
+       if (!arrowFunc || arrowFunc.type !== 'ArrowFunctionExpression') {
+diff --git a/src/rules/prefer-zip-right.js b/src/rules/prefer-zip-right.js
+index b4ec924748dbb20123fabf475a9eb1f92c5b8ef5..7886384c51b2d57d0bfa2b9feecc80ed2eb187b9 100644
+--- a/src/rules/prefer-zip-right.js
++++ b/src/rules/prefer-zip-right.js
+@@ -20,7 +20,7 @@ export default {
+   },
+ 
+   create(context) {
+-    const sourceCode = context.getSourceCode();
++    const sourceCode = context.sourceCode;
+ 
+     const isZipRightPattern = (arrowFunc) => {
+       if (!arrowFunc || arrowFunc.type !== 'ArrowFunctionExpression') {
+diff --git a/src/rules/suggest-currying-opportunity.js b/src/rules/suggest-currying-opportunity.js
+index 770d2e413be0f6d7431df2192825a9e42e4bc7cf..d15c5c212bad4c29148ad0c470e01fe537913c75 100644
+--- a/src/rules/suggest-currying-opportunity.js
++++ b/src/rules/suggest-currying-opportunity.js
+@@ -156,7 +156,7 @@ export default {
+       const functionName = getFunctionName(callExpr.callee);
+       if (!functionName) return null;
+ 
+-      const sourceCode = context.sourceCode || context.getSourceCode();
++      const sourceCode = context.sourceCode || context.sourceCode;
+ 
+       const lastParamArgIndex = Math.max(...argsFromParams.map((item) => item.index));
+       const lastNonParamIndex = Math.max(...argsNotFromParams.map((item) => item.index));

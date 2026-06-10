@@ -4,10 +4,18 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@codeforbreakfast/eslint-effect@0.8.5':
+    hash: 77e96af7a5c200cb3f1a8a383c392e4563cd987f97c4188696c7bcbce58cd8b8
+    path: patches/@codeforbreakfast__eslint-effect@0.8.5.patch
+
 importers:
 
   .:
     devDependencies:
+      '@codeforbreakfast/eslint-effect':
+        specifier: 0.8.5
+        version: 0.8.5(patch_hash=77e96af7a5c200cb3f1a8a383c392e4563cd987f97c4188696c7bcbce58cd8b8)(eslint@10.4.1(jiti@2.7.0))
       '@effect/eslint-plugin':
         specifier: ^0.3.2
         version: 0.3.2
@@ -56,6 +64,9 @@ importers:
       eslint:
         specifier: ^10.3.0
         version: 10.4.1(jiti@2.7.0)
+      eslint-plugin-functional:
+        specifier: ^10.0.0
+        version: 10.0.0(eslint@10.4.1(jiti@2.7.0))(typescript@5.9.3)
       globals:
         specifier: ^17.6.0
         version: 17.6.0
@@ -261,6 +272,50 @@ importers:
         specifier: ^3.2.0
         version: 3.2.6(@types/node@22.19.20)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
 
+  packages/fluent-client:
+    dependencies:
+      '@firegrid/fluent-protocol':
+        specifier: workspace:*
+        version: link:../fluent-protocol
+      effect:
+        specifier: ^3.21.2
+        version: 3.21.3
+    devDependencies:
+      '@firegrid/fluent-store':
+        specifier: workspace:*
+        version: link:../fluent-store
+      '@firegrid/fluent-store-inmemory':
+        specifier: workspace:*
+        version: link:../fluent-store-inmemory
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
+
+  packages/fluent-protocol:
+    dependencies:
+      '@firegrid/fluent-store':
+        specifier: workspace:*
+        version: link:../fluent-store
+      '@firegrid/fluent-transport':
+        specifier: workspace:*
+        version: link:../fluent-transport
+      effect:
+        specifier: ^3.21.2
+        version: 3.21.3
+    devDependencies:
+      '@firegrid/fluent-store-inmemory':
+        specifier: workspace:*
+        version: link:../fluent-store-inmemory
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
+
   packages/fluent-runtime:
     dependencies:
       '@agentclientprotocol/sdk':
@@ -288,6 +343,83 @@ importers:
       vitest:
         specifier: ^3.2.0
         version: 3.2.6(@types/node@22.19.20)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
+
+  packages/fluent-server:
+    dependencies:
+      '@firegrid/fluent-store':
+        specifier: workspace:*
+        version: link:../fluent-store
+      effect:
+        specifier: ^3.21.2
+        version: 3.21.3
+    devDependencies:
+      '@firegrid/fluent-store-inmemory':
+        specifier: workspace:*
+        version: link:../fluent-store-inmemory
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
+
+  packages/fluent-store:
+    dependencies:
+      effect:
+        specifier: ^3.21.2
+        version: 3.21.3
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
+
+  packages/fluent-store-inmemory:
+    dependencies:
+      '@firegrid/fluent-store':
+        specifier: workspace:*
+        version: link:../fluent-store
+      effect:
+        specifier: ^3.21.2
+        version: 3.21.3
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
+
+  packages/fluent-transport:
+    dependencies:
+      effect:
+        specifier: ^3.21.2
+        version: 3.21.3
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
+
+  packages/fluent-transport-inmemory:
+    dependencies:
+      '@firegrid/fluent-transport':
+        specifier: workspace:*
+        version: link:../fluent-transport
+      effect:
+        specifier: ^3.21.2
+        version: 3.21.3
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
 
 packages:
 
@@ -320,6 +452,11 @@ packages:
   '@babel/types@7.29.7':
     resolution: {integrity: sha512-4zBIxpPzowiZpusoFkyGVwakdRJUyuH5PxQ/PrqghfdFWWasvnCdPfQXHrenDai+gyLARulZjZowCOj6fjT4pA==}
     engines: {node: '>=6.9.0'}
+
+  '@codeforbreakfast/eslint-effect@0.8.5':
+    resolution: {integrity: sha512-kLPfNVgBMEXRR2lGtm4SwATNW6hVy2aU50cIk5CB1TuSR9bptXiILBnMRqNF1skBvztCdRKQl+2OaLD3/gtrjw==}
+    peerDependencies:
+      eslint: '>=8.0.0'
 
   '@colors/colors@1.5.0':
     resolution: {integrity: sha512-ooWCrlZP11i8GImSjTHYHLkvFDP48nS4+204nGb1RiX/WXYHmJA2III9/e2DWVabCESdW7hBAEzHRqUn9OUVvQ==}
@@ -2526,6 +2663,10 @@ packages:
   deep-is@0.1.4:
     resolution: {integrity: sha512-oIPzksmTg4/MriiaYGO+okXDT7ztn/w3Eptv/+gSIdMdKsJo0u4CfYNFJPy+4SKMuCqGw2wxnA+URMg3t8a/bQ==}
 
+  deepmerge-ts@7.1.5:
+    resolution: {integrity: sha512-HOJkrhaYsweh+W+e74Yn7YStZOilkoPb6fycpwNLKzSPtruFs48nYis0zy5yJz1+ktUhHxoRDJ27RQAWLIJVJw==}
+    engines: {node: '>=16.0.0'}
+
   defu@6.1.7:
     resolution: {integrity: sha512-7z22QmUWiQ/2d0KkdYmANbRUVABpZ9SNYyH5vx6PZ+nE5bcC0l7uFvEfHlyld/HcGBFTL536ClDt3DEcSlEJAQ==}
 
@@ -2619,6 +2760,20 @@ packages:
   escape-string-regexp@4.0.0:
     resolution: {integrity: sha512-TtpcNJ3XAzx3Gq8sWRzJaVajRs0uVxA2YAkdb1jm2YkPz4G6egUFAyA3n5vtEIZefPk5Wa4UXbKuS5fKkJWdgA==}
     engines: {node: '>=10'}
+
+  escape-string-regexp@5.0.0:
+    resolution: {integrity: sha512-/veY75JbMK4j1yjvuUxuVsiS/hr/4iHs9FTT6cgTexxdE0Ly/glccBAkloH/DofkjRbZU3bnoj38mOmhkZ0lHw==}
+    engines: {node: '>=12'}
+
+  eslint-plugin-functional@10.0.0:
+    resolution: {integrity: sha512-D/BWdGUvPz5uIC+kZM1BWrELhjHpDiYxIYjzF7a6TZ62KINajjKgOiSYGbGv4fpMT1enEC9yG+0kOaIRTZzpTg==}
+    engines: {node: '>=v20.0.0'}
+    peerDependencies:
+      eslint: ^9.0.0 || ^10.0.0
+      typescript: '>=4.7.4'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
 
   eslint-scope@9.1.2:
     resolution: {integrity: sha512-xS90H51cKw0jltxmvmHy2Iai1LIqrfbw57b79w/J7MfvDfkIkFZ+kj6zC3BjtUwh150HsSSdxXZcsuv72miDFQ==}
@@ -2977,6 +3132,12 @@ packages:
   is-glob@4.0.3:
     resolution: {integrity: sha512-xelSayHH36ZgE7ZWhli7pW34hNbNl8Ojv5KVmkJD4hBdD3th8Tfk9vYasLM+mXWOZhFkgZfxhLSnrwRr4elSSg==}
     engines: {node: '>=0.10.0'}
+
+  is-immutable-type@5.0.3:
+    resolution: {integrity: sha512-BiUnHcdNSIbetYR7+d8KGgjV+QsM3kFXpKWJStLQKhMSYjIWEbTLzlbXMw8g4Tlx/SHBOHw1sjkix4yVH4kQsw==}
+    peerDependencies:
+      eslint: '*'
+      typescript: '>=4.7.4'
 
   is-installed-globally@1.0.0:
     resolution: {integrity: sha512-K55T22lfpQ63N4KEN57jZUAaAYqYHEe8veb/TycJRk9DdSCLLcovXz/mL6mOnhQaZsQGwPhuFopdQIlqGSEjiQ==}
@@ -3885,6 +4046,11 @@ packages:
     peerDependencies:
       typescript: '>=4.8.4'
 
+  ts-declaration-location@1.0.7:
+    resolution: {integrity: sha512-EDyGAwH1gO0Ausm9gV6T2nUvBgXT5kGoCMJPllOaooZ+4VvJiKBdZE7wK18N1deEowhcUptS+5GXZK8U/fvpwA==}
+    peerDependencies:
+      typescript: '>=4.0.0'
+
   tsconfig-paths-webpack-plugin@4.2.0:
     resolution: {integrity: sha512-zbem3rfRS8BgeNK50Zz5SIQgXzLafiHjOwUAvk/38/o1jHn/V5QAgVUcz884or7WYcPaH3N2CIfUc2u0ul7UcA==}
     engines: {node: '>=10.13.0'}
@@ -4296,6 +4462,10 @@ snapshots:
     dependencies:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
+
+  '@codeforbreakfast/eslint-effect@0.8.5(patch_hash=77e96af7a5c200cb3f1a8a383c392e4563cd987f97c4188696c7bcbce58cd8b8)(eslint@10.4.1(jiti@2.7.0))':
+    dependencies:
+      eslint: 10.4.1(jiti@2.7.0)
 
   '@colors/colors@1.5.0':
     optional: true
@@ -5877,6 +6047,14 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.0
 
+  '@vitest/mocker@3.2.6(vite@7.3.5(@types/node@22.19.20)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0))':
+    dependencies:
+      '@vitest/spy': 3.2.6
+      estree-walker: 3.0.3
+      magic-string: 0.30.21
+    optionalDependencies:
+      vite: 7.3.5(@types/node@22.19.20)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
+
   '@vitest/mocker@3.2.6(vite@7.3.5(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0))':
     dependencies:
       '@vitest/spy': 3.2.6
@@ -6212,6 +6390,8 @@ snapshots:
 
   deep-is@0.1.4: {}
 
+  deepmerge-ts@7.1.5: {}
+
   defu@6.1.7: {}
 
   dependency-cruiser@17.4.3:
@@ -6355,6 +6535,22 @@ snapshots:
   escape-string-regexp@1.0.5: {}
 
   escape-string-regexp@4.0.0: {}
+
+  escape-string-regexp@5.0.0: {}
+
+  eslint-plugin-functional@10.0.0(eslint@10.4.1(jiti@2.7.0))(typescript@5.9.3):
+    dependencies:
+      '@typescript-eslint/utils': 8.60.1(eslint@10.4.1(jiti@2.7.0))(typescript@5.9.3)
+      deepmerge-ts: 7.1.5
+      escape-string-regexp: 5.0.0
+      eslint: 10.4.1(jiti@2.7.0)
+      is-immutable-type: 5.0.3(eslint@10.4.1(jiti@2.7.0))(typescript@5.9.3)
+      ts-api-utils: 2.5.0(typescript@5.9.3)
+      ts-declaration-location: 1.0.7(typescript@5.9.3)
+    optionalDependencies:
+      typescript: 5.9.3
+    transitivePeerDependencies:
+      - supports-color
 
   eslint-scope@9.1.2:
     dependencies:
@@ -6713,6 +6909,16 @@ snapshots:
   is-glob@4.0.3:
     dependencies:
       is-extglob: 2.1.1
+
+  is-immutable-type@5.0.3(eslint@10.4.1(jiti@2.7.0))(typescript@5.9.3):
+    dependencies:
+      '@typescript-eslint/type-utils': 8.60.1(eslint@10.4.1(jiti@2.7.0))(typescript@5.9.3)
+      eslint: 10.4.1(jiti@2.7.0)
+      ts-api-utils: 2.5.0(typescript@5.9.3)
+      ts-declaration-location: 1.0.7(typescript@5.9.3)
+      typescript: 5.9.3
+    transitivePeerDependencies:
+      - supports-color
 
   is-installed-globally@1.0.0:
     dependencies:
@@ -7668,6 +7874,11 @@ snapshots:
     dependencies:
       typescript: 5.9.3
 
+  ts-declaration-location@1.0.7(typescript@5.9.3):
+    dependencies:
+      picomatch: 4.0.4
+      typescript: 5.9.3
+
   tsconfig-paths-webpack-plugin@4.2.0:
     dependencies:
       chalk: 4.1.2
@@ -7895,7 +8106,7 @@ snapshots:
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/expect': 3.2.6
-      '@vitest/mocker': 3.2.6(vite@7.3.5(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0))
+      '@vitest/mocker': 3.2.6(vite@7.3.5(@types/node@22.19.20)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0))
       '@vitest/pretty-format': 3.2.6
       '@vitest/runner': 3.2.6
       '@vitest/snapshot': 3.2.6
