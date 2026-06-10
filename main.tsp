@@ -17,26 +17,20 @@ using Http;
 namespace DurableStreams;
 
 alias Offset = string;
-alias StreamPath = string;
+alias StreamRootRelativePath = string;
 alias Rfc3339DateTime = utcDateTime;
 alias JsonValue = unknown;
 
-@TypeSpec.Rest.resource("streams")
-model DurableStreamResource {
-  @key
-  streamPath: StreamPath;
-}
-
-model StreamPathParam {
+model StreamUrlPathParam {
   @doc("Stream-root-relative path. This value may contain slash-separated path segments.")
   @path
-  streamPath: StreamPath;
+  path: StreamRootRelativePath;
 }
 
 model ControlPathParam {
   @doc("URL-encoded stream-root-relative path used inside reserved control APIs.")
   @path
-  path: StreamPath;
+  path: StreamRootRelativePath;
 }
 
 model SubscriptionIdParam {
@@ -74,7 +68,7 @@ model StreamCreateHeaders {
   ...StreamClosedRequestHeader;
 
   @header("Stream-Forked-From")
-  streamForkedFrom?: StreamPath;
+  streamForkedFrom?: StreamRootRelativePath;
 
   @header("Stream-Fork-Offset")
   streamForkOffset?: Offset;
@@ -292,7 +286,7 @@ model ErrorEnvelope<TError> {
 }
 
 model CreateStreamRequest {
-  ...StreamPathParam;
+  ...StreamUrlPathParam;
   ...StreamCreateHeaders;
   @body body?: bytes;
 }
@@ -312,7 +306,7 @@ model CreateStreamAlreadyExists {
 }
 
 model AppendStreamRequest {
-  ...StreamPathParam;
+  ...StreamUrlPathParam;
   ...StreamAppendHeaders;
   @body body?: bytes;
 }
@@ -404,11 +398,10 @@ model SseStreamOk {
   ...TypeSpec.SSE.SSEStream<StreamSseEvents>;
 }
 
-@route("/v1/stream/{+streamPath}")
+@route("/v1/stream/{+path}")
 @tag("Streams")
 interface Streams {
   @doc("Create a stream, create a fork, or idempotently confirm an existing stream.")
-  @TypeSpec.Rest.createsOrReplacesResource(DurableStreamResource)
   @put
   createStream(...CreateStreamRequest):
     | CreateStreamCreated
@@ -419,7 +412,6 @@ interface Streams {
     | TooManyRequests;
 
   @doc("Append bytes to a stream and optionally close it atomically.")
-  @TypeSpec.Rest.updatesResource(DurableStreamResource)
   @post
   appendToStream(...AppendStreamRequest):
     | PlainAppendAccepted
@@ -437,19 +429,17 @@ interface Streams {
     | TooManyRequests;
 
   @doc("Read stream metadata without transferring body bytes.")
-  @TypeSpec.Rest.readsResource(DurableStreamResource)
   @head
-  headStream(...StreamPathParam):
+  headStream(...StreamUrlPathParam):
     | HeadStreamOk
     | NotFound
     | Gone
     | TooManyRequests;
 
   @doc("Read catch-up bytes, long-poll for new bytes, or stream SSE events.")
-  @TypeSpec.Rest.readsResource(DurableStreamResource)
   @get
   readStream(
-    ...StreamPathParam,
+    ...StreamUrlPathParam,
     @query offset?: Offset | "-1" | "now",
     @query live?: "long-poll" | "sse",
     @query cursor?: string,
@@ -463,9 +453,8 @@ interface Streams {
     | CommonStreamErrors;
 
   @doc("Delete a stream. Streams with active forks become soft-deleted.")
-  @TypeSpec.Rest.deletesResource(DurableStreamResource)
   @delete
-  deleteStream(...StreamPathParam):
+  deleteStream(...StreamUrlPathParam):
     | NoContentResponse
     | NotFound
     | Gone
@@ -513,11 +502,11 @@ model WebhookMetadata extends WebhookConfig {
 model SubscriptionConfig {
   type: SubscriptionType;
   pattern?: string;
-  streams?: StreamPath[];
+  streams?: StreamRootRelativePath[];
   webhook?: WebhookConfig;
 
   @encodedName("application/json", "wake_stream")
-  wakeStream?: StreamPath;
+  wakeStream?: StreamRootRelativePath;
 
   filter?: WakeFilter;
 
@@ -528,7 +517,7 @@ model SubscriptionConfig {
 }
 
 model SubscriptionStreamLink {
-  path: StreamPath;
+  path: StreamRootRelativePath;
 
   @encodedName("application/json", "link_type")
   linkType: LinkType;
@@ -551,7 +540,7 @@ model Subscription {
   webhook?: WebhookMetadata;
 
   @encodedName("application/json", "wake_stream")
-  wakeStream?: StreamPath | null;
+  wakeStream?: StreamRootRelativePath | null;
 
   filter?: WakeFilter;
 
@@ -581,16 +570,16 @@ model SubscriptionResponse {
 }
 
 model StreamMembershipRequest {
-  streams: StreamPath[];
+  streams: StreamRootRelativePath[];
 }
 
 model Ack {
-  stream: StreamPath;
+  stream: StreamRootRelativePath;
   offset: Offset;
 }
 
 model PendingStream {
-  path: StreamPath;
+  path: StreamRootRelativePath;
 
   @encodedName("application/json", "link_type")
   linkType: LinkType;
@@ -810,7 +799,7 @@ model IdempotentProducer {
 
 model ScheduleRequest {
   at: Rfc3339DateTime;
-  stream: StreamPath;
+  stream: StreamRootRelativePath;
 
   @encodedName("application/json", "content_type")
   contentType: string;
@@ -838,7 +827,7 @@ model Schedule {
 
   status: ScheduleStatus;
   at: Rfc3339DateTime;
-  stream: StreamPath;
+  stream: StreamRootRelativePath;
 }
 
 model ScheduleCreated {

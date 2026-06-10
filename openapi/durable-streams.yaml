@@ -523,12 +523,12 @@ paths:
                 $ref: '#/components/schemas/TooManyRequestsError'
       tags:
         - Subscriptions
-  /v1/stream/{streamPath}:
+  /v1/stream/{path}:
     put:
       operationId: Streams_createStream
       description: Create a stream, create a fork, or idempotently confirm an existing stream.
       parameters:
-        - $ref: '#/components/parameters/StreamPathParam'
+        - $ref: '#/components/parameters/StreamUrlPathParam'
         - $ref: '#/components/parameters/StreamCreateHeaders.streamTtl'
         - $ref: '#/components/parameters/StreamCreateHeaders.streamExpiresAt'
         - $ref: '#/components/parameters/StreamClosedRequestHeader'
@@ -602,7 +602,7 @@ paths:
       operationId: Streams_appendToStream
       description: Append bytes to a stream and optionally close it atomically.
       parameters:
-        - $ref: '#/components/parameters/StreamPathParam'
+        - $ref: '#/components/parameters/StreamUrlPathParam'
         - $ref: '#/components/parameters/StreamAppendHeaders.streamSeq'
         - $ref: '#/components/parameters/StreamClosedRequestHeader'
         - $ref: '#/components/parameters/StreamAppendHeaders.producerId'
@@ -740,7 +740,7 @@ paths:
       operationId: Streams_headStream
       description: Read stream metadata without transferring body bytes.
       parameters:
-        - $ref: '#/components/parameters/StreamPathParam'
+        - $ref: '#/components/parameters/StreamUrlPathParam'
       responses:
         '200':
           description: The request has succeeded.
@@ -796,7 +796,7 @@ paths:
       operationId: Streams_readStream
       description: Read catch-up bytes, long-poll for new bytes, or stream SSE events.
       parameters:
-        - $ref: '#/components/parameters/StreamPathParam'
+        - $ref: '#/components/parameters/StreamUrlPathParam'
         - name: offset
           in: query
           required: false
@@ -940,7 +940,7 @@ paths:
       operationId: Streams_deleteStream
       description: Delete a stream. Streams with active forks become soft-deleted.
       parameters:
-        - $ref: '#/components/parameters/StreamPathParam'
+        - $ref: '#/components/parameters/StreamUrlPathParam'
       responses:
         '204':
           description: There is no content to send for this request, but the headers may be useful.
@@ -1051,8 +1051,8 @@ components:
       required: false
       schema:
         type: string
-    StreamPathParam:
-      name: streamPath
+    StreamUrlPathParam:
+      name: path
       in: path
       required: true
       description: Stream-root-relative path. This value may contain slash-separated path segments.
@@ -1094,9 +1094,9 @@ components:
     AppendStreamRequest:
       type: object
       required:
-        - streamPath
+        - path
       properties:
-        streamPath:
+        path:
           type: string
           description: Stream-root-relative path. This value may contain slash-separated path segments.
         body:
@@ -1191,21 +1191,14 @@ components:
     CreateStreamRequest:
       type: object
       required:
-        - streamPath
+        - path
       properties:
-        streamPath:
+        path:
           type: string
           description: Stream-root-relative path. This value may contain slash-separated path segments.
         body:
           type: string
           contentEncoding: base64
-    DurableStreamResource:
-      type: object
-      required:
-        - streamPath
-      properties:
-        streamPath:
-          type: string
     EmptyError:
       type: object
       properties:
