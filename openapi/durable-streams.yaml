@@ -1,0 +1,1575 @@
+openapi: 3.1.0
+info:
+  title: Durable Streams Protocol
+  version: 0.0.0
+tags:
+  - name: Streams
+  - name: Subscriptions
+  - name: Schedules
+paths:
+  /v1/stream/__ds/jwks.json:
+    get:
+      operationId: Subscriptions_getWebhookSigningKeys
+      description: Discover public webhook signing keys.
+      parameters: []
+      responses:
+        '200':
+          description: The request has succeeded.
+          headers:
+            Cache-Control:
+              required: true
+              schema:
+                type: string
+          content:
+            application/jwk-set+json:
+              schema:
+                $ref: '#/components/schemas/JsonWebKeySet'
+      tags:
+        - Subscriptions
+  /v1/stream/__ds/schedules/{id}:
+    put:
+      operationId: Schedules_putSchedule
+      description: Create or idempotently confirm a scheduled append.
+      parameters:
+        - $ref: '#/components/parameters/ScheduleIdParam'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+        '201':
+          description: The request has succeeded and a new resource has been created as a result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+        '400':
+          description: The server could not understand the request due to invalid syntax.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BadRequestError'
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConflictError'
+        '429':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TooManyRequestsError'
+      tags:
+        - Schedules
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleRequest'
+    get:
+      operationId: Schedules_getSchedule
+      description: Read a scheduled append.
+      parameters:
+        - $ref: '#/components/parameters/ScheduleIdParam'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotFoundError'
+        '410':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoneError'
+        '429':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TooManyRequestsError'
+      tags:
+        - Schedules
+    delete:
+      operationId: Schedules_deleteSchedule
+      description: Cancel a pending scheduled append.
+      parameters:
+        - $ref: '#/components/parameters/ScheduleIdParam'
+      responses:
+        '204':
+          description: There is no content to send for this request, but the headers may be useful.
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotFoundError'
+        '410':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoneError'
+        '429':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TooManyRequestsError'
+      tags:
+        - Schedules
+  /v1/stream/__ds/subscriptions/{id}:
+    put:
+      operationId: Subscriptions_createSubscription
+      description: Create or idempotently re-confirm a subscription.
+      parameters:
+        - $ref: '#/components/parameters/SubscriptionIdParam'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '201':
+          description: The request has succeeded and a new resource has been created as a result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '400':
+          description: The server could not understand the request due to invalid syntax.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BadRequestError'
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConflictError'
+        '429':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TooManyRequestsError'
+      tags:
+        - Subscriptions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubscriptionConfig'
+    get:
+      operationId: Subscriptions_getSubscription
+      description: Read subscription configuration, membership, cursor, and delivery status.
+      parameters:
+        - $ref: '#/components/parameters/SubscriptionIdParam'
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Subscription'
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotFoundError'
+        '410':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoneError'
+        '429':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TooManyRequestsError'
+      tags:
+        - Subscriptions
+    delete:
+      operationId: Subscriptions_deleteSubscription
+      description: Tombstone a subscription.
+      parameters:
+        - $ref: '#/components/parameters/SubscriptionIdParam'
+      responses:
+        '204':
+          description: There is no content to send for this request, but the headers may be useful.
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotFoundError'
+        '410':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoneError'
+        '429':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TooManyRequestsError'
+      tags:
+        - Subscriptions
+  /v1/stream/__ds/subscriptions/{id}/ack:
+    post:
+      operationId: Subscriptions_ack
+      description: Ack processed offsets and optionally release the current claim.
+      parameters:
+        - $ref: '#/components/parameters/SubscriptionIdParam'
+        - name: Authorization
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallbackOk'
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptyError'
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotFoundError'
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    $ref: '#/components/schemas/FencedError'
+        '410':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoneError'
+      tags:
+        - Subscriptions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CallbackRequest'
+  /v1/stream/__ds/subscriptions/{id}/callback:
+    post:
+      operationId: Subscriptions_callback
+      description: Webhook asynchronous completion callback.
+      parameters:
+        - $ref: '#/components/parameters/SubscriptionIdParam'
+        - name: Authorization
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallbackOk'
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptyError'
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotFoundError'
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    $ref: '#/components/schemas/FencedError'
+        '410':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoneError'
+      tags:
+        - Subscriptions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CallbackRequest'
+  /v1/stream/__ds/subscriptions/{id}/claim:
+    post:
+      operationId: Subscriptions_claim
+      description: Claim pending work for a pull-wake subscription.
+      parameters:
+        - $ref: '#/components/parameters/SubscriptionIdParam'
+        - name: Authorization
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimSuccess'
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptyError'
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotFoundError'
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    $ref: '#/components/schemas/AlreadyClaimedError'
+        '410':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoneError'
+      tags:
+        - Subscriptions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimRequest'
+  /v1/stream/__ds/subscriptions/{id}/release:
+    post:
+      operationId: Subscriptions_release
+      description: Release the current pull-wake claim without acking offsets.
+      parameters:
+        - $ref: '#/components/parameters/SubscriptionIdParam'
+        - name: Authorization
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: There is no content to send for this request, but the headers may be useful.
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptyError'
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotFoundError'
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                properties:
+                  error:
+                    $ref: '#/components/schemas/FencedError'
+        '410':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoneError'
+      tags:
+        - Subscriptions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReleaseRequest'
+  /v1/stream/__ds/subscriptions/{id}/streams:
+    post:
+      operationId: Subscriptions_addSubscriptionStreams
+      description: Add explicit stream links to a subscription.
+      parameters:
+        - $ref: '#/components/parameters/SubscriptionIdParam'
+      responses:
+        '204':
+          description: There is no content to send for this request, but the headers may be useful.
+        '400':
+          description: The server could not understand the request due to invalid syntax.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BadRequestError'
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotFoundError'
+        '410':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoneError'
+        '429':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TooManyRequestsError'
+      tags:
+        - Subscriptions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StreamMembershipRequest'
+  /v1/stream/__ds/subscriptions/{id}/streams/{path}:
+    delete:
+      operationId: Subscriptions_removeSubscriptionStream
+      description: Remove one explicit stream link from a subscription.
+      parameters:
+        - $ref: '#/components/parameters/SubscriptionIdParam'
+        - $ref: '#/components/parameters/ControlPathParam'
+      responses:
+        '204':
+          description: There is no content to send for this request, but the headers may be useful.
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotFoundError'
+        '410':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoneError'
+        '429':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TooManyRequestsError'
+      tags:
+        - Subscriptions
+  /v1/stream/{streamPath}:
+    put:
+      operationId: Streams_createStream
+      description: Create a stream, create a fork, or idempotently confirm an existing stream.
+      parameters:
+        - $ref: '#/components/parameters/StreamPathParam'
+        - $ref: '#/components/parameters/StreamCreateHeaders.streamTtl'
+        - $ref: '#/components/parameters/StreamCreateHeaders.streamExpiresAt'
+        - $ref: '#/components/parameters/StreamClosedRequestHeader'
+        - $ref: '#/components/parameters/StreamCreateHeaders.streamForkedFrom'
+        - $ref: '#/components/parameters/StreamCreateHeaders.streamForkOffset'
+        - $ref: '#/components/parameters/StreamCreateHeaders.streamForkSubOffset'
+      responses:
+        '200':
+          description: The request has succeeded.
+          headers:
+            Stream-Next-Offset:
+              required: true
+              schema:
+                type: string
+            Stream-Closed:
+              required: false
+              schema:
+                type: string
+                enum:
+                  - 'true'
+        '201':
+          description: The request has succeeded and a new resource has been created as a result.
+          headers:
+            Location:
+              required: false
+              schema:
+                type: string
+            Stream-Next-Offset:
+              required: true
+              schema:
+                type: string
+            Stream-Closed:
+              required: false
+              schema:
+                type: string
+                enum:
+                  - 'true'
+        '400':
+          description: The server could not understand the request due to invalid syntax.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BadRequestError'
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotFoundError'
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConflictError'
+        '429':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TooManyRequestsError'
+      tags:
+        - Streams
+      requestBody:
+        required: false
+        content:
+          '*/*':
+            schema:
+              contentMediaType: '*/*'
+    post:
+      operationId: Streams_appendToStream
+      description: Append bytes to a stream and optionally close it atomically.
+      parameters:
+        - $ref: '#/components/parameters/StreamPathParam'
+        - $ref: '#/components/parameters/StreamAppendHeaders.streamSeq'
+        - $ref: '#/components/parameters/StreamClosedRequestHeader'
+        - $ref: '#/components/parameters/StreamAppendHeaders.producerId'
+        - $ref: '#/components/parameters/StreamAppendHeaders.producerEpoch'
+        - $ref: '#/components/parameters/StreamAppendHeaders.producerSeq'
+      responses:
+        '200':
+          description: The request has succeeded.
+          headers:
+            Stream-Next-Offset:
+              required: true
+              schema:
+                type: string
+            Stream-Closed:
+              required: false
+              schema:
+                type: string
+                enum:
+                  - 'true'
+            Producer-Epoch:
+              required: false
+              schema:
+                type: integer
+                format: int64
+            Producer-Seq:
+              required: false
+              schema:
+                type: integer
+                format: int64
+        '204':
+          description: 'There is no content to send for this request, but the headers may be useful. '
+          headers:
+            Stream-Next-Offset:
+              required: true
+              schema:
+                type: string
+            Stream-Closed:
+              required: false
+              schema:
+                type: string
+                enum:
+                  - 'true'
+            Producer-Epoch:
+              required: false
+              schema:
+                type: integer
+                format: int64
+            Producer-Seq:
+              required: false
+              schema:
+                type: integer
+                format: int64
+        '400':
+          description: The server could not understand the request due to invalid syntax.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BadRequestError'
+        '403':
+          description: Access is forbidden.
+          headers:
+            Producer-Epoch:
+              required: true
+              schema:
+                type: integer
+                format: int64
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotFoundError'
+        '405':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptyError'
+        '409':
+          description: The request conflicts with the current state of the server.
+          headers:
+            Producer-Expected-Seq:
+              required: false
+              schema:
+                type: integer
+                format: int64
+            Producer-Received-Seq:
+              required: false
+              schema:
+                type: integer
+                format: int64
+            Stream-Closed:
+              required: false
+              schema:
+                type: string
+                enum:
+                  - 'true'
+            Stream-Next-Offset:
+              required: false
+              schema:
+                type: string
+        '410':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoneError'
+        '413':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptyError'
+        '429':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TooManyRequestsError'
+        '501':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptyError'
+      tags:
+        - Streams
+      requestBody:
+        required: false
+        content:
+          '*/*':
+            schema:
+              contentMediaType: '*/*'
+    head:
+      operationId: Streams_headStream
+      description: Read stream metadata without transferring body bytes.
+      parameters:
+        - $ref: '#/components/parameters/StreamPathParam'
+      responses:
+        '200':
+          description: The request has succeeded.
+          headers:
+            Content-Type:
+              required: true
+              schema:
+                type: string
+            Stream-Next-Offset:
+              required: true
+              schema:
+                type: string
+            Stream-Closed:
+              required: false
+              schema:
+                type: string
+                enum:
+                  - 'true'
+            Stream-TTL:
+              required: false
+              schema:
+                type: string
+            Stream-Expires-At:
+              required: false
+              schema:
+                type: string
+                format: http-date
+            Cache-Control:
+              required: false
+              schema:
+                type: string
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotFoundError'
+        '410':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoneError'
+        '429':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TooManyRequestsError'
+      tags:
+        - Streams
+    get:
+      operationId: Streams_readStream
+      description: Read catch-up bytes, long-poll for new bytes, or stream SSE events.
+      parameters:
+        - $ref: '#/components/parameters/StreamPathParam'
+        - name: offset
+          in: query
+          required: false
+          schema:
+            anyOf:
+              - type: string
+              - type: string
+                enum:
+                  - '-1'
+                  - now
+          explode: false
+        - name: live
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - long-poll
+              - sse
+          explode: false
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+        - name: timeout
+          in: query
+          required: false
+          schema:
+            type: string
+          explode: false
+        - name: If-None-Match
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The request has succeeded.
+          headers:
+            Cache-Control:
+              required: true
+              schema:
+                type: string
+            ETag:
+              required: false
+              schema:
+                type: string
+            Stream-Cursor:
+              required: false
+              schema:
+                type: string
+            Stream-Next-Offset:
+              required: true
+              schema:
+                type: string
+            Stream-Up-To-Date:
+              required: false
+              schema:
+                type: string
+                enum:
+                  - 'true'
+            Stream-Closed:
+              required: false
+              schema:
+                type: string
+                enum:
+                  - 'true'
+            X-Content-Type-Options:
+              required: false
+              schema:
+                type: string
+                enum:
+                  - nosniff
+            Stream-SSE-Data-Encoding:
+              required: false
+              schema:
+                type: string
+                enum:
+                  - base64
+          content:
+            '*/*':
+              schema:
+                contentMediaType: '*/*'
+            text/event-stream:
+              schema:
+                type: string
+        '204':
+          description: 'There is no content to send for this request, but the headers may be useful. '
+          headers:
+            Stream-Next-Offset:
+              required: true
+              schema:
+                type: string
+            Stream-Up-To-Date:
+              required: true
+              schema:
+                type: string
+                enum:
+                  - 'true'
+            Stream-Cursor:
+              required: false
+              schema:
+                type: string
+            Stream-Closed:
+              required: false
+              schema:
+                type: string
+                enum:
+                  - 'true'
+        '304':
+          description: The client has made a conditional request and the resource has not been modified.
+        '400':
+          description: The server could not understand the request due to invalid syntax.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BadRequestError'
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotFoundError'
+        '410':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoneError'
+        '429':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TooManyRequestsError'
+      tags:
+        - Streams
+    delete:
+      operationId: Streams_deleteStream
+      description: Delete a stream. Streams with active forks become soft-deleted.
+      parameters:
+        - $ref: '#/components/parameters/StreamPathParam'
+      responses:
+        '204':
+          description: There is no content to send for this request, but the headers may be useful.
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotFoundError'
+        '405':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptyError'
+        '410':
+          description: Client error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoneError'
+        '501':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptyError'
+      tags:
+        - Streams
+components:
+  parameters:
+    ControlPathParam:
+      name: path
+      in: path
+      required: true
+      description: URL-encoded stream-root-relative path used inside reserved control APIs.
+      schema:
+        type: string
+    ScheduleIdParam:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    StreamAppendHeaders.producerEpoch:
+      name: Producer-Epoch
+      in: header
+      required: false
+      schema:
+        type: integer
+        format: int64
+    StreamAppendHeaders.producerId:
+      name: Producer-Id
+      in: header
+      required: false
+      schema:
+        type: string
+    StreamAppendHeaders.producerSeq:
+      name: Producer-Seq
+      in: header
+      required: false
+      schema:
+        type: integer
+        format: int64
+    StreamAppendHeaders.streamSeq:
+      name: Stream-Seq
+      in: header
+      required: false
+      schema:
+        type: string
+    StreamClosedRequestHeader:
+      name: Stream-Closed
+      in: header
+      required: false
+      schema:
+        type: string
+        enum:
+          - 'true'
+    StreamCreateHeaders.streamExpiresAt:
+      name: Stream-Expires-At
+      in: header
+      required: false
+      schema:
+        type: string
+        format: http-date
+    StreamCreateHeaders.streamForkOffset:
+      name: Stream-Fork-Offset
+      in: header
+      required: false
+      schema:
+        type: string
+    StreamCreateHeaders.streamForkSubOffset:
+      name: Stream-Fork-Sub-Offset
+      in: header
+      required: false
+      schema:
+        type: integer
+        format: int64
+    StreamCreateHeaders.streamForkedFrom:
+      name: Stream-Forked-From
+      in: header
+      required: false
+      schema:
+        type: string
+    StreamCreateHeaders.streamTtl:
+      name: Stream-TTL
+      in: header
+      required: false
+      schema:
+        type: string
+    StreamPathParam:
+      name: streamPath
+      in: path
+      required: true
+      description: Stream-root-relative path. This value may contain slash-separated path segments.
+      schema:
+        type: string
+    SubscriptionIdParam:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+  schemas:
+    Ack:
+      type: object
+      required:
+        - stream
+        - offset
+      properties:
+        stream:
+          type: string
+        offset:
+          type: string
+    AlreadyClaimedError:
+      type: object
+      required:
+        - code
+        - current_holder
+        - generation
+      properties:
+        code:
+          type: string
+          enum:
+            - ALREADY_CLAIMED
+        current_holder:
+          type: string
+        generation:
+          type: integer
+          format: int64
+    AppendStreamRequest:
+      type: object
+      required:
+        - streamPath
+      properties:
+        streamPath:
+          type: string
+          description: Stream-root-relative path. This value may contain slash-separated path segments.
+        body:
+          type: string
+          contentEncoding: base64
+    BadRequestError:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          enum:
+            - BAD_REQUEST
+        message:
+          type: string
+    CallbackOk:
+      type: object
+      required:
+        - ok
+        - next_wake
+      properties:
+        ok:
+          type: boolean
+          enum:
+            - true
+        next_wake:
+          type: boolean
+    CallbackRequest:
+      type: object
+      required:
+        - wake_id
+        - generation
+      properties:
+        wake_id:
+          type: string
+        generation:
+          type: integer
+          format: int64
+        acks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Ack'
+        done:
+          type: boolean
+    ClaimRequest:
+      type: object
+      required:
+        - worker
+      properties:
+        worker:
+          type: string
+    ClaimSuccess:
+      type: object
+      required:
+        - wake_id
+        - generation
+        - token
+        - streams
+        - lease_ttl_ms
+      properties:
+        wake_id:
+          type: string
+        generation:
+          type: integer
+          format: int64
+        token:
+          type: string
+        streams:
+          type: array
+          items:
+            $ref: '#/components/schemas/PendingStream'
+        lease_ttl_ms:
+          type: integer
+          format: int32
+    ClosedConflictHeaders:
+      type: object
+    ConflictError:
+      type: object
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          enum:
+            - CONFLICT
+        message:
+          type: string
+    ContentTypeHeader:
+      type: object
+    CreateStreamRequest:
+      type: object
+      required:
+        - streamPath
+      properties:
+        streamPath:
+          type: string
+          description: Stream-root-relative path. This value may contain slash-separated path segments.
+        body:
+          type: string
+          contentEncoding: base64
+    DurableStreamResource:
+      type: object
+      required:
+        - streamPath
+      properties:
+        streamPath:
+          type: string
+    EmptyError:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+    FencedError:
+      type: object
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          enum:
+            - FENCED
+    Forbidden:
+      type: object
+      required:
+        - body
+      properties:
+        body:
+          allOf:
+            - $ref: '#/components/schemas/EmptyError'
+          description: The body type of the operation request or response.
+    GoneError:
+      type: object
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          enum:
+            - GONE
+        message:
+          type: string
+    IdempotentProducer:
+      type: object
+      required:
+        - id
+        - epoch
+        - seq
+      properties:
+        id:
+          type: string
+        epoch:
+          type: integer
+          format: int64
+        seq:
+          type: integer
+          format: int64
+    JsonWebKey:
+      type: object
+      required:
+        - kty
+        - kid
+      properties:
+        kty:
+          type: string
+        crv:
+          type: string
+        kid:
+          type: string
+        use:
+          type: string
+          enum:
+            - sig
+        alg:
+          type: string
+        x:
+          type: string
+      allOf:
+        - type: object
+          unevaluatedProperties: {}
+    JsonWebKeySet:
+      type: object
+      required:
+        - keys
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/JsonWebKey'
+    LinkType:
+      type: string
+      enum:
+        - glob
+        - explicit
+    LiveNoContentHeaders:
+      type: object
+    NotFoundError:
+      type: object
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          enum:
+            - NOT_FOUND
+        message:
+          type: string
+    OptionalContentTypeHeader:
+      type: object
+    PendingStream:
+      type: object
+      required:
+        - path
+        - link_type
+        - acked_offset
+        - tail_offset
+        - has_pending
+      properties:
+        path:
+          type: string
+        link_type:
+          $ref: '#/components/schemas/LinkType'
+        acked_offset:
+          type: string
+        tail_offset:
+          type: string
+        has_pending:
+          type: boolean
+    ProducerFencedHeaders:
+      type: object
+    ProducerGapHeaders:
+      type: object
+    ProducerSuccessHeaders:
+      type: object
+    ReadHeaders:
+      type: object
+    ReleaseRequest:
+      type: object
+      required:
+        - wake_id
+        - generation
+      properties:
+        wake_id:
+          type: string
+        generation:
+          type: integer
+          format: int64
+    Schedule:
+      type: object
+      required:
+        - id
+        - status
+        - at
+        - stream
+      properties:
+        id:
+          type: string
+        status:
+          $ref: '#/components/schemas/ScheduleStatus'
+        at:
+          type: string
+          format: date-time
+        stream:
+          type: string
+    ScheduleRequest:
+      type: object
+      required:
+        - at
+        - stream
+        - content_type
+      properties:
+        at:
+          type: string
+          format: date-time
+        stream:
+          type: string
+        content_type:
+          type: string
+        body: {}
+        body_base64:
+          type: string
+        producer:
+          $ref: '#/components/schemas/IdempotentProducer'
+        close:
+          type: boolean
+    ScheduleStatus:
+      type: string
+      enum:
+        - pending
+        - fired
+        - cancelled
+        - failed
+    StreamMembershipRequest:
+      type: object
+      required:
+        - streams
+      properties:
+        streams:
+          type: array
+          items:
+            type: string
+    StreamSseControl:
+      type: object
+      required:
+        - streamNextOffset
+      properties:
+        streamNextOffset:
+          type: string
+        streamCursor:
+          type: string
+        upToDate:
+          type: boolean
+          enum:
+            - true
+        streamClosed:
+          type: boolean
+          enum:
+            - true
+    StreamSseEvents:
+      anyOf:
+        - type: string
+        - $ref: '#/components/schemas/StreamSseControl'
+    Subscription:
+      type: object
+      required:
+        - id
+        - subscription_id
+        - type
+        - streams
+        - lease_ttl_ms
+        - created_at
+        - status
+      properties:
+        id:
+          type: string
+        subscription_id:
+          type: string
+        type:
+          $ref: '#/components/schemas/SubscriptionType'
+        pattern:
+          type: string
+        streams:
+          type: array
+          items:
+            $ref: '#/components/schemas/SubscriptionStreamLink'
+        webhook:
+          $ref: '#/components/schemas/WebhookMetadata'
+        wake_stream:
+          anyOf:
+            - type: string
+            - type: 'null'
+        filter:
+          $ref: '#/components/schemas/WakeFilter'
+        lease_ttl_ms:
+          type: integer
+          format: int32
+        created_at:
+          type: string
+          format: date-time
+        status:
+          $ref: '#/components/schemas/SubscriptionStatus'
+        description:
+          type: string
+    SubscriptionConfig:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          $ref: '#/components/schemas/SubscriptionType'
+        pattern:
+          type: string
+        streams:
+          type: array
+          items:
+            type: string
+        webhook:
+          $ref: '#/components/schemas/WebhookConfig'
+        wake_stream:
+          type: string
+        filter:
+          $ref: '#/components/schemas/WakeFilter'
+        lease_ttl_ms:
+          type: integer
+          format: int32
+        description:
+          type: string
+    SubscriptionStatus:
+      type: string
+      enum:
+        - active
+        - failed
+    SubscriptionStreamLink:
+      type: object
+      required:
+        - path
+        - link_type
+        - acked_offset
+      properties:
+        path:
+          type: string
+        link_type:
+          $ref: '#/components/schemas/LinkType'
+        acked_offset:
+          type: string
+    SubscriptionType:
+      type: string
+      enum:
+        - webhook
+        - pull-wake
+    TailHeaders:
+      type: object
+    TooManyRequestsError:
+      type: object
+      required:
+        - code
+      properties:
+        code:
+          type: string
+          enum:
+            - TOO_MANY_REQUESTS
+        message:
+          type: string
+    WakeFilter:
+      type: object
+      required:
+        - language
+        - expression
+      properties:
+        language:
+          type: string
+          enum:
+            - cel
+        expression:
+          type: string
+        self: {}
+    WebhookConfig:
+      type: object
+      required:
+        - url
+      properties:
+        url:
+          type: string
+    WebhookMetadata:
+      type: object
+      properties:
+        signing:
+          $ref: '#/components/schemas/WebhookSigningMetadata'
+      allOf:
+        - $ref: '#/components/schemas/WebhookConfig'
+    WebhookSigningMetadata:
+      type: object
+      required:
+        - alg
+        - kid
+        - jwks_url
+      properties:
+        alg:
+          type: string
+          enum:
+            - ed25519
+        kid:
+          type: string
+        jwks_url:
+          type: string
+servers:
+  - url: '{endpoint}'
+    description: Durable Streams server root
+    variables:
+      endpoint:
+        default: ''
+        enum:
+          - https://example.com

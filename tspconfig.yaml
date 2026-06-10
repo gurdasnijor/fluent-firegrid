@@ -3,9 +3,10 @@ emit:
   - "@typespec/openapi3"
 options:
   "@typespec/openapi3":
-    emitter-output-dir: "{output-dir}/schema"
+    emitter-output-dir: "{project-root}/openapi"
+    output-file: "durable-streams.yaml"
     openapi-versions:
-      - 3.2.0
+      - 3.1.0
 # entrypoint: main.tsp                           # Main TypeSpec file (default: main.tsp)
 # extends: ../tspconfig.yaml                     # Extend another config file
 # emit:                                          # Emitter name
