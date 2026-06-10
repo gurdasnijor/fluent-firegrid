@@ -1,4 +1,5 @@
 kind: project
+entrypoint: typespec/main.tsp
 emit:
   - "@typespec/openapi3"
 options:
