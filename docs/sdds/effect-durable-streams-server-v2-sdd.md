@@ -450,11 +450,6 @@ schedules
 Durable correctness comes from transactions, not notifications. Notifications
 only wake local fibers after durable rows exist.
 
-### Ordered KV
-
-An ordered KV backend is still viable, but it should implement the same
-`StreamLog` and store-contract tests. It should not drive public API shape.
-
 ## Transport And Protocol Separation
 
 The reference transport package only knows:
@@ -699,7 +694,7 @@ HTTP tests are separate:
 
 ### Slice 6: Durable Backend
 
-- Implement SQL or ordered-KV backend against `StreamLog` contracts.
+- Implement the SQL/Postgres-shaped backend against `StreamLog` contracts.
 - Add notification bridge like the reference Postgres implementation.
 - Prove crash/restart correctness through contract tests.
 

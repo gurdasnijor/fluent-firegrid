@@ -7,6 +7,11 @@ Transport contract: `typespec/`
 Primary package: `packages/effect-durable-streams`
 Reference snapshot: `docs/reference/durable-streams/`
 
+Superseded by: `docs/sdds/effect-durable-streams-server-v2-sdd.md`
+
+This first-pass SDD is retained for context only. It includes older backend and
+route-design assumptions that are not active requirements.
+
 ## Purpose
 
 This document defines the revised server design for the Effect-native Durable
@@ -170,7 +175,7 @@ HttpApiBuilder / HttpRouter
   -> protocol request decoding and response lowering
   -> managers / protocol state machines
   -> Store algebra
-  -> MemoryStore, SQL store, ordered KV store, or platform backend
+  -> MemoryStore, SQL store, or platform backend
 ```
 
 Rules:
@@ -242,12 +247,6 @@ SQL-shaped durable store:
 - Needs serializable isolation, row locks, advisory locks, or an equivalent
   per-stream/per-producer serialization strategy.
 - Can provide derived tables for host observation and query acceleration.
-
-Ordered KV store:
-
-- Useful as an LMDB-style durable backend.
-- Must expose ordered scans and synchronous write transactions.
-- The public server store remains protocol-shaped; ordered KV is only a driver.
 
 Platform-specific backends:
 
@@ -428,7 +427,7 @@ Durable backends need their own isolation and recovery tests.
   documented as a sibling webhook contract.
 - Whether the shared `HttpApi` contract is generated from TypeSpec, manually
   mirrored, or colocated with TypeSpec-derived validation tests.
-- Which durable backend lands first: SQL/PGlite/Postgres, ordered KV/LMDB, or a
-  platform actor backend.
+- Which durable backend lands first: SQL/PGlite/Postgres or a platform actor
+  backend.
 - How much TypeSpec-generated scaffold code is used locally without committing
   generated server artifacts.
