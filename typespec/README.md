@@ -22,3 +22,19 @@ responsibility:
 The split is intentionally not a simple control-plane/data-plane split:
 subscriptions have both management and delivery concerns, and scheduled append
 is a draft coordination extension rather than subscription CRUD.
+
+Scope notes:
+
+- The OpenAPI document describes the server's own HTTP endpoints. It does not
+  currently model outbound webhook delivery (`POST {webhook.url}` with
+  `Webhook-Signature`) or pull-wake stream event payloads as callback contracts;
+  those shapes are specified in `PROTOCOL.md` Sections 7.1 and 7.2.
+- Implementations must register reserved `__ds` routes before the greedy stream
+  path route. TypeSpec and OpenAPI cannot express route precedence for
+  `/v1/stream/{+path}` versus `/v1/stream/__ds/...`, so generated routers need
+  to preserve the protocol's reserved-prefix rule explicitly.
+- `PROTOCOL.md` requires `Content-Type` on successful create responses even
+  though those responses have no body. TypeSpec treats `Content-Type` as
+  representation metadata and ignores it on no-body responses, so the generated
+  OpenAPI cannot currently show that create-response header. The `HEAD` metadata
+  response does model `Content-Type`.
