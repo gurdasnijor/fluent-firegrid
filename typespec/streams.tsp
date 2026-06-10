@@ -86,11 +86,27 @@ model HeadStreamOk {
   cacheControl?: string;
 }
 
-@TypeSpec.Streams.streamOf(bytes)
-model ReadStreamOk {
+model ReadStreamJsonOk {
   ...OkResponse;
-  ...ReadHeaders;
-  @body body: bytes;
+  ...ReadMetadataHeaders;
+
+  @header("Content-Type")
+  contentType: "application/json";
+
+  @doc("JSON stream messages in the requested offset range. `application/json` stream reads preserve message boundaries and return an array.")
+  @body body: JsonValue[];
+}
+
+@TypeSpec.Streams.streamOf(string)
+model ReadStreamTextOk {
+  ...OkResponse;
+  ...ReadMetadataHeaders;
+
+  @header("Content-Type")
+  contentType: "text/plain";
+
+  @doc("Text stream data in the requested offset range. The concrete stream content type is server-defined; OpenAPI uses text/plain as the generic mockable stream representation.")
+  @body body: string;
 }
 
 model ReadStreamNoContent {
@@ -208,7 +224,8 @@ interface Streams {
     @query timeout?: WaitTimeout,
     @header("If-None-Match") ifNoneMatch?: string,
   ):
-    | ReadStreamOk
+    | ReadStreamJsonOk
+    | ReadStreamTextOk
     | ReadStreamNoContent
     | ReadStreamNotModified
     | SseStreamOk

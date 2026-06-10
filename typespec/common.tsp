@@ -160,9 +160,7 @@ model TailHeaders {
   streamClosed?: "true";
 }
 
-model ReadHeaders {
-  ...ContentTypeHeader;
-
+model ReadMetadataHeaders {
   @header("Cache-Control")
   cacheControl: string;
 
