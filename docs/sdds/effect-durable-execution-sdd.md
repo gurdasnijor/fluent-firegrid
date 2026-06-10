@@ -26,8 +26,8 @@ canonical user vocabulary. Its public surface is operation-first:
 
 - `Effect.gen` builds lazy durable programs;
 - free primitives such as `run`, `sleep`, `signal`, `awakeable`, `deferred`,
-  `waitForState`, `attach`, `state`, `channel`, and `select` are resolved from
-  the active operation runtime;
+  `attach`, `state`, `channel`, and `select` are resolved from the active
+  operation runtime;
 - named handler declarations add stable identity and Effect Schema metadata; and
 - host packages register those handlers and provide the runtime Layer.
 
@@ -100,6 +100,130 @@ The rule is:
 The execution package defines the ordering contract that makes activations safe.
 It does not own the worker loop that claims wakes or hosts HTTP routes.
 
+## State machine layer decision
+
+The current draft is too loose if it implies durable execution appears by
+writing enough log records. The real mechanism is an invocation state machine:
+durable operation-log events are inputs, state transitions are deterministic,
+and any required substrate calls are emitted as commands for a driver to
+interpret.
+
+The layer split should be:
+
+- `effect-durable-execution` defines `InvocationMachine`, `InvocationState`,
+  `InvocationEvent`, `InvocationCommand`, replay helpers, and transition tests.
+  This is the durable execution semantics layer.
+- the host/runtime package drives the machine: claim wake, claim producer epoch,
+  read the invocation log, replay events through the machine, run missing user
+  work, interpret emitted commands, append resulting facts, and ack the wake
+  last. This is the worker orchestration layer.
+- `effect-durable-client` remains a protocol client. It provides producers,
+  reads, schedules, subscriptions, claims, acks, and leases, but it does not own
+  invocation lifecycle.
+- `effect-durable-streams` remains the substrate. It stores streams and wakes;
+  it must not know about `run`, `sleep`, `signal`, or invocation statecharts.
+
+This mirrors the event-sourced workflow pattern: replay rebuilds state, a
+decision function chooses outputs, and tests can exercise the transition model
+without running infrastructure. It also matches the useful part of Restate's
+worker design: journal entries are not passive logs; they drive a lifecycle
+state machine that may write state, complete promises, forward completions,
+handle timers, terminate, purge, or resume an invocation.
+
+Implementation should use `@effect/experimental/Machine` for the in-process
+activation machine. The implementation work must add `@effect/experimental` as
+an explicit dependency of `packages/effect-durable-execution` before importing
+it. The SDD should treat the package as a chosen abstraction, not as an
+incidental transitive dependency.
+
+## Invocation statechart
+
+The invocation lifecycle should be modeled as a statechart, not a flat bag of
+booleans. Statecharts are useful here because the invocation has a top-level
+lifecycle plus nested waiting/running modes.
+
+Proposed durable states:
+
+| State                 | Meaning                                                       |
+| --------------------- | ------------------------------------------------------------- |
+| `NotStarted`          | No `InvocationStarted` fact has been replayed                 |
+| `Activating`          | Wake claimed, writer claimed, log replay in progress          |
+| `Running`             | Handler is evaluating and may execute durable primitives      |
+| `Suspending`          | Handler reached a durable wait and is appending wait intent   |
+| `Suspended.Timer`     | Waiting for a scheduled timer fact                            |
+| `Suspended.Signal`    | Waiting for a signal fact                                     |
+| `Suspended.State`     | Waiting for a state/subscription match                        |
+| `Suspended.Deferred`  | Waiting for a deferred/awakeable settlement                   |
+| `Suspended.Child`     | Waiting for child invocation completion                       |
+| `Completing`          | Handler returned and terminal success is being appended       |
+| `Completed`           | Terminal success fact exists                                  |
+| `Failing`             | Handler failed and terminal failure is being appended         |
+| `Failed`              | Terminal failure fact exists                                  |
+| `Cancelling`          | Cancellation requested and cancellation outcome is appending  |
+| `Cancelled`           | Terminal cancellation fact exists                             |
+
+`StaleWriter` is not a durable invocation state. It is an activation-local
+result: a stale executor may continue local work, but the producer epoch must
+reject its append. The driver should stop interpreting commands after a stale
+writer error and should not ack the wake as successful.
+
+Machine events should include both durable facts and activation facts:
+
+```ts
+export type InvocationEvent =
+  | { readonly _tag: "ActivationClaimed"; readonly wake: InvocationWake }
+  | { readonly _tag: "WriterClaimed"; readonly producer: FencedProducerInfo }
+  | { readonly _tag: "ReplayStarted" }
+  | { readonly _tag: "ReplayFinished"; readonly tailOffset: Offset }
+  | OperationLogEvent
+  | { readonly _tag: "ProgramReturned"; readonly value: unknown }
+  | { readonly _tag: "ProgramFailed"; readonly error: unknown }
+  | { readonly _tag: "ProducerFenced" }
+  | { readonly _tag: "WakeAcked" }
+  | { readonly _tag: "ActivationCrashed"; readonly defect: unknown }
+```
+
+Machine commands should be data, not performed inside transitions:
+
+```ts
+export type InvocationCommand =
+  | { readonly _tag: "ClaimWriter"; readonly producerId: string }
+  | { readonly _tag: "ReadLogToTail" }
+  | { readonly _tag: "Append"; readonly event: OperationLogEvent }
+  | { readonly _tag: "RunStep"; readonly key: string }
+  | { readonly _tag: "CreateSchedule"; readonly request: ScheduleRequest }
+  | { readonly _tag: "CreateSubscription"; readonly request: SubscriptionRequest }
+  | { readonly _tag: "AckWake"; readonly wake: InvocationWake }
+  | { readonly _tag: "ReleaseWake"; readonly wake: InvocationWake }
+  | { readonly _tag: "StopActivation"; readonly reason: StopReason }
+```
+
+The invariant is: every substrate mutation happens because the command
+interpreter handled an `InvocationCommand`, and every command either appends a
+durable fact or produces a new `InvocationEvent` that the machine consumes. No
+hidden side effect should update invocation semantics outside the machine.
+
+The activation driver has one job:
+
+```ts
+export const activateInvocation = (input: ActivationInput) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const actor = yield* Machine.boot(InvocationMachine, input)
+
+      yield* actor.send(new ActivationClaimed(input.wake))
+      yield* drainCommands(actor, CommandInterpreter.Live)
+
+      return yield* actor.get
+    })
+  )
+```
+
+Actual code will use typed `Schema.TaggedRequest` requests for Machine messages
+so `actor.send(...)` returns typed replies where useful. The important part is
+that activation sends events into the machine; it does not manually mutate an
+ad-hoc runtime object.
+
 ## Package shape
 
 Proposed package path:
@@ -118,6 +242,12 @@ src/runtime.ts
 src/run.ts
 src/operation-log.ts
 src/replay.ts
+src/invocation-event.ts
+src/invocation-state.ts
+src/invocation-command.ts
+src/invocation-machine.ts
+src/machine-driver.ts
+src/command-interpreter.ts
 src/operation-log-layer.ts
 src/handler.ts
 src/client.ts
@@ -143,8 +273,17 @@ Module ownership:
 - `runtime.ts` owns the active-operation slot and scheduler interface.
 - `run.ts` defines durable step options and step execution semantics.
 - `operation-log.ts` defines the append/read abstraction used by the runtime.
-- `replay.ts` owns the step and invocation replay folds over operation-log
-  events.
+- `replay.ts` owns pure replay helpers that feed operation-log events into the
+  invocation machine.
+- `invocation-event.ts` defines durable and activation-local machine inputs.
+- `invocation-state.ts` defines the top-level lifecycle statechart.
+- `invocation-command.ts` defines command outputs for the driver to interpret.
+- `invocation-machine.ts` defines the `@effect/experimental/Machine`
+  transition model.
+- `machine-driver.ts` boots the machine for an activation, feeds replayed facts
+  into it, and drains commands until quiescence or terminal state.
+- `command-interpreter.ts` maps machine commands to `effect-durable-client`
+  calls and appends.
 - `operation-log-layer.ts` adapts operation-log reads and appends to
   `effect-durable-client`.
 - `handler.ts` defines named handler declarations with Effect Schema metadata.
@@ -230,6 +369,240 @@ The underlying program remains an `Effect.Effect`, not a custom `Operation`.
 This covers `effect-execution.API.6`, `effect-execution.API.20`,
 `effect-execution.CONFORMANCE.10`, and `effect-execution.CONFORMANCE.11`.
 
+## User-facing code examples
+
+The public API should be explainable from user code first. The examples below
+are the target authoring surface; the state machine and command interpreter
+exist to make this code durable without exposing runtime plumbing.
+
+Define schemas and a handler:
+
+```ts
+import { Duration, Effect, Schema } from "effect"
+import {
+  handler,
+  handlerRequest,
+  run,
+  signal,
+  sleep,
+} from "effect-durable-execution"
+
+const PermissionRequest = Schema.Struct({
+  requestId: Schema.String,
+  userId: Schema.String,
+  resource: Schema.String,
+})
+
+const DraftResponse = Schema.Struct({
+  message: Schema.String,
+})
+
+const Approval = Schema.Struct({
+  approved: Schema.Boolean,
+  reason: Schema.String,
+})
+
+const ApprovalResult = Schema.Struct({
+  requestId: Schema.String,
+  approved: Schema.Boolean,
+  sentAt: Schema.DateTimeUtc,
+})
+
+export const reviewPermission = handler("reviewPermission", {
+  input: PermissionRequest,
+  output: ApprovalResult,
+})(
+  Effect.gen(function* () {
+    const request = yield* handlerRequest(PermissionRequest)
+
+    const draft = yield* run("draft-response", draftResponse(request), {
+      output: DraftResponse,
+      retry: {
+        maxAttempts: 3,
+        initialInterval: Duration.millis(100),
+        maxInterval: Duration.seconds(5),
+      },
+    })
+
+    yield* run("notify-reviewer", notifyReviewer(request, draft), {
+      output: Schema.Void,
+      idempotencyKey: `notify-reviewer:${request.requestId}`,
+    })
+
+    const approval = yield* signal("approval", Approval)
+
+    yield* sleep("audit-delay", Duration.seconds(10))
+
+    return yield* run("send-result", sendApprovalResult(request, approval), {
+      output: ApprovalResult,
+      idempotencyKey: `send-result:${request.requestId}`,
+    })
+  })
+)
+```
+
+The handler body is normal `Effect.gen`. Users do not receive an `ops` object,
+do not call a public `currentRuntime`, and do not manually append operation-log
+events. `run`, `signal`, and `sleep` talk to the active durable runtime
+internally.
+
+Register handlers in a host:
+
+```ts
+import { Layer } from "effect"
+import { serve } from "fluent-runtime"
+import { DurableExecutionRuntime } from "effect-durable-execution"
+import { DurableStreamClientLive } from "effect-durable-client-node"
+import { reviewPermission } from "./handlers/review-permission.js"
+
+serve({
+  handlers: [reviewPermission],
+  layer: DurableExecutionRuntime.layer.pipe(
+    Layer.provide(DurableStreamClientLive)
+  ),
+})
+```
+
+The exact `serve(...)` package belongs to the host/runtime layer, not
+`effect-durable-execution`. The execution package only defines handler metadata
+and the runtime Layer needed by handler evaluation.
+
+Call a handler from application code:
+
+```ts
+import { Effect } from "effect"
+import { client } from "effect-durable-execution"
+import { reviewPermission } from "./handlers/review-permission.js"
+
+const program = Effect.gen(function* () {
+  const durable = yield* client({ handlers: [reviewPermission] })
+
+  const invocation = yield* durable.reviewPermission.send({
+    requestId: "req-123",
+    userId: "user-42",
+    resource: "billing-dashboard",
+  })
+
+  yield* invocation.signal("approval", Approval).resolve({
+    approved: true,
+    reason: "manager approved",
+  })
+
+  return yield* invocation.attach
+})
+```
+
+`send` returns an invocation reference because the caller wants to signal and
+attach later. A request/response helper may also exist:
+
+```ts
+const result = yield* durable.reviewPermission.call({
+  requestId: "req-124",
+  userId: "user-43",
+  resource: "reports",
+})
+```
+
+Access durable state from ordinary Effect Schemas:
+
+```ts
+import {
+  handler,
+  handlerRequest,
+  run,
+  state,
+} from "effect-durable-execution"
+
+const Account = Schema.Struct({
+  id: Schema.String,
+  status: Schema.Literal("ready"),
+}).annotations({
+  identifier: "account",
+})
+
+export const provisionAccount = handler("provisionAccount", {
+  input: ProvisionAccountRequest,
+  output: ProvisionAccountResult,
+})(
+  Effect.gen(function* () {
+    const request = yield* handlerRequest(ProvisionAccountRequest)
+    const accounts = yield* state(Account)
+
+    yield* run("create-provider-account", createProviderAccount(request), {
+      output: ProviderAccount,
+      idempotencyKey: `provider-account:${request.accountId}`,
+    })
+
+    const account = yield* accounts.wait({
+      key: request.accountId,
+      where: { status: "ready" },
+    })
+
+    return { accountId: account.id, ready: true }
+  })
+)
+```
+
+`state(schema, options?)` accepts an Effect Schema directly. Internally the
+execution package adapts it with `Schema.standardSchemaV1(schema)` for the
+underlying `@durable-streams/state` collection helper path. The durable state
+event type comes from the schema identifier by default and the primary key is
+inferred from an `id` field by default. A non-`id` primary key can be supplied as
+the small bit of protocol metadata the state package needs. Users do not author
+a second schema DSL and do not manually construct state protocol events in
+operation code.
+
+The returned state binding is reusable outside handler code too. It should carry
+the schema, event type, primary key, and derived tool/client metadata needed by
+runtime edges:
+
+```ts
+const accounts = state(Account)
+
+// operation/runtime usage
+yield* accounts.get("acct_1")
+yield* accounts.set({ id: "acct_1", status: "ready" })
+yield* accounts.wait("acct_1", { where: { status: "ready" } })
+
+// client/UI usage
+accounts.changes({ where: { id: "acct_1" } })
+accounts.subscribe("acct_1")
+accounts.query({ where: { status: "ready" } })
+```
+
+`get`, `set`, `delete`, `upsert`, and `wait` are Effect operations inside an
+active runtime. `changes`, `subscribe`, and `query` are client/runtime-edge
+accessors over the same schema binding. The binding is the typed handle; the
+runtime chooses whether a particular accessor is legal in the current context.
+
+Read state from another handler:
+
+```ts
+export const getAccount = handler("getAccount", {
+  input: GetAccountRequest,
+  output: Schema.NullOr(Account),
+})(
+  Effect.gen(function* () {
+    const request = yield* handlerRequest(GetAccountRequest)
+    const accounts = yield* state(Account)
+    return yield* accounts.get(request.accountId)
+  })
+)
+```
+
+Use local Effect composition for non-durable concurrency:
+
+```ts
+const [profile, settings] = yield* Effect.all([
+  run("load-profile", loadProfile(userId), { output: Profile }),
+  run("load-settings", loadSettings(userId), { output: Settings }),
+])
+```
+
+Each `run` remains independently keyed and replayable. Plain `Effect.all`,
+`Effect.race`, scoped fibers, and other Effect combinators do not create hidden
+positional durable counters.
+
 ## Free primitives
 
 Free primitives are the public authoring surface. Each primitive is a function
@@ -241,7 +614,6 @@ export const sleep: Sleep
 export const awakeable: Awakeable
 export const deferred: Deferred // vocabulary alias over the substrate primitive
 export const signal: Signal
-export const waitForState: WaitForState
 export const attach: Attach
 export const call: Call
 export const send: Send
@@ -249,7 +621,6 @@ export const client: ClientFactory
 export const sendClient: SendClientFactory
 export const cancel: Cancel
 export const state: State
-export const sharedState: SharedState
 export const channel: Channel
 export const select: Select
 export const handlerRequest: HandlerRequest
@@ -272,7 +643,6 @@ slot-backed delegation style, not the exact surface. The target split is:
 | `handlerRequest()`     | expose, schema decoded                                           |
 | `run`, `sleep`         | expose as durable Effect primitives                              |
 | `signal`, `awakeable`  | expose with Effect Schema boundaries                             |
-| `waitForState`         | expose as filtered state/resource wait                           |
 | `workflowPromise`      | expose as `deferred` vocabulary                                  |
 | `attach`, `cancel`     | expose only against explicit invocation references/ids           |
 | `client`, `sendClient` | expose for active-operation call/send composition                |
@@ -283,7 +653,7 @@ slot-backed delegation style, not the exact surface. The target split is:
 | `select`               | optional typed helper for tagged durable/local waits             |
 | `spawn`                | use Effect scoped fibers; durable children are a separate helper |
 | `channel`              | expose local-only settle-once coordination                       |
-| `state`, `sharedState` | expose with exclusive/read-only context typing                   |
+| `state(schema)`        | bind an Effect Schema to durable state collection access         |
 
 These are the Restate `RestateOperations` tier: operation-body primitives backed
 by the active context and scheduler. They are not host/control-plane APIs.
@@ -308,17 +678,21 @@ promises are different: they are named, invocation/key-scoped settle-once values
 that can be peeked, awaited, resolved, or rejected by name inside the same keyed
 execution context.
 
-`state()` is only available in exclusive contexts and exposes reads and writes.
-`sharedState()` is available in shared/read-only contexts and exposes reads only.
-The type surface must make accidental writes from a shared context impossible.
+`state(schema, options?)` accepts an Effect Schema and returns an active-runtime
+collection handle. Internally it adapts the schema with
+`Schema.standardSchemaV1(...)` and delegates validation and change-event helper
+construction to `@durable-streams/state`'s collection helper pattern. The state
+protocol event `type` comes from the schema identifier by default. The
+`primaryKey` is inferred from an `id` field where possible or supplied in
+`options`.
 
-`waitForState` is source-specific: it waits for a schema-bound
-`@durable-streams/state` resource or collection change to satisfy a server-side
-filter, then materializes and decodes the matching state. A future
-`waitForEvent` helper may wrap source-specific waits, but the first durable
-surface should preserve the distinct identity and completion semantics of
-`sleep`, `signal`, `awakeable`, `deferred`, state/resource waits, and local
-`channel`.
+State waits are collection methods, not a separate free primitive.
+`accounts.wait(...)` waits for a schema-bound collection change to
+satisfy a server-side filter, then materializes and decodes the matching state
+through the same Effect Schema. A future `waitForEvent` helper may wrap
+source-specific waits, but the first durable surface should preserve the
+distinct identity and completion semantics of `sleep`, `signal`, `awakeable`,
+`deferred`, bound state waits, and local `channel`.
 
 Ingress clients are a separate host/client-facing surface. They can call/send
 handlers, resolve/reject awakeables, and fetch attached results over transport.
@@ -384,20 +758,23 @@ The distinction is load-bearing:
 - durable deferreds model named invocation/key-scoped promises; and
 - none of these should be implemented as a client-side polling loop.
 
-## State waits and webhook-originated facts
+## Bound state and webhook-originated facts
 
-State/resource waits are not another name for `signal`. They wait on durable
+Bound state is not another name for `signal`. Collection waits park on durable
 domain facts represented through `@durable-streams/state` change events and
 server-side filtered subscriptions:
 
 ```ts
 import { Duration, Effect } from "effect"
 import { CEL } from "effect-durable-client/CEL"
-import { waitForState } from "effect-durable-execution"
+import { state } from "effect-durable-execution"
 
+const approvals = yield* state(Approval, {
+  primaryKey: "approvalId",
+})
 const approval =
   yield *
-  waitForState(approvals, {
+  approvals.wait({
     key: request.approvalId,
     filter: CEL.and(
       CEL.eq(CEL.path("value", "approvalId"), request.approvalId),
@@ -408,7 +785,8 @@ const approval =
   })
 ```
 
-The primitive owns the user-facing wait shape and Schema decode. It lowers to:
+The collection handle owns the user-facing wait shape and Schema decode. It
+lowers to:
 
 1. record `StateWaitRegistered` in the operation log;
 2. create or use a filtered Durable Streams subscription over the relevant state
@@ -438,7 +816,7 @@ const stripeWebhook = Effect.gen(function* () {
 The webhook does not directly resume an invocation. It verifies, decodes, and
 appends a durable event or state fact. After the append commits, the server's
 filtered wake path can wake matching invocations, and replay/materialization
-decides whether `waitForState` can return. If a product needs an opaque task
+decides whether `accounts.wait(...)` can return. If a product needs an opaque task
 token instead, the webhook can resolve an awakeable through ingress client APIs;
 that remains distinct from state/resource waits.
 
@@ -449,9 +827,112 @@ whose payloads land in typed `@durable-streams/state` collections such as
 source", and "unsubscribe" that write subscription/manifest facts for agents to
 use. That pattern belongs above the Durable Streams server and above the
 handler-facing execution primitive. In this package, the durable operation still
-waits through `waitForState(...)`; the host decides whether a provider webhook,
-database feed, cron source, or agent tool created the underlying state stream
-and subscription.
+waits through a bound state collection such as `accounts.wait(...)`; the host
+decides whether a provider webhook, database feed, cron source, or agent tool
+created the underlying state stream and subscription.
+
+## Agent tool binding for state waits
+
+The MCP host remains a tool edge. It should expose state waits as Firegrid
+choreography tools backed by the same bound state handles, not as a separate
+state runtime.
+
+```text
+Claude ACP      Codex ACP      cloud agent      stdio/HTTP agent
+    │              │              │                  │
+    ▼              ▼              ▼                  ▼
+adapter A      adapter B      adapter C          adapter D
+    │              │              │                  │
+    └──────────────┴──────────────┴──────────────────┘
+                           │
+                           ▼
+                Firegrid choreography tools
+          wait_for · sleep · spawn · spawn_all · schedule_me · execute
+                           │
+                           ▼
+                 same Durable Streams session model
+              L1 harness facts + L2 coordination facts
+                           │
+                           ▼
+             projections for humans, agents, firelab, audit
+```
+
+For an Effect Schema binding:
+
+```ts
+const Account = Schema.Struct({
+  id: Schema.String,
+  status: Schema.Literal("pending", "ready"),
+}).annotations({ identifier: "account" })
+
+const accounts = state(Account)
+```
+
+the MCP host can expose either a generic `wait_for` tool whose `target` names the
+state binding, or a generated specialized tool such as `wait_for_account`. Both
+forms lower to the same runtime service:
+
+```ts
+tool("wait_for_account", {
+  input: Schema.Struct({
+    id: Schema.String,
+    where: Schema.Struct({
+      status: Schema.optional(Schema.Literal("pending", "ready")),
+    }),
+    timeoutMs: Schema.optional(Schema.Number),
+  }),
+})(Effect.gen(function* () {
+  const args = yield* toolRequest
+  return yield* accounts.wait(args.id, {
+    where: args.where,
+    timeout: args.timeoutMs,
+  })
+}))
+```
+
+This is a tool binding, not tool-owned durability. The flow is:
+
+```text
+harness tool call: wait_for_account
+  │
+  ▼
+harness I/O boundary records L1 tool_call
+  │
+  ▼
+Firegrid MCP host
+  schema + auth + tool dispatch only
+  │
+  ▼
+fluent-runtime tool service
+  append L2 wait intent on session stream
+  create or reuse filtered state subscription
+  park harness turn
+  │
+  ▼
+Durable Streams wake
+  provider/user/source appends Account state fact
+  subscription matches
+  fluent-runtime claims wake
+  materializes matching Account
+  appends L2 wait_matched + tool_result facts
+  │
+  ▼
+harness I/O boundary returns native tool_result
+```
+
+The same schema binding supplies:
+
+- handler-side `accounts.get/set/upsert/delete/wait`;
+- client/UI `accounts.changes/subscribe/query`;
+- MCP tool input and output schemas derived from Effect Schema; and
+- projection metadata for humans, agents, Firelab, and audit.
+
+This preserves the Firegrid architecture: adapters differ by harness, the MCP
+host is an edge, fluent-runtime owns wait matching and session facts, Durable
+Streams remains the single durable boundary, and projections read the same L1/L2
+facts. Agent tools do not subscribe directly to Durable Streams; they call a
+tool that records intent, parks, and returns after the runtime commits the
+matched state fact and tool result.
 
 This covers `effect-execution.API.25` through
 `effect-execution.API.27` and `effect-execution.RESUME.6` through
@@ -641,14 +1122,18 @@ This covers `effect-execution.API.1`, `effect-execution.API.11`, and
 
 ## Operation log and replay folds
 
-The package should avoid using "journal" as a generic catch-all. There are two
-separate folds over the invocation operation log:
+The package should avoid using "journal" as a generic catch-all. The operation
+log is the event stream that drives the invocation machine. Replay is not a
+separate implementation path; replay is just sending previously committed
+`OperationLogEvent` values into `InvocationMachine` in offset order.
+
+There are two read models derived from that same machine-driven replay:
 
 - `StepReplayFold` answers `run(key, action)`: should this action be skipped,
   returned, failed, or evaluated?
-- `InvocationReplayFold` reconstructs the current operation runtime: lifecycle,
-  suspended waits, signals, deferred values, timers, cancellation, child
-  invocation state, and materialized user state.
+- `InvocationReplayState` is the current machine state after replay:
+  lifecycle, suspended waits, signals, deferred values, timers, cancellation,
+  child invocation state, and materialized user state.
 
 The operation log itself is an abstraction supplied to the runtime:
 
@@ -685,7 +1170,7 @@ must not cause replay to skip an action. If a process crashes after
 `StepStarted` and before `StepSucceeded` / `StepFailed`, the step is eligible to
 run again.
 
-`InvocationReplayFold` consumes the broader operation-log event set:
+`InvocationMachine` consumes the broader operation-log event set:
 
 ```ts
 export type OperationLogEvent =
@@ -713,7 +1198,7 @@ export type OperationLogEvent =
   | StateDeleted
 ```
 
-Replay semantics:
+Replay transition effects:
 
 | Event                                      | Runtime effect                                    |
 | ------------------------------------------ | ------------------------------------------------- |
@@ -731,9 +1216,63 @@ Replay semantics:
 | `InvocationCancelled`                      | injects cancellation/interruption                 |
 | `StateSet` / `StateDeleted`                | reconstructs invocation-local materialized state  |
 
+Replay must be total over known committed facts. Unknown event tags from a newer
+runtime are a compatibility error unless the event schema declares them
+ignorable. A replay decode failure must prevent handler evaluation; otherwise a
+worker could run from a state it did not understand.
+
 This covers `effect-execution.JOURNAL.1` through
 `effect-execution.JOURNAL.3` and `effect-execution.JOURNAL.6` through
 `effect-execution.JOURNAL.8`.
+
+## Machine-driven activation
+
+Activation should be phrased as a state-machine driver plus a command
+interpreter, not as direct imperative workflow code.
+
+Driver loop:
+
+1. receive an `InvocationWake` from the host;
+2. boot `InvocationMachine` with the handler identity and invocation id;
+3. send `ActivationClaimed`;
+4. interpret `ClaimWriter` by opening the operation log producer and claiming
+   the current epoch;
+5. interpret `ReadLogToTail` and send each committed `OperationLogEvent` into
+   the machine in offset order;
+6. after replay, run only commands emitted by the machine:
+   `RunStep`, `CreateSchedule`, `CreateSubscription`, `Append`, `AckWake`, or
+   `ReleaseWake`;
+7. feed results of interpreted commands back as machine events; and
+8. stop only when the machine reaches a terminal state or a local activation
+   stop such as `ProducerFenced`.
+
+The handler program still looks like an ordinary `Effect.gen`, but each durable
+primitive is a machine interaction:
+
+```ts
+export const run = (key, action, options) =>
+  Effect.gen(function* () {
+    const runtime = yield* DurableExecutionRuntime
+    const decision = yield* runtime.machine.send(
+      new RunRequested({ key, options })
+    )
+
+    switch (decision._tag) {
+      case "ReplaySuccess":
+        return yield* decodeRecordedStep(decision.event, options)
+      case "ReplayFailure":
+        return yield* failRecordedStep(decision.event, options)
+      case "Evaluate":
+        return yield* runtime.evaluateStep(key, action, options)
+    }
+  })
+```
+
+`evaluateStep` is also command-driven: append `StepStarted`, execute the local
+Effect action, append `StepSucceeded` or `StepFailed`, then send the appended
+fact back into the machine. If the process crashes after `StepStarted` and
+before the terminal step fact, redelivery replays the machine to a state where
+that step is eligible to run again.
 
 ## Operation log adapter
 
@@ -1078,7 +1617,7 @@ client/server substrate exists.
 | `signal`            | named event wait API and schema decode              | signal notification plus wake/materialization                    |
 | `awakeable`         | opaque externally resolved handle                   | external resolution command plus signal notification             |
 | `deferred`          | invocation/key-scoped settle-once API               | named promise state plus completion notification                 |
-| `waitForState`      | state/resource wait shape and schema decode         | filtered subscription plus state/event materialization           |
+| bound state wait    | state/resource wait shape and schema decode         | filtered subscription plus state/event materialization           |
 | webhook-origin fact | host-owned ingress interpretation                   | verified append, then the same filtered wake/materialization     |
 | child               | child naming, parent interpretation, attach helpers | child invocation facts plus subscription/wake                    |
 | `run` retry         | attempt classification and retry policy             | repeated action attempts before final step fact                  |
@@ -1091,7 +1630,7 @@ This table is the intended path to turning
 missing concerns into thin lowerings:
 
 - retry becomes `run(..., { retry })`;
-- waiting for shared resource changes becomes `waitForState(...)` over
+- waiting for shared resource changes becomes `state(Schema).wait(...)` over
   `@durable-streams/state` events and server-side CEL filters;
 - saga becomes user `try/catch` plus compensating `run` steps;
 - cancellation becomes host cancel plus `AbortSignal` in `run`;
@@ -1217,7 +1756,7 @@ Minimum conformance cases:
   advertised;
 - receiver-side `signal` lowers to signal wait registration and notification
   materialization once substrate is advertised;
-- `waitForState` lowers to filtered subscription plus replay/materialization and
+- bound state waits lower to filtered subscription plus replay/materialization and
   does not poll client-side;
 - webhook-originated durable facts resume matching waits only after the append is
   durable;
@@ -1263,8 +1802,9 @@ This covers `effect-execution.CONFORMANCE.1` through
     available.
 16. Add receiver-side `signal` after the client/server signal notification
     surface is available.
-17. Add `waitForState` after the client/server filtered subscription and
-    `@durable-streams/state` materialization surfaces are available.
+17. Add bound state collection waits after the client/server filtered
+    subscription and `@durable-streams/state` materialization surfaces are
+    available.
 18. Add webhook-origin fact conformance against host-verified append plus
     filtered wake/materialization.
 19. Add `deferred`, `signal`, durable child invocation, and attachment lowering.
