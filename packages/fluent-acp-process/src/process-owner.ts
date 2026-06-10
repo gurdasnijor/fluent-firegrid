@@ -13,8 +13,8 @@ import {
  * Spawn a real ACP harness process and expose its stdio as an `acp.Stream`.
  *
  * This is the entire job of the ACP process owner: launch / kill the process and
- * hand Firegrid the stream. Firegrid's `FiregridAcpClient` (separate
- * `fluent-runtime` lane) wraps it in a `ClientSideConnection`. The owner records
+ * hand Firegrid the stream. Firegrid's ACP client runtime lane wraps it in a
+ * `ClientSideConnection`. The owner records
  * nothing to Durable Streams (F-A1) and makes no coordination decisions (F-A4).
  *
  * The process is spawned via `@effect/platform` `Command` (the `CommandExecutor`

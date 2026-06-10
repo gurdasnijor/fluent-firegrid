@@ -6,4 +6,10 @@ The standalone **fluent-firegrid** monorepo: an Effect-native substrate for dura
 
 - **`@firegrid/fluent-firegrid`** — Effect-native Firegrid primitives with named durable steps; the substrate-free Operation/Future scheduler.
 - **`@firegrid/fluent-acp-process`** — ACP harness process owner: spawn/kill an ACP agent and expose its `acp.Stream`.
-- **`effect-durable-streams`** — Effect-native client for the Durable Streams Protocol (Stream-shaped reads, Sink-shaped writes, schema-validated decode/encode boundaries); the only package that touches `@durable-streams/*`.
+
+## Legacy Reference
+
+The pre-fluent `effect-durable-*`, `firelab`, and `fluent-runtime` packages were
+archived on [`archive/legacy-effect-firelab`](https://github.com/gurdasnijor/fluent-firegrid/tree/archive/legacy-effect-firelab).
+They are reference material only; replacement packages should be rebuilt on top
+of the fluent store/protocol/client/server modules.

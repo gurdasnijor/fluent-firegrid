@@ -15,41 +15,6 @@
         "test/**/*.ts"
       ]
     },
-    "packages/durable-streams-protocol": {
-      "project": [
-        "src/**/*.ts"
-      ]
-    },
-    "packages/effect-durable-client": {
-      "entry": [
-        "test/**/*.test.ts",
-        "test/bench/**/*.bench.ts"
-      ],
-      "project": [
-        "src/**/*.ts",
-        "test/**/*.ts"
-      ]
-    },
-    "packages/effect-durable-execution": {
-      "entry": [
-        "test/**/*.test.ts",
-        "bench/**/*.bench.ts"
-      ],
-      "project": [
-        "src/**/*.ts",
-        "test/**/*.ts",
-        "bench/**/*.ts"
-      ]
-    },
-    "packages/effect-durable-streams": {
-      "entry": [
-        "test/**/*.test.ts"
-      ],
-      "project": [
-        "src/**/*.ts",
-        "test/**/*.ts"
-      ]
-    },
     "packages/conformance": {
       "entry": [
         "bin/**/*.mjs"
@@ -57,17 +22,6 @@
       "project": [
         "src/**/*.ts",
         "bin/**/*.mjs"
-      ]
-    },
-    "packages/firelab": {
-      "entry": [
-        "src/index.ts",
-        "src/bin/**/*.ts",
-        "src/simulations/*/index.ts",
-        "src/observability/index.ts"
-      ],
-      "project": [
-        "src/**/*.ts"
       ]
     }
   },
@@ -81,9 +35,6 @@
     ],
     "packages/conformance/src/client/test-cases.ts": [
       "exports",
-      "types"
-    ],
-    "packages/effect-durable-client/src/Client.ts": [
       "types"
     ],
     "packages/conformance/src/server/consumer-dsl.ts": [
@@ -104,10 +55,5 @@
   "ignore": [
     "repos/**"
   ],
-  "ignoreWorkspaces": [
-    "packages/effect-durable-client",
-    "packages/effect-durable-execution",
-    "packages/effect-durable-streams",
-    "packages/firelab"
-  ]
+  "ignoreWorkspaces": []
 }

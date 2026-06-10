@@ -22,7 +22,7 @@ export interface AcpSpawnInput {
 /**
  * A spawned ACP harness process, exposed as an ACP stream plus a teardown.
  *
- * Firegrid's `FiregridAcpClient` (a separate `fluent-runtime` lane) wraps this
+ * Firegrid's ACP client runtime lane wraps this
  * `stream` in an `acp.ClientSideConnection` and drives the ACP lifecycle. This
  * package records nothing and decides nothing.
  */

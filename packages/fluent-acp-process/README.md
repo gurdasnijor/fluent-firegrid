@@ -5,10 +5,11 @@ its stdio as an `acp.Stream`. That is the entire job.
 
 Per `docs/sdds/SDD_FLUENT_HARNESS_ADAPTER_CONTRACT.md`: Firegrid owns durable
 coordination around the agent loop; the external harness owns the loop. This
-package is the **outside** of the ACP client boundary — it hands `fluent-runtime`
-a stream and nothing else. `FiregridAcpClient` / `connectFiregridAcp` (the ACP
-`Client` role) and `FiregridAcpConductor` (the editor-facing ACP `Agent` role)
-are **separate `fluent-runtime` lanes**; this package implements neither.
+package is the **outside** of the ACP client boundary — it hands the fluent ACP
+runtime lane a stream and nothing else. `FiregridAcpClient` /
+`connectFiregridAcp` (the ACP `Client` role) and `FiregridAcpConductor` (the
+editor-facing ACP `Agent` role) are **separate fluent runtime lanes**; this
+package implements neither.
 
 ## Surface
 
@@ -31,7 +32,7 @@ the service tag (`.Default` wires `spawnAcpProcess`).
 ## Boundary invariants (enforced)
 
 - **F-A1 / F-A11**: imports only `@agentclientprotocol/sdk` + `effect` +
-  `@effect/platform` — no `fluent-runtime`, Durable Streams, Store/Host/
+  `@effect/platform` — no runtime package, Durable Streams, Store/Host/
   EventIngress/Sources, or projection internals (dependency-cruiser guard
   `fluent-acp-process-tiny-import-surface`).
 - **F-A12**: owns no agent-db / queryable projection schema.
@@ -46,6 +47,6 @@ ACP_RUN_REAL=1 pnpm test                    # real claude-code-acp: stream compl
 ACP_RUN_REAL=1 ACP_AGENT=codex pnpm test
 ```
 
-Full binding acceptance (real agent + `FiregridAcpClient` + `fluent-runtime`,
+Full binding acceptance (real agent + `FiregridAcpClient` + fluent runtime,
 Layer 1/2, resume, cancel/interrupt) lives under
 `features/fluent/agent-binding/` — a fake harness is never accepted there (F-A10).

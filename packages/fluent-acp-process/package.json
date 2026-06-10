@@ -1,7 +1,7 @@
 {
   "name": "@firegrid/fluent-acp-process",
   "version": "0.0.0",
-  "description": "ACP harness process owner: spawn/kill an ACP agent and expose its acp.Stream. Firegrid's FiregridAcpClient (separate fluent-runtime lane) wraps the stream.",
+  "description": "ACP harness process owner: spawn/kill an ACP agent and expose its acp.Stream. Firegrid's ACP client runtime lane wraps the stream.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
