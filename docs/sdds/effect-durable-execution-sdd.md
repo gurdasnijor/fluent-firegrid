@@ -6,9 +6,15 @@ Protocol source of truth: `PROTOCOL.md`
 Feature spec reference: `docs/reference/durable-streams/features/durable-streams/effect-execution.feature.yaml`
 Companion client SDD: `docs/sdds/effect-durable-client-sdd.md`
 Companion server SDD: `docs/sdds/effect-durable-streams-server-v2-sdd.md`
+Core architecture source:
+`docs/sdds/durable-streams-transport-agnostic-core-sdd.md`
 Upstream reference package: `docs/reference/durable-streams/packages/effect-durable-execution`
 Local design reference: `packages/fluent-firegrid`
 Source snapshot: `docs/reference/durable-streams/docs/sdds/effect-durable-execution-sdd.md`
+
+> Current direction: execution is downstream of the transport-agnostic Durable
+> Streams substrate. Do not implement execution mechanisms until the semantic
+> log, protocol transport, in-memory server, and client path exist.
 
 This SDD was promoted from the Durable Streams reference snapshot so the client,
 execution, and server designs are visible together in this repository. Some

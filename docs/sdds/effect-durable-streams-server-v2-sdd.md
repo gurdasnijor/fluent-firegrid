@@ -6,6 +6,13 @@ Owner: Firegrid / Durable Streams
 Primary package: `packages/effect-durable-streams`
 Protocol source: `PROTOCOL.md`
 HTTP contract source: `typespec/`
+Core architecture source:
+`docs/sdds/durable-streams-transport-agnostic-core-sdd.md`
+
+> Current direction: this SDD is now a server-package implementation note under
+> the transport-agnostic core architecture. Build the semantic store, protocol,
+> transport, and in-memory client/server path before using this document to wire
+> HTTP routes.
 
 ## Purpose
 

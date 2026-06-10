@@ -6,8 +6,14 @@ Protocol source of truth: `PROTOCOL.md`
 Feature spec reference: `docs/reference/durable-streams/features/durable-streams/effect-client.feature.yaml`
 Companion server SDD: `docs/sdds/effect-durable-streams-server-v2-sdd.md`
 Companion execution SDD: `docs/sdds/effect-durable-execution-sdd.md`
+Core architecture source:
+`docs/sdds/durable-streams-transport-agnostic-core-sdd.md`
 Upstream semantic reference: `docs/reference/durable-streams/packages/effect-durable-client/docs/client-curr.md`
 Source snapshot: `docs/reference/durable-streams/docs/sdds/effect-native-client-sdd.md`
+
+> Current direction: build the client against the transport-agnostic protocol
+> and in-memory server first. HTTP and generated TypeSpec/OpenAPI clients are
+> adapter targets, not the initial client substrate.
 
 This SDD was promoted from the Durable Streams reference snapshot so the client,
 execution, and server designs are visible together in this repository. Some
