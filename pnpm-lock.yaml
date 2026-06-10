@@ -347,6 +347,25 @@ importers:
         specifier: ^3.2.0
         version: 3.2.6(@types/node@22.19.20)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
 
+  packages/fluent-server:
+    dependencies:
+      '@firegrid/fluent-store':
+        specifier: workspace:*
+        version: link:../fluent-store
+      effect:
+        specifier: ^3.21.2
+        version: 3.21.3
+    devDependencies:
+      '@firegrid/fluent-store-inmemory':
+        specifier: workspace:*
+        version: link:../fluent-store-inmemory
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
+
   packages/fluent-store:
     dependencies:
       effect:
