@@ -197,6 +197,22 @@ export default defineConfig({
       }),
       defineProject({
         test: {
+          name: "fluent-transport-http",
+          include: ["packages/fluent-transport-http/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"],
+        },
+        resolve: {
+          alias: {
+            ...alias,
+            "@firegrid/fluent-transport-http": path.resolve(
+              __dirname,
+              "./packages/fluent-transport-http/src"
+            ),
+          },
+        },
+      }),
+      defineProject({
+        test: {
           name: "effect-durable-execution",
           include: ["packages/effect-durable-execution/test/**/*.test.ts"],
           exclude: ["**/node_modules/**"],
