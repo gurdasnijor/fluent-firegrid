@@ -329,6 +329,35 @@ importers:
         specifier: ^3.2.0
         version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
 
+  packages/fluent-transport:
+    dependencies:
+      effect:
+        specifier: ^3.21.2
+        version: 3.21.3
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
+
+  packages/fluent-transport-inmemory:
+    dependencies:
+      '@firegrid/fluent-transport':
+        specifier: workspace:*
+        version: link:../fluent-transport
+      effect:
+        specifier: ^3.21.2
+        version: 3.21.3
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
+
 packages:
 
   '@agentclientprotocol/sdk@0.22.1':

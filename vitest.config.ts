@@ -88,6 +88,42 @@ export default defineConfig({
       }),
       defineProject({
         test: {
+          name: "fluent-transport",
+          include: ["packages/fluent-transport/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"],
+        },
+        resolve: {
+          alias: {
+            ...alias,
+            "@firegrid/fluent-transport": path.resolve(
+              __dirname,
+              "./packages/fluent-transport/src"
+            ),
+          },
+        },
+      }),
+      defineProject({
+        test: {
+          name: "fluent-transport-inmemory",
+          include: ["packages/fluent-transport-inmemory/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"],
+        },
+        resolve: {
+          alias: {
+            ...alias,
+            "@firegrid/fluent-transport": path.resolve(
+              __dirname,
+              "./packages/fluent-transport/src"
+            ),
+            "@firegrid/fluent-transport-inmemory": path.resolve(
+              __dirname,
+              "./packages/fluent-transport-inmemory/src"
+            ),
+          },
+        },
+      }),
+      defineProject({
+        test: {
           name: "effect-durable-execution",
           include: ["packages/effect-durable-execution/test/**/*.test.ts"],
           exclude: ["**/node_modules/**"],
