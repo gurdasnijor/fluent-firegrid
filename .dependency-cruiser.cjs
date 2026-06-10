@@ -69,22 +69,8 @@ module.exports = {
       from: { path: "^packages/fluent-acp-process/src/" },
       to: {
         path: [
-          "^packages/fluent-runtime/",
           "effect-durable-streams",
           "(^|/)node_modules/(?:\\.pnpm/)?@durable-streams/",
-        ],
-      },
-    },
-    {
-      name: "fluent-runtime-no-legacy-runtime",
-      severity: "error",
-      comment:
-        "fluent-runtime is the lean managed-agent runtime workbench. It must not depend on the legacy workflow engine.",
-      from: { path: "^packages/fluent-runtime/src" },
-      to: {
-        path: [
-          "^node_modules/@effect/workflow",
-          "@effect/workflow",
         ],
       },
     },
@@ -96,7 +82,6 @@ module.exports = {
       from: { path: "^packages/effect-durable-execution/src/" },
       to: {
         path: [
-          "^packages/fluent-runtime/src",
           "effect-durable-streams",
           "^node_modules/@effect/workflow",
           "@effect/workflow",

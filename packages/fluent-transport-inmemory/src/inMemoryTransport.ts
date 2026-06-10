@@ -63,8 +63,8 @@ const streamFromPubSub = (
   filter?: (message: TransportMessage) => boolean,
 ) =>
   PubSub.subscribe(pubsub).pipe(
-    Effect.map((queue) => {
-      const stream = Stream.fromQueue(queue)
+    Effect.map((subscription) => {
+      const stream = Stream.fromSubscription(subscription)
       return filter === undefined ? stream : stream.pipe(Stream.filter(filter))
     }),
   )
@@ -73,7 +73,7 @@ const clientTransport = (state: ClientState): ClientTransport => ({
   connectionState: stateStream(state),
   publish: (message) =>
     failIfDisconnected(state, "Not connected").pipe(
-      Effect.zipRight(PubSub.publish(state.clientToServer, message)),
+      Effect.andThen(PubSub.publish(state.clientToServer, message)),
       Effect.asVoid,
     ),
   subscribe: (filter) => streamFromPubSub(state.serverToClient, filter),
@@ -83,7 +83,7 @@ const serverSideTransport = (state: ClientState): ClientTransport => ({
   connectionState: stateStream(state),
   publish: (message) =>
     failIfDisconnected(state, "Client not connected").pipe(
-      Effect.zipRight(PubSub.publish(state.serverToClient, message)),
+      Effect.andThen(PubSub.publish(state.serverToClient, message)),
       Effect.asVoid,
     ),
   subscribe: (filter) => streamFromPubSub(state.clientToServer, filter),
@@ -91,7 +91,7 @@ const serverSideTransport = (state: ClientState): ClientTransport => ({
 
 const disconnectClient = (state: ClientState) =>
   Ref.set(state.connectionState, "disconnected").pipe(
-    Effect.zipRight(PubSub.publish(state.connectionStateChanges, "disconnected")),
+    Effect.andThen(PubSub.publish(state.connectionStateChanges, "disconnected")),
     Effect.asVoid,
   )
 
@@ -108,7 +108,7 @@ const disconnectAll = (serverState: ServerState) =>
 
 const unregisterClient = (serverState: ServerState, clientId: string, state: ClientState) =>
   disconnectClient(state).pipe(
-    Effect.zipRight(Ref.update(serverState.clients, HashMap.remove(clientId))),
+    Effect.andThen(Ref.update(serverState.clients, HashMap.remove(clientId))),
   )
 
 const nextClientId = (serverState: ServerState): Effect.Effect<string, never> =>

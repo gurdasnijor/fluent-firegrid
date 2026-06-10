@@ -1,4 +1,4 @@
-import { Chunk, Effect, Fiber, Stream } from "effect"
+import { Effect, Fiber, Stream } from "effect"
 import { describe, expect, it } from "vitest"
 import { decodeStreamPath } from "@firegrid/fluent-store"
 import * as InMemoryStreamLog from "@firegrid/fluent-store-inmemory"
@@ -21,7 +21,7 @@ describe("fluent-server", () => {
         const head = yield* server.head(path)
         const deleted = yield* server.delete(path)
         return {
-          body: Chunk.toReadonlyArray(records).map((record) => dec.decode(record.bytes)).join(""),
+          body: records.map((record) => dec.decode(record.bytes)).join(""),
           head,
           deleted,
         }
@@ -44,10 +44,10 @@ describe("fluent-server", () => {
         return yield* Effect.scoped(
           Effect.gen(function* () {
             const stream = yield* bus.tailAdvanced()
-            const fiber = yield* stream.pipe(Stream.take(1), Stream.runCollect, Effect.fork)
+            const fiber = yield* stream.pipe(Stream.take(1), Stream.runCollect, Effect.forkChild)
             yield* server.append(path, "text/plain", enc.encode("x"))
             const tails = yield* Fiber.join(fiber)
-            return Chunk.toReadonlyArray(tails)[0]
+            return tails[0]
           }),
         )
       }),

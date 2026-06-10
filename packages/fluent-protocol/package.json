@@ -28,7 +28,7 @@
   "dependencies": {
     "@firegrid/fluent-store": "workspace:*",
     "@firegrid/fluent-transport": "workspace:*",
-    "effect": "^3.21.2"
+    "effect": "4.0.0-beta.78"
   },
   "devDependencies": {
     "@firegrid/fluent-store-inmemory": "workspace:*",

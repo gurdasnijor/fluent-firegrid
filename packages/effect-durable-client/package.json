@@ -41,8 +41,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@effect/platform": "^0.96.0",
-    "effect": "^3.18.0"
+    "effect": "4.0.0-beta.78"
   },
   "dependencies": {
     "eventsource-parser": "^3.0.0"
@@ -50,9 +49,8 @@
   "devDependencies": {
     "@durable-streams/client": "0.2.6",
     "@durable-streams/server": "0.3.7",
-    "@effect/platform": "^0.96.1",
     "@types/node": "^22.10.0",
-    "effect": "^3.21.2",
+    "effect": "4.0.0-beta.78",
     "expect-type": "^1.1.0",
     "typescript": "^5.7.0",
     "vitest": "^3.2.0"

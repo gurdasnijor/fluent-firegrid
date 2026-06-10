@@ -1,4 +1,4 @@
-import { NodeContext } from "@effect/platform-node"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 import { spawnAcpProcess } from "../src/process-owner.ts"
@@ -48,7 +48,7 @@ maybe(`spawnAcpProcess (real ${AGENT})`, () => {
             expect(response?.result).toBeDefined()
             reader.releaseLock()
           }),
-        ).pipe(Effect.provide(NodeContext.layer)),
+        ).pipe(Effect.provide(NodeServices.layer)),
       ),
     90_000,
   )

@@ -1,6 +1,6 @@
 import type * as acp from "@agentclientprotocol/sdk"
-import type { CommandExecutor } from "@effect/platform"
 import { Data, type Effect, type Scope } from "effect"
+import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 
 /**
  * Either a known agent key (`"claude"`, `"codex"`) resolved to its ACP adapter
@@ -51,8 +51,8 @@ export class AcpProcessError extends Data.TaggedError("AcpProcessError")<{
  * `acp.Client`/`acp.Agent` (F-A13), write Durable Streams (F-A1), record Layer 1
  * or commit Layer 2, evaluate waits/timers, or fork children (F-A4), nor own
  * queryable projection schemas (F-A12). The process lifetime is bound to the
- * provided `Scope`; `CommandExecutor` is provided by the host (e.g.
- * `NodeContext.layer`).
+ * provided `Scope`; `ChildProcessSpawner` is provided by the host (e.g.
+ * `NodeServices.layer`).
  */
 export interface AcpHarnessProcessOwnerService {
   readonly spawn: (
@@ -60,6 +60,6 @@ export interface AcpHarnessProcessOwnerService {
   ) => Effect.Effect<
     AcpProcessHandle,
     AcpProcessError,
-    CommandExecutor.CommandExecutor | Scope.Scope
+    ChildProcessSpawner | Scope.Scope
   >
 }

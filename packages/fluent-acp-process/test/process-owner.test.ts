@@ -1,4 +1,4 @@
-import { NodeContext } from "@effect/platform-node"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { Effect, type Scope } from "effect"
 import { describe, expect, it } from "vitest"
 import { resolveAgent } from "../src/resolve-agent.ts"
@@ -13,9 +13,9 @@ const FAKE_HARNESS = [
 ].join("")
 
 const runScoped = <A, E>(
-  eff: Effect.Effect<A, E, NodeContext.NodeContext | Scope.Scope>,
+  eff: Effect.Effect<A, E, NodeServices.NodeServices | Scope.Scope>,
 ): Promise<A> =>
-  Effect.runPromise(Effect.scoped(eff).pipe(Effect.provide(NodeContext.layer)))
+  Effect.runPromise(Effect.scoped(eff).pipe(Effect.provide(NodeServices.layer)))
 
 describe("resolveAgent", () => {
   it("maps known agents to their ACP adapters", () =>

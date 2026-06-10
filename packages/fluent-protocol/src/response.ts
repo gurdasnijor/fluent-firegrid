@@ -1,16 +1,12 @@
 import { Schema } from "effect"
 import { Offset, StreamPath } from "@firegrid/fluent-store"
-
-const SequenceNumber = Schema.Number.pipe(
-  Schema.int(),
-  Schema.between(0, Number.MAX_SAFE_INTEGER),
-)
+import { SequenceNumber } from "./schemaShared.ts"
 
 export class WireRecord extends Schema.Class<WireRecord>("WireRecord")({
   path: StreamPath,
   fromOffset: Offset,
   nextOffset: Offset,
-  bytes: Schema.Uint8ArrayFromSelf,
+  bytes: Schema.Uint8Array,
   contentType: Schema.String,
   closed: Schema.Boolean,
 }) {}
@@ -66,10 +62,10 @@ export class AlreadyExists extends Schema.TaggedClass<AlreadyExists>("AlreadyExi
 
 export class CreateConflict extends Schema.TaggedClass<CreateConflict>("CreateConflict")("CreateConflict", {
   code: Schema.Literal("create-conflict"),
-  reason: Schema.Literal("config-mismatch", "closure-mismatch"),
+  reason: Schema.Literals(["config-mismatch", "closure-mismatch"]),
 }) {}
 
-export const CreateResponse = Schema.Union(Created, AlreadyExists, CreateConflict, StreamGone)
+export const CreateResponse = Schema.Union([Created, AlreadyExists, CreateConflict, StreamGone])
 export type CreateResponse = typeof CreateResponse.Type
 
 export class OffsetConflict extends Schema.TaggedClass<OffsetConflict>("OffsetConflict")("OffsetConflict", {
@@ -78,7 +74,7 @@ export class OffsetConflict extends Schema.TaggedClass<OffsetConflict>("OffsetCo
   actualTailOffset: Offset,
 }) {}
 
-export const AppendResponse = Schema.Union(
+export const AppendResponse = Schema.Union([
   Appended,
   AppendDuplicate,
   EpochFenced,
@@ -88,10 +84,10 @@ export const AppendResponse = Schema.Union(
   OffsetConflict,
   StreamNotFound,
   StreamGone,
-)
+])
 export type AppendResponse = typeof AppendResponse.Type
 
-export const CloseResponse = Schema.Union(
+export const CloseResponse = Schema.Union([
   Appended,
   AppendDuplicate,
   Closed,
@@ -101,7 +97,7 @@ export const CloseResponse = Schema.Union(
   OffsetConflict,
   StreamNotFound,
   StreamGone,
-)
+])
 export type CloseResponse = typeof CloseResponse.Type
 
 export class ReadResult extends Schema.TaggedClass<ReadResult>("ReadResult")("ReadResult", {
@@ -115,7 +111,7 @@ export class InvalidOffset extends Schema.TaggedClass<InvalidOffset>("InvalidOff
   offset: Schema.String,
 }) {}
 
-export const ReadResponse = Schema.Union(ReadResult, InvalidOffset, StreamNotFound, StreamGone)
+export const ReadResponse = Schema.Union([ReadResult, InvalidOffset, StreamNotFound, StreamGone])
 export type ReadResponse = typeof ReadResponse.Type
 
 export class HeadResult extends Schema.TaggedClass<HeadResult>("HeadResult")("HeadResult", {
@@ -123,15 +119,15 @@ export class HeadResult extends Schema.TaggedClass<HeadResult>("HeadResult")("He
   closed: Schema.Boolean,
   contentType: Schema.String,
 }) {}
-export const HeadResponse = Schema.Union(HeadResult, StreamNotFound, StreamGone)
+export const HeadResponse = Schema.Union([HeadResult, StreamNotFound, StreamGone])
 export type HeadResponse = typeof HeadResponse.Type
 
 export class Deleted extends Schema.TaggedClass<Deleted>("Deleted")("Deleted", {}) {}
 
-export const DeleteResponse = Schema.Union(Deleted, StreamNotFound, StreamGone)
+export const DeleteResponse = Schema.Union([Deleted, StreamNotFound, StreamGone])
 export type DeleteResponse = typeof DeleteResponse.Type
 
-export const Response = Schema.Union(
+export const Response = Schema.Union([
   Appended,
   AppendDuplicate,
   Closed,
@@ -149,5 +145,5 @@ export const Response = Schema.Union(
   InvalidOffset,
   HeadResult,
   Deleted,
-)
+])
 export type Response = typeof Response.Type

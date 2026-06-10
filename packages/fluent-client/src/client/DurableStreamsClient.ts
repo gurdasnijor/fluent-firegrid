@@ -1,5 +1,4 @@
 import type { Effect, Scope } from "effect"
-import type { ReadonlyMailbox } from "effect/Mailbox"
 import * as Protocol from "@firegrid/fluent-protocol"
 import { makeProducer, type Producer, type ProducerConfig } from "./Producer.ts"
 import type { StreamHandle } from "./StreamHandle.ts"
@@ -27,7 +26,7 @@ export interface DurableStreamsClient {
   readonly tail: (
     path: Protocol.ReadLive["path"],
     offset?: Protocol.ReadLive["offset"],
-  ) => Effect.Effect<ReadonlyMailbox<Protocol.ReadEvent, Protocol.TransportError>, Protocol.TransportError, Scope.Scope>
+  ) => Effect.Effect<Protocol.ReadEventQueue, Protocol.TransportError, Scope.Scope>
   readonly head: (path: Protocol.Head["path"]) => Effect.Effect<Protocol.HeadResponse, Protocol.TransportError>
   readonly delete: (path: Protocol.Delete["path"]) => Effect.Effect<Protocol.DeleteResponse, Protocol.TransportError>
   readonly close: (path: Protocol.Close["path"]) => Effect.Effect<Protocol.CloseResponse, Protocol.TransportError>

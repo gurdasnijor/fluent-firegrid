@@ -27,7 +27,7 @@
   },
   "dependencies": {
     "@firegrid/fluent-store": "workspace:*",
-    "effect": "^3.21.2"
+    "effect": "4.0.0-beta.78"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

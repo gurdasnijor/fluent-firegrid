@@ -6,15 +6,6 @@
     "tslib"
   ],
   "workspaces": {
-    "packages/fluent-runtime": {
-      "entry": [
-        "test/**/*.test.ts"
-      ],
-      "project": [
-        "src/**/*.ts",
-        "test/**/*.ts"
-      ]
-    },
     "packages/fluent-acp-process": {
       "entry": [
         "test/**/*.test.ts"
@@ -113,5 +104,10 @@
   "ignore": [
     "repos/**"
   ],
-  "ignoreWorkspaces": []
+  "ignoreWorkspaces": [
+    "packages/effect-durable-client",
+    "packages/effect-durable-execution",
+    "packages/effect-durable-streams",
+    "packages/firelab"
+  ]
 }

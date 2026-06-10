@@ -1,5 +1,5 @@
 /* eslint-disable effect/no-runPromise -- Reusable Vitest contract suite runs Effects at test boundaries. */
-import { Chunk, Effect, Fiber, Stream, pipe } from "effect"
+import { Effect, Fiber, Stream, pipe } from "effect"
 import { describe, expect, it } from "vitest"
 import { appendBytes, appendEmpty, beginning, readCollect } from "../streamLog.ts"
 import { ContentTypeMismatchError, StreamNotFoundError } from "../errors.ts"
@@ -11,7 +11,6 @@ const decoder = new TextDecoder()
 
 const bytes = (text: string) => encoder.encode(text)
 const text = (input: Uint8Array) => decoder.decode(input)
-const toArray = Chunk.toReadonlyArray
 
 export interface DurableStreamLogTestOptions {
   readonly supportsMissingHistoricalRead?: boolean
@@ -51,7 +50,7 @@ export const runDurableStreamLogTestSuite = (
         }),
       )
 
-      expect(toArray(records).map((record) => text(record.bytes))).toEqual(["a", "b"])
+      expect(records.map((record) => text(record.bytes))).toEqual(["a", "b"])
     })
 
     it("rejects appends with a mismatched content type", async () => {
@@ -80,7 +79,7 @@ export const runDurableStreamLogTestSuite = (
           return yield* Effect.scoped(
             Effect.gen(function* () {
               const stream = yield* log.subscribe(beginning(path))
-              const fiber = yield* pipe(stream, Stream.take(2), Stream.runCollect, Effect.fork)
+              const fiber = yield* pipe(stream, Stream.take(2), Stream.runCollect, Effect.forkChild)
               yield* appendBytes(log, { path, contentType: "text/plain" }, bytes("live"))
               return yield* Fiber.join(fiber)
             }),
@@ -88,7 +87,7 @@ export const runDurableStreamLogTestSuite = (
         }),
       )
 
-      expect(toArray(records).map((record) => text(record.bytes))).toEqual(["historical", "live"])
+      expect(records.map((record) => text(record.bytes))).toEqual(["historical", "live"])
     })
 
     it("does not create missing streams through subscribe", async () => {
@@ -118,10 +117,10 @@ export const runDurableStreamLogTestSuite = (
           return yield* Effect.scoped(
             Effect.gen(function* () {
               const stream = yield* log.subscribeAll()
-              const fiber = yield* pipe(stream, Stream.take(1), Stream.runCollect, Effect.fork)
+              const fiber = yield* pipe(stream, Stream.take(1), Stream.runCollect, Effect.forkChild)
               yield* appendBytes(log, { path, contentType: "text/plain" }, bytes("x"))
               const tails = yield* Fiber.join(fiber)
-              return toArray(tails)[0]
+              return tails[0]
             }),
           )
         }),
@@ -145,7 +144,7 @@ export const runDurableStreamLogTestSuite = (
       )
 
       expect(result.metadata.closed).toBe(true)
-      expect(toArray(result.records)[0]?.closed).toBe(true)
+      expect(result.records[0]?.closed).toBe(true)
     })
 
     if (supportsMissingHistoricalRead) {
@@ -158,7 +157,7 @@ export const runDurableStreamLogTestSuite = (
           }),
         )
 
-        expect(toArray(records)).toEqual([])
+        expect(records).toEqual([])
       })
     }
   })

@@ -1,4 +1,4 @@
-import { Chunk, Effect, Stream } from "effect"
+import { Effect, Stream } from "effect"
 import {
   appendBytes,
   appendEmpty,
@@ -230,7 +230,6 @@ const read = (log: DurableStreamLog, request: Req.Read): Effect.Effect<Res.ReadR
     Effect.flatMap((metadata) =>
       log.read(readPosition(request)).pipe(
         Effect.flatMap(Stream.runCollect),
-        Effect.map(Chunk.toReadonlyArray),
         Effect.map((records) => {
           const wired = records.map(wireRecord)
           const last = wired[wired.length - 1]

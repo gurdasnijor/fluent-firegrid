@@ -9,10 +9,9 @@ export interface EventBus {
   >
 }
 
-export class EventBusTag extends Context.Tag("@firegrid/fluent-server/EventBus")<
-  EventBusTag,
-  EventBus
->() {}
+export class EventBusTag extends Context.Service<EventBusTag, EventBus>()(
+  "@firegrid/fluent-server/EventBus",
+) {}
 
 export const makeEventBus = (log: DurableStreamLog): EventBus => ({
   tailAdvanced: log.subscribeAll,

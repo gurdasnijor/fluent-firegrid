@@ -41,7 +41,6 @@ export interface DurableStreamLog {
   readonly delete: (path: StreamPath) => Effect.Effect<DeleteStreamResult, DurableStreamLogError>
 }
 
-export class DurableStreamLogTag extends Context.Tag("@firegrid/fluent-store/DurableStreamLog")<
-  DurableStreamLogTag,
-  DurableStreamLog
->() {}
+export class DurableStreamLogTag extends Context.Service<DurableStreamLogTag, DurableStreamLog>()(
+  "@firegrid/fluent-store/DurableStreamLog",
+) {}

@@ -42,14 +42,6 @@ export default defineConfig({
       }),
       defineProject({
         test: {
-          name: "fluent-runtime",
-          include: ["packages/fluent-runtime/test/**/*.test.ts"],
-          exclude: ["**/node_modules/**"],
-        },
-        resolve: { alias },
-      }),
-      defineProject({
-        test: {
           name: "fluent-store",
           include: ["packages/fluent-store/test/**/*.test.ts"],
           exclude: ["**/node_modules/**"],

@@ -13,12 +13,10 @@ export interface ClientConnector {
   readonly connect: (url: string) => Effect.Effect<ClientTransport, ConnectionError, Scope.Scope>
 }
 
-export class ClientConnectorTag extends Context.Tag("@firegrid/fluent-transport/ClientConnector")<
-  ClientConnectorTag,
-  ClientConnector
->() {}
+export class ClientConnectorTag extends Context.Service<ClientConnectorTag, ClientConnector>()(
+  "@firegrid/fluent-transport/ClientConnector",
+) {}
 
-export class ClientTransportTag extends Context.Tag("@firegrid/fluent-transport/ClientTransport")<
-  ClientTransportTag,
-  ClientTransport
->() {}
+export class ClientTransportTag extends Context.Service<ClientTransportTag, ClientTransport>()(
+  "@firegrid/fluent-transport/ClientTransport",
+) {}

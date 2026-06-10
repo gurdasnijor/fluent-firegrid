@@ -1,4 +1,4 @@
-import { Brand, Data, Schema } from "effect"
+import { Brand, Data, Effect, Schema } from "effect"
 
 export type MessageId = string & Brand.Brand<"MessageId">
 export const MessageId = Brand.nominal<MessageId>()
@@ -6,17 +6,14 @@ export const MessageId = Brand.nominal<MessageId>()
 export type ClientId = string & Brand.Brand<"ClientId">
 export const ClientId = Brand.nominal<ClientId>()
 
-export const TransportMetadata = Schema.Record({
-  key: Schema.String,
-  value: Schema.Unknown,
-})
+export const TransportMetadata = Schema.Record(Schema.String, Schema.Unknown)
 export type TransportMetadata = typeof TransportMetadata.Type
 
 export const TransportMessage = Schema.Struct({
   id: Schema.String.pipe(Schema.brand("MessageId")),
   type: Schema.String,
   payload: Schema.String,
-  metadata: Schema.optionalWith(TransportMetadata, { default: () => ({}) }),
+  metadata: TransportMetadata.pipe(Schema.withDecodingDefaultTypeKey(Effect.succeed({}))),
 })
 export type TransportMessage = typeof TransportMessage.Type
 
@@ -65,5 +62,5 @@ export const makeTransportMessage = (
   metadata,
 })
 
-export const parseTransportMessage = Schema.decodeUnknown(TransportMessage)
-export const encodeTransportMessage = Schema.encode(TransportMessage)
+export const parseTransportMessage = Schema.decodeUnknownEffect(TransportMessage)
+export const encodeTransportMessage = Schema.encodeEffect(TransportMessage)
