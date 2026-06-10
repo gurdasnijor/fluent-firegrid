@@ -33,6 +33,23 @@ export class OffsetConflictError extends Data.TaggedError("OffsetConflictError")
   }>
 > {}
 
+export class ProducerEpochRegressionError extends Data.TaggedError("ProducerEpochRegressionError")<
+  Readonly<{
+    readonly path: StreamPath
+    readonly producerId: string
+    readonly currentEpoch: number
+  }>
+> {}
+
+export class ProducerSequenceGapError extends Data.TaggedError("ProducerSequenceGapError")<
+  Readonly<{
+    readonly path: StreamPath
+    readonly producerId: string
+    readonly expectedSeq: number
+    readonly receivedSeq: number
+  }>
+> {}
+
 export class StreamNotFoundError extends Data.TaggedError("StreamNotFoundError")<
   Readonly<{
     readonly path: StreamPath
@@ -51,6 +68,8 @@ export type DurableStreamLogError =
   | StreamClosedError
   | ContentTypeMismatchError
   | OffsetConflictError
+  | ProducerEpochRegressionError
+  | ProducerSequenceGapError
   | StreamNotFoundError
   | InvalidOffsetError
 
@@ -59,5 +78,7 @@ export const isDurableStreamLogError = (error: unknown): error is DurableStreamL
   Predicate.isTagged(error, "StreamClosedError") ||
   Predicate.isTagged(error, "ContentTypeMismatchError") ||
   Predicate.isTagged(error, "OffsetConflictError") ||
+  Predicate.isTagged(error, "ProducerEpochRegressionError") ||
+  Predicate.isTagged(error, "ProducerSequenceGapError") ||
   Predicate.isTagged(error, "StreamNotFoundError") ||
   Predicate.isTagged(error, "InvalidOffsetError")

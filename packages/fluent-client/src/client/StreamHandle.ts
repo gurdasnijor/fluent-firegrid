@@ -1,5 +1,11 @@
 import type { Effect } from "effect"
-import type { DurableStreamsClientError, DurableStreamsProtocolFailure } from "./Errors.ts"
+import type {
+  Append,
+  AppendResponse,
+  Read,
+  ReadResponse,
+  TransportError,
+} from "@firegrid/fluent-protocol"
 
 export interface StreamHandle {
   readonly path: string
@@ -7,25 +13,10 @@ export interface StreamHandle {
     bytes: Uint8Array,
     options?: {
       readonly close?: boolean
-      readonly expectedTailOffset?: string
+      readonly expectedTailOffset?: Append["expectedTailOffset"]
     },
-  ) => Effect.Effect<
-    {
-      readonly tailOffset: string
-      readonly closed: boolean
-    },
-    DurableStreamsClientError | DurableStreamsProtocolFailure
-  >
+  ) => Effect.Effect<AppendResponse, TransportError>
   readonly read: (
-    offset?: string,
-  ) => Effect.Effect<
-    readonly {
-      readonly bytes: Uint8Array
-      readonly fromOffset: string
-      readonly nextOffset: string
-      readonly contentType: string
-      readonly closed: boolean
-    }[],
-    DurableStreamsClientError | DurableStreamsProtocolFailure
-  >
+    offset?: Read["offset"],
+  ) => Effect.Effect<ReadResponse, TransportError>
 }

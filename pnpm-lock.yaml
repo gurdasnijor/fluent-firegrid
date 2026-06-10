@@ -277,19 +277,16 @@ importers:
       '@firegrid/fluent-protocol':
         specifier: workspace:*
         version: link:../fluent-protocol
-      '@firegrid/fluent-transport':
-        specifier: workspace:*
-        version: link:../fluent-transport
       effect:
         specifier: ^3.21.2
         version: 3.21.3
     devDependencies:
+      '@firegrid/fluent-store':
+        specifier: workspace:*
+        version: link:../fluent-store
       '@firegrid/fluent-store-inmemory':
         specifier: workspace:*
         version: link:../fluent-store-inmemory
-      '@firegrid/fluent-transport-inmemory':
-        specifier: workspace:*
-        version: link:../fluent-transport-inmemory
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

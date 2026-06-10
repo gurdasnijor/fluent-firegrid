@@ -165,14 +165,6 @@ export default defineConfig({
               __dirname,
               "./packages/fluent-store-inmemory/src"
             ),
-            "@firegrid/fluent-transport": path.resolve(
-              __dirname,
-              "./packages/fluent-transport/src"
-            ),
-            "@firegrid/fluent-transport-inmemory": path.resolve(
-              __dirname,
-              "./packages/fluent-transport-inmemory/src"
-            ),
             "@firegrid/fluent-protocol": path.resolve(
               __dirname,
               "./packages/fluent-protocol/src"

@@ -23,6 +23,13 @@ export interface AppendStream {
   readonly contentType: string
   readonly expectedTailOffset?: Offset
   readonly close?: boolean
+  readonly producer?: ProducerFence
+}
+
+export interface ProducerFence {
+  readonly producerId: string
+  readonly epoch: number
+  readonly seq: number
 }
 
 export type AppendResult =
@@ -34,6 +41,10 @@ export type AppendResult =
     }
   | {
       readonly _tag: "Noop"
+      readonly metadata: StreamMetadata
+    }
+  | {
+      readonly _tag: "Duplicate"
       readonly metadata: StreamMetadata
     }
 

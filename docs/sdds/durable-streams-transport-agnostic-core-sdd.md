@@ -333,15 +333,18 @@ Forbidden dependencies:
 
 ### `fluent-protocol`
 
-Owns Durable Streams protocol envelopes, client request correlation, server
-protocol routing, and codec logic over `TransportMessage`.
+Owns the Durable Streams request/response algebra, typed protocol outcomes,
+server-side request handling over `DurableStreamLog`, and the `DurableTransport`
+contract. The local transport does not serialize; codec logic over
+`TransportMessage` belongs to future socket/RPC transport implementations.
 
 ```text
 packages/fluent-protocol/src/
-  protocol.ts
-  serverProtocol.ts
-  codec.ts
-  layer.ts
+  request.ts
+  response.ts
+  transport.ts
+  handler.ts
+  localTransport.ts
   index.ts
 ```
 
@@ -542,8 +545,7 @@ packages/fluent-transport-inmemory/test/
   in-memory-transport.test.ts
 
 packages/fluent-protocol/test/
-  protocol-codec.test.ts
-  protocol-client-server.test.ts
+  in-memory-transport.test.ts
 
 packages/fluent-server/test/
   subscription-service.contract.test.ts
@@ -808,20 +810,20 @@ must instead be aligned with `repos/eventsourcing/packages/eventsourcing-protoco
 The split should resemble:
 
 ```text
-ProtocolMessage.ts
-  command/result/subscribe/record/control envelope schemas
+request.ts
+  create/append/close/read/head/delete request schemas
 
-ProtocolClient.ts
-  send(command) -> correlated response
-  subscribe(path, offset) -> Stream<StreamRecord>
+response.ts
+  typed protocol outcome schemas; no lossy Failure variant
 
-ProtocolServer.ts
-  incoming commands stream
-  send result
-  publish stream record/control
+transport.ts
+  DurableTransport.call(request) and DurableTransport.stream(readLive)
 
-ProtocolCodec.ts
-  encode/decode TransportMessage payloads
+handler.ts
+  handle(log, request) -> typed response
+
+localTransport.ts
+  direct dispatch plus scoped Mailbox live reads
 ```
 
 The exact filenames can change, but the boundary cannot: protocol messages are
@@ -963,18 +965,18 @@ interface ServerTransport {
 }
 ```
 
-The in-memory transport is the first client/server integration target:
+The local protocol transport is the first client/server integration target:
 
 ```text
 fluent-client
-  -> fluent-protocol client
-  -> fluent-transport-inmemory
-  -> fluent-protocol server
-  -> fluent-server
+  -> fluent-protocol DurableTransport
+  -> fluent-protocol handler
   -> fluent-store-inmemory
 ```
 
-This gives client work a real local target before HTTP server work exists.
+This gives client work a real local target before HTTP server work exists. The
+raw `fluent-transport` byte-pipe is exercised later by HTTP/socket transports,
+not by the ergonomic client.
 
 ## HTTP Transport
 

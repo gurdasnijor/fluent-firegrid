@@ -121,10 +121,7 @@ module.exports = {
         "fluent-store-inmemory mirrors eventsourcing-store-inmemory: production code may import fluent-store, but not transport, protocol, server, client, HTTP/RPC transport, or legacy stores.",
       from: { path: "^packages/fluent-store-inmemory/src/" },
       to: {
-        path: [
-          "^packages/(?:fluent-transport|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-server|fluent-client|effect-durable-streams|effect-durable-client|effect-durable-execution)/src/",
-          "^packages/effect-durable-streams/src/(?:Store|MemoryStore)\\.ts$",
-        ],
+        path: "^packages/(?:fluent-transport|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-server|fluent-client|effect-durable-streams|effect-durable-client|effect-durable-execution)/src/",
       },
     },
     {
@@ -178,7 +175,7 @@ module.exports = {
       },
     },
     {
-      name: "fluent-server-only-imports-store-and-protocol",
+      name: "fluent-server-only-imports-store",
       severity: "error",
       comment:
         "fluent-server mirrors eventsourcing-server: production code may import fluent-store only; protocol and concrete transports stay outside the semantic server.",
@@ -191,10 +188,10 @@ module.exports = {
       name: "fluent-client-no-concrete-or-server-runtime",
       severity: "error",
       comment:
-        "fluent-client may use shared store/protocol/transport interfaces, but runtime code must not import concrete in-memory transports/stores, server implementation, HTTP/RPC transport internals, compatibility packages, or execution.",
+        "fluent-client may use fluent-protocol only; runtime code must not import raw transport, concrete in-memory transports/stores, server implementation, HTTP/RPC transport internals, compatibility packages, or execution.",
       from: { path: "^packages/fluent-client/src/" },
       to: {
-        path: "^packages/(?:fluent-store-inmemory|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-server|effect-durable-streams|effect-durable-client|effect-durable-execution)/src/",
+        path: "^packages/(?:fluent-store|fluent-store-inmemory|fluent-transport|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-server|effect-durable-streams|effect-durable-client|effect-durable-execution)/src/",
       },
     },
   ],

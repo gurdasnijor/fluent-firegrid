@@ -1,7 +1,7 @@
 import { Effect, Stream, pipe } from "effect"
 import { BeginningOffset, NowOffset, type Offset, type StreamPath } from "./domainTypes.ts"
 import type { DurableStreamLog } from "./services.ts"
-import type { AppendStream, ReadPosition, StreamMetadata, StreamRecord } from "./streamTypes.ts"
+import type { AppendStream, ReadPosition, StreamMetadata } from "./streamTypes.ts"
 
 export const beginning = (path: StreamPath): ReadPosition => ({
   path,
@@ -52,5 +52,3 @@ export const currentTail = (log: DurableStreamLog, path: StreamPath) =>
     log.head,
     Effect.map((metadata: StreamMetadata) => metadata.tailOffset),
   )
-
-export type { AppendStream, StreamMetadata, StreamRecord }

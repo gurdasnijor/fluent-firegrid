@@ -5,6 +5,8 @@ import {
   InvalidOffsetError,
   NowOffset,
   OffsetConflictError,
+  ProducerEpochRegressionError,
+  ProducerSequenceGapError,
   StreamClosedError,
   StreamNotFoundError,
   initialOffset,
@@ -32,6 +34,12 @@ interface EventStream {
 interface Value {
   readonly streamsByPath: HashMap.HashMap<StreamPath, EventStream>
   readonly allTails: PubSub.PubSub<TailAdvanced>
+  readonly producerStates: HashMap.HashMap<string, ProducerState>
+}
+
+interface ProducerState {
+  readonly epoch: number
+  readonly lastSeq: number
 }
 
 export interface InMemoryStore {
@@ -189,6 +197,34 @@ interface AppendCommit {
   readonly publish: Effect.Effect<void, never>
 }
 
+const producerKey = (request: AppendStream): string | undefined =>
+  request.producer === undefined ? undefined : `${request.path}\u0000${request.producer.producerId}`
+
+const duplicateCommit = (metadata: StreamMetadata): AppendCommit => ({
+  result: {
+    _tag: "Duplicate",
+    metadata,
+  },
+  publish: Effect.void,
+})
+
+const updateProducerState = (
+  value: Value,
+  request: AppendStream,
+): Value => {
+  const key = producerKey(request)
+  if (key === undefined || request.producer === undefined) {
+    return value
+  }
+  return {
+    ...value,
+    producerStates: HashMap.set(value.producerStates, key, {
+      epoch: request.producer.epoch,
+      lastSeq: request.producer.seq,
+    }),
+  }
+}
+
 const commitAppend = (
   request: AppendStream,
   chunks: readonly Uint8Array[],
@@ -244,10 +280,77 @@ const appendCollected =
         onSome: (stream) =>
           pipe(
             validateAppend(request, stream),
-            Effect.zipRight(commitAppend(request, chunks, value, stream)),
+            Effect.zipRight(validateProducer(request, value, stream)),
+            Effect.flatMap((producer) =>
+              producer._tag === "Duplicate"
+                ? Effect.succeed([duplicateCommit(stream.metadata), value] as const)
+                : commitAppend(request, chunks, value, stream).pipe(
+                    Effect.map(([commit, updatedValue]) => [
+                      commit,
+                      updateProducerState(updatedValue, request),
+                    ] as const),
+                  ),
+            ),
           ),
       }),
     )
+
+type ProducerDecision =
+  | { readonly _tag: "Proceed" }
+  | { readonly _tag: "Duplicate" }
+
+const validateProducer = (
+  request: AppendStream,
+  value: Value,
+  stream: EventStream,
+): Effect.Effect<ProducerDecision, ProducerEpochRegressionError | ProducerSequenceGapError> => {
+  const key = producerKey(request)
+  if (key === undefined || request.producer === undefined) {
+    return Effect.succeed({ _tag: "Proceed" })
+  }
+
+  const current = HashMap.get(value.producerStates, key)
+  if (Option.isNone(current) || request.producer.epoch > current.value.epoch) {
+    return request.producer.seq === 0
+      ? Effect.succeed({ _tag: "Proceed" })
+      : Effect.fail(
+          new ProducerSequenceGapError({
+            path: request.path,
+            producerId: request.producer.producerId,
+            expectedSeq: 0,
+            receivedSeq: request.producer.seq,
+          }),
+        )
+  }
+
+  if (request.producer.epoch < current.value.epoch) {
+    return Effect.fail(
+      new ProducerEpochRegressionError({
+        path: request.path,
+        producerId: request.producer.producerId,
+        currentEpoch: current.value.epoch,
+      }),
+    )
+  }
+
+  if (request.producer.seq <= current.value.lastSeq) {
+    return Effect.succeed({ _tag: "Duplicate" })
+  }
+
+  const expectedSeq = current.value.lastSeq + 1
+  if (request.producer.seq !== expectedSeq) {
+    return Effect.fail(
+      new ProducerSequenceGapError({
+        path: stream.metadata.path,
+        producerId: request.producer.producerId,
+        expectedSeq,
+        receivedSeq: request.producer.seq,
+      }),
+    )
+  }
+
+  return Effect.succeed({ _tag: "Proceed" })
+}
 
 const collectChunks = (request: AppendStream, value: SynchronizedRef.SynchronizedRef<Value>) =>
   Sink.foldChunksEffect<readonly Uint8Array[], Uint8Array, never, never>(
@@ -408,6 +511,7 @@ export const make = (): Effect.Effect<InMemoryStore, never> =>
       SynchronizedRef.make<Value>({
         streamsByPath: HashMap.empty<StreamPath, EventStream>(),
         allTails,
+        producerStates: HashMap.empty<string, ProducerState>(),
       }).pipe(
         Effect.map(makeStore),
       ),
