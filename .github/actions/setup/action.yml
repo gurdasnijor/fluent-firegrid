@@ -1,0 +1,22 @@
+name: "Setup pnpm + Node + install"
+description: >-
+  Repeated setup boilerplate shared across the parallel CI jobs in
+  `.github/workflows/`. Extracted so pnpm/node version bumps are a one-file
+  edit rather than a change to every job. Pure boilerplate consolidation; no
+  behavior change. Checkout (with `submodules: recursive` for the
+  durable-streams submodule) stays per-job since fetch-depth varies.
+runs:
+  using: composite
+  steps:
+    - name: Set up pnpm
+      uses: pnpm/action-setup@v4
+
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: pnpm
+
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile

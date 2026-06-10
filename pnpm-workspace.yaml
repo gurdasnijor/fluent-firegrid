@@ -1,8 +1,2 @@
 packages:
   - packages/*
-  - "!packages/durable-streams"
-  - packages/durable-streams/packages/client
-  - packages/durable-streams/packages/server
-  - packages/durable-streams/packages/state
-  - packages/durable-streams/packages/effect-durable-streams
-  - packages/durable-streams/packages/server-conformance-tests

@@ -1,5 +1,5 @@
 import { Context, Effect, Layer } from "effect"
-import type { ProducerAppendResult } from "effect-durable-streams"
+import type { ProducerAppendResult } from "effect-durable-client"
 import type { SessionHandle, SessionId, StateChangeMessage, TurnId, WaitId } from "./Domain.ts"
 import { FluentSources, type AlreadyMatchedTurnWait, type UnmatchedTurnWait } from "./Sources.ts"
 import { FluentStore, type FluentRuntimeError } from "./Store.ts"

@@ -6,7 +6,7 @@ import {
   type Endpoint,
   type HeadResult,
   type ProducerAppendResult,
-} from "effect-durable-streams"
+} from "effect-durable-client"
 import {
   SessionEventSchema,
   TurnEventSchema,

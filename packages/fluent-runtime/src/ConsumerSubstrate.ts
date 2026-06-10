@@ -5,7 +5,7 @@ import {
 } from "@effect/platform"
 import { FetchHttpClient } from "@effect/platform"
 import { Context, Data, Effect, Layer, Schema } from "effect"
-import { DurableStream, type WriteError } from "effect-durable-streams"
+import { DurableStream, type WriteError } from "effect-durable-client"
 
 const contentTypeJson = "application/json"
 

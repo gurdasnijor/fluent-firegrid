@@ -31,7 +31,7 @@
     "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
     "overview": "effect-language-service overview --project tsconfig.json",
     "build": "tsc",
-    "test": "vitest run",
+    "test": "vitest run --root ../.. --project fluent-runtime",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -39,7 +39,7 @@
     "@effect/platform": "^0.96.1",
     "@marcbachmann/cel-js": "7.6.1",
     "effect": "^3.21.2",
-    "effect-durable-streams": "workspace:*"
+    "effect-durable-client": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
