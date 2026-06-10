@@ -28,6 +28,10 @@ describe("DurableStreamsClient", () => {
           const client = yield* DurableStreamsClient.make(transport)
           yield* client.create("client/orders", "text/plain")
           const append = yield* client.append("client/orders", "text/plain", enc.encode("hello"))
+          yield* Effect.all([
+            client.append("client/orders", "text/plain", enc.encode(" concurrent-a")),
+            client.append("client/orders", "text/plain", enc.encode(" concurrent-b")),
+          ], { concurrency: "unbounded" })
           const records = yield* client.read("client/orders")
           const head = yield* client.head("client/orders")
           const deleted = yield* client.delete("client/orders")
@@ -46,7 +50,9 @@ describe("DurableStreamsClient", () => {
       append: { closed: false },
       head: { contentType: "text/plain" },
       deleted: "Deleted",
-      body: "hello",
     })
+    expect(result?.body.startsWith("hello")).toBe(true)
+    expect(result?.body).toContain("concurrent-a")
+    expect(result?.body).toContain("concurrent-b")
   })
 })

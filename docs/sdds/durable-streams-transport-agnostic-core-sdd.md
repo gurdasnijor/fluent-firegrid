@@ -28,6 +28,8 @@ Reference design inputs:
 - `repos/eventsourcing/packages/eventsourcing-protocol`
 - `repos/eventsourcing/packages/eventsourcing-server`
 - `repos/eventsourcing/packages/eventsourcing-testing-contracts`
+- `repos/effect/packages/experimental/src/EventLogRemote.ts`
+- `repos/effect/packages/experimental/src/EventLogServer.ts`
 
 ## Purpose
 
@@ -105,6 +107,19 @@ interface EventStore<TEvent> {
 
 For Durable Streams, the analogous contract is a byte/log substrate plus a
 protocol service over it. We should clone the approach, not the domain names.
+
+The Effect experimental `EventLogRemote` / `EventLogServer` files are the
+reference shape for the client/server protocol machinery over a transport:
+single inbound pump, request id to `Deferred` correlation, scoped streaming
+subscription resources, terminal mailboxes for long-lived remote changes,
+tagged schema protocol messages, binary framing, chunking, ping/pong liveness,
+and retry around the transport loop.
+
+Do not copy `EventJournal` / `EventLog` as the Durable Streams log model. That
+domain is local-first, multi-writer, encrypted sync with client-minted ids and
+remote sequence cursors. Durable Streams needs an authoritative byte log with
+server-minted opaque offsets, content-type validation, producer fencing,
+closure, forks, subscriptions, leases, and schedules.
 
 The first implementation source should be
 `repos/eventsourcing/packages/eventsourcing-store-inmemory`, specifically:

@@ -1,6 +1,6 @@
-import { Chunk, Duration, Effect, Ref, Stream } from "effect"
+import { Deferred, Duration, Effect, Ref, Stream, type Scope } from "effect"
 import * as Protocol from "@firegrid/fluent-protocol"
-import type { ClientTransport } from "@firegrid/fluent-transport"
+import type { ClientTransport, TransportMessage } from "@firegrid/fluent-transport"
 import { DurableStreamsClientError, DurableStreamsProtocolFailure } from "./Errors.ts"
 import type { StreamHandle } from "./StreamHandle.ts"
 
@@ -101,65 +101,93 @@ const responseValue = <A>(value: A): Effect.Effect<A, DurableStreamsClientError>
 const responseError = (operation: string, tag: string): Effect.Effect<never, DurableStreamsClientError> =>
   Effect.fail(unexpectedResponse(operation, tag))
 
-const responseFor = (
-  operation: string,
-  messages: Stream.Stream<Parameters<ClientTransport["publish"]>[0]>,
-): Effect.Effect<Protocol.DurableStreamsResponse, DurableStreamsClientError> =>
-  messages.pipe(
-    Stream.mapEffect((message) =>
-      Protocol.decodeProtocolEnvelope(message).pipe(Effect.mapError(transportError(operation))),
-    ),
-    Stream.filter((envelope) => envelope.kind === "response"),
-    Stream.take(1),
-    Stream.runCollect,
-    Effect.map((items) => Chunk.toReadonlyArray(items)[0]),
-    Effect.flatMap((envelope) =>
-      envelope?.kind === "response"
-        ? Effect.succeed(envelope.response)
-        : Effect.fail(
-            new DurableStreamsClientError({
-              operation,
-              message: "Protocol response stream ended before a response arrived",
-            }),
-        ),
-    ),
-  )
+interface PendingResponse {
+  readonly operation: string
+  readonly deferred: Deferred.Deferred<Protocol.DurableStreamsResponse, DurableStreamsClientError>
+}
+
+const completePending =
+  (pending: Map<string, PendingResponse>) =>
+  (id: string, complete: (entry: PendingResponse) => Effect.Effect<void>) => {
+    const entry = pending.get(id)
+    if (entry === undefined) {
+      return Effect.void
+    }
+    pending.delete(id)
+    return complete(entry)
+  }
+
+const handleInbound =
+  (pending: Map<string, PendingResponse>) =>
+  (message: TransportMessage): Effect.Effect<void> =>
+    Protocol.decodeProtocolEnvelope(message).pipe(
+      Effect.matchEffect({
+        onFailure: (cause) =>
+          completePending(pending)(message.id, (entry) =>
+            Deferred.fail(entry.deferred, transportError(entry.operation)(cause)),
+          ),
+        onSuccess: (envelope) =>
+          envelope.kind === "response"
+            ? completePending(pending)(envelope.id, (entry) =>
+                Deferred.succeed(entry.deferred, envelope.response),
+              )
+            : Effect.void,
+      }),
+    )
 
 const sendCommand = (
   transport: ClientTransport,
   nextId: Ref.Ref<number>,
+  pending: Map<string, PendingResponse>,
   operation: string,
   command: Protocol.DurableStreamsCommand,
-): Effect.Effect<Protocol.DurableStreamsResponse, DurableStreamsClientError> =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const id = yield* Ref.modify(nextId, (current) => [`client-command-${current}`, current + 1] as const)
-      const responses = yield* transport
-        .subscribe((message) => message.id === id)
-        .pipe(Effect.mapError(transportError(operation)))
-      const message = yield* Protocol.encodeProtocolEnvelope({ kind: "command", id, command }).pipe(
-        Effect.mapError(transportError(operation)),
-      )
-      yield* transport.publish(message).pipe(Effect.mapError(transportError(operation)))
-      return yield* responseFor(operation, responses).pipe(
-        Effect.timeoutFail({
-          duration: Duration.seconds(5),
-          onTimeout: () =>
-            new DurableStreamsClientError({
-              operation,
-              message: "Timed out waiting for protocol response",
-            }),
-        }),
-      )
-    }),
+): Effect.Effect<Protocol.DurableStreamsResponse, DurableStreamsClientError> => {
+  let id: string | undefined
+  return Effect.gen(function* () {
+    id = yield* Ref.modify(nextId, (current) => [`client-command-${current}`, current + 1] as const)
+    const deferred = yield* Deferred.make<Protocol.DurableStreamsResponse, DurableStreamsClientError>()
+    pending.set(id, { operation, deferred })
+    const message = yield* Protocol.encodeProtocolEnvelope({ kind: "command", id, command }).pipe(
+      Effect.mapError(transportError(operation)),
+    )
+    yield* transport.publish(message).pipe(Effect.mapError(transportError(operation)))
+    return yield* Deferred.await(deferred).pipe(
+      Effect.timeoutFail({
+        duration: Duration.seconds(5),
+        onTimeout: () =>
+          new DurableStreamsClientError({
+            operation,
+            message: "Timed out waiting for protocol response",
+          }),
+      }),
+    )
+  }).pipe(
+    Effect.ensuring(
+      Effect.sync(() => {
+        if (id !== undefined) {
+          pending.delete(id)
+        }
+      }),
+    ),
   )
+}
 
-export const make = (transport: ClientTransport): Effect.Effect<DurableStreamsClient> =>
-  Ref.make(0).pipe(
-    Effect.map((nextId): DurableStreamsClient => {
+export const make = (
+  transport: ClientTransport,
+): Effect.Effect<DurableStreamsClient, DurableStreamsClientError, Scope.Scope> =>
+  Effect.gen(function* () {
+    const nextId = yield* Ref.make(0)
+    const pending = new Map<string, PendingResponse>()
+    const inbound = yield* transport.subscribe().pipe(Effect.mapError(transportError("subscribe")))
+    yield* inbound.pipe(
+      Stream.runForEach(handleInbound(pending)),
+      Effect.forkScoped,
+    )
+
+    return yield* Effect.sync((): DurableStreamsClient => {
       const client: DurableStreamsClient = {
         create: (path, contentType, options) =>
-          sendCommand(transport, nextId, "create", {
+          sendCommand(transport, nextId, pending, "create", {
             _tag: "CreateStream",
             path,
             contentType,
@@ -185,7 +213,7 @@ export const make = (transport: ClientTransport): Effect.Effect<DurableStreamsCl
           read: (offset) => client.read(path, offset),
         }),
         append: (path, contentType, bytes, options) =>
-          sendCommand(transport, nextId, "append", {
+          sendCommand(transport, nextId, pending, "append", {
             _tag: "AppendToStream",
             path,
             contentType,
@@ -205,7 +233,7 @@ export const make = (transport: ClientTransport): Effect.Effect<DurableStreamsCl
             ),
           ),
         read: (path, offset = "-1") =>
-          sendCommand(transport, nextId, "read", {
+          sendCommand(transport, nextId, pending, "read", {
             _tag: "ReadStream",
             path,
             offset,
@@ -228,7 +256,7 @@ export const make = (transport: ClientTransport): Effect.Effect<DurableStreamsCl
             ),
           ),
         head: (path) =>
-          sendCommand(transport, nextId, "head", {
+          sendCommand(transport, nextId, pending, "head", {
             _tag: "HeadStream",
             path,
           }).pipe(
@@ -246,7 +274,7 @@ export const make = (transport: ClientTransport): Effect.Effect<DurableStreamsCl
             ),
           ),
         delete: (path) =>
-          sendCommand(transport, nextId, "delete", {
+          sendCommand(transport, nextId, pending, "delete", {
             _tag: "DeleteStream",
             path,
           }).pipe(
@@ -261,5 +289,5 @@ export const make = (transport: ClientTransport): Effect.Effect<DurableStreamsCl
           ),
       }
       return client
-    }),
-  )
+    })
+  })
