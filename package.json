@@ -15,6 +15,7 @@
     "build": "turbo run build --filter='@firegrid/fluent-*' --filter=firelab",
     "diagnostics": "turbo run diagnostics --filter='@firegrid/fluent-*'",
     "typespec:compile": "tsp compile .",
+    "typespec:import:electric": "tsp-openapi3 openapi/electric-api.yaml --output-dir tsp-output/electric-api --namespace ElectricAPI",
     "preflight": "turbo run lint lint:dead lint:dup lint:deps --continue --output-logs=errors-only; L=$?; pnpm run typecheck; T=$?; pnpm run test; E=$?; pnpm run diagnostics; D=$?; pnpm run typespec:compile; P=$?; exit $((L|T|E|D|P))",
     "verify": "pnpm run preflight"
   },

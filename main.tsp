@@ -7,6 +7,7 @@ import "@typespec/rest";
 using Http;
 
 @service(#{ title: "Durable Streams Protocol" })
+@summary("Path-addressed durable byte streams with long-polling, SSE, subscriptions, and scheduled appends.")
 @server(
   "{endpoint}",
   "Durable Streams server root",
@@ -16,35 +17,90 @@ using Http;
 )
 namespace DurableStreams;
 
-alias Offset = string;
-alias StreamPath = string;
-alias Rfc3339DateTime = utcDateTime;
+@doc("Opaque stream offset emitted by the server.")
+@minLength(1)
+scalar Offset extends string;
+
+@doc("Stream-root-relative path. The protocol treats this as an application path, not an absolute URL.")
+@minLength(1)
+scalar StreamRootRelativePath extends string;
+
+@doc("RFC 3339 date-time string.")
+@format("date-time")
+scalar Rfc3339DateTime extends string;
+
+@doc("Absolute HTTP or HTTPS URL.")
+@format("uri")
+scalar AbsoluteUrl extends string;
+
+@doc("HTTP media type, such as application/json or application/octet-stream.")
+@minLength(1)
+scalar MediaType extends string;
+
+@doc("Base64-encoded bytes.")
+@format("byte")
+scalar Base64Bytes extends string;
+
+@doc("Subscription identifier.")
+@minLength(1)
+scalar SubscriptionId extends string;
+
+@doc("Schedule identifier.")
+@minLength(1)
+scalar ScheduleId extends string;
+
+@doc("Durable wake identifier.")
+@minLength(1)
+scalar WakeId extends string;
+
+@doc("Pull-wake worker identifier.")
+@minLength(1)
+scalar WorkerId extends string;
+
+@doc("Common Expression Language expression.")
+@minLength(1)
+scalar CelExpression extends string;
+
+@doc("Non-empty producer identifier used for idempotent appends.")
+@minLength(1)
+scalar ProducerId extends string;
+
+@doc("Monotonic producer epoch.")
+@minValue(0)
+scalar ProducerEpoch extends safeint;
+
+@doc("Zero-based producer sequence number.")
+@minValue(0)
+scalar ProducerSeq extends safeint;
+
+@doc("Pull-wake lease generation.")
+@minValue(0)
+scalar LeaseGeneration extends safeint;
+
+@doc("Lease duration in milliseconds.")
+@minValue(1)
+scalar LeaseTtlMs extends int32;
+
 alias JsonValue = unknown;
 
-@TypeSpec.Rest.resource("streams")
-model DurableStreamResource {
-  @key
-  streamPath: StreamPath;
-}
-
-model StreamPathParam {
+model StreamUrlPathParam {
   @doc("Stream-root-relative path. This value may contain slash-separated path segments.")
   @path
-  streamPath: StreamPath;
+  path: StreamRootRelativePath;
 }
 
 model ControlPathParam {
   @doc("URL-encoded stream-root-relative path used inside reserved control APIs.")
   @path
-  path: StreamPath;
+  path: StreamRootRelativePath;
 }
 
 model SubscriptionIdParam {
-  @path id: string;
+  @path id: SubscriptionId;
 }
 
 model ScheduleIdParam {
-  @path id: string;
+  @path id: ScheduleId;
 }
 
 model ContentTypeHeader {
@@ -74,7 +130,7 @@ model StreamCreateHeaders {
   ...StreamClosedRequestHeader;
 
   @header("Stream-Forked-From")
-  streamForkedFrom?: StreamPath;
+  streamForkedFrom?: StreamRootRelativePath;
 
   @header("Stream-Fork-Offset")
   streamForkOffset?: Offset;
@@ -92,18 +148,16 @@ model StreamAppendHeaders {
   ...StreamClosedRequestHeader;
 
   @header("Producer-Id")
-  producerId?: string;
+  producerId?: ProducerId;
 
   @header("Producer-Epoch")
-  producerEpoch?: safeint;
+  producerEpoch?: ProducerEpoch;
 
   @header("Producer-Seq")
-  producerSeq?: safeint;
+  producerSeq?: ProducerSeq;
 }
 
 model TailHeaders {
-  ...ContentTypeHeader;
-
   @header("Stream-Next-Offset")
   streamNextOffset: Offset;
 
@@ -158,23 +212,23 @@ model ProducerSuccessHeaders {
   streamClosed?: "true";
 
   @header("Producer-Epoch")
-  producerEpoch?: safeint;
+  producerEpoch?: ProducerEpoch;
 
   @header("Producer-Seq")
-  producerSeq?: safeint;
+  producerSeq?: ProducerSeq;
 }
 
 model ProducerFencedHeaders {
   @header("Producer-Epoch")
-  producerEpoch: safeint;
+  producerEpoch: ProducerEpoch;
 }
 
 model ProducerGapHeaders {
   @header("Producer-Expected-Seq")
-  producerExpectedSeq?: safeint;
+  producerExpectedSeq?: ProducerSeq;
 
   @header("Producer-Received-Seq")
-  producerReceivedSeq?: safeint;
+  producerReceivedSeq?: ProducerSeq;
 }
 
 model ClosedConflictHeaders {
@@ -191,48 +245,68 @@ model EmptyError {
 }
 
 @error
-model BadRequestError {
+@discriminator("code")
+model ProtocolError {
+  code: string;
+  message?: string;
+}
+
+@error
+@example(
+  #{ code: "BAD_REQUEST", message: "offset must be -1, now, or a stream offset" },
+  #{ title: "Invalid offset" }
+)
+model BadRequestError extends ProtocolError {
   code: "BAD_REQUEST";
   message: string;
 }
 
 @error
-model ConflictError {
+@example(#{ code: "CONFLICT", message: "stream is closed" }, #{ title: "Conflict" })
+model ConflictError extends ProtocolError {
   code: "CONFLICT";
   message?: string;
 }
 
 @error
-model NotFoundError {
+@example(#{ code: "NOT_FOUND", message: "stream not found" }, #{ title: "Missing stream" })
+model NotFoundError extends ProtocolError {
   code: "NOT_FOUND";
   message?: string;
 }
 
 @error
-model GoneError {
+@example(#{ code: "GONE", message: "stream was deleted" }, #{ title: "Deleted stream" })
+model GoneError extends ProtocolError {
   code: "GONE";
   message?: string;
 }
 
 @error
-model TooManyRequestsError {
+@example(#{ code: "TOO_MANY_REQUESTS", message: "retry later" }, #{ title: "Rate limited" })
+model TooManyRequestsError extends ProtocolError {
   code: "TOO_MANY_REQUESTS";
   message?: string;
 }
 
 @error
-model FencedError {
+@example(#{ code: "FENCED" }, #{ title: "Stale generation" })
+model FencedError extends ProtocolError {
   code: "FENCED";
 }
 
 @error
-model AlreadyClaimedError {
+@example(
+  #{ code: "ALREADY_CLAIMED", currentHolder: "worker-a", generation: 4 },
+  #{ title: "Claim held by another worker" }
+)
+model AlreadyClaimedError extends ProtocolError {
   code: "ALREADY_CLAIMED";
 
   @encodedName("application/json", "current_holder")
   currentHolder: string;
 
-  generation: safeint;
+  generation: LeaseGeneration;
 }
 
 model BadRequest {
@@ -292,7 +366,7 @@ model ErrorEnvelope<TError> {
 }
 
 model CreateStreamRequest {
-  ...StreamPathParam;
+  ...StreamUrlPathParam;
   ...StreamCreateHeaders;
   @body body?: bytes;
 }
@@ -312,7 +386,7 @@ model CreateStreamAlreadyExists {
 }
 
 model AppendStreamRequest {
-  ...StreamPathParam;
+  ...StreamUrlPathParam;
   ...StreamAppendHeaders;
   @body body?: bytes;
 }
@@ -390,6 +464,7 @@ model StreamSseControl {
 }
 
 @TypeSpec.Events.events
+@summary("SSE event variants emitted while following a stream.")
 union StreamSseEvents {
   data: string,
   control: StreamSseControl,
@@ -404,11 +479,17 @@ model SseStreamOk {
   ...TypeSpec.SSE.SSEStream<StreamSseEvents>;
 }
 
-@route("/v1/stream/{+streamPath}")
+@route("/v1/stream/{+path}")
 @tag("Streams")
 interface Streams {
   @doc("Create a stream, create a fork, or idempotently confirm an existing stream.")
-  @TypeSpec.Rest.createsOrReplacesResource(DurableStreamResource)
+  @summary("Create or confirm a stream")
+  @returnsDoc("Create or confirm result, or a documented protocol error.")
+  @errorsDoc("The request is invalid, conflicts with an existing stream, references a missing fork source, or is rate limited.")
+  @opExample(
+    #{ parameters: #{ path: "events/orders", contentType: "application/json" } },
+    #{ title: "Create an appendable JSON stream" }
+  )
   @put
   createStream(...CreateStreamRequest):
     | CreateStreamCreated
@@ -419,7 +500,21 @@ interface Streams {
     | TooManyRequests;
 
   @doc("Append bytes to a stream and optionally close it atomically.")
-  @TypeSpec.Rest.updatesResource(DurableStreamResource)
+  @summary("Append bytes to a stream")
+  @returnsDoc("Append result, including idempotent producer metadata when supplied, or a documented protocol error.")
+  @errorsDoc("The append is invalid, references a missing or closed stream, violates producer sequencing, or is unsupported.")
+  @opExample(
+    #{
+      parameters: #{
+        path: "events/orders",
+        contentType: "application/json",
+        producerId: "orders-writer",
+        producerEpoch: 1,
+        producerSeq: 0,
+      },
+    },
+    #{ title: "Append with producer fencing" }
+  )
   @post
   appendToStream(...AppendStreamRequest):
     | PlainAppendAccepted
@@ -437,19 +532,31 @@ interface Streams {
     | TooManyRequests;
 
   @doc("Read stream metadata without transferring body bytes.")
-  @TypeSpec.Rest.readsResource(DurableStreamResource)
+  @summary("Read stream metadata")
+  @returnsDoc("Stream metadata result or a documented protocol error.")
+  @errorsDoc("The stream is missing, deleted, or currently rate limited.")
   @head
-  headStream(...StreamPathParam):
+  headStream(...StreamUrlPathParam):
     | HeadStreamOk
     | NotFound
     | Gone
     | TooManyRequests;
 
   @doc("Read catch-up bytes, long-poll for new bytes, or stream SSE events.")
-  @TypeSpec.Rest.readsResource(DurableStreamResource)
+  @summary("Read or follow a stream")
+  @returnsDoc("Read, long-poll, SSE, cache validation, or documented protocol error result.")
+  @errorsDoc("The request is invalid, the stream is missing or deleted, or the server is rate limiting.")
+  @opExample(
+    #{ parameters: #{ path: "events/orders", offset: "-1" } },
+    #{ title: "Initial catch-up read" }
+  )
+  @opExample(
+    #{ parameters: #{ path: "events/orders", offset: "128", live: "sse" } },
+    #{ title: "Follow using SSE" }
+  )
   @get
   readStream(
-    ...StreamPathParam,
+    ...StreamUrlPathParam,
     @query offset?: Offset | "-1" | "now",
     @query live?: "long-poll" | "sse",
     @query cursor?: string,
@@ -463,9 +570,11 @@ interface Streams {
     | CommonStreamErrors;
 
   @doc("Delete a stream. Streams with active forks become soft-deleted.")
-  @TypeSpec.Rest.deletesResource(DurableStreamResource)
+  @summary("Delete a stream")
+  @returnsDoc("Delete result or a documented protocol error.")
+  @errorsDoc("The stream is missing, already deleted, or deletion is unsupported.")
   @delete
-  deleteStream(...StreamPathParam):
+  deleteStream(...StreamUrlPathParam):
     | NoContentResponse
     | NotFound
     | Gone
@@ -490,12 +599,13 @@ enum LinkType {
 
 model WakeFilter {
   language: "cel";
-  expression: string;
+  expression: CelExpression;
   self?: JsonValue;
 }
 
+@example(#{ url: "https://example.com/durable-streams/webhook" }, #{ title: "Webhook endpoint" })
 model WebhookConfig {
-  url: string;
+  url: AbsoluteUrl;
 }
 
 model WebhookSigningMetadata {
@@ -503,32 +613,58 @@ model WebhookSigningMetadata {
   kid: string;
 
   @encodedName("application/json", "jwks_url")
-  jwksUrl: string;
+  jwksUrl: AbsoluteUrl;
 }
 
 model WebhookMetadata extends WebhookConfig {
   signing?: WebhookSigningMetadata;
 }
 
-model SubscriptionConfig {
+@discriminator("type")
+model SubscriptionConfigBase {
   type: SubscriptionType;
   pattern?: string;
-  streams?: StreamPath[];
-  webhook?: WebhookConfig;
-
-  @encodedName("application/json", "wake_stream")
-  wakeStream?: StreamPath;
+  streams?: StreamRootRelativePath[];
 
   filter?: WakeFilter;
 
   @encodedName("application/json", "lease_ttl_ms")
-  leaseTtlMs?: int32;
+  leaseTtlMs?: LeaseTtlMs;
 
   description?: string;
 }
 
+model WebhookSubscriptionConfig extends SubscriptionConfigBase {
+  type: SubscriptionType.webhook;
+  webhook: WebhookConfig;
+}
+
+model PullWakeSubscriptionConfig extends SubscriptionConfigBase {
+  type: SubscriptionType.pullWake;
+
+  @encodedName("application/json", "wake_stream")
+  wakeStream?: StreamRootRelativePath;
+}
+
+@summary("Subscription creation request keyed by subscription type.")
+@example(
+  #{
+    type: SubscriptionType.webhook,
+    pattern: "events/*",
+    webhook: #{ url: "https://example.com/durable-streams/webhook" },
+    filter: #{ language: "cel", expression: "message.type == 'order.created'" },
+    leaseTtlMs: 30000,
+    description: "Order events webhook",
+  },
+  #{ title: "Webhook subscription" }
+)
+union SubscriptionConfig {
+  webhook: WebhookSubscriptionConfig,
+  pullWake: PullWakeSubscriptionConfig,
+}
+
 model SubscriptionStreamLink {
-  path: StreamPath;
+  path: StreamRootRelativePath;
 
   @encodedName("application/json", "link_type")
   linkType: LinkType;
@@ -540,10 +676,12 @@ model SubscriptionStreamLink {
 @TypeSpec.Rest.resource("subscriptions")
 model Subscription {
   @key
-  id: string;
+  @visibility(Lifecycle.Read)
+  id: SubscriptionId;
 
+  @visibility(Lifecycle.Read)
   @encodedName("application/json", "subscription_id")
-  subscriptionId: string;
+  subscriptionId: SubscriptionId;
 
   type: SubscriptionType;
   pattern?: string;
@@ -551,16 +689,18 @@ model Subscription {
   webhook?: WebhookMetadata;
 
   @encodedName("application/json", "wake_stream")
-  wakeStream?: StreamPath | null;
+  wakeStream?: StreamRootRelativePath | null;
 
   filter?: WakeFilter;
 
   @encodedName("application/json", "lease_ttl_ms")
-  leaseTtlMs: int32;
+  leaseTtlMs: LeaseTtlMs;
 
+  @visibility(Lifecycle.Read)
   @encodedName("application/json", "created_at")
   createdAt: Rfc3339DateTime;
 
+  @visibility(Lifecycle.Read)
   status: SubscriptionStatus;
   description?: string;
 }
@@ -581,16 +721,16 @@ model SubscriptionResponse {
 }
 
 model StreamMembershipRequest {
-  streams: StreamPath[];
+  streams: StreamRootRelativePath[];
 }
 
 model Ack {
-  stream: StreamPath;
+  stream: StreamRootRelativePath;
   offset: Offset;
 }
 
 model PendingStream {
-  path: StreamPath;
+  path: StreamRootRelativePath;
 
   @encodedName("application/json", "link_type")
   linkType: LinkType;
@@ -607,9 +747,9 @@ model PendingStream {
 
 model CallbackRequest {
   @encodedName("application/json", "wake_id")
-  wakeId: string;
+  wakeId: WakeId;
 
-  generation: safeint;
+  generation: LeaseGeneration;
   acks?: Ack[];
   done?: boolean;
 }
@@ -632,19 +772,21 @@ model FencedConflict {
 }
 
 model ClaimRequest {
-  worker: string;
+  worker: WorkerId;
 }
 
 model ClaimSuccess {
   @encodedName("application/json", "wake_id")
-  wakeId: string;
+  wakeId: WakeId;
 
-  generation: safeint;
+  generation: LeaseGeneration;
+
+  @secret
   token: string;
   streams: PendingStream[];
 
   @encodedName("application/json", "lease_ttl_ms")
-  leaseTtlMs: int32;
+  leaseTtlMs: LeaseTtlMs;
 }
 
 model ClaimSuccessResponse {
@@ -659,9 +801,9 @@ model AlreadyClaimedConflict {
 
 model ReleaseRequest {
   @encodedName("application/json", "wake_id")
-  wakeId: string;
+  wakeId: WakeId;
 
-  generation: safeint;
+  generation: LeaseGeneration;
 }
 
 model JsonWebKey extends Record<JsonValue> {
@@ -693,6 +835,24 @@ model JwksResponse {
 @tag("Subscriptions")
 interface Subscriptions {
   @doc("Create or idempotently re-confirm a subscription.")
+  @summary("Create or confirm a subscription")
+  @returnsDoc("Create or confirm result, or a documented protocol error.")
+  @errorsDoc("The subscription request is invalid, conflicts with an existing subscription, or is rate limited.")
+  @opExample(
+    #{
+      parameters: #{
+        id: "sub-orders",
+        contentType: "application/json",
+        body: #{
+          type: SubscriptionType.webhook,
+          pattern: "events/*",
+          webhook: #{ url: "https://example.com/durable-streams/webhook" },
+          leaseTtlMs: 30000,
+        },
+      },
+    },
+    #{ title: "Create a webhook subscription" }
+  )
   @TypeSpec.Rest.createsOrReplacesResource(Subscription)
   @put
   @route("/subscriptions/{id}")
@@ -708,6 +868,9 @@ interface Subscriptions {
     | TooManyRequests;
 
   @doc("Read subscription configuration, membership, cursor, and delivery status.")
+  @summary("Get a subscription")
+  @returnsDoc("Subscription state result or a documented protocol error.")
+  @errorsDoc("The subscription is missing, tombstoned, or currently rate limited.")
   @TypeSpec.Rest.readsResource(Subscription)
   @get
   @route("/subscriptions/{id}")
@@ -718,6 +881,9 @@ interface Subscriptions {
     | TooManyRequests;
 
   @doc("Tombstone a subscription.")
+  @summary("Delete a subscription")
+  @returnsDoc("Delete result or a documented protocol error.")
+  @errorsDoc("The subscription is missing, tombstoned, or currently rate limited.")
   @TypeSpec.Rest.deletesResource(Subscription)
   @delete
   @route("/subscriptions/{id}")
@@ -728,6 +894,9 @@ interface Subscriptions {
     | TooManyRequests;
 
   @doc("Add explicit stream links to a subscription.")
+  @summary("Add subscription stream links")
+  @returnsDoc("Stream membership update result or a documented protocol error.")
+  @errorsDoc("The request is invalid, the subscription is missing or tombstoned, or the server is rate limiting.")
   @TypeSpec.Rest.collectionAction(Subscription, "streams")
   @post
   @route("/subscriptions/{id}/streams")
@@ -738,6 +907,9 @@ interface Subscriptions {
   ): NoContentResponse | NotFound | Gone | BadRequest | TooManyRequests;
 
   @doc("Remove one explicit stream link from a subscription.")
+  @summary("Remove a subscription stream link")
+  @returnsDoc("Stream membership update result or a documented protocol error.")
+  @errorsDoc("The subscription is missing, tombstoned, or currently rate limited.")
   @TypeSpec.Rest.collectionAction(Subscription, "streams")
   @delete
   @route("/subscriptions/{id}/streams/{+path}")
@@ -748,22 +920,30 @@ interface Subscriptions {
     | TooManyRequests;
 
   @doc("Webhook asynchronous completion callback.")
+  @summary("Complete webhook delivery")
+  @returnsDoc("Webhook callback result or a documented protocol error.")
+  @errorsDoc("The callback token is invalid, stale, references missing state, or uses a stale generation.")
   @TypeSpec.Rest.action("callback")
   @post
   @route("/subscriptions/{id}/callback")
   callback(
     ...SubscriptionIdParam,
+    @secret
     @header("Authorization") authorization: string,
     @header("Content-Type") contentType: "application/json",
     @body body: CallbackRequest,
   ): CallbackOkResponse | FencedConflict | Unauthorized | NotFound | Gone;
 
   @doc("Claim pending work for a pull-wake subscription.")
+  @summary("Claim pull-wake work")
+  @returnsDoc("Claim result or a documented protocol error.")
+  @errorsDoc("The claim is unauthorized, already held, or references missing subscription state.")
   @TypeSpec.Rest.action("claim")
   @post
   @route("/subscriptions/{id}/claim")
   claim(
     ...SubscriptionIdParam,
+    @secret
     @header("Authorization") authorization: string,
     @header("Content-Type") contentType: "application/json",
     @body body: ClaimRequest,
@@ -775,50 +955,70 @@ interface Subscriptions {
     | Gone;
 
   @doc("Ack processed offsets and optionally release the current claim.")
+  @summary("Acknowledge pull-wake progress")
+  @returnsDoc("Acknowledgement result or a documented protocol error.")
+  @errorsDoc("The token is unauthorized, stale, or references missing subscription state.")
   @TypeSpec.Rest.action("ack")
   @post
   @route("/subscriptions/{id}/ack")
   ack(
     ...SubscriptionIdParam,
+    @secret
     @header("Authorization") authorization: string,
     @header("Content-Type") contentType: "application/json",
     @body body: CallbackRequest,
   ): CallbackOkResponse | FencedConflict | Unauthorized | NotFound | Gone;
 
   @doc("Release the current pull-wake claim without acking offsets.")
+  @summary("Release pull-wake claim")
+  @returnsDoc("Release result or a documented protocol error.")
+  @errorsDoc("The token is unauthorized, stale, or references missing subscription state.")
   @TypeSpec.Rest.action("release")
   @post
   @route("/subscriptions/{id}/release")
   release(
     ...SubscriptionIdParam,
+    @secret
     @header("Authorization") authorization: string,
     @header("Content-Type") contentType: "application/json",
     @body body: ReleaseRequest,
   ): NoContentResponse | FencedConflict | Unauthorized | NotFound | Gone;
 
   @doc("Discover public webhook signing keys.")
+  @summary("Get webhook signing keys")
+  @returnsDoc("Public JSON Web Key Set used to verify Durable Streams webhook signatures.")
   @get
   @route("/jwks.json")
   getWebhookSigningKeys(): JwksResponse;
 }
 
 model IdempotentProducer {
-  id: string;
-  epoch: safeint;
-  seq: safeint;
+  id: ProducerId;
+  epoch: ProducerEpoch;
+  seq: ProducerSeq;
 }
 
+@example(
+  #{
+    at: "2026-01-01T00:00:00Z",
+    stream: "events/orders",
+    contentType: "application/json",
+    body: #{ type: "order.timeout", orderId: "ord_123" },
+    producer: #{ id: "scheduler", epoch: 1, seq: 42 },
+  },
+  #{ title: "Scheduled JSON append" }
+)
 model ScheduleRequest {
   at: Rfc3339DateTime;
-  stream: StreamPath;
+  stream: StreamRootRelativePath;
 
   @encodedName("application/json", "content_type")
-  contentType: string;
+  contentType: MediaType;
 
   body?: JsonValue;
 
   @encodedName("application/json", "body_base64")
-  bodyBase64?: string;
+  bodyBase64?: Base64Bytes;
 
   producer?: IdempotentProducer;
   close?: boolean;
@@ -834,11 +1034,13 @@ enum ScheduleStatus {
 @TypeSpec.Rest.resource("schedules")
 model Schedule {
   @key
-  id: string;
+  @visibility(Lifecycle.Read)
+  id: ScheduleId;
 
+  @visibility(Lifecycle.Read)
   status: ScheduleStatus;
   at: Rfc3339DateTime;
-  stream: StreamPath;
+  stream: StreamRootRelativePath;
 }
 
 model ScheduleCreated {
@@ -860,6 +1062,24 @@ model ScheduleResponse {
 @tag("Schedules")
 interface Schedules {
   @doc("Create or idempotently confirm a scheduled append.")
+  @summary("Create or confirm a scheduled append")
+  @returnsDoc("Create or confirm result, or a documented protocol error.")
+  @errorsDoc("The schedule request is invalid, conflicts with an existing schedule, or is rate limited.")
+  @opExample(
+    #{
+      parameters: #{
+        id: "sched-order-timeout",
+        contentType: "application/json",
+        body: #{
+          at: "2026-01-01T00:00:00Z",
+          stream: "events/orders",
+          contentType: "application/json",
+          body: #{ type: "order.timeout", orderId: "ord_123" },
+        },
+      },
+    },
+    #{ title: "Schedule a JSON append" }
+  )
   @TypeSpec.Rest.createsOrReplacesResource(Schedule)
   @put
   putSchedule(
@@ -874,6 +1094,9 @@ interface Schedules {
     | TooManyRequests;
 
   @doc("Read a scheduled append.")
+  @summary("Get a schedule")
+  @returnsDoc("Schedule state result or a documented protocol error.")
+  @errorsDoc("The schedule is missing, tombstoned, or currently rate limited.")
   @TypeSpec.Rest.readsResource(Schedule)
   @get
   getSchedule(...ScheduleIdParam):
@@ -883,6 +1106,9 @@ interface Schedules {
     | TooManyRequests;
 
   @doc("Cancel a pending scheduled append.")
+  @summary("Cancel a schedule")
+  @returnsDoc("Cancel result or a documented protocol error.")
+  @errorsDoc("The schedule is missing, tombstoned, or currently rate limited.")
   @TypeSpec.Rest.deletesResource(Schedule)
   @delete
   deleteSchedule(...ScheduleIdParam):
