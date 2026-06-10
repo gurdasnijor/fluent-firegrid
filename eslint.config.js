@@ -1238,6 +1238,12 @@ export default tseslint.config(
       // repos/** contains pinned git submodules used as read-only design references.
       // They are not part of this repo's build graph.
       "repos/**",
+      // Legacy lanes are intentionally outside the Effect v4 fluent cutover.
+      // They will be rebuilt on top of the fluent modules instead of migrated in-place.
+      "packages/effect-durable-client/**",
+      "packages/effect-durable-execution/**",
+      "packages/effect-durable-streams/**",
+      "packages/firelab/**",
     ],
   },
   js.configs.recommended,
