@@ -3,6 +3,45 @@ import js from "@eslint/js"
 import stylistic from "@stylistic/eslint-plugin"
 import globals from "globals"
 import tseslint from "typescript-eslint"
+import effectEslint from "@codeforbreakfast/eslint-effect"
+
+// @codeforbreakfast/eslint-effect rules that are clean (or auto-fixable to
+// clean) across packages/*/src today — enforced as errors. The opinionated /
+// high-blast-radius rules the team has agreed to adopt (functional immutability
+// suite + effect/prefer-effect-platform + moderate tier) run in the non-blocking
+// `lint:effect` burn-down lane (eslint.config.effect-advisory.mjs) until their
+// counts reach zero, then graduate here. no-gen / no-if-statement /
+// no-method-pipe are intentionally NOT adopted (they fight this repo's
+// Effect.gen-first / imperative-control-flow idioms).
+// NOTE: this plugin's autofixers are NOT reliable — `prefer-andThen` rewrites a
+// multi-statement `flatMap(() => { … })` block into an invalid object literal,
+// and `prefer-as-some` emits `Effect.asSome()` (called with no self). Do not run
+// `eslint --fix` for effect/* rules. Rules that currently report findings
+// (prefer-andThen, prefer-as-some) live in the advisory lane for MANUAL fixing,
+// not here — the blocking set is rules that are already clean at zero.
+const effectBlockingRules = {
+  "effect/no-runSync": "error",
+  "effect/no-runPromise": "error",
+  "effect/prefer-as": "error",
+  "effect/no-pipe-first-arg-call": "error",
+  "effect/no-unnecessary-pipe-wrapper": "error",
+  "effect/no-effect-if-option-check": "error",
+  "effect/prefer-match-tag": "error",
+  "effect/prefer-match-over-conditionals": "error",
+  "effect/prefer-effect-if-over-match-boolean": "error",
+  "effect/prefer-as-void": "error",
+  "effect/prefer-as-some-error": "error",
+  "effect/prefer-flatten": "error",
+  "effect/prefer-zip-left": "error",
+  "effect/prefer-zip-right": "error",
+  "effect/prefer-ignore": "error",
+  "effect/prefer-ignore-logged": "error",
+  "effect/prefer-from-nullable": "error",
+  "effect/prefer-get-or-else": "error",
+  "effect/prefer-get-or-null": "error",
+  "effect/prefer-get-or-undefined": "error",
+  "effect/prefer-succeed-none": "error",
+}
 
 const riskyEffectRuntimeCalls = [
   {
@@ -1466,5 +1505,17 @@ export default tseslint.config(
       "no-undef": "off",
       "stylistic/quotes": "off",
     },
+  },
+  {
+    // @codeforbreakfast/eslint-effect — blocking subset (clean today). The
+    // burn-down lane for the agreed opinionated rules lives in
+    // eslint.config.effect-advisory.mjs (`pnpm run lint:effect`).
+    files: ["packages/**/src/**/*.ts"],
+    ignores: [
+      "packages/**/src/__tests__/**/*.ts",
+      "packages/**/*.test.ts",
+    ],
+    plugins: { effect: { rules: effectEslint.rules } },
+    rules: effectBlockingRules,
   },
 )
