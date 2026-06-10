@@ -71,9 +71,18 @@ scalar ProducerSeq extends safeint;
 @minValue(0)
 scalar LeaseGeneration extends safeint;
 
-@doc("Lease duration in milliseconds.")
-@minValue(1)
+@doc("Lease duration in milliseconds. Protocol-valid values are from 1 second to 10 minutes.")
+@minValue(1000)
+@maxValue(600000)
 scalar LeaseTtlMs extends int32;
+
+@doc("Stream TTL in seconds. Decimal notation only: no leading zeroes except zero itself, no sign, decimals, or scientific notation.")
+@pattern("^(0|[1-9][0-9]*)$")
+scalar StreamTtlSeconds extends string;
+
+@doc("Non-negative fork sub-offset refining Stream-Fork-Offset.")
+@minValue(0)
+scalar StreamForkSubOffset extends safeint;
 
 alias JsonValue = unknown;
 
@@ -117,7 +126,7 @@ model StreamCreateHeaders {
   ...OptionalContentTypeHeader;
 
   @header("Stream-TTL")
-  streamTtl?: string;
+  streamTtl?: StreamTtlSeconds;
 
   @header("Stream-Expires-At")
   streamExpiresAt?: Rfc3339DateTime;
@@ -131,7 +140,7 @@ model StreamCreateHeaders {
   streamForkOffset?: Offset;
 
   @header("Stream-Fork-Sub-Offset")
-  streamForkSubOffset?: int64;
+  streamForkSubOffset?: StreamForkSubOffset;
 }
 
 model StreamAppendHeaders {

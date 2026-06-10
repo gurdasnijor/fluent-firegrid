@@ -74,10 +74,11 @@ model ClosedStreamConflict {
 
 model HeadStreamOk {
   ...OkResponse;
+  ...ContentTypeHeader;
   ...TailHeaders;
 
   @header("Stream-TTL")
-  streamTtl?: string;
+  streamTtl?: StreamTtlSeconds;
 
   @header("Stream-Expires-At")
   streamExpiresAt?: Rfc3339DateTime;
@@ -185,6 +186,7 @@ interface Streams {
     | ProducerGap
     | ClosedStreamConflict
     | BadRequest
+    | Conflict
     | NotFound
     | Gone
     | MethodNotAllowed

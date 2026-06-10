@@ -742,6 +742,10 @@ paths:
               required: true
               schema:
                 $ref: '#/components/schemas/Offset'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConflictError'
         '410':
           description: Append result, including idempotent producer metadata when supplied, or a documented protocol error.
           content:
@@ -785,6 +789,10 @@ paths:
         '200':
           description: Stream metadata result or a documented protocol error.
           headers:
+            Content-Type:
+              required: true
+              schema:
+                type: string
             Stream-Next-Offset:
               required: true
               schema:
@@ -798,7 +806,7 @@ paths:
             Stream-TTL:
               required: false
               schema:
-                type: string
+                $ref: '#/components/schemas/StreamTtlSeconds'
             Stream-Expires-At:
               required: false
               schema:
@@ -1075,8 +1083,7 @@ components:
       in: header
       required: false
       schema:
-        type: integer
-        format: int64
+        $ref: '#/components/schemas/StreamForkSubOffset'
     StreamCreateHeaders.streamForkedFrom:
       name: Stream-Forked-From
       in: header
@@ -1088,7 +1095,7 @@ components:
       in: header
       required: false
       schema:
-        type: string
+        $ref: '#/components/schemas/StreamTtlSeconds'
     StreamUrlPathParam:
       name: path
       in: path
@@ -1406,8 +1413,9 @@ components:
     LeaseTtlMs:
       type: integer
       format: int32
-      minimum: 1
-      description: Lease duration in milliseconds.
+      minimum: 1000
+      maximum: 600000
+      description: Lease duration in milliseconds. Protocol-valid values are from 1 second to 10 minutes.
     LinkType:
       type: string
       enum:
@@ -1580,6 +1588,11 @@ components:
         - fired
         - cancelled
         - failed
+    StreamForkSubOffset:
+      type: integer
+      format: int64
+      minimum: 0
+      description: Non-negative fork sub-offset refining Stream-Fork-Offset.
     StreamMembershipRequest:
       type: object
       required:
@@ -1619,6 +1632,10 @@ components:
         - type: string
         - $ref: '#/components/schemas/StreamSseControl'
       title: SSE event variants emitted while following a stream.
+    StreamTtlSeconds:
+      type: string
+      pattern: ^(0|[1-9][0-9]*)$
+      description: 'Stream TTL in seconds. Decimal notation only: no leading zeroes except zero itself, no sign, decimals, or scientific notation.'
     Subscription:
       type: object
       required:
