@@ -5,8 +5,10 @@ import "@typespec/events";
 import "@typespec/rest";
 
 import "./common.tsp";
-import "./data-plane.tsp";
-import "./control-plane.tsp";
+import "./streams.tsp";
+import "./subscriptions.tsp";
+import "./subscription-delivery.tsp";
+import "./schedules.tsp";
 
 using Http;
 
