@@ -124,6 +124,31 @@ export default defineConfig({
       }),
       defineProject({
         test: {
+          name: "fluent-protocol",
+          include: ["packages/fluent-protocol/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"],
+        },
+        resolve: {
+          alias: {
+            ...alias,
+            "@firegrid/fluent-store": path.resolve(__dirname, "./packages/fluent-store/src"),
+            "@firegrid/fluent-store-inmemory": path.resolve(
+              __dirname,
+              "./packages/fluent-store-inmemory/src"
+            ),
+            "@firegrid/fluent-transport": path.resolve(
+              __dirname,
+              "./packages/fluent-transport/src"
+            ),
+            "@firegrid/fluent-protocol": path.resolve(
+              __dirname,
+              "./packages/fluent-protocol/src"
+            ),
+          },
+        },
+      }),
+      defineProject({
+        test: {
           name: "effect-durable-execution",
           include: ["packages/effect-durable-execution/test/**/*.test.ts"],
           exclude: ["**/node_modules/**"],
