@@ -6,706 +6,711 @@ Owner: Firegrid / Durable Streams
 Primary package: `packages/effect-durable-streams`
 Protocol source: `PROTOCOL.md`
 HTTP contract source: `typespec/`
-Reference snapshot: `docs/reference/durable-streams/`
 
 ## Purpose
 
-This SDD turns the Durable Streams server direction into an implementation plan.
-It supersedes the first local draft in
-`docs/sdds/effect-durable-streams-server-sdd.md` where the two disagree.
+This SDD defines the Effect Durable Streams server design from actual code
+context, not just the HTTP protocol inventory.
 
-The core correction in v2 is that the protocol should not require generated
-routers to understand hidden route precedence. Durable stream data operations
-and server-owned coordination resources are different API surfaces. They should
-be modeled that way in TypeSpec, OpenAPI, and the Effect server.
+The design input is the `CodeForBreakfast/eventsourcing` architecture and
+source code at commit `12e788d7b7820a7e70fc8781dccb955fca84c271`, especially:
 
-## Decisions
+- `docs/ARCHITECTURE.md`
+- `packages/eventsourcing-store/src/lib/services.ts`
+- `packages/eventsourcing-store/src/lib/streamTypes.ts`
+- `packages/eventsourcing-store/src/lib/eventstore.ts`
+- `packages/eventsourcing-store-inmemory/src/lib/InMemoryStore.ts`
+- `packages/eventsourcing-store-inmemory/src/lib/inMemoryEventStore.ts`
+- `packages/eventsourcing-store-postgres/src/sqlEventStore.ts`
+- `packages/eventsourcing-aggregates/src/lib/aggregateRootEventStream.ts`
+- `packages/eventsourcing-protocol/src/lib/protocol.ts`
+- `packages/eventsourcing-protocol/src/lib/server-protocol.ts`
+- `packages/eventsourcing-transport/src/lib/{shared,client,server}.ts`
+- `docs/plans/2025-10-25-eventsourcing-server-components-design.md`
 
-1. Canonical server routes are split into a data plane and a control plane.
-2. `__ds`-under-stream routes are compatibility aliases only if we keep them.
-3. TypeSpec is the external HTTP contract.
-4. Effect services own the protocol state machines.
-5. Store APIs are protocol-shaped and transactional, not CRUD-shaped.
-6. Generated scaffold code is a local tool output, not committed source.
-7. Application event schemas and projections are above Durable Streams.
+The point to lift is not event sourcing itself. The point is the shape of the
+server: a small semantic store algebra, streams and sinks as the primary Effect
+surface, explicit boundary transformations, and protocol/transport separation.
 
-## API Shape
+## What The Eventsourcing Code Actually Does
 
-### Data Plane
-
-The data plane owns user-addressed stream bytes and stream metadata.
-
-```text
-PUT    /v1/streams/{+path}
-POST   /v1/streams/{+path}
-HEAD   /v1/streams/{+path}
-GET    /v1/streams/{+path}
-DELETE /v1/streams/{+path}
-```
-
-The path parameter is stream-root-relative. It is greedy because stream paths
-are hierarchical. It must not share a prefix with control resources.
-
-Data-plane routes support:
-
-- create or reconfirm stream
-- fork stream
-- append bytes
-- close stream
-- metadata read
-- catch-up read
-- long-poll read
-- SSE read
-- delete or soft-delete
-
-### Control Plane
-
-The control plane owns server coordination resources.
+The reference system is organized around four layers:
 
 ```text
-PUT    /v1/subscriptions/{id}
-GET    /v1/subscriptions/{id}
-DELETE /v1/subscriptions/{id}
-PUT    /v1/subscriptions/{id}/streams/{+path}
-DELETE /v1/subscriptions/{id}/streams/{+path}
+Layer 1 Domain
+  domain events, aggregates, projections
 
-POST   /v1/subscription-delivery/{id}/callback
-POST   /v1/subscription-delivery/{id}/claim
-POST   /v1/subscription-delivery/{id}/ack
-POST   /v1/subscription-delivery/{id}/release
+Layer 2 Wire API
+  public serialized commands/events with unknown payloads
 
-PUT    /v1/schedules/{id}
-GET    /v1/schedules/{id}
-DELETE /v1/schedules/{id}
+Layer 3 Protocol
+  internal message envelopes, correlation, subscriptions
 
-GET    /v1/jwks.json
+Layer 4 Transport
+  protocol-agnostic message delivery
 ```
 
-This gives OpenAPI and generated routers a clean path tree. It also makes the
-server architecture honest: subscription and schedule resources are not stream
-data.
+The strongest design move is that the store interface is tiny:
 
-### Compatibility Aliases
-
-If we need compatibility with the current draft shape:
-
-```text
-/v1/stream/{+path}
-/v1/stream/__ds/...
+```ts
+interface EventStore<TEvent> {
+  append(to: EventStreamPosition): Sink.Sink<EventStreamPosition, TEvent, TEvent, ...>
+  read(from: EventStreamPosition): Effect.Effect<Stream.Stream<TEvent, ...>, ...>
+  subscribe(from: EventStreamPosition): Effect.Effect<Stream.Stream<TEvent, ...>, ...>
+  subscribeAll(): Effect.Effect<Stream.Stream<StreamEvent<TEvent>, ...>, ...>
+}
 ```
 
-then aliases are implemented at the HTTP adapter edge. They must lower to the
-same protocol operations as the canonical routes. They are not the canonical
-TypeSpec surface unless we deliberately choose legacy compatibility over clean
-generation.
+Important concrete patterns:
 
-## TypeSpec Layout
+- `append` is a `Sink`, so writing is a stream operation, not a method that
+  accepts a pre-collected array.
+- `read` returns historical events only.
+- `subscribe` returns historical events followed by live events.
+- `subscribeAll` is live-only and cross-stream.
+- `EventStreamPosition` is the optimistic concurrency token:
+  `{ streamId, eventNumber }`.
+- `encodedEventStore(schema)` wraps a store and moves schema
+  encode/decode to the boundary.
+- In-memory storage uses per-stream `PubSub` plus an all-events `PubSub`.
+- Postgres storage uses database rows for history and LISTEN/NOTIFY bridged
+  into in-process subscription managers.
+- Protocol and transport are deliberately separate: transport moves string
+  payload messages; protocol parses envelopes and manages correlation.
+- The planned server components are bridges over the store:
+  `EventBus`, `CommandDispatcher`, `StoreSubscriptionManager`,
+  `ProtocolBridge`.
 
-Keep the top-level `typespec/` folder. The v2 route split should be reflected
-without changing the conceptual module split.
+That design is better than an endpoint-first server because domain operations
+compose directly in Effect. HTTP/WebSocket/etc are adapters, not the semantic
+center.
 
-```text
-typespec/
-  main.tsp
-  common.tsp
-  streams.tsp
-  subscriptions.tsp
-  subscription-delivery.tsp
-  schedules.tsp
-```
+## What We Should Lift
 
-Required v2 TypeSpec changes:
+Lift these ideas:
 
-- Move stream operation routes to `/v1/streams/{+path}`.
-- Move subscription management routes to `/v1/subscriptions/...`.
-- Move delivery routes to `/v1/subscription-delivery/...`.
-- Move schedules to `/v1/schedules/...`.
-- Move JWKS to `/v1/jwks.json`.
-- Keep stream-root-relative path models for request bodies.
-- Keep protocol names aligned with `PROTOCOL.md` concepts.
-- Add a README note for any compatibility aliases outside the canonical
-  OpenAPI surface.
+- A small stream-native store interface.
+- `Sink` for append paths, so streaming request bodies can flow into storage.
+- `Stream` for read, long-poll, SSE, and subscription surfaces.
+- Schema encoding/decoding wrappers at storage/wire boundaries.
+- Domain-specific service tags where higher layers need typed facts.
+- Live cross-stream tail notification as a first-class primitive.
+- Separate public wire DTOs from internal protocol decisions.
+- Bridge components that wire services together without becoming semantic
+  owners.
+- Store contract tests shared across memory and durable backends.
 
-The TypeSpec source should model HTTP placement directly with `@typespec/http`
-and use library types where they help:
+Do not lift these directly:
 
-- `@typespec/rest` for resource-shaped control-plane routes.
-- `@typespec/sse` for SSE response events.
-- `@typespec/streams` for streaming bodies, with the known OpenAPI 3.1 warning.
-- `@typespec/events` for outbound webhook event shapes if we model them as a
-  sibling event contract.
+- The aggregate command layer as part of Durable Streams. That is above us.
+- `WireCommand` as the server API model. Durable Streams is a stream substrate,
+  not an application command bus.
+- WebSocket protocol as a required transport. HTTP is already the Durable
+  Streams binding; WebSocket can be an adapter later.
+- Numeric event numbers as public offsets. Durable Streams offsets are opaque,
+  lexicographically sortable protocol tokens.
+- Best-effort `subscribeAll` for required webhook/pull-wake delivery. We need a
+  durable wake substrate for coordination, not only an in-memory event bus.
 
-## Server Components
+## Current Local Code Context
 
-```text
-HTTP binding
-  DataPlaneHttp
-  ControlPlaneHttp
-  CompatibilityHttp
-
-Protocol services
-  StreamService
-  SubscriptionService
-  DeliveryService
-  ScheduleService
-  WakeService
-  WebhookService
-  KeyService
-
-Persistence
-  Store
-  MemoryStore
-  SqlStore
-  OrderedKvStore
-
-Runtime
-  Server
-  Telemetry
-  Config
-```
-
-### HTTP Binding
-
-The HTTP binding performs transport work only:
-
-- decode path, query, headers, and body
-- preserve raw bytes for data-plane writes
-- call protocol services
-- lower typed protocol decisions to HTTP responses
-- add cache and security headers
-- expose OpenAPI-compatible response shapes
-
-It must not implement producer-state logic, wake generation, schedule state
-transitions, or filter evaluation.
-
-### Protocol Services
-
-Protocol services own state-machine semantics.
-
-`StreamService`:
-
-- create, append, close, fork, read, head, delete
-- content-type checks
-- stream sequence checks
-- producer fencing
-- tail-advance emission
-- read mode behavior
-
-`SubscriptionService`:
-
-- normalized subscription config hash
-- idempotent reconfirmation
-- pattern backfill
-- explicit stream membership
-- subscription deletion
-
-`WakeService`:
-
-- consume committed tail-advance facts
-- evaluate linked subscriptions
-- update internal evaluated cursors
-- create generation-fenced wake snapshots
-
-`DeliveryService`:
-
-- callback completion
-- claim
-- ack
-- release
-- lease expiry
-
-`WebhookService`:
-
-- build outbound webhook payloads
-- sign deliveries
-- retry according to policy
-- handle callback token validation
-
-`ScheduleService`:
-
-- durable schedule create, reconfirm, read, cancel
-- due schedule scanning
-- append through `StreamService`
-- idempotent retries through producer headers
-
-`KeyService`:
-
-- webhook signing key lifecycle
-- JWKS publication
-- key rotation overlap
-
-## Effect Package Layout
-
-The package should move toward this shape:
+Current local package shape:
 
 ```text
 packages/effect-durable-streams/src/
   Api.ts
   ApiLive.ts
-  DataPlaneApi.ts
-  ControlPlaneApi.ts
-  Protocol.ts
-  ProtocolError.ts
-  Store.ts
-  StreamService.ts
-  SubscriptionService.ts
-  WakeService.ts
-  DeliveryService.ts
-  WebhookService.ts
-  ScheduleService.ts
-  KeyService.ts
-  MemoryStore.ts
-  Server.ts
-  Telemetry.ts
   Config.ts
   DurableStreamsServer.ts
+  MemoryStore.ts
+  Protocol.ts
+  ProtocolError.ts
+  Server.ts
+  Store.ts
+  Telemetry.ts
   index.ts
 ```
 
-`Api.ts` should be TypeSpec-aligned. Until there is a reliable generator from
-TypeSpec to Effect `HttpApi`, it may be hand-authored, but it must be checked
-against generated OpenAPI in tests or review.
+Current good parts:
 
-`DurableStreamsServer.ts` remains an optional in-process RPC adapter over the
-same services. It is not the source of public HTTP semantics.
+- `Protocol.ts` already names protocol concepts and decisions.
+- `Store.ts` is transport-neutral and wrapped by `Telemetry.traced`.
+- `MemoryStore.ts` owns append precedence and producer rules, rather than
+  scattering all decisions through the HTTP router.
+- `DurableStreamsServer.ts` is correctly described as an optional RPC adapter.
 
-## Store Model
+Current design issues:
 
-The store is the durable correctness boundary. It exposes atomic protocol
-operations and hides physical storage.
+- `Store.ts` is still endpoint-shaped:
+  `createStream`, `append`, `read`, `head`, `deleteStream`.
+- `read` returns one `ReadChunk` instead of an Effect `Stream`, making long-poll
+  and SSE adapters harder than they need to be.
+- `append` accepts a fully materialized `Uint8Array`; this loses the natural
+  streaming shape of HTTP request bodies.
+- `Api.ts` defines the public stream wildcard under `/v1/stream`, and
+  `ApiLive.ts` contains a reserved-path check for `__ds`. That is route design
+  leaking into the data-plane adapter.
+- Control-plane APIs are not modeled in the server package yet.
+- There is no first-class all-stream tail stream equivalent to
+  `EventStore.subscribeAll()`.
 
-### Required Tables Or Collections
+## Desired Architecture
+
+Durable Streams should have four layers, analogous to eventsourcing but with
+Durable Streams concepts:
 
 ```text
-streams
-  path
-  content_type
-  tail_offset
-  closed
-  closed_at
-  deleted
-  soft_deleted
-  ttl_seconds
-  expires_at
-  source_path
-  fork_offset
-  fork_sub_offset
-  ref_count
+Layer 1 Semantic Consumers
+  Firegrid runtime, event-sourced apps, projections, durable execution, clients
 
+Layer 2 Durable Streams API
+  typed public HTTP DTOs from TypeSpec/OpenAPI and client/server adapters
+
+Layer 3 Durable Streams Protocol
+  internal stream decisions, producer fencing, offsets, wake generation
+
+Layer 4 Store/Transport
+  byte log storage, tail notifications, HTTP/SSE/webhook delivery mechanics
+```
+
+The server package owns Layers 2-4 for Durable Streams. It does not own Layer 1
+application event semantics.
+
+## Core Service Shape
+
+The central service should become stream-native, closer to
+`EventStore<TEvent>` than to a catalog of HTTP endpoints.
+
+```ts
+export interface DurableStreamLog {
+  readonly create: (
+    request: CreateStreamRequest
+  ) => Effect.Effect<CreateStreamResult, ProtocolError>
+
+  readonly append: (
+    request: AppendEnvelope
+  ) => Sink.Sink<AppendResult, Uint8Array, Uint8Array, ProtocolError>
+
+  readonly read: (
+    from: StreamPosition
+  ) => Effect.Effect<Stream.Stream<StreamRecord, ProtocolError>, ProtocolError>
+
+  readonly subscribe: (
+    from: StreamPosition
+  ) => Effect.Effect<Stream.Stream<StreamRecord, ProtocolError>, ProtocolError>
+
+  readonly subscribeAll: () => Effect.Effect<
+    Stream.Stream<TailAdvanced, ProtocolError>,
+    ProtocolError
+  >
+
+  readonly head: (
+    path: StreamPath
+  ) => Effect.Effect<StreamMetadata, ProtocolError>
+
+  readonly delete: (
+    path: StreamPath
+  ) => Effect.Effect<DeleteStreamResult, ProtocolError>
+}
+```
+
+`append` as a `Sink` is the biggest change. It lets the HTTP adapter pipe a raw
+request stream into the protocol/store layer without buffering the whole body at
+the route boundary. The sink can still accumulate internally when a backend
+requires whole-record writes, but the public server seam becomes stream-native.
+
+`read` and `subscribe` split the current `read` operation:
+
+- `read` is historical catch-up only.
+- `subscribe` is catch-up followed by live updates.
+- HTTP long-poll is an adapter over `subscribe` with `Stream.take(1)` and a
+  timeout.
+- HTTP SSE is an adapter over `subscribe` with SSE framing.
+
+`subscribeAll` is not the webhook guarantee mechanism by itself. It is the live
+tail signal from which wake evaluation and in-process observers can be driven.
+Durable wake snapshots remain persisted state.
+
+## Position Model
+
+The eventsourcing code uses:
+
+```ts
+{ streamId, eventNumber }
+```
+
+Durable Streams should use:
+
+```ts
+interface StreamPosition {
+  readonly path: StreamPath
+  readonly offset: Offset
+  readonly subOffset?: number
+}
+```
+
+Differences:
+
+- `offset` remains opaque externally.
+- `subOffset` exists only for fork/addressing boundaries where the protocol
+  needs it.
+- Internally a backend may map offsets to byte ranges, sequence numbers, WAL
+  positions, or content-framed records.
+- Optimistic write checks are not only expected position; they include content
+  type, closed state, `Stream-Seq`, and idempotent producer tuple.
+
+## Boundary Encoding
+
+Lift the `encodedEventStore(schema)` idea.
+
+Durable Streams has a generic byte store at the substrate boundary, but higher
+layers need typed records. We should provide adapters rather than pushing typed
+event concerns into the server:
+
+```ts
+export const encodedStreamLog =
+  <A, I>(schema: Schema.Schema<A, I>, encoding: ContentEncoding) =>
+  (log: DurableStreamLog): TypedStreamLog<A> => ({
+    append: (request) =>
+      Sink.mapInputEffect(log.append(request), encodeRecord(schema, encoding)),
+    read: (from) =>
+      log.read(from).pipe(Effect.map(Stream.mapEffect(decodeRecord(schema, encoding)))),
+    subscribe: (from) =>
+      log.subscribe(from).pipe(Effect.map(Stream.mapEffect(decodeRecord(schema, encoding)))),
+  })
+```
+
+This keeps:
+
+- bytes and protocol headers in `effect-durable-streams`;
+- typed domain events in Firegrid/application packages;
+- schema validation at explicit boundaries.
+
+## Naming Rules
+
+Adopt the reference naming discipline.
+
+Use:
+
+- `Http*` or `Api*` for TypeSpec/OpenAPI DTOs and HTTP binding models.
+- `Protocol*` for internal protocol decisions and state-machine inputs.
+- `Store*` for physical persistence rows/records.
+- `Stream*` for semantic Durable Streams concepts.
+- `Wire*` only if we add a non-HTTP serialized public message API.
+
+Avoid:
+
+- leaking `Protocol*` types into public TypeSpec DTOs;
+- using storage row shapes as HTTP response schemas;
+- using generic `unknown` payloads except at explicit wire/storage boundaries.
+
+## Server Components To Build
+
+### StreamLog
+
+Equivalent role to `EventStore<TEvent>`.
+
+Responsibilities:
+
+- create stream
+- append bytes through a sink
+- read historical records
+- subscribe historical plus live records
+- expose live all-stream tail advances
+- head/delete stream
+
+This is the semantic center of the server.
+
+### DataPlaneHttp
+
+HTTP adapter over `StreamLog`.
+
+Responsibilities:
+
+- decode TypeSpec/OpenAPI route shapes
+- preserve raw request body streaming
+- translate `GET` modes to `read`, long-poll, and SSE streams
+- lower protocol errors to HTTP responses
+
+It should not own producer logic or wake logic.
+
+### TailAdvanceBus
+
+Equivalent to the live part of `subscribeAll`.
+
+Responsibilities:
+
+- expose committed tail advances as an Effect `Stream`
+- support in-process observers
+- back wake evaluation
+- tolerate multiple server instances through backend-specific notification
+  mechanisms
+
+Memory backend implementation should look like the reference in-memory store:
+per-stream pubsub plus all-stream pubsub. Durable backend implementation should
+look closer to the Postgres bridge: persisted rows plus notification listener.
+
+### WakeEvaluator
+
+Equivalent in spirit to the planned `EventBus` plus server-side process-manager
+bridge, but durable.
+
+Responsibilities:
+
+- consume `TailAdvanceBus`
+- match explicit and pattern subscriptions
+- evaluate filters
+- advance internal evaluated cursors
+- persist generation-fenced wake snapshots
+
+It must not directly call webhooks as the source of truth. It persists wake
+state first.
+
+### SubscriptionDeliveryManager
+
+Equivalent to `StoreSubscriptionManager`, but for Durable Streams
+subscription/wake delivery.
+
+Responsibilities:
+
+- expose pull-wake claim/ack/release
+- dispatch webhook attempts from persisted wake snapshots
+- validate callback and lease tokens
+- handle stale generations safely
+
+### ScheduleRunner
+
+Server-owned background component.
+
+Responsibilities:
+
+- claim due schedules
+- append through `StreamLog`
+- record completion/failure
+- retry with producer idempotency
+
+### HttpApiBridge
+
+Equivalent to `ProtocolBridge`: wiring, not a semantic service.
+
+Responsibilities:
+
+- connect TypeSpec/Effect `HttpApi` handlers to protocol services
+- translate between public DTOs and internal inputs
+- own no state-machine decisions
+
+## Store Backends
+
+### Memory
+
+Reference mapping:
+
+- eventsourcing in-memory store uses `SynchronizedRef<HashMap<streamId,
+  EventStream>>`;
+- each `EventStream` stores historical events and a `PubSub`;
+- an all-events stream stores tagged stream events.
+
+Our memory store should use the same conceptual shape, with STM or
+`SynchronizedRef` depending on transaction complexity:
+
+```text
+streams: path -> metadata + records + pubsub
+allTailAdvances: pubsub
+subscriptions: id -> config/state
+wakeSnapshots: subscription/generation -> wake
+schedules: id -> schedule
+```
+
+Append updates stream metadata, records, producer state, and all-tail pubsub as
+one atomic operation.
+
+### SQL/Postgres
+
+Reference mapping:
+
+- `sqlEventStore.ts` stores historical rows in `events`;
+- read path selects rows ordered by event number;
+- subscribe path concatenates historical rows with live notification stream;
+- LISTEN/NOTIFY is bridged into subscription managers.
+
+Our SQL store should follow the same shape but with richer protocol tables:
+
+```text
+stream_metadata
 stream_records
-  path
-  offset
-  sub_offset
-  byte_start
-  byte_end
-  body
-  created_at
-
 producer_state
-  path
-  producer_id
-  epoch
-  highest_accepted_seq
-  expires_at
-
 stream_sequence_state
-  path
-  writer_scope
-  last_stream_seq
-
-subscriptions
-  id
-  type
-  config_hash
-  pattern
-  filter
-  wake_stream
-  webhook_url
-  callback_token_hash
-  lease_ttl_ms
-  status
-  generation
-
-subscription_streams
-  subscription_id
-  path
-  link_type
-  public_acked_offset
-  internal_evaluated_offset
-  internal_evaluated_sub_offset
-
-wake_snapshots
-  subscription_id
-  wake_id
-  generation
-  token_hash
-  lease_expires_at
-  claimed_by
-  status
-  payload
-
-schedules
-  id
-  config_hash
-  due_at
-  target_path
-  request
-  status
-  result
-
 tail_advances
-  path
-  tail_offset
-  closed
-  created_at
-  processed_at
+subscriptions
+subscription_streams
+wake_snapshots
+schedules
 ```
 
-Backends can store these differently, but they must provide equivalent
-transactional behavior.
+Durable correctness comes from transactions, not notifications. Notifications
+only wake local fibers after durable rows exist.
 
-### Atomic Append Transaction
+### Ordered KV
+
+An ordered KV backend is still viable, but it should implement the same
+`StreamLog` and store-contract tests. It should not drive public API shape.
+
+## Transport And Protocol Separation
+
+The reference transport package only knows:
+
+```ts
+TransportMessage {
+  id: MessageId
+  type: string
+  payload: string
+  metadata: Record<string, unknown>
+}
+```
+
+The protocol package parses those payloads into commands, results, and events.
+
+For Durable Streams:
+
+- HTTP is a concrete transport binding.
+- TypeSpec/OpenAPI is the public HTTP contract.
+- `Protocol.ts` should contain internal decisions, not public route DTOs.
+- `Api.ts` should translate HTTP DTOs to protocol inputs.
+- A future WebSocket or RPC transport should reuse protocol services, not HTTP
+  route handlers.
+
+## Control Plane Design
+
+The previous SDD route split still matters, but as a consequence of the code
+architecture, not as the architecture itself.
+
+Canonical public HTTP binding:
 
 ```text
-begin transaction
-  load stream metadata for update
-  reject missing, gone, closed, content-type mismatch, Stream-Seq regression
-  load producer state for update when producer headers are present
-  apply producer fencing and gap rules
-  insert stream record when accepted and body is non-empty
-  update stream tail and close state
-  update producer state
-  update stream sequence state
-  insert tail_advance when tail or closure changed
-commit transaction
-notify wake evaluator after commit
+Data plane:
+  /v1/streams/{+path}
+
+Control plane:
+  /v1/subscriptions/{id}
+  /v1/subscriptions/{id}/streams/{+path}
+  /v1/subscription-delivery/{id}/callback
+  /v1/subscription-delivery/{id}/claim
+  /v1/subscription-delivery/{id}/ack
+  /v1/subscription-delivery/{id}/release
+  /v1/schedules/{id}
+  /v1/jwks.json
 ```
 
-The transaction must serialize per `(stream, producerId)` and must not allow a
-log write to commit without the corresponding producer-state update.
+The reason is not aesthetics. It keeps HTTP adapter routes from leaking into
+`StreamLog` semantics and prevents generated routers from encoding precedence
+rules.
 
-### Fork Transaction
+If `/v1/stream/__ds/...` remains, it is a compatibility HTTP adapter that calls
+the same control-plane services. It is not the conceptual model.
+
+## Effect Package Plan
+
+Target package shape:
 
 ```text
-begin transaction
-  load target stream
-  if target exists, compare normalized fork/create config
-  load source stream
-  validate source availability and fork offset
-  validate content type compatibility
-  insert target stream with source pointer
-  increment source ref count
-commit transaction
+src/
+  StreamLog.ts                 core semantic store service
+  StreamPosition.ts            branded path/offset/sub-offset types
+  StreamRecord.ts              internal record envelope
+  EncodedStreamLog.ts          schema boundary adapter
+  DataPlaneHttp.ts             HTTP stream adapter
+  ControlPlaneHttp.ts          HTTP control adapter
+  Protocol.ts                  decisions and internal protocol inputs
+  ProtocolError.ts             typed errors
+  TailAdvanceBus.ts            live all-stream notification service
+  WakeEvaluator.ts             durable wake creation
+  SubscriptionService.ts       subscription config/membership
+  SubscriptionDelivery.ts      claim/ack/release/webhook callback
+  ScheduleRunner.ts            due schedule processing
+  WebhookSigner.ts             signing and JWKS
+  Store.ts                     physical backend algebra, if separate from StreamLog
+  MemoryStore.ts
+  SqlStore.ts
+  Telemetry.ts
+  Server.ts
 ```
 
-Fork reads may stitch source records lazily. The fork storage model must not
-copy source bytes unless a backend intentionally chooses copy-on-fork.
+Some of these can start as modules over the existing `Store` tag. The important
+change is the direction: `StreamLog` becomes the semantic service and HTTP
+routes become adapters.
 
-### Delete Transaction
+## API Migration From Current Code
 
-```text
-begin transaction
-  load stream metadata
-  if ref_count == 0:
-    mark deleted or physically remove according to retention policy
-    decrement source ref count if this stream is itself a fork
-    cascade cleanup for soft-deleted ancestors with ref_count == 0
-  else:
-    mark soft_deleted
-commit transaction
+Current:
+
+```ts
+Store.createStream(request): Effect<CreateDecision>
+Store.append(request): Effect<AppendResult>
+Store.read(path, offset): Effect<ReadChunk>
 ```
 
-Direct operations against soft-deleted streams return `410 Gone`. Fork reads
-may still stitch retained source data.
+Target:
 
-## Read Model
-
-Reads are byte-oriented.
-
-Catch-up:
-
-- returns immediately with bytes from requested offset to tail
-- returns `204` or empty body according to protocol when no data is available
-- includes `Stream-Next-Offset`
-- includes closure and up-to-date headers when applicable
-
-Long-poll:
-
-- requires an offset
-- returns immediately if data exists or stream is closed
-- waits only when offset is at the relevant tail
-- wakes on append or close for that stream
-- must not be awakened by source appends after a fork boundary
-
-SSE:
-
-- uses protocol control and data events
-- encodes non-text bytes safely
-- includes stream cursor while the stream remains open
-- emits terminal control event and closes when stream is closed
-- should close periodically for CDN friendliness
-
-## Wake Model
-
-Wake evaluation is post-commit.
-
-```text
-append transaction commits
-tail advance is durable
-wake evaluator reads tail advance
-subscriptions are matched by explicit link and pattern link
-filter is evaluated over new records
-internal evaluated cursor advances
-pending work creates or updates wake snapshot
-delivery mechanism observes wake snapshot
+```ts
+StreamLog.create(request): Effect<CreateStreamResult>
+StreamLog.append(envelope): Sink<AppendResult, Uint8Array, Uint8Array, ProtocolError>
+StreamLog.read(from): Effect<Stream<StreamRecord, ProtocolError>>
+StreamLog.subscribe(from): Effect<Stream<StreamRecord, ProtocolError>>
+StreamLog.subscribeAll(): Effect<Stream<TailAdvanced, ProtocolError>>
 ```
 
-This keeps arbitrary CEL/effectful evaluation out of storage transactions.
+Bridge plan:
 
-Pattern subscription creation performs an eager backfill of existing streams.
-Backfill links each matching stream at its current tail so historical data is
-not replayed by default.
+1. Introduce `StreamLog` alongside current `Store`.
+2. Implement `StreamLog` adapter over existing `Store` for the current memory
+   slice.
+3. Move HTTP read/append adapters to consume `StreamLog`.
+4. Move memory implementation to implement `StreamLog` directly.
+5. Keep `Store` only if needed as a lower physical persistence algebra.
 
-## Webhook Delivery
+## TypeSpec Role
 
-Outbound webhook delivery is part of the protocol contract even though it is
-not a server endpoint.
+TypeSpec remains essential, but it is not the server architecture.
 
-Payload:
+Use TypeSpec to define:
 
-```text
-subscription_id
-wake_id
-generation
-streams[]
-callback_url
-callback_token
-```
+- HTTP paths
+- headers
+- query parameters
+- request/response schemas
+- OpenAPI output
+- mock/scaffold tooling
 
-Headers:
+Do not use TypeSpec as:
 
-```text
-Webhook-Signature
-```
-
-The server signs deliveries with an asymmetric key and publishes public keys at
-`/v1/jwks.json`.
-
-Delivery succeeds only when the worker calls the callback endpoint with the
-current generation token. Retries are allowed, but retrying a stale generation
-must not mutate newer wake state.
-
-OpenAPI can model this as callbacks or as a sibling event contract. The server
-implementation should not wait for that modeling decision before defining the
-payload and signer service.
-
-## Schedule Model
-
-Schedules are durable append requests with a due time.
-
-Create or reconfirm:
-
-- normalize config and compare hash
-- store pending schedule
-- reject conflicting schedule ids
-
-Runner:
-
-- scans due pending schedules
-- claims a schedule transactionally
-- appends through `StreamService`
-- records completed or failed result
-- retries only in ways that preserve producer idempotency
-
-Delete:
-
-- cancels pending schedules
-- does not erase completed schedule history unless retention policy allows it
+- the internal store model;
+- the protocol decision model;
+- the shape of Effect service interfaces;
+- the source for application event schemas.
 
 ## Error Model
 
-Protocol services return typed errors. HTTP handlers lower them to declared
-status codes.
+Reference code uses tagged errors with operation context and recovery hints.
+Lift that discipline.
 
-Important response distinctions:
+Public HTTP errors should remain protocol-specific, but internal errors should
+carry:
 
-- `400 Bad Request`: malformed offset/header/body, producer bootstrap gap,
-  invalid fork sub-offset, invalid lease TTL
-- `403 Forbidden`: producer fenced, invalid token
-- `404 Not Found`: stream or resource missing
-- `409 Conflict`: closed stream, content type mismatch, Stream-Seq regression,
-  producer gap after bootstrap, conflicting create/reconfirm config
-- `410 Gone`: retention or soft-delete state
-- `503 Service Unavailable`: optional overload/backpressure surface
+- module
+- operation
+- stream path or resource id
+- expected/actual version where applicable
+- cause
+- recovery hint for logs/tests
 
-Error precedence must live in protocol services or store transactions, not in
-route handlers.
+Example:
+
+```ts
+class StreamConcurrencyError extends Data.TaggedError("StreamConcurrencyError")<{
+  readonly path: StreamPath
+  readonly expectedOffset: Offset
+  readonly actualOffset: Offset
+  readonly operation: "append" | "fork" | "schedule"
+}> {}
+```
+
+Route handlers lower these into protocol response variants.
 
 ## Telemetry
 
-Telemetry is a service-layer concern.
+The reference code adds spans around protocol send/result paths. Our telemetry
+should wrap semantic services, not just HTTP handlers.
 
-Required spans and attributes:
+Required spans:
 
-- `stream.create`: path, content type, decision
-- `stream.append`: path, bytes, close, producer present, decision
-- `stream.read`: path, mode, offset, bytes, wait duration
-- `stream.delete`: path, hard/soft decision
-- `subscription.put`: id, type, config hash decision
-- `wake.evaluate`: subscription id, path, records scanned, matched
-- `wake.claim`, `wake.ack`, `wake.release`: id, generation, outcome
-- `webhook.deliver`: id, generation, attempt, status
-- `schedule.run`: id, due lag, append outcome
-- `store.transaction`: backend, operation, duration, retry count
+- `streamlog.create`
+- `streamlog.append`
+- `streamlog.read`
+- `streamlog.subscribe`
+- `streamlog.subscribe_all`
+- `tail_advance.publish`
+- `wake.evaluate`
+- `subscription.claim`
+- `subscription.ack`
+- `webhook.deliver`
+- `schedule.run`
 
-Telemetry wrappers should be reusable across HTTP, RPC, and in-process
-composition.
+This makes HTTP, RPC, and in-process use visible in the same way.
 
-## Server Runtime
+## Tests To Steal Conceptually
 
-The runtime layer composes:
+The reference repo has shared event-store test contracts. We need the same for
+Durable Streams.
 
-```text
-Config
-Store layer
-Protocol services
-HTTP API live layers
-Webhook dispatcher
-Wake evaluator
-Schedule runner
-Telemetry/logging
-NodeHttpServer
-```
+Store contract tests should run against memory and every durable backend:
 
-Background fibers are scoped to the server layer. Interrupting the server must
-interrupt dispatchers and runners cleanly.
+- append returns the next position
+- append rejects stale expected/concurrency state
+- read is historical only
+- subscribe is historical plus live
+- subscribeAll is live all-stream tail advances
+- schema adapter round-trips typed records
+- concurrent writers preserve producer fencing
+- durable backend notifications are not the source of correctness
 
-For local development:
+HTTP tests are separate:
 
-- `MemoryStore` is the default.
-- OpenAPI viewer and Prism mock remain tooling, not server code.
-- Generated scaffold output remains ignored or regenerated on demand.
-
-For production:
-
-- a durable store layer is required.
-- background workers must be safe to run in multiple processes or explicitly
-  single-owner through backend claims.
-
-## Conformance Plan
-
-### Unit Tests
-
-- protocol header decoding
-- path normalization
-- append precedence
-- producer fencing
-- close retry idempotency
-- fork validation
-- lease token validation
-- schedule config hashing
-
-### Store Contract Tests
-
-Run against every store layer:
-
-- create/reconfirm conflict matrix
-- concurrent append serialization
-- producer state/log atomicity
-- stream sequence regression
-- soft delete and fork GC
-- subscription backfill
-- wake generation fencing
-- schedule claim/complete/cancel
-
-### HTTP Tests
-
-- TypeSpec/OpenAPI route smoke tests
-- canonical route tests
-- compatibility alias tests if aliases exist
-- raw byte preservation
-- content negotiation for read modes
-- SSE framing
-- cache headers and nosniff headers
-
-### Durable Backend Tests
-
-- crash after append before notification
-- crash after schedule claim before append
-- crash after webhook delivery before callback
-- retry after serialization conflict
-- multi-worker claim contention
+- raw body preservation
+- header/status lowering
+- long-poll adapter over `subscribe`
+- SSE adapter over `subscribe`
+- control-plane handlers over subscription services
 
 ## Implementation Slices
 
-### Slice 1: Contract Cleanup
+### Slice 1: Add Stream-Native Core
 
-- Update `PROTOCOL.md` route examples to canonical split.
-- Update `typespec/` route prefixes.
+- Add `StreamPosition.ts`.
+- Add `StreamRecord.ts`.
+- Add `StreamLog.ts`.
+- Add an adapter from current `Store` to `StreamLog`.
+- Add tests for `read` versus `subscribe`.
+
+### Slice 2: Move HTTP Data Plane To StreamLog
+
+- Make `ApiLive.ts` pipe request bodies into `StreamLog.append`.
+- Implement catch-up `GET` using `StreamLog.read`.
+- Implement long-poll and SSE using `StreamLog.subscribe`.
+- Keep current endpoints passing while the internal seam changes.
+
+### Slice 3: Add TailAdvanceBus
+
+- Expose `StreamLog.subscribeAll`.
+- Memory backend publishes committed tail advances.
+- Add tests equivalent to the reference `subscribeAll` contract.
+
+### Slice 4: Rework Control Plane As Bridges
+
+- Add `SubscriptionService`.
+- Add `WakeEvaluator`.
+- Add `SubscriptionDelivery`.
+- HTTP handlers become bridge code only.
+
+### Slice 5: Revisit Routes In TypeSpec
+
+- Move canonical routes to non-overlapping data/control prefixes.
+- Keep compatibility aliases only if needed.
 - Regenerate OpenAPI.
-- Update mock/viewer smoke tests.
-- Document any compatibility aliases.
 
-### Slice 2: API Alignment
+### Slice 6: Durable Backend
 
-- Split `Api.ts` into data-plane and control-plane groups.
-- Add missing control-plane models to Effect schemas.
-- Add drift checks against TypeSpec/OpenAPI where practical.
-- Keep raw byte handling explicit at the data-plane boundary.
+- Implement SQL or ordered-KV backend against `StreamLog` contracts.
+- Add notification bridge like the reference Postgres implementation.
+- Prove crash/restart correctness through contract tests.
 
-### Slice 3: Store Expansion
+## Acceptance Criteria
 
-- Add stream fork, TTL, expiry, list/match, and soft-delete operations.
-- Add subscription, membership, wake, and schedule operations.
-- Keep `MemoryStore` passing all existing stream tests.
+The server design is corrected when:
 
-### Slice 4: Live Reads
-
-- Implement long-poll waiters from committed tail-advance notifications.
-- Implement SSE stream events.
-- Add fork-aware wake behavior for reads.
-
-### Slice 5: Coordination Plane
-
-- Implement subscription CRUD and explicit stream membership.
-- Implement wake evaluator.
-- Implement pull-wake claim/ack/release.
-- Implement webhook callback.
-- Add JWKS endpoint and signing service.
-
-### Slice 6: Schedules
-
-- Implement schedule CRUD.
-- Add schedule runner.
-- Route due schedules through append state machine.
-
-### Slice 7: Durable Store
-
-- Choose first durable backend.
-- Implement store contract.
-- Add concurrent and crash/recovery tests.
-
-## Open Questions
-
-- Do we keep `/v1/stream/{+path}` as an alias for `/v1/streams/{+path}`?
-- Do we expose compatibility aliases in OpenAPI or keep them undocumented?
-- Do we generate Effect `HttpApi` contracts from TypeSpec or maintain them with
-  automated drift checks?
-- Which durable backend should land first?
-- Should outbound webhook delivery be modeled as OpenAPI callbacks now, or as a
-  separate event contract first?
-- How much of pull-wake event payload shape should be first-class TypeSpec
-  rather than protocol prose?
-
-## Acceptance Criteria For v2
-
-The v2 design is implemented when:
-
-- canonical routes no longer depend on `__ds` precedence;
-- TypeSpec and OpenAPI match the canonical route split;
-- the Effect server has separate data-plane and control-plane API groups;
-- all protocol state transitions flow through typed services and `Store`;
-- memory store passes stream, control-plane, wake, and schedule contract tests;
-- at least one durable backend passes the same store contract tests;
-- Prism/mock tooling and generated scaffold tooling can be run without committing
-  generated server artifacts.
+- `StreamLog` is the semantic center of the package.
+- Append/read/subscribe use Effect `Sink`/`Stream` surfaces.
+- HTTP route handlers contain no producer/wake/schedule state-machine logic.
+- TypeSpec describes HTTP only.
+- Memory and durable backends run the same stream-log contract tests.
+- Wake evaluation is driven by committed tail advances, not by HTTP route code.
+- Application typed event adapters live above the byte stream substrate.
