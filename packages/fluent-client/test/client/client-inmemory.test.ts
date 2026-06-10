@@ -24,8 +24,7 @@ describe("DurableStreamsClient", () => {
             return undefined
           }
 
-          yield* serveConnection(log, connection).pipe(Effect.fork)
-          yield* Effect.yieldNow()
+          yield* serveConnection(log, connection)
           const client = yield* DurableStreamsClient.make(transport)
           yield* client.create("client/orders", "text/plain")
           const append = yield* client.append("client/orders", "text/plain", enc.encode("hello"))

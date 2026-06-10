@@ -9,7 +9,7 @@ import {
   type ReadOffset,
   type StreamRecord,
 } from "@firegrid/fluent-store"
-import type { ClientConnection } from "@firegrid/fluent-transport"
+import type { ClientConnection, TransportMessage } from "@firegrid/fluent-transport"
 import { decodeProtocolEnvelope, encodeProtocolEnvelope } from "./codec.ts"
 import type { DurableStreamsCommand, DurableStreamsResponse, WireStreamRecord } from "./protocol.ts"
 
@@ -143,29 +143,44 @@ export const handleCommand = (
     ),
   )
 
-export const serveConnection = (log: DurableStreamLog, connection: ClientConnection) =>
-  connection.transport.subscribe().pipe(
-    Effect.flatMap((messages) =>
-      messages.pipe(
-        Stream.runForEach((message) =>
-          decodeProtocolEnvelope(message).pipe(
-            Effect.flatMap((envelope) =>
-              envelope.kind === "command"
-                ? handleCommand(log, envelope.command).pipe(
-                    Effect.flatMap((response) =>
-                      encodeProtocolEnvelope({
-                        kind: "response",
-                        id: envelope.id,
-                        response,
-                      }),
-                    ),
-                    Effect.flatMap(connection.transport.publish),
-                  )
-                : Effect.void,
-            ),
-            Effect.catchAll(() => Effect.void),
-          ),
-        ),
-      ),
-    ),
+const publishResponse = (
+  connection: ClientConnection,
+  id: string,
+  response: DurableStreamsResponse,
+) =>
+  encodeProtocolEnvelope({
+    kind: "response",
+    id,
+    response,
+  }).pipe(
+    Effect.flatMap(connection.transport.publish),
+    Effect.catchAll(() => Effect.void),
   )
+
+const publishProtocolFailure = (connection: ClientConnection, message: TransportMessage) =>
+  publishResponse(connection, message.id, {
+    _tag: "Failure",
+    reason: "ProtocolValidationError",
+    message: "Invalid protocol envelope",
+  })
+
+const handleMessage = (log: DurableStreamLog, connection: ClientConnection) => (message: TransportMessage) =>
+  decodeProtocolEnvelope(message).pipe(
+    Effect.flatMap((envelope) =>
+      envelope.kind === "command"
+        ? handleCommand(log, envelope.command).pipe(
+            Effect.flatMap((response) => publishResponse(connection, envelope.id, response)),
+          )
+        : Effect.void,
+    ),
+    Effect.catchAll(() => publishProtocolFailure(connection, message)),
+  )
+
+export const serveConnection = (log: DurableStreamLog, connection: ClientConnection) =>
+  Effect.gen(function* () {
+    const messages = yield* connection.transport.subscribe()
+    yield* messages.pipe(
+      Stream.runForEach(handleMessage(log, connection)),
+      Effect.forkScoped,
+    )
+  })

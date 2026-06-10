@@ -1,4 +1,4 @@
-import { Context, type Effect, type Sink, type Stream } from "effect"
+import { Context, type Effect, type Scope, type Sink, type Stream } from "effect"
 import type { DurableStreamLogError } from "./errors.ts"
 import type {
   AppendResult,
@@ -28,11 +28,12 @@ export interface DurableStreamLog {
 
   readonly subscribe: (
     from: ReadPosition,
-  ) => Effect.Effect<Stream.Stream<StreamRecord, DurableStreamLogError>, DurableStreamLogError>
+  ) => Effect.Effect<Stream.Stream<StreamRecord, DurableStreamLogError>, DurableStreamLogError, Scope.Scope>
 
   readonly subscribeAll: () => Effect.Effect<
     Stream.Stream<TailAdvanced, DurableStreamLogError>,
-    DurableStreamLogError
+    DurableStreamLogError,
+    Scope.Scope
   >
 
   readonly head: (path: StreamPath) => Effect.Effect<StreamMetadata, DurableStreamLogError>

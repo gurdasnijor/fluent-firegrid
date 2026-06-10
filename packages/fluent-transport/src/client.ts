@@ -6,7 +6,7 @@ export interface ClientTransport {
   readonly publish: (message: TransportMessage) => Effect.Effect<void, TransportError>
   readonly subscribe: (
     filter?: (message: TransportMessage) => boolean,
-  ) => Effect.Effect<Stream.Stream<TransportMessage>, TransportError>
+  ) => Effect.Effect<Stream.Stream<TransportMessage>, TransportError, Scope.Scope>
 }
 
 export interface ClientConnector {

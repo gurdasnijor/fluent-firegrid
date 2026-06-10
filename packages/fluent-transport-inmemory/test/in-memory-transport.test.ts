@@ -1,54 +1,47 @@
-import { Chunk, Duration, Effect, Fiber, Stream } from "effect"
-import { describe, expect, it } from "vitest"
-import { makeTransportMessage } from "@firegrid/fluent-transport"
+import { Effect } from "effect"
+import {
+  makeTransportMessage,
+  type ClientTransport,
+  type ServerTransport,
+  type TransportMessage,
+} from "@firegrid/fluent-transport"
+import {
+  runClientServerTransportTestSuite,
+  type ClientServerTransportTestContext,
+  type TransportPair,
+} from "@firegrid/fluent-transport/testing"
 import * as InMemoryTransport from "../src/inMemoryTransport.ts"
 
-describe("In-memory transport", () => {
-  it("connects clients and delivers client messages to the server side", async () => {
-    const received = await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const server = yield* InMemoryTransport.makeInMemoryServer()
-          const connectionFiber = yield* server.connections.pipe(Stream.take(1), Stream.runCollect, Effect.fork)
-          const client = yield* server.connector.connect("memory://test")
-          const connections = yield* Fiber.join(connectionFiber)
-          const connection = Chunk.toReadonlyArray(connections)[0]
+const makeContext = (): Effect.Effect<ClientServerTransportTestContext> =>
+  Effect.succeed({
+    makeTransportPair: (): TransportPair => {
+      let serverInstance: InMemoryTransport.InMemoryServer | undefined
 
-          if (connection === undefined) {
-            return undefined
-          }
-
-          const messagesFiber = yield* connection.transport
-            .subscribe()
-            .pipe(Effect.flatMap((stream) => stream.pipe(Stream.take(1), Stream.runCollect)), Effect.fork)
-          yield* Effect.sleep(Duration.millis(10))
-          yield* client.publish(makeTransportMessage("m1", "test", "hello"))
-          const messages = yield* Fiber.join(messagesFiber)
-          return Chunk.toReadonlyArray(messages)[0]
-        }),
-      ),
-    )
-
-    expect(received?.payload).toBe("hello")
+      return {
+        makeServer: () =>
+          InMemoryTransport.makeInMemoryServer().pipe(
+            Effect.tap((server) =>
+              Effect.sync(() => {
+                serverInstance = server
+              }),
+            ),
+            Effect.map((server): ServerTransport => server),
+          ),
+        makeClient: () =>
+          Effect.sync(() => serverInstance).pipe(
+            Effect.flatMap((server) =>
+              server === undefined
+                ? Effect.fail(new Error("Server must be created before client"))
+                : server.connector.connect("memory://contract").pipe(
+                    Effect.mapError((cause) => new Error("Failed to connect in-memory client", { cause })),
+                  ),
+            ),
+            Effect.map((client): ClientTransport => client),
+          ),
+      }
+    },
+    makeTestMessage: (type: string, payload: unknown): TransportMessage =>
+      makeTransportMessage(`test-${type}`, type, JSON.stringify(payload)),
   })
 
-  it("broadcasts server messages to connected clients", async () => {
-    const received = await Effect.runPromise(
-      Effect.scoped(
-        Effect.gen(function* () {
-          const server = yield* InMemoryTransport.makeInMemoryServer()
-          const client = yield* server.connector.connect("memory://test")
-          const messagesFiber = yield* client
-            .subscribe()
-            .pipe(Effect.flatMap((stream) => stream.pipe(Stream.take(1), Stream.runCollect)), Effect.fork)
-          yield* Effect.sleep(Duration.millis(10))
-          yield* server.broadcast(makeTransportMessage("m2", "test", "broadcast"))
-          const messages = yield* Fiber.join(messagesFiber)
-          return Chunk.toReadonlyArray(messages)[0]
-        }),
-      ),
-    )
-
-    expect(received?.payload).toBe("broadcast")
-  })
-})
+runClientServerTransportTestSuite("In-memory", makeContext)

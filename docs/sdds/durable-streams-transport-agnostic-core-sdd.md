@@ -3,7 +3,7 @@
 Status: draft
 Owner: Firegrid / Durable Streams
 Primary protocol source: `PROTOCOL.md`
-Implementation targets:
+Current core-slice implementation targets:
 
 - `packages/fluent-store`
 - `packages/fluent-store-inmemory`
@@ -11,8 +11,11 @@ Implementation targets:
 - `packages/fluent-transport-inmemory`
 - `packages/fluent-protocol`
 - `packages/fluent-server`
-- `packages/fluent-transport-http`
 - `packages/fluent-client`
+
+Deferred Phase 6 implementation target:
+
+- `packages/fluent-transport-http`
 
 Reference design inputs:
 
@@ -50,6 +53,12 @@ concerns.
 This SDD defines that split and gives the agents a concrete build target. The
 build is intentionally serial until the in-memory store can provide a usable
 protocol client. Parallel work before that point creates fake surfaces.
+
+The first mergeable slice must stop at a production-shaped in-memory path:
+store, in-memory store, transport, in-memory transport, protocol, semantic
+server, and client. HTTP helpers that do not implement `ClientTransport` or
+`ServerTransport` should not ship under `fluent-transport-http`; Phase 6 starts
+only when HTTP can plug into the transport contracts.
 
 ## Reference Shape To Lift
 
@@ -342,14 +351,14 @@ reference shape and `PROTOCOL.md` semantics instead.
 
 ### `fluent-server`
 
-Owns server-side store-backed services: stream server, subscription server, and
-event bus. Protocol binding lives in `fluent-protocol`; HTTP, RPC, and
+Owns server-side store-backed services: stream server and event bus.
+Subscription server starts in Phase 5, when subscription semantics are real.
+Protocol binding lives in `fluent-protocol`; HTTP, RPC, and
 in-memory transport/store assembly live outside `fluent-server`.
 
 ```text
 packages/fluent-server/src/
   streamServer.ts
-  subscriptionServer.ts
   eventBus.ts
   layer.ts
   index.ts

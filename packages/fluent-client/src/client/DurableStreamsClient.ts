@@ -1,4 +1,4 @@
-import { Chunk, Effect, Fiber, Ref, Stream } from "effect"
+import { Chunk, Duration, Effect, Ref, Stream } from "effect"
 import * as Protocol from "@firegrid/fluent-protocol"
 import type { ClientTransport } from "@firegrid/fluent-transport"
 import { DurableStreamsClientError, DurableStreamsProtocolFailure } from "./Errors.ts"
@@ -101,50 +101,29 @@ const responseValue = <A>(value: A): Effect.Effect<A, DurableStreamsClientError>
 const responseError = (operation: string, tag: string): Effect.Effect<never, DurableStreamsClientError> =>
   Effect.fail(unexpectedResponse(operation, tag))
 
-const waitForSubscriber = () =>
-  Effect.yieldNow().pipe(Effect.zipRight(Effect.yieldNow()))
-
-const waitAndPublish = (
-  transport: ClientTransport,
-  operation: string,
-  message: Parameters<ClientTransport["publish"]>[0],
-) =>
-  waitForSubscriber().pipe(
-    Effect.zipRight(transport.publish(message)),
-    Effect.mapError(transportError(operation)),
-  )
-
 const responseFor = (
-  transport: ClientTransport,
-  id: string,
   operation: string,
+  messages: Stream.Stream<Parameters<ClientTransport["publish"]>[0]>,
 ): Effect.Effect<Protocol.DurableStreamsResponse, DurableStreamsClientError> =>
-  transport
-    .subscribe((message) => message.id === id)
-    .pipe(
-      Effect.mapError(transportError(operation)),
-      Effect.flatMap((messages) =>
-        messages.pipe(
-          Stream.mapEffect((message) =>
-            Protocol.decodeProtocolEnvelope(message).pipe(Effect.mapError(transportError(operation))),
-          ),
-          Stream.filter((envelope) => envelope.kind === "response" && envelope.id === id),
-          Stream.take(1),
-          Stream.runCollect,
-          Effect.map((items) => Chunk.toReadonlyArray(items)[0]),
-          Effect.flatMap((envelope) =>
-            envelope?.kind === "response"
-              ? Effect.succeed(envelope.response)
-              : Effect.fail(
-                  new DurableStreamsClientError({
-                    operation,
-                    message: "Protocol response stream ended before a response arrived",
-                  }),
-                ),
-          ),
+  messages.pipe(
+    Stream.mapEffect((message) =>
+      Protocol.decodeProtocolEnvelope(message).pipe(Effect.mapError(transportError(operation))),
+    ),
+    Stream.filter((envelope) => envelope.kind === "response"),
+    Stream.take(1),
+    Stream.runCollect,
+    Effect.map((items) => Chunk.toReadonlyArray(items)[0]),
+    Effect.flatMap((envelope) =>
+      envelope?.kind === "response"
+        ? Effect.succeed(envelope.response)
+        : Effect.fail(
+            new DurableStreamsClientError({
+              operation,
+              message: "Protocol response stream ended before a response arrived",
+            }),
         ),
-      ),
-    )
+    ),
+  )
 
 const sendCommand = (
   transport: ClientTransport,
@@ -152,15 +131,28 @@ const sendCommand = (
   operation: string,
   command: Protocol.DurableStreamsCommand,
 ): Effect.Effect<Protocol.DurableStreamsResponse, DurableStreamsClientError> =>
-  Effect.gen(function* () {
-    const id = yield* Ref.modify(nextId, (current) => [`client-command-${current}`, current + 1] as const)
-    const responseFiber = yield* responseFor(transport, id, operation).pipe(Effect.fork)
-    const message = yield* Protocol.encodeProtocolEnvelope({ kind: "command", id, command }).pipe(
-      Effect.mapError(transportError(operation)),
-    )
-    yield* waitAndPublish(transport, operation, message)
-    return yield* Fiber.join(responseFiber)
-  })
+  Effect.scoped(
+    Effect.gen(function* () {
+      const id = yield* Ref.modify(nextId, (current) => [`client-command-${current}`, current + 1] as const)
+      const responses = yield* transport
+        .subscribe((message) => message.id === id)
+        .pipe(Effect.mapError(transportError(operation)))
+      const message = yield* Protocol.encodeProtocolEnvelope({ kind: "command", id, command }).pipe(
+        Effect.mapError(transportError(operation)),
+      )
+      yield* transport.publish(message).pipe(Effect.mapError(transportError(operation)))
+      return yield* responseFor(operation, responses).pipe(
+        Effect.timeoutFail({
+          duration: Duration.seconds(5),
+          onTimeout: () =>
+            new DurableStreamsClientError({
+              operation,
+              message: "Timed out waiting for protocol response",
+            }),
+        }),
+      )
+    }),
+  )
 
 export const make = (transport: ClientTransport): Effect.Effect<DurableStreamsClient> =>
   Ref.make(0).pipe(

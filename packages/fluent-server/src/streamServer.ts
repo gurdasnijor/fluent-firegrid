@@ -1,13 +1,13 @@
-import { Context, Effect, type Stream } from "effect"
+import { Context, type Effect, type Stream } from "effect"
 import {
   appendBytes,
   beginning,
-  decodeStreamPath,
-  type AppendResult,
   type CreateStreamResult,
   type DeleteStreamResult,
   type DurableStreamLog,
   type DurableStreamLogError,
+  type AppendResult,
+  type Offset,
   type ReadOffset,
   type StreamMetadata,
   type StreamPath,
@@ -26,11 +26,7 @@ export interface StreamServer {
     bytes: Uint8Array,
     options?: {
       readonly close?: boolean
-      readonly expectedTailOffset?: AppendResult extends { readonly metadata: infer M }
-        ? M extends StreamMetadata
-          ? M["tailOffset"]
-          : never
-        : never
+      readonly expectedTailOffset?: Offset
     },
   ) => Effect.Effect<AppendResult, DurableStreamLogError>
   readonly read: (
@@ -69,11 +65,4 @@ export const makeStreamServer = (log: DurableStreamLog): StreamServer => ({
   read: (path, offset) => log.read(offset === undefined ? beginning(path) : { path, offset }),
   head: log.head,
   delete: log.delete,
-})
-
-export const makeStreamServerFromStrings = (log: DurableStreamLog) => ({
-  create: (path: string, contentType: string, options?: { readonly closed?: boolean }) =>
-    Effect.flatMap(decodeStreamPath(path), (streamPath) =>
-      makeStreamServer(log).create(streamPath, contentType, options),
-    ),
 })

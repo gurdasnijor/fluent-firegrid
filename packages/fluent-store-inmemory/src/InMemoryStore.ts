@@ -1,4 +1,4 @@
-import { Chunk, Effect, HashMap, Option, PubSub, Sink, Stream, SynchronizedRef, pipe } from "effect"
+import { Chunk, Effect, HashMap, Option, PubSub, Sink, Stream, SynchronizedRef, pipe, type Scope } from "effect"
 import {
   BeginningOffset,
   ContentTypeMismatchError,
@@ -44,8 +44,8 @@ export interface InMemoryStore {
   ) => Effect.Effect<Stream.Stream<StreamRecord, never>, DurableStreamLogError>
   readonly subscribe: (
     from: ReadPosition,
-  ) => Effect.Effect<Stream.Stream<StreamRecord, never>, DurableStreamLogError>
-  readonly subscribeAll: () => Effect.Effect<Stream.Stream<TailAdvanced, never>, never>
+  ) => Effect.Effect<Stream.Stream<StreamRecord, never>, DurableStreamLogError, Scope.Scope>
+  readonly subscribeAll: () => Effect.Effect<Stream.Stream<TailAdvanced, never>, never, Scope.Scope>
   readonly head: (path: StreamPath) => Effect.Effect<StreamMetadata, StreamNotFoundError>
   readonly delete: (path: StreamPath) => Effect.Effect<DeleteStreamResult, never>
 }
@@ -184,19 +184,24 @@ const publishRecords = (stream: EventStream, records: readonly StreamRecord[]) =
 const publishTail = (allTails: PubSub.PubSub<TailAdvanced>, tailAdvanced: TailAdvanced) =>
   pipe(allTails, PubSub.publish(tailAdvanced))
 
+interface AppendCommit {
+  readonly result: AppendResult
+  readonly publish: Effect.Effect<void, never>
+}
+
 const commitAppend = (
   request: AppendStream,
   chunks: readonly Uint8Array[],
   value: Value,
   stream: EventStream,
-): Effect.Effect<readonly [AppendResult, Value], never> => {
+): Effect.Effect<readonly [AppendCommit, Value], never> => {
   const records = makeRecords(request, stream, chunks)
   if (records.length === 0) {
     const result: AppendResult = {
       _tag: "Noop",
       metadata: stream.metadata,
     }
-    return Effect.succeed([result, value] as const)
+    return Effect.succeed([{ result, publish: Effect.void }, value] as const)
   }
 
   const updatedStream = appendRecords(stream, records, request.close === true)
@@ -215,16 +220,22 @@ const commitAppend = (
     records,
     tailAdvanced,
   }
-  return pipe(
-    publishRecords(updatedStream, records),
-    Effect.zipRight(publishTail(value.allTails, tailAdvanced)),
-    Effect.as([result, updatedValue] as const),
-  )
+  return Effect.succeed([
+    {
+      result,
+      publish: pipe(
+        publishRecords(updatedStream, records),
+        Effect.zipRight(publishTail(value.allTails, tailAdvanced)),
+        Effect.asVoid,
+      ),
+    },
+    updatedValue,
+  ] as const)
 }
 
 const appendCollected =
   (request: AppendStream, chunks: readonly Uint8Array[]) =>
-  (value: Value): Effect.Effect<readonly [AppendResult, Value], DurableStreamLogError> =>
+  (value: Value): Effect.Effect<readonly [AppendCommit, Value], DurableStreamLogError> =>
     pipe(
       value.streamsByPath,
       HashMap.get(request.path),
@@ -245,7 +256,10 @@ const collectChunks = (request: AppendStream, value: SynchronizedRef.Synchronize
     (chunks, chunk) => Effect.succeed([...chunks, ...Chunk.toReadonlyArray(chunk)]),
   ).pipe(
     Sink.mapEffect((chunks) =>
-      SynchronizedRef.modifyEffect(value, (current) => appendCollected(request, chunks)(current)),
+      SynchronizedRef.modifyEffect(value, (current) => appendCollected(request, chunks)(current)).pipe(
+        Effect.tap((commit) => commit.publish),
+        Effect.map((commit) => commit.result),
+      ),
     ),
   )
 
@@ -266,7 +280,7 @@ const indexFromOffset = (
     return Effect.succeed(stream.records.length)
   }
 
-  const index = Chunk.findFirstIndex(stream.records, (record) => record.fromOffset === offset)
+  const index = Chunk.findFirstIndex(stream.records, (record) => record.fromOffset >= offset)
   return pipe(
     index,
     Option.match({
@@ -294,32 +308,41 @@ const createHistoricalOrEmpty = (
     }),
   )
 
-const ensureStreamForSubscribe = (
+const streamForSubscribe = (
   position: ReadPosition,
   value: Value,
-): Effect.Effect<readonly [EventStream, Value], never> =>
+): Effect.Effect<EventStream, StreamNotFoundError> =>
   pipe(
     value.streamsByPath,
     HashMap.get(position.path),
     Option.match({
-      onSome: (stream) => Effect.succeed([stream, value] as const),
-      onNone: () =>
-        emptyEventStream({
-          path: position.path,
-          tailOffset: initialOffset,
-          closed: false,
-          contentType: "application/octet-stream",
-        }).pipe(
-          Effect.map((stream) => [
-            stream,
-            {
-              ...value,
-              streamsByPath: HashMap.set(value.streamsByPath, position.path, stream),
-            },
-          ] as const),
-        ),
+      onSome: Effect.succeed,
+      onNone: () => Effect.fail(new StreamNotFoundError({ path: position.path })),
     }),
   )
+
+const subscribeFrom = (
+  value: SynchronizedRef.SynchronizedRef<Value>,
+  from: ReadPosition,
+): Effect.Effect<Stream.Stream<StreamRecord, never>, DurableStreamLogError, Scope.Scope> =>
+  Effect.gen(function* () {
+    const stream = yield* pipe(
+      value,
+      SynchronizedRef.get,
+      Effect.flatMap((current) => streamForSubscribe(from, current)),
+    )
+    const liveQueue = yield* PubSub.subscribe(stream.pubsub)
+    const snapshot = yield* pipe(
+      value,
+      SynchronizedRef.get,
+      Effect.flatMap((current) => streamForSubscribe(from, current)),
+    )
+    const historical = yield* historicalStreamFrom(from, snapshot)
+    const live = Stream.fromQueue(liveQueue).pipe(
+      Stream.filter((record) => record.fromOffset >= snapshot.metadata.tailOffset),
+    )
+    return historical.pipe(Stream.concat(live))
+  })
 
 const makeStore = (value: SynchronizedRef.SynchronizedRef<Value>): InMemoryStore => ({
   create: (request) =>
@@ -339,21 +362,13 @@ const makeStore = (value: SynchronizedRef.SynchronizedRef<Value>): InMemoryStore
       ),
     ),
   subscribe: (from) =>
-    pipe(
-      value,
-      SynchronizedRef.modifyEffect((current) => ensureStreamForSubscribe(from, current)),
-      Effect.flatMap((stream) =>
-        pipe(
-          historicalStreamFrom(from, stream),
-          Effect.map((historical) => historical.pipe(Stream.concat(Stream.fromPubSub(stream.pubsub)))),
-        ),
-      ),
-    ),
+    subscribeFrom(value, from),
   subscribeAll: () =>
     pipe(
       value,
       SynchronizedRef.get,
-      Effect.map((current) => Stream.fromPubSub(current.allTails)),
+      Effect.flatMap((current) => PubSub.subscribe(current.allTails)),
+      Effect.map(Stream.fromQueue),
     ),
   head: (path) =>
     pipe(

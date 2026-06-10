@@ -41,12 +41,15 @@ describe("fluent-server", () => {
         const bus = makeEventBus(log)
         const path = yield* decodeStreamPath("server/tails")
         yield* server.create(path, "text/plain")
-        const stream = yield* bus.tailAdvanced()
-        const fiber = yield* stream.pipe(Stream.take(1), Stream.runCollect, Effect.fork)
-        yield* Effect.yieldNow()
-        yield* server.append(path, "text/plain", enc.encode("x"))
-        const tails = yield* Fiber.join(fiber)
-        return Chunk.toReadonlyArray(tails)[0]
+        return yield* Effect.scoped(
+          Effect.gen(function* () {
+            const stream = yield* bus.tailAdvanced()
+            const fiber = yield* stream.pipe(Stream.take(1), Stream.runCollect, Effect.fork)
+            yield* server.append(path, "text/plain", enc.encode("x"))
+            const tails = yield* Fiber.join(fiber)
+            return Chunk.toReadonlyArray(tails)[0]
+          }),
+        )
       }),
     )
 

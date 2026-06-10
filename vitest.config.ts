@@ -111,6 +111,10 @@ export default defineConfig({
         resolve: {
           alias: {
             ...alias,
+            "@firegrid/fluent-transport/testing": path.resolve(
+              __dirname,
+              "./packages/fluent-transport/src/testing/client-server-contract-test-suite.ts"
+            ),
             "@firegrid/fluent-transport": path.resolve(
               __dirname,
               "./packages/fluent-transport/src"
@@ -192,22 +196,6 @@ export default defineConfig({
               "./packages/fluent-store-inmemory/src"
             ),
             "@firegrid/fluent-server": path.resolve(__dirname, "./packages/fluent-server/src"),
-          },
-        },
-      }),
-      defineProject({
-        test: {
-          name: "fluent-transport-http",
-          include: ["packages/fluent-transport-http/test/**/*.test.ts"],
-          exclude: ["**/node_modules/**"],
-        },
-        resolve: {
-          alias: {
-            ...alias,
-            "@firegrid/fluent-transport-http": path.resolve(
-              __dirname,
-              "./packages/fluent-transport-http/src"
-            ),
           },
         },
       }),

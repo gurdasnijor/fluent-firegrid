@@ -61,10 +61,13 @@ const failIfDisconnected = (
 const streamFromPubSub = (
   pubsub: PubSub.PubSub<TransportMessage>,
   filter?: (message: TransportMessage) => boolean,
-) => {
-  const stream = Stream.fromPubSub(pubsub)
-  return filter === undefined ? stream : stream.pipe(Stream.filter(filter))
-}
+) =>
+  PubSub.subscribe(pubsub).pipe(
+    Effect.map((queue) => {
+      const stream = Stream.fromQueue(queue)
+      return filter === undefined ? stream : stream.pipe(Stream.filter(filter))
+    }),
+  )
 
 const clientTransport = (state: ClientState): ClientTransport => ({
   connectionState: stateStream(state),
@@ -73,7 +76,7 @@ const clientTransport = (state: ClientState): ClientTransport => ({
       Effect.zipRight(PubSub.publish(state.clientToServer, message)),
       Effect.asVoid,
     ),
-  subscribe: (filter) => Effect.succeed(streamFromPubSub(state.serverToClient, filter)),
+  subscribe: (filter) => streamFromPubSub(state.serverToClient, filter),
 })
 
 const serverSideTransport = (state: ClientState): ClientTransport => ({
@@ -83,7 +86,7 @@ const serverSideTransport = (state: ClientState): ClientTransport => ({
       Effect.zipRight(PubSub.publish(state.serverToClient, message)),
       Effect.asVoid,
     ),
-  subscribe: (filter) => Effect.succeed(streamFromPubSub(state.clientToServer, filter)),
+  subscribe: (filter) => streamFromPubSub(state.clientToServer, filter),
 })
 
 const disconnectClient = (state: ClientState) =>
