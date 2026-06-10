@@ -6,6 +6,7 @@ import { Offset } from "@firegrid/fluent-store"
 import type { Append, Close, Create, Delete, Head, Read, ReadLive, Request } from "./request.ts"
 import type {
   AppendResponse,
+  CloseResponse,
   CreateResponse,
   DeleteResponse,
   HeadResponse,
@@ -15,7 +16,7 @@ import { WireRecord } from "./response.ts"
 
 export type ResponseOf<R extends Request> =
   R extends Append ? AppendResponse :
-  R extends Close ? AppendResponse :
+  R extends Close ? CloseResponse :
   R extends Create ? CreateResponse :
   R extends Read ? ReadResponse :
   R extends Head ? HeadResponse :

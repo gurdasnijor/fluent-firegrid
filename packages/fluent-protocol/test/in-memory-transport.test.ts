@@ -4,6 +4,7 @@ import { decodeStreamPath } from "@firegrid/fluent-store"
 import * as InMemoryStreamLog from "@firegrid/fluent-store-inmemory"
 import {
   Append,
+  Close,
   Create,
   ProducerFence,
   Read,
@@ -43,8 +44,50 @@ describe("DurableTransport in-memory", () => {
     })
     expect(result.mismatch).toMatchObject({
       _tag: "ContentMismatch",
+      code: "content-mismatch",
       expected: "text/plain",
       actual: "application/json",
+    })
+  })
+
+  it("returns typed offset conflicts and idempotent close responses", async () => {
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const path = yield* decodeStreamPath("protocol/close")
+        const log = yield* InMemoryStreamLog.makeInMemoryStreamLog()
+        const transport = yield* makeLocalTransport(log)
+        yield* transport.call(new Create({ path, contentType: "text/plain" }))
+        yield* transport.call(new Append({ path, contentType: "text/plain", bytes: enc.encode("one") }))
+
+        const conflict = yield* transport.call(
+          new Append({
+            path,
+            contentType: "text/plain",
+            bytes: enc.encode("stale"),
+            expectedTailOffset: "00000000000000000000" as Append["expectedTailOffset"],
+          }),
+        )
+        const firstClose = yield* transport.call(new Close({ path }))
+        const secondClose = yield* transport.call(new Close({ path }))
+
+        return { conflict, firstClose, secondClose }
+      }),
+    )
+
+    expect(result.conflict).toMatchObject({
+      _tag: "OffsetConflict",
+      code: "offset-conflict",
+      expectedTailOffset: "00000000000000000000",
+      actualTailOffset: "00000000000000000001",
+    })
+    expect(result.firstClose).toMatchObject({
+      _tag: "Appended",
+      nextOffset: "00000000000000000002",
+      closed: true,
+    })
+    expect(result.secondClose).toMatchObject({
+      _tag: "Closed",
+      finalOffset: "00000000000000000002",
     })
   })
 

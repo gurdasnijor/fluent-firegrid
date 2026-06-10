@@ -38,7 +38,12 @@ export class WriteToClosed extends Schema.TaggedClass<WriteToClosed>("WriteToClo
   finalOffset: Offset,
 }) {}
 
+export class Closed extends Schema.TaggedClass<Closed>("Closed")("Closed", {
+  finalOffset: Offset,
+}) {}
+
 export class ContentMismatch extends Schema.TaggedClass<ContentMismatch>("ContentMismatch")("ContentMismatch", {
+  code: Schema.Literal("content-mismatch"),
   expected: Schema.String,
   actual: Schema.String,
 }) {}
@@ -60,6 +65,7 @@ export class AlreadyExists extends Schema.TaggedClass<AlreadyExists>("AlreadyExi
 }) {}
 
 export class CreateConflict extends Schema.TaggedClass<CreateConflict>("CreateConflict")("CreateConflict", {
+  code: Schema.Literal("create-conflict"),
   reason: Schema.Literal("config-mismatch", "closure-mismatch"),
 }) {}
 
@@ -67,6 +73,7 @@ export const CreateResponse = Schema.Union(Created, AlreadyExists, CreateConflic
 export type CreateResponse = typeof CreateResponse.Type
 
 export class OffsetConflict extends Schema.TaggedClass<OffsetConflict>("OffsetConflict")("OffsetConflict", {
+  code: Schema.Literal("offset-conflict"),
   expectedTailOffset: Offset,
   actualTailOffset: Offset,
 }) {}
@@ -83,6 +90,19 @@ export const AppendResponse = Schema.Union(
   StreamGone,
 )
 export type AppendResponse = typeof AppendResponse.Type
+
+export const CloseResponse = Schema.Union(
+  Appended,
+  AppendDuplicate,
+  Closed,
+  EpochFenced,
+  SequenceGap,
+  ContentMismatch,
+  OffsetConflict,
+  StreamNotFound,
+  StreamGone,
+)
+export type CloseResponse = typeof CloseResponse.Type
 
 export class ReadResult extends Schema.TaggedClass<ReadResult>("ReadResult")("ReadResult", {
   records: Schema.Array(WireRecord),
@@ -114,6 +134,7 @@ export type DeleteResponse = typeof DeleteResponse.Type
 export const Response = Schema.Union(
   Appended,
   AppendDuplicate,
+  Closed,
   EpochFenced,
   SequenceGap,
   WriteToClosed,

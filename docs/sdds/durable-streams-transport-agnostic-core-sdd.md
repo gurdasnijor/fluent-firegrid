@@ -778,23 +778,46 @@ Responses are tagged semantic responses. HTTP status codes are added later by
 ```ts
 type AppendResponse =
   | { readonly _tag: "Appended"; readonly nextOffset: Offset; readonly closed: boolean }
-  | { readonly _tag: "Duplicate"; readonly nextOffset: Offset; readonly closed: boolean }
-  | { readonly _tag: "ProducerEpochAdvanced"; readonly epoch: number }
-  | { readonly _tag: "ProducerGap"; readonly expectedSeq: number; readonly receivedSeq: number }
-  | { readonly _tag: "Conflict"; readonly reason: ConflictReason }
-  | { readonly _tag: "Forbidden"; readonly reason: ForbiddenReason }
+  | { readonly _tag: "AppendDuplicate"; readonly nextOffset: Offset; readonly closed: boolean }
+  | { readonly _tag: "EpochFenced"; readonly currentEpoch: number }
+  | { readonly _tag: "SequenceGap"; readonly expectedSeq: number; readonly receivedSeq: number }
+  | { readonly _tag: "WriteToClosed"; readonly finalOffset: Offset }
+  | { readonly _tag: "ContentMismatch"; readonly code: "content-mismatch"; readonly expected: string; readonly actual: string }
+  | { readonly _tag: "OffsetConflict"; readonly code: "offset-conflict"; readonly expectedTailOffset: Offset; readonly actualTailOffset: Offset }
+  | { readonly _tag: "StreamNotFound" }
+  | { readonly _tag: "StreamGone" }
+
+type CloseResponse =
+  | { readonly _tag: "Appended"; readonly nextOffset: Offset; readonly closed: true }
+  | { readonly _tag: "AppendDuplicate"; readonly nextOffset: Offset; readonly closed: true }
+  | { readonly _tag: "Closed"; readonly finalOffset: Offset }
+  | Exclude<AppendResponse, { readonly _tag: "WriteToClosed" | "Appended" | "AppendDuplicate" }>
+
+type CreateResponse =
+  | { readonly _tag: "Created"; readonly tailOffset: Offset; readonly closed: boolean; readonly contentType: string }
+  | { readonly _tag: "AlreadyExists"; readonly tailOffset: Offset; readonly closed: boolean; readonly contentType: string }
+  | { readonly _tag: "CreateConflict"; readonly code: "create-conflict"; readonly reason: "config-mismatch" | "closure-mismatch" }
+  | { readonly _tag: "StreamGone" }
 ```
 
 The protocol layer owns validation and decision precedence. For append:
 
 1. closed stream;
 2. content type mismatch;
-3. `Stream-Seq` regression;
+3. expected-tail offset conflict;
 4. producer epoch/sequence validation;
 5. store append.
 
 The HTTP transport maps those tagged outcomes to `204`, `200`, `400`, `403`,
-`409`, `410`, etc.
+`409`, `410`, etc. Variants that share a status code must self-discriminate on
+the wire: 409 variants carry a literal `code` value, and `204` append responses
+decode as `Appended` unless the transport has an explicit duplicate marker.
+Repeated plain `close()` is idempotent and returns `Closed`, not `WriteToClosed`.
+
+The handler must map store typed errors with `Effect.catchTags` over every
+current `DurableStreamLogError` member. Meaningful domain errors become typed
+responses; impossible failures become defects. It must not use `catchAll` to
+turn unexpected failures into `StreamGone`.
 
 The existing `packages/effect-durable-streams/src/Protocol.ts` should not be
 ported. It contains HTTP-shaped request and decision schemas. `fluent-protocol`
@@ -1196,6 +1219,10 @@ Owner: Agent1 review, implementation after Phases 1-5.
 Deliverables:
 
 - map TypeSpec/OpenAPI operations to protocol commands;
+- first define pure `wireEncode`, `wireDecode`, and `parseSse` helpers in
+  `fluent-protocol` against canned `(status, headers, body)` fixtures;
+- make `(status, code, headers) -> Response` inverse mapping total before
+  adding network handlers;
 - preserve `__ds` route precedence in `fluent-transport-http`;
 - catch-up, long-poll, and SSE HTTP transport handlers over `read`/`subscribe`;
 - webhook callback/ack/release HTTP endpoints over subscription service;

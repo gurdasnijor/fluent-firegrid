@@ -67,6 +67,7 @@ describe("DurableStreamsClient", () => {
 
     expect(outcome).toMatchObject({
       _tag: "ContentMismatch",
+      code: "content-mismatch",
       expected: "text/plain",
       actual: "application/json",
     })

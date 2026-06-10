@@ -13,6 +13,7 @@ import {
   type AppendStream,
   type CreateStream,
   type DurableStreamLog,
+  type DurableStreamLogError,
   type ReadPosition,
   type StreamMetadata,
   type StreamRecord,
@@ -83,11 +84,18 @@ const appendError = (error: unknown): Effect.Effect<Res.AppendResponse> => {
     return Effect.succeed(new Res.WriteToClosed({ finalOffset: error.finalOffset }))
   }
   if (error instanceof ContentTypeMismatchError) {
-    return Effect.succeed(new Res.ContentMismatch({ expected: error.expected, actual: error.actual }))
+    return Effect.succeed(
+      new Res.ContentMismatch({
+        code: "content-mismatch",
+        expected: error.expected,
+        actual: error.actual,
+      }),
+    )
   }
   if (error instanceof OffsetConflictError) {
     return Effect.succeed(
       new Res.OffsetConflict({
+        code: "offset-conflict",
         expectedTailOffset: error.expectedTailOffset,
         actualTailOffset: error.actualTailOffset,
       }),
@@ -107,7 +115,7 @@ const appendError = (error: unknown): Effect.Effect<Res.AppendResponse> => {
   if (error instanceof StreamNotFoundError) {
     return Effect.succeed(new Res.StreamNotFound())
   }
-  return Effect.succeed(new Res.StreamGone())
+  return defect(error)
 }
 
 const readError = (error: unknown): Effect.Effect<Res.ReadResponse> => {
@@ -117,37 +125,120 @@ const readError = (error: unknown): Effect.Effect<Res.ReadResponse> => {
   if (error instanceof StreamNotFoundError) {
     return Effect.succeed(new Res.StreamNotFound())
   }
-  return Effect.succeed(new Res.StreamGone())
+  return defect(error)
 }
 
 const headError = (error: unknown): Effect.Effect<Res.HeadResponse> =>
   error instanceof StreamNotFoundError
     ? Effect.succeed(new Res.StreamNotFound())
-    : Effect.succeed(new Res.StreamGone())
+    : defect(error)
+
+const closeError = (error: unknown): Effect.Effect<Res.CloseResponse> => {
+  if (error instanceof StreamClosedError) {
+    return Effect.succeed(new Res.Closed({ finalOffset: error.finalOffset }))
+  }
+  if (error instanceof ContentTypeMismatchError) {
+    return Effect.succeed(
+      new Res.ContentMismatch({
+        code: "content-mismatch",
+        expected: error.expected,
+        actual: error.actual,
+      }),
+    )
+  }
+  if (error instanceof OffsetConflictError) {
+    return Effect.succeed(
+      new Res.OffsetConflict({
+        code: "offset-conflict",
+        expectedTailOffset: error.expectedTailOffset,
+        actualTailOffset: error.actualTailOffset,
+      }),
+    )
+  }
+  if (error instanceof ProducerEpochRegressionError) {
+    return Effect.succeed(new Res.EpochFenced({ currentEpoch: error.currentEpoch }))
+  }
+  if (error instanceof ProducerSequenceGapError) {
+    return Effect.succeed(
+      new Res.SequenceGap({
+        expectedSeq: error.expectedSeq,
+        receivedSeq: error.receivedSeq,
+      }),
+    )
+  }
+  if (error instanceof StreamNotFoundError) {
+    return Effect.succeed(new Res.StreamNotFound())
+  }
+  return defect(error)
+}
+
+const unexpectedStoreError = (error: DurableStreamLogError): Effect.Effect<never> =>
+  defect(error)
+
+const defect = (error: unknown): Effect.Effect<never> =>
+  Effect.sync(() => {
+    throw error
+  })
 
 const create = (log: DurableStreamLog, request: Req.Create): Effect.Effect<Res.CreateResponse> =>
   log.create(createRequest(request)).pipe(
     Effect.map(created),
-    Effect.catchAll(() => Effect.succeed(new Res.StreamGone())),
+    Effect.catchTags({
+      StreamLogError: unexpectedStoreError,
+      StreamClosedError: unexpectedStoreError,
+      ContentTypeMismatchError: unexpectedStoreError,
+      OffsetConflictError: unexpectedStoreError,
+      ProducerEpochRegressionError: unexpectedStoreError,
+      ProducerSequenceGapError: unexpectedStoreError,
+      StreamNotFoundError: unexpectedStoreError,
+      InvalidOffsetError: unexpectedStoreError,
+    }),
   )
 
 const append = (log: DurableStreamLog, request: Req.Append): Effect.Effect<Res.AppendResponse> =>
   appendBytes(log, appendRequest(request), request.bytes).pipe(
     Effect.map(appended),
-    Effect.catchAll(appendError),
+    Effect.catchTags({
+      StreamClosedError: appendError,
+      ContentTypeMismatchError: appendError,
+      OffsetConflictError: appendError,
+      ProducerEpochRegressionError: appendError,
+      ProducerSequenceGapError: appendError,
+      StreamNotFoundError: appendError,
+      InvalidOffsetError: unexpectedStoreError,
+      StreamLogError: unexpectedStoreError,
+    }),
   )
 
-const close = (log: DurableStreamLog, request: Req.Close): Effect.Effect<Res.AppendResponse> =>
-  log.head(request.path).pipe(
-    Effect.flatMap((metadata) =>
-      appendEmpty(log, {
+const closeAppend = (
+  log: DurableStreamLog,
+  request: Req.Close,
+  metadata: StreamMetadata,
+): Effect.Effect<Res.Closed | Res.Appended | Res.AppendDuplicate, DurableStreamLogError> =>
+  metadata.closed
+    ? Effect.succeed(new Res.Closed({ finalOffset: metadata.tailOffset }))
+    : appendEmpty(log, {
         path: request.path,
         contentType: metadata.contentType,
         close: true,
-      }),
-    ),
-    Effect.map(appended),
-    Effect.catchAll(appendError),
+        ...(request.producer !== undefined && {
+          producer: request.producer,
+        }),
+      }).pipe(Effect.map(appended))
+
+const close = (log: DurableStreamLog, request: Req.Close): Effect.Effect<Res.CloseResponse> =>
+  log.head(request.path).pipe(
+    Effect.flatMap((metadata) => closeAppend(log, request, metadata)),
+    Effect.catchTags({
+      StreamClosedError: closeError,
+      ContentTypeMismatchError: closeError,
+      OffsetConflictError: closeError,
+      ProducerEpochRegressionError: closeError,
+      ProducerSequenceGapError: closeError,
+      StreamNotFoundError: closeError,
+      InvalidOffsetError: unexpectedStoreError,
+      StreamLogError: unexpectedStoreError,
+    }),
   )
 
 const read = (log: DurableStreamLog, request: Req.Read): Effect.Effect<Res.ReadResponse> =>
@@ -168,7 +259,16 @@ const read = (log: DurableStreamLog, request: Req.Read): Effect.Effect<Res.ReadR
         }),
       ),
     ),
-    Effect.catchAll(readError),
+    Effect.catchTags({
+      InvalidOffsetError: readError,
+      StreamNotFoundError: readError,
+      StreamClosedError: readError,
+      ContentTypeMismatchError: readError,
+      OffsetConflictError: readError,
+      ProducerEpochRegressionError: unexpectedStoreError,
+      ProducerSequenceGapError: unexpectedStoreError,
+      StreamLogError: unexpectedStoreError,
+    }),
   )
 
 const head = (log: DurableStreamLog, request: Req.Head): Effect.Effect<Res.HeadResponse> =>
@@ -181,13 +281,31 @@ const head = (log: DurableStreamLog, request: Req.Head): Effect.Effect<Res.HeadR
           contentType: metadata.contentType,
         }),
     ),
-    Effect.catchAll(headError),
+    Effect.catchTags({
+      StreamNotFoundError: headError,
+      StreamLogError: unexpectedStoreError,
+      StreamClosedError: unexpectedStoreError,
+      ContentTypeMismatchError: unexpectedStoreError,
+      OffsetConflictError: unexpectedStoreError,
+      ProducerEpochRegressionError: unexpectedStoreError,
+      ProducerSequenceGapError: unexpectedStoreError,
+      InvalidOffsetError: unexpectedStoreError,
+    }),
   )
 
 const deleteStream = (log: DurableStreamLog, request: Req.Delete): Effect.Effect<Res.DeleteResponse> =>
   log.delete(request.path).pipe(
     Effect.map((result) => result._tag === "Deleted" ? new Res.Deleted() : new Res.StreamNotFound()),
-    Effect.catchAll(() => Effect.succeed(new Res.StreamGone())),
+    Effect.catchTags({
+      StreamLogError: unexpectedStoreError,
+      StreamClosedError: unexpectedStoreError,
+      ContentTypeMismatchError: unexpectedStoreError,
+      OffsetConflictError: unexpectedStoreError,
+      ProducerEpochRegressionError: unexpectedStoreError,
+      ProducerSequenceGapError: unexpectedStoreError,
+      StreamNotFoundError: unexpectedStoreError,
+      InvalidOffsetError: unexpectedStoreError,
+    }),
   )
 
 export function handle<R extends Req.Request>(

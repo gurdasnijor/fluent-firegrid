@@ -80,7 +80,12 @@ export interface ProducerConfig {
   readonly maxTransportRetries?: number
 }
 
-const producerError = (response: Protocol.AppendResponse): ProducerError => {
+type ProducerFailureResponse = Exclude<
+  Protocol.AppendResponse,
+  Protocol.Appended | Protocol.AppendDuplicate
+>
+
+const producerError = (response: ProducerFailureResponse): ProducerError => {
   switch (response._tag) {
     case "EpochFenced":
       return new ProducerFenced({ currentEpoch: response.currentEpoch })
@@ -104,9 +109,6 @@ const producerError = (response: Protocol.AppendResponse): ProducerError => {
     case "StreamNotFound":
       return new ProducerStreamNotFound({})
     case "StreamGone":
-      return new ProducerStreamGone({})
-    case "Appended":
-    case "AppendDuplicate":
       return new ProducerStreamGone({})
   }
 }

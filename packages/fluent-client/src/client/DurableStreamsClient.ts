@@ -30,7 +30,7 @@ export interface DurableStreamsClient {
   ) => Effect.Effect<ReadonlyMailbox<Protocol.ReadEvent, Protocol.TransportError>, Protocol.TransportError, Scope.Scope>
   readonly head: (path: Protocol.Head["path"]) => Effect.Effect<Protocol.HeadResponse, Protocol.TransportError>
   readonly delete: (path: Protocol.Delete["path"]) => Effect.Effect<Protocol.DeleteResponse, Protocol.TransportError>
-  readonly close: (path: Protocol.Close["path"]) => Effect.Effect<Protocol.AppendResponse, Protocol.TransportError>
+  readonly close: (path: Protocol.Close["path"]) => Effect.Effect<Protocol.CloseResponse, Protocol.TransportError>
   readonly producer: (config: ProducerConfig) => Effect.Effect<Producer>
 }
 
