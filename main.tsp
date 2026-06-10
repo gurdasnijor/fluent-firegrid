@@ -37,9 +37,10 @@ scalar AbsoluteUrl extends string;
 @minLength(1)
 scalar MediaType extends string;
 
-@doc("Base64-encoded bytes.")
-@format("byte")
-scalar Base64Bytes extends string;
+@doc("Base64url-encoded bytes used for non-JSON scheduled append bodies.")
+@minLength(1)
+@pattern("^[A-Za-z0-9_-]+={0,2}$")
+scalar Base64UrlBytes extends string;
 
 @doc("Subscription identifier.")
 @minLength(1)
@@ -60,6 +61,14 @@ scalar WorkerId extends string;
 @doc("Common Expression Language expression.")
 @minLength(1)
 scalar CelExpression extends string;
+
+@doc("Opaque writer sequence for Stream-Seq. Values are compared byte-wise lexicographically by the server.")
+@minLength(1)
+scalar StreamSeq extends string;
+
+@doc("Optional long-poll timeout. Servers define the accepted duration syntax and limits.")
+@minLength(1)
+scalar WaitTimeout extends string;
 
 @doc("Non-empty producer identifier used for idempotent appends.")
 @minLength(1)
@@ -84,13 +93,13 @@ scalar LeaseTtlMs extends int32;
 alias JsonValue = unknown;
 
 model StreamUrlPathParam {
-  @doc("Stream-root-relative path. This value may contain slash-separated path segments.")
+  @doc("Stream-root-relative path. This value may contain slash-separated path segments. TypeSpec models the route with `{+path}` so implementations preserve slashes; OpenAPI 3.1 renders this as `{path}` and cannot fully express reserved expansion.")
   @path
   path: StreamRootRelativePath;
 }
 
 model ControlPathParam {
-  @doc("URL-encoded stream-root-relative path used inside reserved control APIs.")
+  @doc("URL-encoded stream-root-relative path used inside reserved control APIs. TypeSpec models the route with `{+path}` so implementations preserve slashes; OpenAPI 3.1 renders this as `{path}` and cannot fully express reserved expansion.")
   @path
   path: StreamRootRelativePath;
 }
@@ -109,6 +118,7 @@ model ContentTypeHeader {
 }
 
 model OptionalContentTypeHeader {
+  @doc("Request Content-Type. Required when a create or append request carries a non-empty body. Optional for close-only requests and fork creation where protocol-specific inheritance rules apply.")
   @header("Content-Type")
   contentType?: string;
 }
@@ -143,7 +153,7 @@ model StreamAppendHeaders {
   ...OptionalContentTypeHeader;
 
   @header("Stream-Seq")
-  streamSeq?: string;
+  streamSeq?: StreamSeq;
 
   ...StreamClosedRequestHeader;
 
@@ -246,6 +256,7 @@ model EmptyError {
 
 @error
 @discriminator("code")
+@doc("Protocol error body used directly by stream endpoints. Reserved control endpoints wrap some fencing errors in `{ error: ... }` where PROTOCOL.md requires that envelope.")
 model ProtocolError {
   code: string;
   message?: string;
@@ -361,13 +372,17 @@ model Forbidden {
 
 alias CommonStreamErrors = BadRequest | NotFound | Gone | TooManyRequests;
 
+@doc("JSON error envelope used by reserved control APIs for fenced or claim-conflict responses. Stream APIs generally return bare protocol errors or header-only conflicts.")
 model ErrorEnvelope<TError> {
   error: TError;
 }
 
+@doc("Create or confirm a stream. If `body` is present, `Content-Type` is required. Fork creation may omit `Content-Type` to inherit the source stream content type, but a provided value must match the source.")
 model CreateStreamRequest {
   ...StreamUrlPathParam;
   ...StreamCreateHeaders;
+
+  @doc("Initial stream bytes. Empty-body create is allowed, including create-and-close with `Stream-Closed: true`.")
   @body body?: bytes;
 }
 
@@ -385,9 +400,12 @@ model CreateStreamAlreadyExists {
   ...TailHeaders;
 }
 
+@doc("Append bytes to a stream. If `body` is present, `Content-Type` is required. Empty body is only meaningful for close-only requests with `Stream-Closed: true`.")
 model AppendStreamRequest {
   ...StreamUrlPathParam;
   ...StreamAppendHeaders;
+
+  @doc("Bytes to append. Servers reject empty append bodies unless the request also closes the stream.")
   @body body?: bytes;
 }
 
@@ -421,6 +439,7 @@ model ProducerGap {
   ...ProducerGapHeaders;
 }
 
+@doc("Header-only closed-stream conflict. Clients should use `Stream-Closed` and `Stream-Next-Offset` instead of parsing a body.")
 model ClosedStreamConflict {
   ...ConflictResponse;
   ...ClosedConflictHeaders;
@@ -560,7 +579,7 @@ interface Streams {
     @query offset?: Offset | "-1" | "now",
     @query live?: "long-poll" | "sse",
     @query cursor?: string,
-    @query timeout?: string,
+    @query timeout?: WaitTimeout,
     @header("If-None-Match") ifNoneMatch?: string,
   ):
     | ReadStreamOk
@@ -623,7 +642,11 @@ model WebhookMetadata extends WebhookConfig {
 @discriminator("type")
 model SubscriptionConfigBase {
   type: SubscriptionType;
+
+  @doc("Glob over stream-root-relative paths. A subscription request must provide at least one of `pattern` or `streams`.")
   pattern?: string;
+
+  @doc("Explicit stream-root-relative paths. A subscription request must provide at least one of `pattern` or `streams`.")
   streams?: StreamRootRelativePath[];
 
   filter?: WakeFilter;
@@ -643,7 +666,7 @@ model PullWakeSubscriptionConfig extends SubscriptionConfigBase {
   type: SubscriptionType.pullWake;
 
   @encodedName("application/json", "wake_stream")
-  wakeStream?: StreamRootRelativePath;
+  wakeStream: StreamRootRelativePath;
 }
 
 @summary("Subscription creation request keyed by subscription type.")
@@ -998,6 +1021,14 @@ model IdempotentProducer {
   seq: ProducerSeq;
 }
 
+model ScheduleRequestBase {
+  at: Rfc3339DateTime;
+  stream: StreamRootRelativePath;
+
+  producer?: IdempotentProducer;
+  close?: boolean;
+}
+
 @example(
   #{
     at: "2026-01-01T00:00:00Z",
@@ -1008,20 +1039,27 @@ model IdempotentProducer {
   },
   #{ title: "Scheduled JSON append" }
 )
-model ScheduleRequest {
-  at: Rfc3339DateTime;
-  stream: StreamRootRelativePath;
+model JsonScheduleRequest extends ScheduleRequestBase {
+  @encodedName("application/json", "content_type")
+  contentType: "application/json";
 
+  @doc("JSON value to append when `content_type` is `application/json`.")
+  body: JsonValue;
+}
+
+model BinaryScheduleRequest extends ScheduleRequestBase {
   @encodedName("application/json", "content_type")
   contentType: MediaType;
 
-  body?: JsonValue;
-
+  @doc("Base64url bytes for non-JSON scheduled appends. Mutually exclusive with `body`; `content_type` must not be `application/json`.")
   @encodedName("application/json", "body_base64")
-  bodyBase64?: Base64Bytes;
+  bodyBase64: Base64UrlBytes;
+}
 
-  producer?: IdempotentProducer;
-  close?: boolean;
+@summary("Scheduled append request. Use `body` for JSON appends and `body_base64` for non-JSON appends.")
+union ScheduleRequest {
+  json: JsonScheduleRequest,
+  binary: BinaryScheduleRequest,
 }
 
 enum ScheduleStatus {
