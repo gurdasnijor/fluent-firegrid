@@ -1,0 +1,147 @@
+feature:
+  name: effect-execution
+  product: durable-streams
+  description: Build a thin Effect-native durable execution authoring layer over the Effect Durable Streams client and server substrate.
+
+components:
+  PACKAGE:
+    requirements:
+      1: "The durable execution authoring package is named `effect-durable-execution`."
+      2: "The package may use `packages/fluent-firegrid` and the current `packages/effect-durable-execution` as design references but not compatibility targets."
+      3: "The package depends on `effect-durable-client` for Durable Streams protocol semantics and does not bind directly to server endpoints."
+      4: "The package does not import implementation code from `packages/server`, `packages/effect-durable-streams`, `packages/client`, or `packages/fluent-firegrid`."
+  BOUNDARY:
+    requirements:
+      1: "The package owns execution authoring semantics, not Durable Streams substrate state machines."
+      2: "The package exposes a thin API for userland durable execution platforms rather than a complete hosted platform."
+      3: "Server, client, and execution concerns are separated so they may evolve in unison without importing across implementation boundaries."
+      4: "Durable sleep, signal, awakeable, durable promise, state-change wait, child, and attachment features lower to client primitives rather than package-owned schedulers, predicate registries, or dedupe stores."
+      5: "The public API uses execution, handler, operation, step, signal, awakeable, and deferred vocabulary; invocation is the internal durable run identity and session is left to application/host naming."
+  JOURNAL:
+    requirements:
+      1: "The package owns the keyed replay fold over application step events."
+      2: "The keyed replay fold skips an action when a matching successful step event already exists."
+      3: "The keyed replay fold replays typed failures through caller-provided error schemas."
+      4: "The Durable Streams operation-log adapter uses the client producer resource and never derives producer sequence from event count or offsets."
+      5: "The Durable Streams operation-log adapter does not expose or duplicate client-level producer fencing, batching, or append retry mechanics."
+      6: "The step replay fold consumes only terminal step outcome events for skip/replay decisions."
+      7: "The invocation replay fold consumes lifecycle, step, timer, wait, signal, deferred, child, cancellation, and state events to reconstruct runtime state."
+      8: "`StepStarted` and attempt metadata are observability facts and must not cause a step action to be skipped."
+  API:
+    requirements:
+      1: "`run` records named durable steps and replays recorded successes or failures."
+      2: "`execute` binds an activation context to an operation and provides the execution requirements."
+      3:
+        requirement: "`service`, `object`, and `workflow` descriptors preserve typed handler metadata for host platforms."
+        deprecated: true
+        reason: "The canonical public API is handler/operation-first; Restate-style descriptor containers belong to host/platform adapters, not this package."
+      4: "Typed call and send clients are derived from named handler metadata over an injected ingress interface."
+      5: "`Effect.all`, `Effect.race`/`Effect.raceAll`, Effect fibers, and any local `select` helper remain Effect-native composition helpers and do not imply durable child-session semantics."
+      6: "`Effect.gen` is the canonical authoring primitive for durable programs; the package does not expose a second public generator protocol that duplicates `Effect.Effect`."
+      7: "`run`, `sleep`, `signal`, `awakeable`, `deferred`, `waitForState`, `attach`, `state`, `channel`, and selection helpers are free primitives resolved from the active operation runtime."
+      8: "Named handler declarations provide stable identity and Effect Schema metadata around operations without requiring a top-level service container."
+      9:
+        requirement: "Service-like grouping APIs may exist only as optional registration conveniences and are not the canonical authoring model."
+        deprecated: true
+        reason: "Grouping into services, virtual objects, or workflows is a host/platform concern outside this package."
+      10: "All public serialization boundaries use Effect Schema; the package does not expose a parallel serde abstraction."
+      11: "`run` accepts retry, output schema, error schema, idempotency, and cancellation policy as step options."
+      12: "The package does not expose start, status, list, delete, pause, resume, or restart invocation-control APIs; those belong to host platforms or control-plane clients."
+      13: "`attach`, `cancel`, and cross-session signal helpers target explicit invocation references or ids from within an active operation runtime."
+      14: "Typed `call` and `send` primitives return invocation references when the substrate exposes them; those references are not lifecycle control handles."
+      15: "`signal(name, schema)` is receiver-side and waits for a named signal on the current active operation."
+      16: "`InvocationReference.signal(name, schema)` is sender-side and returns a synchronous signal reference with resolve and reject methods."
+      17: "`awakeable(schema)` creates an externally resolvable one-shot handle scoped to the current operation, while durable promises are named, invocation/key-scoped settle-once values."
+      18: "The package exposes read-write state only in exclusive contexts and read-only shared state in shared contexts."
+      19: "Ingress clients are host/client-facing APIs for calls, sends, awakeable resolution, and attached results; operation primitives are handler-facing APIs resolved from the active runtime."
+      20: "Public durable programs are ordinary `Effect.Effect<A, E, R>` values whose durable requirements are supplied through Effect context services and Layers."
+      21: "`channel` is a local in-memory settle-once coordination primitive for routines inside one active operation; it is not durable, externally addressable, or replayed from the operation log."
+      22: "The free primitive API exposes durable/replay-aware operation primitives and active handler metadata, while ordinary local composition uses Effect's built-in combinators."
+      23: "The package does not expose a public `currentRuntime`/`currentOps` escape hatch; active runtime lookup is an internal implementation detail."
+      24: "The package exposes named handler declarations as its only definition primitive; it does not export Restate-equivalent `service`, `object`, or `workflow` definition APIs."
+      25: "`waitForState` waits for a schema-bound `@durable-streams/state` resource or collection change through a filtered Durable Streams subscription and materialization."
+      26: "Generic `waitForEvent` may exist only as an ergonomic umbrella over source-specific waits after sleep, signal, awakeable, deferred, and state-change semantics remain distinguishable."
+      27: "Webhook-originated signals are modeled as host-verified durable event or state facts, or as awakeable resolutions, not as a separate handler-facing wait backend."
+  RESUME:
+    requirements:
+      1: "Durable sleep lowers to scheduled append plus wake/materialization."
+      2: "Receiver-side `signal` lowers to signal wait registration plus signal notification materialization."
+      3: "Durable child and attachment helpers lower to ordinary child streams plus subscription or wake primitives."
+      4: "Lease generation fencing gates ack and release while producer fencing gates durable fact append."
+      5: "The package does not own a worker loop, host scheduler, webhook ingress policy, or transport listener."
+      6: "State/resource waits lower to `@durable-streams/state` event streams, server-side filtered subscription wake, and schema-decoded materialization."
+      7: "Webhook ingress lowers to host verification, schema decode, durable fact append, and the same filtered wake/materialization path as other event or state waits."
+  DELIVERY:
+    requirements:
+      1: "Wake delivery is treated as at-least-once; effectively-once execution is achieved by replaying the invocation operation log before running missing steps."
+      2: "A host activation must not ack a wake as done until the execution outcome or suspension intent is durably recorded."
+      3: "A redelivered activation must replay the invocation operation log and skip completed named steps before evaluating user code."
+      4: "External side effects require caller-visible idempotency keys or explicit durable intent/result patterns."
+      5: "The package defines the activation ordering contract but does not own the worker loop that claims wakes."
+      6: "When using a single-writer invocation operation-log design, the operation-log producer epoch is the write-authority fence; subscription generation fences are liveness hints and ack guards, not the operation-log correctness fence."
+      7: "Producer epoch fencing and producer sequence deduplication are both required: epoch rejects stale writers, while sequence deduplicates retry-ambiguous appends from the current writer."
+      8: "A colocated SQL/PGlite host may observe derived ready-work tables through live query or changefeed APIs instead of external pull-wake polling, but activation still replays the operation log and acks only after a durable outcome or suspension intent."
+  INVOCATION:
+    requirements:
+      1: "The package defines invocation and step metadata event schemas for host platforms to materialize lifecycle state."
+      2: "Invocation metadata is derived from durable stream facts and may be materialized by `packages/state`; it is not a new Durable Streams protocol table."
+      3: "Invocation lifecycle metadata includes scheduled, inboxed, running, suspended, completed, failed, cancelled, and timed-out states where applicable."
+      4: "Invocation metadata records timestamps, operation log stream path, operation log watermark, idempotency key, current wake generation, and current wait reason when available."
+      5: "Step metadata records step key, status, attempt, started timestamp, completed timestamp, and encoded success or failure reference."
+      6: "Invocation and step projection events may be emitted as `@durable-streams/state` state change events for `MaterializedState` or StreamDB consumers."
+      7: "`@durable-streams/state` materializations are read/query projections and are not the authoritative operation log."
+  USERLAND:
+    requirements:
+      1: "The public surface is sufficient for users to build their own durable execution platform on top."
+      2: "The package keeps platform hosting, routing, tenancy, authorization, and worker-pool policy outside the package."
+      3:
+        requirement: "The package exposes explicit extension seams for ingress, journal stream naming, producer identity, serde, retry policy, cancellation, and compensation."
+        deprecated: true
+        reason: "Effect Schema replaces public serde terminology."
+      4: "The package exposes explicit extension seams for ingress, invocation stream naming, producer identity, Effect Schema encoding, retry policy, cancellation, and compensation."
+  CONFORMANCE:
+    requirements:
+      1: "Execution conformance proves named step replay does not re-run successful actions."
+      2: "Execution conformance proves typed failed steps replay through the declared error schema."
+      3: "Execution conformance proves the Durable Streams operation-log adapter uses the client producer resource rather than event-count-derived sequence."
+      4: "Execution conformance proves local Effect composition does not introduce positional durable counters."
+      5: "Execution conformance proves handler-derived call and send clients preserve typed metadata."
+      6: "Execution conformance includes integration coverage against a conformant Effect server and Effect client."
+      7: "Execution conformance includes tutorial-surface coverage for deferred features and the substrate primitive each deferred feature depends on."
+      8: "Execution conformance proves wake redelivery after a crash replays completed steps and does not re-run successful actions."
+      9: "Execution conformance proves hosts cannot ack a wake as done before a durable outcome or suspension intent is recorded."
+      10: "Execution conformance proves durable programs are ordinary lazy `Effect.Effect` values and do not require a public custom `Operation` interface."
+      11: "Execution conformance proves free primitives fail deterministically outside an active operation runtime and delegate to the active runtime inside one."
+      12: "Execution conformance proves retry is a policy on `run` and does not require a separate retry primitive."
+      13: "Execution conformance proves Effect Schema encoded values, typed successes, and typed failures round-trip through handler, step, signal, awakeable, and deferred boundaries."
+      14: "Execution conformance proves named handler registration works without a top-level service container."
+      15: "Execution conformance proves `StepStarted` without a terminal outcome does not skip re-execution on replay."
+      16: "Execution conformance proves invocation and step metadata can be projected into `@durable-streams/state` state events without changing operation-log semantics."
+      17: "Execution conformance proves operation primitives do not expose host-level invocation control APIs."
+      18: "Execution conformance proves `call` and `send` return invocation references usable by `attach`, cross-session signal, and cancel primitives where supported."
+      19: "Execution conformance proves receiver-side `signal` waits on the current operation and sender-side `InvocationReference.signal` resolves or rejects a target invocation signal."
+      20: "Execution conformance proves awakeables and durable promises have distinct identity, scope, and completion semantics."
+      21: "Execution conformance proves shared state exposes no write methods while exclusive state does."
+      22: "Execution conformance proves ingress clients are not available through the active operation primitive surface."
+      23: "Execution conformance proves `channel` is local-only: first send wins, receive resolves once, no operation-log event is appended, and replay does not recreate completed channel state."
+      24: "Execution conformance proves the public free primitive surface contains no `currentRuntime`/`currentOps` escape hatch and uses Effect combinators for ordinary local composition."
+      25: "Execution conformance proves the package does not export Restate-equivalent `service`, `object`, or `workflow` definition APIs."
+      26: "Execution conformance proves a stale invocation writer cannot append after a newer producer epoch has claimed the invocation operation log."
+      27: "Execution conformance proves retry-ambiguous appends from the current invocation writer are deduplicated by producer sequence."
+      28: "Execution conformance proves `waitForState` lowers to a filtered subscription plus replay/materialization and does not implement a client-side polling loop."
+      29: "Execution conformance proves webhook-originated durable facts resume matching waits only after the fact append is durable."
+      30: "Execution conformance proves sleep, signal, awakeable, deferred, state-change wait, and channel have distinct identity, scope, durability, and completion semantics."
+
+constraints:
+  SCOPE:
+    requirements:
+      1: "Source compatibility with `packages/fluent-firegrid` is a non-goal."
+      2: "Source compatibility with the current `packages/effect-durable-execution` API is subordinate to conformance and the SDD boundary."
+      3: "The package must not implement Durable Streams protocol behavior that belongs in `effect-durable-client` or `effect-durable-streams`."
+      4: "The package must not become a hosted durable execution engine with its own scheduler, queue, transport server, or persistence backend."
+  SCHEMA:
+    requirements:
+      1: "Every public durable execution serialization boundary accepts only discharged Effect schemas whose context requirement is `never`; schemas may use services while being constructed, but replay cannot require live services."
+  TOOLING:
+    requirements:
+      1: "Execution conformance directories must not implement fake Durable Streams fetch transports, fake servers, or fake substrates to prove production protocol guarantees; missing production seams stay explicit blocked conformance until real client, server, OperationLog, or telemetry instrumentation exists."

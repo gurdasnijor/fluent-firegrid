@@ -1,0 +1,94 @@
+feature:
+  name: effect-client
+  product: durable-streams
+  description: Build an Effect-native Durable Streams client that conforms to PROTOCOL.md, derives reserved control-plane plumbing from shared HttpApi schemas, and exposes protocol semantics as Effect primitives.
+
+components:
+  PACKAGE:
+    requirements:
+      1: "The Effect-native client package is named `effect-durable-client` or another client-specific name that is not `effect-durable-streams`."
+      2: "The existing `packages/effect-durable-streams` client may be used as a design reference but is not a compatibility target."
+      3: "The shared `HttpApi` protocol contract is imported from `durable-streams-protocol`, a package-neutral module shared with the Effect server."
+      4: "The package does not import implementation code from `packages/client`, `packages/server`, or `packages/effect-durable-streams` after the rename."
+      5: "`DurableStreamClient` is the canonical public service for creating typed stream handles, producer resources, and control-plane semantic operations."
+      6: "`DurableStreamClient.stream(path, schema)` is the primary Effect-native schema-bound projection; pathless schema mini-clients are legacy compatibility only."
+  CONFORMANCE:
+    requirements:
+      1: "Client behavior compatibility is defined by `packages/client-conformance-tests`, not by source or API compatibility with the current TypeScript client."
+      2: "Effect client conformance tests prove the public Effect API drives a real conformant server correctly."
+      3: "Additional Effect-client conformance is added before advertising reserved subscriptions, schedules, pull-wake leases, or webhook verification."
+      4: "The client build may diverge from current client API names and module structure when conformance and Effect semantics are preserved."
+      5: "Producer conformance includes cold-replay/recovery cases where existing event count differs from the next usable producer sequence."
+      6: "Client conformance includes a server target that mints non-sequential opaque offsets so event counts cannot be mistaken for offsets or producer sequence."
+      7: "Client conformance proves CEL expression helpers serialize into filtered subscription configs without local predicate evaluation."
+      8: "Client conformance proves raw CEL strings require explicit branding or construction before being accepted by filtered subscription helpers."
+      9: "Client conformance proves array-valued JSON events append as one event through single-append APIs."
+      10: "Client conformance proves multi-event JSON batches use explicit batch append APIs rather than overloading array-valued events."
+      11: "Client conformance proves beginning and now read sentinels have stable, mode-specific behavior."
+      12: "Client conformance proves ordinary typed message streams use `DurableStreamClient.stream(path, schema)` as the schema-bound projection."
+  HTTP_API:
+    requirements:
+      1: "Reserved `__ds` control-plane request construction, response decoding, and declared errors are derived from the shared `HttpApi` contract."
+      2: "Hand-written control-plane code is limited to semantic wrappers over the generated client."
+      3: "The generated control client may be exported as a test/tooling escape hatch but is not the primary public API."
+      4: "Generated control-plane errors are lowered into the client semantic error model."
+      5: "Generated control-plane client types expose only declared protocol errors and do not leak handler, store, or implementation error types."
+  LOG:
+    requirements:
+      1: "Protocol reads are exposed as `Stream` values whose default mode completes only on protocol stream closure."
+      2: "Catch-up, long-poll, SSE, cursor echoing, base64 SSE decoding for non-JSON streams, and up-to-date control markers are internal read-loop concerns."
+      3: "`Stream-Up-To-Date` is exposed only through an opt-in control-event stream and is not treated as EOF."
+      4: "Offsets are opaque ordered tokens and response offsets can always be reused as resume points."
+      5: "Schema decoding happens at the wire boundary and parse failures are typed read errors."
+      6: "`DurableStreamClient.stream(path, schema)` creates typed stream handles without performing I/O."
+      7: "The client exposes a lightweight read-only stream surface or tree-shakable entry point so read-only consumers do not need producer or control-plane resources."
+      8: "`ReadFrom` accepts `ReadFrom.beginning`, `ReadFrom.now`, `ReadFrom.offset(offset)`, and `ReadFrom.cursor(offset, cursor)` forms accepted by the read loop."
+      9: '`ReadFrom.now` starts at the stream head resolved for that read, while `ReadFrom.beginning` is the protocol beginning sentinel; `until: "tail"` bounds catch-up and `until: "close"` follows until stream closure.'
+      10: "`DurableStreamClient.stream(path, schema)` creates the primary schema-bound typed stream handle, with the stream path supplied as runtime address data."
+  PRODUCER:
+    requirements:
+      1: "Producer identity is modeled as a scoped stateful resource that owns epoch and sequence state."
+      2: "Producer append assignment and send order are serialized so concurrent Effect fibers cannot create protocol sequence gaps."
+      3: "Duplicate producer appends are successful control flow, while stale epochs and sequence gaps are typed failures."
+      4: "The client distinguishes `Producer-Seq` managed by the producer from optional caller-supplied `Stream-Seq`."
+      5: "Producer auto-claim is opt-in and bounded."
+      6: "Producer recovery derives sequence from explicit producer protocol state or claims a fresh epoch; it never derives sequence from collected event count or stream offsets."
+      7: "Producer resources are acquired from `DurableStreamClient` stream handles rather than a separate top-level constructor."
+      8: "JSON single-event append and multi-event batch append are distinct public methods so array-valued events cannot be mistaken for batches."
+  COORDINATION:
+    requirements:
+      1: "Subscription creation and stream membership helpers wrap generated control-plane endpoints without owning server state."
+      2: "Pull-wake claims are modeled as scoped leases with heartbeat tied to the active scope."
+      3: "Generation fencing interrupts the claimed work region and prevents ack/release side effects from continuing."
+      4: "Ack with `done: true` is explicit and occurs only after the caller records its durable outcome."
+      5: "The client does not provide a worker loop, handler scheduler, predicate index, lease table, cursor store, or dedupe store."
+      6: "Server-side filter configuration is carried as opaque data and is never evaluated by the client as a durable wait mechanism."
+      7: "Schedule helpers, filtered subscription helpers, and scoped leases compose as resume substrates for higher-level runtimes without embedding execution policy in the client."
+      8: "The client exposes CEL expression construction helpers for filtered subscription creation while preserving server-side evaluation semantics."
+      9: "CEL expressions are represented as branded opaque values so raw strings cannot be confused with locally executable predicates."
+      10: "Filtered subscription helpers accept CEL expressions and typed event schemas but do not evaluate CEL, maintain predicate indexes, or decide wake eligibility in the client."
+  SCHEDULES:
+    requirements:
+      1: "Schedule helpers wrap generated schedule endpoints and model schedule creation as delayed append."
+      2: "Schedule helpers reuse the same producer tuple type as producer append helpers."
+      3: "Schedule idempotency conflicts are typed `ConfigConflict` failures."
+  WEBHOOKS:
+    requirements:
+      1: "Webhook helpers are handler-side verification layers, not outbound client methods."
+      2: "Webhook verification uses shared JWKS and callback schemas from the protocol contract."
+      3: "Webhook verification enforces signature, key id, timestamp, replay-window, and malformed-body checks."
+  LAYERS:
+    requirements:
+      1: "HTTP transport is supplied by Effect layers over `@effect/platform` clients."
+      2: "Auth, retry, tracing, and webhook verifier dependencies are composable layers rather than baked-in global state."
+      3: "Retry is error-class-aware and does not retry protocol-final errors such as fencing or config conflicts."
+
+constraints:
+  SCOPE:
+    requirements:
+      1: "Source compatibility with `packages/client` is a non-goal."
+      2: "Source compatibility with the current `packages/effect-durable-streams` client API is a non-goal."
+      3: "Execution semantics such as keyed replay, workflow scheduling, and product worker policy remain outside the client."
+  SCHEMA:
+    requirements:
+      1: "Every public durable wire boundary accepts only discharged Effect schemas whose context requirement is `never`; schemas may use services while being constructed, but encode, decode, and replay cannot require live services."
