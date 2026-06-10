@@ -1,6 +1,7 @@
 openapi: 3.1.0
 info:
   title: Durable Streams Protocol
+  summary: Path-addressed durable byte streams with long-polling, SSE, subscriptions, and scheduled appends.
   version: 0.0.0
 tags:
   - name: Streams
@@ -10,11 +11,12 @@ paths:
   /v1/stream/__ds/jwks.json:
     get:
       operationId: Subscriptions_getWebhookSigningKeys
+      summary: Get webhook signing keys
       description: Discover public webhook signing keys.
       parameters: []
       responses:
         '200':
-          description: The request has succeeded.
+          description: Public JSON Web Key Set used to verify Durable Streams webhook signatures.
           headers:
             Cache-Control:
               required: true
@@ -29,36 +31,37 @@ paths:
   /v1/stream/__ds/schedules/{id}:
     put:
       operationId: Schedules_putSchedule
+      summary: Create or confirm a scheduled append
       description: Create or idempotently confirm a scheduled append.
       parameters:
         - $ref: '#/components/parameters/ScheduleIdParam'
       responses:
         '200':
-          description: The request has succeeded.
+          description: Create or confirm result, or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Schedule'
         '201':
-          description: The request has succeeded and a new resource has been created as a result.
+          description: Create or confirm result, or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Schedule'
         '400':
-          description: The server could not understand the request due to invalid syntax.
+          description: Create or confirm result, or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/BadRequestError'
         '409':
-          description: The request conflicts with the current state of the server.
+          description: Create or confirm result, or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ConflictError'
         '429':
-          description: Client error
+          description: Create or confirm result, or a documented protocol error.
           content:
             application/json:
               schema:
@@ -71,32 +74,43 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/ScheduleRequest'
+            examples:
+              Schedule a JSON append:
+                summary: Schedule a JSON append
+                value:
+                  at: '2026-01-01T00:00:00Z'
+                  stream: events/orders
+                  content_type: application/json
+                  body:
+                    type: order.timeout
+                    orderId: ord_123
     get:
       operationId: Schedules_getSchedule
+      summary: Get a schedule
       description: Read a scheduled append.
       parameters:
         - $ref: '#/components/parameters/ScheduleIdParam'
       responses:
         '200':
-          description: The request has succeeded.
+          description: Schedule state result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Schedule'
         '404':
-          description: The server cannot find the requested resource.
+          description: Schedule state result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NotFoundError'
         '410':
-          description: Client error
+          description: Schedule state result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/GoneError'
         '429':
-          description: Client error
+          description: Schedule state result or a documented protocol error.
           content:
             application/json:
               schema:
@@ -105,6 +119,7 @@ paths:
         - Schedules
     delete:
       operationId: Schedules_deleteSchedule
+      summary: Cancel a schedule
       description: Cancel a pending scheduled append.
       parameters:
         - $ref: '#/components/parameters/ScheduleIdParam'
@@ -112,19 +127,19 @@ paths:
         '204':
           description: There is no content to send for this request, but the headers may be useful.
         '404':
-          description: The server cannot find the requested resource.
+          description: Cancel result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NotFoundError'
         '410':
-          description: Client error
+          description: Cancel result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/GoneError'
         '429':
-          description: Client error
+          description: Cancel result or a documented protocol error.
           content:
             application/json:
               schema:
@@ -134,36 +149,37 @@ paths:
   /v1/stream/__ds/subscriptions/{id}:
     put:
       operationId: Subscriptions_createSubscription
+      summary: Create or confirm a subscription
       description: Create or idempotently re-confirm a subscription.
       parameters:
         - $ref: '#/components/parameters/SubscriptionIdParam'
       responses:
         '200':
-          description: The request has succeeded.
+          description: Create or confirm result, or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Subscription'
         '201':
-          description: The request has succeeded and a new resource has been created as a result.
+          description: Create or confirm result, or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Subscription'
         '400':
-          description: The server could not understand the request due to invalid syntax.
+          description: Create or confirm result, or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/BadRequestError'
         '409':
-          description: The request conflicts with the current state of the server.
+          description: Create or confirm result, or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ConflictError'
         '429':
-          description: Client error
+          description: Create or confirm result, or a documented protocol error.
           content:
             application/json:
               schema:
@@ -176,32 +192,42 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/SubscriptionConfig'
+            examples:
+              Create a webhook subscription:
+                summary: Create a webhook subscription
+                value:
+                  type: webhook
+                  pattern: events/*
+                  webhook:
+                    url: https://example.com/durable-streams/webhook
+                  lease_ttl_ms: 30000
     get:
       operationId: Subscriptions_getSubscription
+      summary: Get a subscription
       description: Read subscription configuration, membership, cursor, and delivery status.
       parameters:
         - $ref: '#/components/parameters/SubscriptionIdParam'
       responses:
         '200':
-          description: The request has succeeded.
+          description: Subscription state result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Subscription'
         '404':
-          description: The server cannot find the requested resource.
+          description: Subscription state result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NotFoundError'
         '410':
-          description: Client error
+          description: Subscription state result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/GoneError'
         '429':
-          description: Client error
+          description: Subscription state result or a documented protocol error.
           content:
             application/json:
               schema:
@@ -210,6 +236,7 @@ paths:
         - Subscriptions
     delete:
       operationId: Subscriptions_deleteSubscription
+      summary: Delete a subscription
       description: Tombstone a subscription.
       parameters:
         - $ref: '#/components/parameters/SubscriptionIdParam'
@@ -217,19 +244,19 @@ paths:
         '204':
           description: There is no content to send for this request, but the headers may be useful.
         '404':
-          description: The server cannot find the requested resource.
+          description: Delete result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NotFoundError'
         '410':
-          description: Client error
+          description: Delete result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/GoneError'
         '429':
-          description: Client error
+          description: Delete result or a documented protocol error.
           content:
             application/json:
               schema:
@@ -239,6 +266,7 @@ paths:
   /v1/stream/__ds/subscriptions/{id}/ack:
     post:
       operationId: Subscriptions_ack
+      summary: Acknowledge pull-wake progress
       description: Ack processed offsets and optionally release the current claim.
       parameters:
         - $ref: '#/components/parameters/SubscriptionIdParam'
@@ -247,27 +275,28 @@ paths:
           required: true
           schema:
             type: string
+            format: password
       responses:
         '200':
-          description: The request has succeeded.
+          description: Acknowledgement result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/CallbackOk'
         '401':
-          description: Access is unauthorized.
+          description: Acknowledgement result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/EmptyError'
         '404':
-          description: The server cannot find the requested resource.
+          description: Acknowledgement result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NotFoundError'
         '409':
-          description: The request conflicts with the current state of the server.
+          description: Acknowledgement result or a documented protocol error.
           content:
             application/json:
               schema:
@@ -278,7 +307,7 @@ paths:
                   error:
                     $ref: '#/components/schemas/FencedError'
         '410':
-          description: Client error
+          description: Acknowledgement result or a documented protocol error.
           content:
             application/json:
               schema:
@@ -294,6 +323,7 @@ paths:
   /v1/stream/__ds/subscriptions/{id}/callback:
     post:
       operationId: Subscriptions_callback
+      summary: Complete webhook delivery
       description: Webhook asynchronous completion callback.
       parameters:
         - $ref: '#/components/parameters/SubscriptionIdParam'
@@ -302,27 +332,28 @@ paths:
           required: true
           schema:
             type: string
+            format: password
       responses:
         '200':
-          description: The request has succeeded.
+          description: Webhook callback result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/CallbackOk'
         '401':
-          description: Access is unauthorized.
+          description: Webhook callback result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/EmptyError'
         '404':
-          description: The server cannot find the requested resource.
+          description: Webhook callback result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NotFoundError'
         '409':
-          description: The request conflicts with the current state of the server.
+          description: Webhook callback result or a documented protocol error.
           content:
             application/json:
               schema:
@@ -333,7 +364,7 @@ paths:
                   error:
                     $ref: '#/components/schemas/FencedError'
         '410':
-          description: Client error
+          description: Webhook callback result or a documented protocol error.
           content:
             application/json:
               schema:
@@ -349,6 +380,7 @@ paths:
   /v1/stream/__ds/subscriptions/{id}/claim:
     post:
       operationId: Subscriptions_claim
+      summary: Claim pull-wake work
       description: Claim pending work for a pull-wake subscription.
       parameters:
         - $ref: '#/components/parameters/SubscriptionIdParam'
@@ -357,27 +389,28 @@ paths:
           required: true
           schema:
             type: string
+            format: password
       responses:
         '200':
-          description: The request has succeeded.
+          description: Claim result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ClaimSuccess'
         '401':
-          description: Access is unauthorized.
+          description: Claim result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/EmptyError'
         '404':
-          description: The server cannot find the requested resource.
+          description: Claim result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NotFoundError'
         '409':
-          description: The request conflicts with the current state of the server.
+          description: Claim result or a documented protocol error.
           content:
             application/json:
               schema:
@@ -388,7 +421,7 @@ paths:
                   error:
                     $ref: '#/components/schemas/AlreadyClaimedError'
         '410':
-          description: Client error
+          description: Claim result or a documented protocol error.
           content:
             application/json:
               schema:
@@ -404,6 +437,7 @@ paths:
   /v1/stream/__ds/subscriptions/{id}/release:
     post:
       operationId: Subscriptions_release
+      summary: Release pull-wake claim
       description: Release the current pull-wake claim without acking offsets.
       parameters:
         - $ref: '#/components/parameters/SubscriptionIdParam'
@@ -412,23 +446,24 @@ paths:
           required: true
           schema:
             type: string
+            format: password
       responses:
         '204':
           description: There is no content to send for this request, but the headers may be useful.
         '401':
-          description: Access is unauthorized.
+          description: Release result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/EmptyError'
         '404':
-          description: The server cannot find the requested resource.
+          description: Release result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NotFoundError'
         '409':
-          description: The request conflicts with the current state of the server.
+          description: Release result or a documented protocol error.
           content:
             application/json:
               schema:
@@ -439,7 +474,7 @@ paths:
                   error:
                     $ref: '#/components/schemas/FencedError'
         '410':
-          description: Client error
+          description: Release result or a documented protocol error.
           content:
             application/json:
               schema:
@@ -455,6 +490,7 @@ paths:
   /v1/stream/__ds/subscriptions/{id}/streams:
     post:
       operationId: Subscriptions_addSubscriptionStreams
+      summary: Add subscription stream links
       description: Add explicit stream links to a subscription.
       parameters:
         - $ref: '#/components/parameters/SubscriptionIdParam'
@@ -462,25 +498,25 @@ paths:
         '204':
           description: There is no content to send for this request, but the headers may be useful.
         '400':
-          description: The server could not understand the request due to invalid syntax.
+          description: Stream membership update result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/BadRequestError'
         '404':
-          description: The server cannot find the requested resource.
+          description: Stream membership update result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NotFoundError'
         '410':
-          description: Client error
+          description: Stream membership update result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/GoneError'
         '429':
-          description: Client error
+          description: Stream membership update result or a documented protocol error.
           content:
             application/json:
               schema:
@@ -496,6 +532,7 @@ paths:
   /v1/stream/__ds/subscriptions/{id}/streams/{path}:
     delete:
       operationId: Subscriptions_removeSubscriptionStream
+      summary: Remove a subscription stream link
       description: Remove one explicit stream link from a subscription.
       parameters:
         - $ref: '#/components/parameters/SubscriptionIdParam'
@@ -504,19 +541,19 @@ paths:
         '204':
           description: There is no content to send for this request, but the headers may be useful.
         '404':
-          description: The server cannot find the requested resource.
+          description: Stream membership update result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NotFoundError'
         '410':
-          description: Client error
+          description: Stream membership update result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/GoneError'
         '429':
-          description: Client error
+          description: Stream membership update result or a documented protocol error.
           content:
             application/json:
               schema:
@@ -526,6 +563,7 @@ paths:
   /v1/stream/{path}:
     put:
       operationId: Streams_createStream
+      summary: Create or confirm a stream
       description: Create a stream, create a fork, or idempotently confirm an existing stream.
       parameters:
         - $ref: '#/components/parameters/StreamUrlPathParam'
@@ -537,12 +575,12 @@ paths:
         - $ref: '#/components/parameters/StreamCreateHeaders.streamForkSubOffset'
       responses:
         '200':
-          description: The request has succeeded.
+          description: Create or confirm result, or a documented protocol error.
           headers:
             Stream-Next-Offset:
               required: true
               schema:
-                type: string
+                $ref: '#/components/schemas/Offset'
             Stream-Closed:
               required: false
               schema:
@@ -550,7 +588,7 @@ paths:
                 enum:
                   - 'true'
         '201':
-          description: The request has succeeded and a new resource has been created as a result.
+          description: Create or confirm result, or a documented protocol error.
           headers:
             Location:
               required: false
@@ -559,7 +597,7 @@ paths:
             Stream-Next-Offset:
               required: true
               schema:
-                type: string
+                $ref: '#/components/schemas/Offset'
             Stream-Closed:
               required: false
               schema:
@@ -567,25 +605,25 @@ paths:
                 enum:
                   - 'true'
         '400':
-          description: The server could not understand the request due to invalid syntax.
+          description: Create or confirm result, or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/BadRequestError'
         '404':
-          description: The server cannot find the requested resource.
+          description: Create or confirm result, or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NotFoundError'
         '409':
-          description: The request conflicts with the current state of the server.
+          description: Create or confirm result, or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ConflictError'
         '429':
-          description: Client error
+          description: Create or confirm result, or a documented protocol error.
           content:
             application/json:
               schema:
@@ -600,6 +638,7 @@ paths:
               contentMediaType: '*/*'
     post:
       operationId: Streams_appendToStream
+      summary: Append bytes to a stream
       description: Append bytes to a stream and optionally close it atomically.
       parameters:
         - $ref: '#/components/parameters/StreamUrlPathParam'
@@ -610,12 +649,12 @@ paths:
         - $ref: '#/components/parameters/StreamAppendHeaders.producerSeq'
       responses:
         '200':
-          description: The request has succeeded.
+          description: Append result, including idempotent producer metadata when supplied, or a documented protocol error.
           headers:
             Stream-Next-Offset:
               required: true
               schema:
-                type: string
+                $ref: '#/components/schemas/Offset'
             Stream-Closed:
               required: false
               schema:
@@ -625,20 +664,18 @@ paths:
             Producer-Epoch:
               required: false
               schema:
-                type: integer
-                format: int64
+                $ref: '#/components/schemas/ProducerEpoch'
             Producer-Seq:
               required: false
               schema:
-                type: integer
-                format: int64
+                $ref: '#/components/schemas/ProducerSeq'
         '204':
-          description: 'There is no content to send for this request, but the headers may be useful. '
+          description: Append result, including idempotent producer metadata when supplied, or a documented protocol error.
           headers:
             Stream-Next-Offset:
               required: true
               schema:
-                type: string
+                $ref: '#/components/schemas/Offset'
             Stream-Closed:
               required: false
               schema:
@@ -648,52 +685,47 @@ paths:
             Producer-Epoch:
               required: false
               schema:
-                type: integer
-                format: int64
+                $ref: '#/components/schemas/ProducerEpoch'
             Producer-Seq:
               required: false
               schema:
-                type: integer
-                format: int64
+                $ref: '#/components/schemas/ProducerSeq'
         '400':
-          description: The server could not understand the request due to invalid syntax.
+          description: Append result, including idempotent producer metadata when supplied, or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/BadRequestError'
         '403':
-          description: Access is forbidden.
+          description: Append result, including idempotent producer metadata when supplied, or a documented protocol error.
           headers:
             Producer-Epoch:
               required: true
               schema:
-                type: integer
-                format: int64
+                $ref: '#/components/schemas/ProducerEpoch'
         '404':
-          description: The server cannot find the requested resource.
+          description: Append result, including idempotent producer metadata when supplied, or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NotFoundError'
         '405':
-          description: Client error
+          description: Append result, including idempotent producer metadata when supplied, or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/EmptyError'
         '409':
-          description: The request conflicts with the current state of the server.
+          description: Append result, including idempotent producer metadata when supplied, or a documented protocol error.
           headers:
             Producer-Expected-Seq:
               required: false
               schema:
-                type: integer
-                format: int64
+                $ref: '#/components/schemas/ProducerSeq'
             Producer-Received-Seq:
               required: false
               schema:
-                type: integer
-                format: int64
+                $ref: '#/components/schemas/ProducerSeq'
             Stream-Closed:
               required: false
               schema:
@@ -703,27 +735,27 @@ paths:
             Stream-Next-Offset:
               required: false
               schema:
-                type: string
+                $ref: '#/components/schemas/Offset'
         '410':
-          description: Client error
+          description: Append result, including idempotent producer metadata when supplied, or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/GoneError'
         '413':
-          description: Client error
+          description: Append result, including idempotent producer metadata when supplied, or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/EmptyError'
         '429':
-          description: Client error
+          description: Append result, including idempotent producer metadata when supplied, or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/TooManyRequestsError'
         '501':
-          description: Server error
+          description: Append result, including idempotent producer metadata when supplied, or a documented protocol error.
           content:
             application/json:
               schema:
@@ -738,21 +770,18 @@ paths:
               contentMediaType: '*/*'
     head:
       operationId: Streams_headStream
+      summary: Read stream metadata
       description: Read stream metadata without transferring body bytes.
       parameters:
         - $ref: '#/components/parameters/StreamUrlPathParam'
       responses:
         '200':
-          description: The request has succeeded.
+          description: Stream metadata result or a documented protocol error.
           headers:
-            Content-Type:
-              required: true
-              schema:
-                type: string
             Stream-Next-Offset:
               required: true
               schema:
-                type: string
+                $ref: '#/components/schemas/Offset'
             Stream-Closed:
               required: false
               schema:
@@ -766,26 +795,25 @@ paths:
             Stream-Expires-At:
               required: false
               schema:
-                type: string
-                format: http-date
+                $ref: '#/components/schemas/Rfc3339DateTime'
             Cache-Control:
               required: false
               schema:
                 type: string
         '404':
-          description: The server cannot find the requested resource.
+          description: Stream metadata result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NotFoundError'
         '410':
-          description: Client error
+          description: Stream metadata result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/GoneError'
         '429':
-          description: Client error
+          description: Stream metadata result or a documented protocol error.
           content:
             application/json:
               schema:
@@ -794,6 +822,7 @@ paths:
         - Streams
     get:
       operationId: Streams_readStream
+      summary: Read or follow a stream
       description: Read catch-up bytes, long-poll for new bytes, or stream SSE events.
       parameters:
         - $ref: '#/components/parameters/StreamUrlPathParam'
@@ -802,7 +831,7 @@ paths:
           required: false
           schema:
             anyOf:
-              - type: string
+              - $ref: '#/components/schemas/Offset'
               - type: string
                 enum:
                   - '-1'
@@ -836,7 +865,7 @@ paths:
             type: string
       responses:
         '200':
-          description: The request has succeeded.
+          description: Read, long-poll, SSE, cache validation, or documented protocol error result.
           headers:
             Cache-Control:
               required: true
@@ -853,7 +882,7 @@ paths:
             Stream-Next-Offset:
               required: true
               schema:
-                type: string
+                $ref: '#/components/schemas/Offset'
             Stream-Up-To-Date:
               required: false
               schema:
@@ -886,12 +915,12 @@ paths:
               schema:
                 type: string
         '204':
-          description: 'There is no content to send for this request, but the headers may be useful. '
+          description: Read, long-poll, SSE, cache validation, or documented protocol error result.
           headers:
             Stream-Next-Offset:
               required: true
               schema:
-                type: string
+                $ref: '#/components/schemas/Offset'
             Stream-Up-To-Date:
               required: true
               schema:
@@ -909,27 +938,27 @@ paths:
                 enum:
                   - 'true'
         '304':
-          description: The client has made a conditional request and the resource has not been modified.
+          description: Read, long-poll, SSE, cache validation, or documented protocol error result.
         '400':
-          description: The server could not understand the request due to invalid syntax.
+          description: Read, long-poll, SSE, cache validation, or documented protocol error result.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/BadRequestError'
         '404':
-          description: The server cannot find the requested resource.
+          description: Read, long-poll, SSE, cache validation, or documented protocol error result.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NotFoundError'
         '410':
-          description: Client error
+          description: Read, long-poll, SSE, cache validation, or documented protocol error result.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/GoneError'
         '429':
-          description: Client error
+          description: Read, long-poll, SSE, cache validation, or documented protocol error result.
           content:
             application/json:
               schema:
@@ -938,6 +967,7 @@ paths:
         - Streams
     delete:
       operationId: Streams_deleteStream
+      summary: Delete a stream
       description: Delete a stream. Streams with active forks become soft-deleted.
       parameters:
         - $ref: '#/components/parameters/StreamUrlPathParam'
@@ -945,25 +975,25 @@ paths:
         '204':
           description: There is no content to send for this request, but the headers may be useful.
         '404':
-          description: The server cannot find the requested resource.
+          description: Delete result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/NotFoundError'
         '405':
-          description: Client error
+          description: Delete result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/EmptyError'
         '410':
-          description: Client error
+          description: Delete result or a documented protocol error.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/GoneError'
         '501':
-          description: Server error
+          description: Delete result or a documented protocol error.
           content:
             application/json:
               schema:
@@ -978,33 +1008,31 @@ components:
       required: true
       description: URL-encoded stream-root-relative path used inside reserved control APIs.
       schema:
-        type: string
+        $ref: '#/components/schemas/StreamRootRelativePath'
     ScheduleIdParam:
       name: id
       in: path
       required: true
       schema:
-        type: string
+        $ref: '#/components/schemas/ScheduleId'
     StreamAppendHeaders.producerEpoch:
       name: Producer-Epoch
       in: header
       required: false
       schema:
-        type: integer
-        format: int64
+        $ref: '#/components/schemas/ProducerEpoch'
     StreamAppendHeaders.producerId:
       name: Producer-Id
       in: header
       required: false
       schema:
-        type: string
+        $ref: '#/components/schemas/ProducerId'
     StreamAppendHeaders.producerSeq:
       name: Producer-Seq
       in: header
       required: false
       schema:
-        type: integer
-        format: int64
+        $ref: '#/components/schemas/ProducerSeq'
     StreamAppendHeaders.streamSeq:
       name: Stream-Seq
       in: header
@@ -1024,14 +1052,13 @@ components:
       in: header
       required: false
       schema:
-        type: string
-        format: http-date
+        $ref: '#/components/schemas/Rfc3339DateTime'
     StreamCreateHeaders.streamForkOffset:
       name: Stream-Fork-Offset
       in: header
       required: false
       schema:
-        type: string
+        $ref: '#/components/schemas/Offset'
     StreamCreateHeaders.streamForkSubOffset:
       name: Stream-Fork-Sub-Offset
       in: header
@@ -1044,7 +1071,7 @@ components:
       in: header
       required: false
       schema:
-        type: string
+        $ref: '#/components/schemas/StreamRootRelativePath'
     StreamCreateHeaders.streamTtl:
       name: Stream-TTL
       in: header
@@ -1057,14 +1084,18 @@ components:
       required: true
       description: Stream-root-relative path. This value may contain slash-separated path segments.
       schema:
-        type: string
+        $ref: '#/components/schemas/StreamRootRelativePath'
     SubscriptionIdParam:
       name: id
       in: path
       required: true
       schema:
-        type: string
+        $ref: '#/components/schemas/SubscriptionId'
   schemas:
+    AbsoluteUrl:
+      type: string
+      format: uri
+      description: Absolute HTTP or HTTPS URL.
     Ack:
       type: object
       required:
@@ -1072,9 +1103,9 @@ components:
         - offset
       properties:
         stream:
-          type: string
+          $ref: '#/components/schemas/StreamRootRelativePath'
         offset:
-          type: string
+          $ref: '#/components/schemas/Offset'
     AlreadyClaimedError:
       type: object
       required:
@@ -1089,15 +1120,21 @@ components:
         current_holder:
           type: string
         generation:
-          type: integer
-          format: int64
+          $ref: '#/components/schemas/LeaseGeneration'
+      allOf:
+        - $ref: '#/components/schemas/ProtocolError'
+      examples:
+        - code: ALREADY_CLAIMED
+          current_holder: worker-a
+          generation: 4
     AppendStreamRequest:
       type: object
       required:
         - path
       properties:
         path:
-          type: string
+          allOf:
+            - $ref: '#/components/schemas/StreamRootRelativePath'
           description: Stream-root-relative path. This value may contain slash-separated path segments.
         body:
           type: string
@@ -1114,6 +1151,15 @@ components:
             - BAD_REQUEST
         message:
           type: string
+      allOf:
+        - $ref: '#/components/schemas/ProtocolError'
+      examples:
+        - code: BAD_REQUEST
+          message: offset must be -1, now, or a stream offset
+    Base64Bytes:
+      type: string
+      format: byte
+      description: Base64-encoded bytes.
     CallbackOk:
       type: object
       required:
@@ -1133,23 +1179,26 @@ components:
         - generation
       properties:
         wake_id:
-          type: string
+          $ref: '#/components/schemas/WakeId'
         generation:
-          type: integer
-          format: int64
+          $ref: '#/components/schemas/LeaseGeneration'
         acks:
           type: array
           items:
             $ref: '#/components/schemas/Ack'
         done:
           type: boolean
+    CelExpression:
+      type: string
+      minLength: 1
+      description: Common Expression Language expression.
     ClaimRequest:
       type: object
       required:
         - worker
       properties:
         worker:
-          type: string
+          $ref: '#/components/schemas/WorkerId'
     ClaimSuccess:
       type: object
       required:
@@ -1160,19 +1209,18 @@ components:
         - lease_ttl_ms
       properties:
         wake_id:
-          type: string
+          $ref: '#/components/schemas/WakeId'
         generation:
-          type: integer
-          format: int64
+          $ref: '#/components/schemas/LeaseGeneration'
         token:
           type: string
+          format: password
         streams:
           type: array
           items:
             $ref: '#/components/schemas/PendingStream'
         lease_ttl_ms:
-          type: integer
-          format: int32
+          $ref: '#/components/schemas/LeaseTtlMs'
     ClosedConflictHeaders:
       type: object
     ConflictError:
@@ -1186,6 +1234,11 @@ components:
             - CONFLICT
         message:
           type: string
+      allOf:
+        - $ref: '#/components/schemas/ProtocolError'
+      examples:
+        - code: CONFLICT
+          message: stream is closed
     ContentTypeHeader:
       type: object
     CreateStreamRequest:
@@ -1194,7 +1247,8 @@ components:
         - path
       properties:
         path:
-          type: string
+          allOf:
+            - $ref: '#/components/schemas/StreamRootRelativePath'
           description: Stream-root-relative path. This value may contain slash-separated path segments.
         body:
           type: string
@@ -1215,6 +1269,10 @@ components:
           type: string
           enum:
             - FENCED
+      allOf:
+        - $ref: '#/components/schemas/ProtocolError'
+      examples:
+        - code: FENCED
     Forbidden:
       type: object
       required:
@@ -1235,6 +1293,11 @@ components:
             - GONE
         message:
           type: string
+      allOf:
+        - $ref: '#/components/schemas/ProtocolError'
+      examples:
+        - code: GONE
+          message: stream was deleted
     IdempotentProducer:
       type: object
       required:
@@ -1243,13 +1306,11 @@ components:
         - seq
       properties:
         id:
-          type: string
+          $ref: '#/components/schemas/ProducerId'
         epoch:
-          type: integer
-          format: int64
+          $ref: '#/components/schemas/ProducerEpoch'
         seq:
-          type: integer
-          format: int64
+          $ref: '#/components/schemas/ProducerSeq'
     JsonWebKey:
       type: object
       required:
@@ -1282,6 +1343,16 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/JsonWebKey'
+    LeaseGeneration:
+      type: integer
+      format: int64
+      minimum: 0
+      description: Pull-wake lease generation.
+    LeaseTtlMs:
+      type: integer
+      format: int32
+      minimum: 1
+      description: Lease duration in milliseconds.
     LinkType:
       type: string
       enum:
@@ -1289,6 +1360,10 @@ components:
         - explicit
     LiveNoContentHeaders:
       type: object
+    MediaType:
+      type: string
+      minLength: 1
+      description: HTTP media type, such as application/json or application/octet-stream.
     NotFoundError:
       type: object
       required:
@@ -1300,6 +1375,15 @@ components:
             - NOT_FOUND
         message:
           type: string
+      allOf:
+        - $ref: '#/components/schemas/ProtocolError'
+      examples:
+        - code: NOT_FOUND
+          message: stream not found
+    Offset:
+      type: string
+      minLength: 1
+      description: Opaque stream offset emitted by the server.
     OptionalContentTypeHeader:
       type: object
     PendingStream:
@@ -1312,21 +1396,67 @@ components:
         - has_pending
       properties:
         path:
-          type: string
+          $ref: '#/components/schemas/StreamRootRelativePath'
         link_type:
           $ref: '#/components/schemas/LinkType'
         acked_offset:
-          type: string
+          $ref: '#/components/schemas/Offset'
         tail_offset:
-          type: string
+          $ref: '#/components/schemas/Offset'
         has_pending:
           type: boolean
+    ProducerEpoch:
+      type: integer
+      format: int64
+      minimum: 0
+      description: Monotonic producer epoch.
     ProducerFencedHeaders:
       type: object
     ProducerGapHeaders:
       type: object
+    ProducerId:
+      type: string
+      minLength: 1
+      description: Non-empty producer identifier used for idempotent appends.
+    ProducerSeq:
+      type: integer
+      format: int64
+      minimum: 0
+      description: Zero-based producer sequence number.
     ProducerSuccessHeaders:
       type: object
+    ProtocolError:
+      type: object
+      required:
+        - code
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+      discriminator:
+        propertyName: code
+        mapping:
+          CONFLICT: '#/components/schemas/ConflictError'
+          NOT_FOUND: '#/components/schemas/NotFoundError'
+          GONE: '#/components/schemas/GoneError'
+          TOO_MANY_REQUESTS: '#/components/schemas/TooManyRequestsError'
+          FENCED: '#/components/schemas/FencedError'
+          ALREADY_CLAIMED: '#/components/schemas/AlreadyClaimedError'
+          BAD_REQUEST: '#/components/schemas/BadRequestError'
+    PullWakeSubscriptionConfig:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum:
+            - pull-wake
+        wake_stream:
+          $ref: '#/components/schemas/StreamRootRelativePath'
+      allOf:
+        - $ref: '#/components/schemas/SubscriptionConfigBase'
     ReadHeaders:
       type: object
     ReleaseRequest:
@@ -1336,10 +1466,13 @@ components:
         - generation
       properties:
         wake_id:
-          type: string
+          $ref: '#/components/schemas/WakeId'
         generation:
-          type: integer
-          format: int64
+          $ref: '#/components/schemas/LeaseGeneration'
+    Rfc3339DateTime:
+      type: string
+      format: date-time
+      description: RFC 3339 date-time string.
     Schedule:
       type: object
       required:
@@ -1349,14 +1482,21 @@ components:
         - stream
       properties:
         id:
-          type: string
+          allOf:
+            - $ref: '#/components/schemas/ScheduleId'
+          readOnly: true
         status:
-          $ref: '#/components/schemas/ScheduleStatus'
+          allOf:
+            - $ref: '#/components/schemas/ScheduleStatus'
+          readOnly: true
         at:
-          type: string
-          format: date-time
+          $ref: '#/components/schemas/Rfc3339DateTime'
         stream:
-          type: string
+          $ref: '#/components/schemas/StreamRootRelativePath'
+    ScheduleId:
+      type: string
+      minLength: 1
+      description: Schedule identifier.
     ScheduleRequest:
       type: object
       required:
@@ -1365,19 +1505,29 @@ components:
         - content_type
       properties:
         at:
-          type: string
-          format: date-time
+          $ref: '#/components/schemas/Rfc3339DateTime'
         stream:
-          type: string
+          $ref: '#/components/schemas/StreamRootRelativePath'
         content_type:
-          type: string
+          $ref: '#/components/schemas/MediaType'
         body: {}
         body_base64:
-          type: string
+          $ref: '#/components/schemas/Base64Bytes'
         producer:
           $ref: '#/components/schemas/IdempotentProducer'
         close:
           type: boolean
+      examples:
+        - at: '2026-01-01T00:00:00Z'
+          stream: events/orders
+          content_type: application/json
+          body:
+            type: order.timeout
+            orderId: ord_123
+          producer:
+            id: scheduler
+            epoch: 1
+            seq: 42
     ScheduleStatus:
       type: string
       enum:
@@ -1393,14 +1543,18 @@ components:
         streams:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/StreamRootRelativePath'
+    StreamRootRelativePath:
+      type: string
+      minLength: 1
+      description: Stream-root-relative path. The protocol treats this as an application path, not an absolute URL.
     StreamSseControl:
       type: object
       required:
         - streamNextOffset
       properties:
         streamNextOffset:
-          type: string
+          $ref: '#/components/schemas/Offset'
         streamCursor:
           type: string
         upToDate:
@@ -1415,6 +1569,7 @@ components:
       anyOf:
         - type: string
         - $ref: '#/components/schemas/StreamSseControl'
+      title: SSE event variants emitted while following a stream.
     Subscription:
       type: object
       required:
@@ -1427,9 +1582,13 @@ components:
         - status
       properties:
         id:
-          type: string
+          allOf:
+            - $ref: '#/components/schemas/SubscriptionId'
+          readOnly: true
         subscription_id:
-          type: string
+          allOf:
+            - $ref: '#/components/schemas/SubscriptionId'
+          readOnly: true
         type:
           $ref: '#/components/schemas/SubscriptionType'
         pattern:
@@ -1442,21 +1601,38 @@ components:
           $ref: '#/components/schemas/WebhookMetadata'
         wake_stream:
           anyOf:
-            - type: string
+            - $ref: '#/components/schemas/StreamRootRelativePath'
             - type: 'null'
         filter:
           $ref: '#/components/schemas/WakeFilter'
         lease_ttl_ms:
-          type: integer
-          format: int32
+          $ref: '#/components/schemas/LeaseTtlMs'
         created_at:
-          type: string
-          format: date-time
+          allOf:
+            - $ref: '#/components/schemas/Rfc3339DateTime'
+          readOnly: true
         status:
-          $ref: '#/components/schemas/SubscriptionStatus'
+          allOf:
+            - $ref: '#/components/schemas/SubscriptionStatus'
+          readOnly: true
         description:
           type: string
     SubscriptionConfig:
+      anyOf:
+        - $ref: '#/components/schemas/WebhookSubscriptionConfig'
+        - $ref: '#/components/schemas/PullWakeSubscriptionConfig'
+      title: Subscription creation request keyed by subscription type.
+      examples:
+        - type: webhook
+          pattern: events/*
+          webhook:
+            url: https://example.com/durable-streams/webhook
+          filter:
+            language: cel
+            expression: message.type == 'order.created'
+          lease_ttl_ms: 30000
+          description: Order events webhook
+    SubscriptionConfigBase:
       type: object
       required:
         - type
@@ -1468,18 +1644,22 @@ components:
         streams:
           type: array
           items:
-            type: string
-        webhook:
-          $ref: '#/components/schemas/WebhookConfig'
-        wake_stream:
-          type: string
+            $ref: '#/components/schemas/StreamRootRelativePath'
         filter:
           $ref: '#/components/schemas/WakeFilter'
         lease_ttl_ms:
-          type: integer
-          format: int32
+          $ref: '#/components/schemas/LeaseTtlMs'
         description:
           type: string
+      discriminator:
+        propertyName: type
+        mapping:
+          pull-wake: '#/components/schemas/PullWakeSubscriptionConfig'
+          webhook: '#/components/schemas/WebhookSubscriptionConfig'
+    SubscriptionId:
+      type: string
+      minLength: 1
+      description: Subscription identifier.
     SubscriptionStatus:
       type: string
       enum:
@@ -1493,11 +1673,11 @@ components:
         - acked_offset
       properties:
         path:
-          type: string
+          $ref: '#/components/schemas/StreamRootRelativePath'
         link_type:
           $ref: '#/components/schemas/LinkType'
         acked_offset:
-          type: string
+          $ref: '#/components/schemas/Offset'
     SubscriptionType:
       type: string
       enum:
@@ -1516,6 +1696,11 @@ components:
             - TOO_MANY_REQUESTS
         message:
           type: string
+      allOf:
+        - $ref: '#/components/schemas/ProtocolError'
+      examples:
+        - code: TOO_MANY_REQUESTS
+          message: retry later
     WakeFilter:
       type: object
       required:
@@ -1527,15 +1712,21 @@ components:
           enum:
             - cel
         expression:
-          type: string
+          $ref: '#/components/schemas/CelExpression'
         self: {}
+    WakeId:
+      type: string
+      minLength: 1
+      description: Durable wake identifier.
     WebhookConfig:
       type: object
       required:
         - url
       properties:
         url:
-          type: string
+          $ref: '#/components/schemas/AbsoluteUrl'
+      examples:
+        - url: https://example.com/durable-streams/webhook
     WebhookMetadata:
       type: object
       properties:
@@ -1557,7 +1748,25 @@ components:
         kid:
           type: string
         jwks_url:
+          $ref: '#/components/schemas/AbsoluteUrl'
+    WebhookSubscriptionConfig:
+      type: object
+      required:
+        - type
+        - webhook
+      properties:
+        type:
           type: string
+          enum:
+            - webhook
+        webhook:
+          $ref: '#/components/schemas/WebhookConfig'
+      allOf:
+        - $ref: '#/components/schemas/SubscriptionConfigBase'
+    WorkerId:
+      type: string
+      minLength: 1
+      description: Pull-wake worker identifier.
 servers:
   - url: '{endpoint}'
     description: Durable Streams server root
