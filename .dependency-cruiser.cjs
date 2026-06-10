@@ -104,6 +104,99 @@ module.exports = {
         ],
       },
     },
+    {
+      name: "fluent-store-is-leaf-package",
+      severity: "error",
+      comment:
+        "fluent-store mirrors eventsourcing-store: it owns store contracts and must not import transport, protocol, server, client, HTTP/RPC transport, compatibility packages, or execution.",
+      from: { path: "^packages/fluent-store/src/" },
+      to: {
+        path: "^packages/(?:fluent-store-inmemory|fluent-transport|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-server|fluent-client|effect-durable-streams|effect-durable-client|effect-durable-execution)/src/",
+      },
+    },
+    {
+      name: "fluent-store-inmemory-only-imports-store",
+      severity: "error",
+      comment:
+        "fluent-store-inmemory mirrors eventsourcing-store-inmemory: production code may import fluent-store, but not transport, protocol, server, client, HTTP/RPC transport, or legacy stores.",
+      from: { path: "^packages/fluent-store-inmemory/src/" },
+      to: {
+        path: [
+          "^packages/(?:fluent-transport|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-server|fluent-client|effect-durable-streams|effect-durable-client|effect-durable-execution)/src/",
+          "^packages/effect-durable-streams/src/(?:Store|MemoryStore)\\.ts$",
+        ],
+      },
+    },
+    {
+      name: "fluent-transport-is-leaf-package",
+      severity: "error",
+      comment:
+        "fluent-transport mirrors eventsourcing-transport: it owns protocol-agnostic transport contracts and must not import store, protocol, server, client, concrete transports, or platform HTTP modules.",
+      from: { path: "^packages/fluent-transport/src/" },
+      to: {
+        path: "^packages/(?:fluent-store|fluent-store-inmemory|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-server|fluent-client|effect-durable-streams|effect-durable-client|effect-durable-execution)/src/",
+      },
+    },
+    {
+      name: "fluent-transport-inmemory-only-imports-transport",
+      severity: "error",
+      comment:
+        "fluent-transport-inmemory mirrors eventsourcing-transport-inmemory: production code may import fluent-transport only, not protocol, store, server, client, or other concrete transports.",
+      from: { path: "^packages/fluent-transport-inmemory/src/" },
+      to: {
+        path: "^packages/(?:fluent-store|fluent-store-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-server|fluent-client|effect-durable-streams|effect-durable-client|effect-durable-execution)/src/",
+      },
+    },
+    {
+      name: "fluent-transport-http-only-imports-transport",
+      severity: "error",
+      comment:
+        "fluent-transport-http must stay a concrete transport like eventsourcing-transport-websocket: it may import fluent-transport, but not protocol, store, server, client, or other concrete transports.",
+      from: { path: "^packages/fluent-transport-http/src/" },
+      to: {
+        path: "^packages/(?:fluent-store|fluent-store-inmemory|fluent-transport-inmemory|fluent-transport-rpc|fluent-protocol|fluent-server|fluent-client|effect-durable-streams|effect-durable-client|effect-durable-execution)/src/",
+      },
+    },
+    {
+      name: "fluent-transport-rpc-only-imports-transport",
+      severity: "error",
+      comment:
+        "fluent-transport-rpc is a concrete transport: it may import fluent-transport, but not protocol, store, server, client, or other concrete transports.",
+      from: { path: "^packages/fluent-transport-rpc/src/" },
+      to: {
+        path: "^packages/(?:fluent-store|fluent-store-inmemory|fluent-transport-inmemory|fluent-transport-http|fluent-protocol|fluent-server|fluent-client|effect-durable-streams|effect-durable-client|effect-durable-execution)/src/",
+      },
+    },
+    {
+      name: "fluent-protocol-only-imports-store-and-transport",
+      severity: "error",
+      comment:
+        "fluent-protocol mirrors eventsourcing-protocol: production code may import fluent-store and fluent-transport, but not concrete implementations, server, client, HTTP/RPC transport, or compatibility packages.",
+      from: { path: "^packages/fluent-protocol/src/" },
+      to: {
+        path: "^packages/(?:fluent-store-inmemory|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-server|fluent-client|effect-durable-streams|effect-durable-client|effect-durable-execution)/src/",
+      },
+    },
+    {
+      name: "fluent-server-only-imports-store-and-protocol",
+      severity: "error",
+      comment:
+        "fluent-server mirrors eventsourcing-server: production code may import fluent-store only; protocol and concrete transports stay outside the semantic server.",
+      from: { path: "^packages/fluent-server/src/" },
+      to: {
+        path: "^packages/(?:fluent-store-inmemory|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-transport|fluent-protocol|fluent-client|effect-durable-streams|effect-durable-client|effect-durable-execution)/src/",
+      },
+    },
+    {
+      name: "fluent-client-no-concrete-or-server-runtime",
+      severity: "error",
+      comment:
+        "fluent-client may use shared store/protocol/transport interfaces, but runtime code must not import concrete in-memory transports/stores, server implementation, HTTP/RPC transport internals, compatibility packages, or execution.",
+      from: { path: "^packages/fluent-client/src/" },
+      to: {
+        path: "^packages/(?:fluent-store-inmemory|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-server|effect-durable-streams|effect-durable-client|effect-durable-execution)/src/",
+      },
+    },
   ],
   options: {
     tsConfig: { fileName: "tsconfig.eslint.json" },

@@ -50,6 +50,44 @@ export default defineConfig({
       }),
       defineProject({
         test: {
+          name: "fluent-store",
+          include: ["packages/fluent-store/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"],
+        },
+        resolve: {
+          alias: {
+            ...alias,
+            "@firegrid/fluent-store/testing": path.resolve(
+              __dirname,
+              "./packages/fluent-store/src/testing/durable-stream-log-test-suite.ts"
+            ),
+            "@firegrid/fluent-store": path.resolve(__dirname, "./packages/fluent-store/src"),
+          },
+        },
+      }),
+      defineProject({
+        test: {
+          name: "fluent-store-inmemory",
+          include: ["packages/fluent-store-inmemory/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"],
+        },
+        resolve: {
+          alias: {
+            ...alias,
+            "@firegrid/fluent-store/testing": path.resolve(
+              __dirname,
+              "./packages/fluent-store/src/testing/durable-stream-log-test-suite.ts"
+            ),
+            "@firegrid/fluent-store": path.resolve(__dirname, "./packages/fluent-store/src"),
+            "@firegrid/fluent-store-inmemory": path.resolve(
+              __dirname,
+              "./packages/fluent-store-inmemory/src"
+            ),
+          },
+        },
+      }),
+      defineProject({
+        test: {
           name: "effect-durable-execution",
           include: ["packages/effect-durable-execution/test/**/*.test.ts"],
           exclude: ["**/node_modules/**"],
