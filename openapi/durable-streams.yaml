@@ -306,6 +306,7 @@ paths:
                 properties:
                   error:
                     $ref: '#/components/schemas/FencedError'
+                description: JSON error envelope used by reserved control APIs for fenced or claim-conflict responses. Stream APIs generally return bare protocol errors or header-only conflicts.
         '410':
           description: Acknowledgement result or a documented protocol error.
           content:
@@ -363,6 +364,7 @@ paths:
                 properties:
                   error:
                     $ref: '#/components/schemas/FencedError'
+                description: JSON error envelope used by reserved control APIs for fenced or claim-conflict responses. Stream APIs generally return bare protocol errors or header-only conflicts.
         '410':
           description: Webhook callback result or a documented protocol error.
           content:
@@ -420,6 +422,7 @@ paths:
                 properties:
                   error:
                     $ref: '#/components/schemas/AlreadyClaimedError'
+                description: JSON error envelope used by reserved control APIs for fenced or claim-conflict responses. Stream APIs generally return bare protocol errors or header-only conflicts.
         '410':
           description: Claim result or a documented protocol error.
           content:
@@ -473,6 +476,7 @@ paths:
                 properties:
                   error:
                     $ref: '#/components/schemas/FencedError'
+                description: JSON error envelope used by reserved control APIs for fenced or claim-conflict responses. Stream APIs generally return bare protocol errors or header-only conflicts.
         '410':
           description: Release result or a documented protocol error.
           content:
@@ -636,6 +640,7 @@ paths:
           '*/*':
             schema:
               contentMediaType: '*/*'
+        description: 'Initial stream bytes. Empty-body create is allowed, including create-and-close with `Stream-Closed: true`.'
     post:
       operationId: Streams_appendToStream
       summary: Append bytes to a stream
@@ -768,6 +773,7 @@ paths:
           '*/*':
             schema:
               contentMediaType: '*/*'
+        description: Bytes to append. Servers reject empty append bodies unless the request also closes the stream.
     head:
       operationId: Streams_headStream
       summary: Read stream metadata
@@ -856,7 +862,7 @@ paths:
           in: query
           required: false
           schema:
-            type: string
+            $ref: '#/components/schemas/WaitTimeout'
           explode: false
         - name: If-None-Match
           in: header
@@ -1006,7 +1012,7 @@ components:
       name: path
       in: path
       required: true
-      description: URL-encoded stream-root-relative path used inside reserved control APIs.
+      description: URL-encoded stream-root-relative path used inside reserved control APIs. TypeSpec models the route with `{+path}` so implementations preserve slashes; OpenAPI 3.1 renders this as `{path}` and cannot fully express reserved expansion.
       schema:
         $ref: '#/components/schemas/StreamRootRelativePath'
     ScheduleIdParam:
@@ -1038,7 +1044,7 @@ components:
       in: header
       required: false
       schema:
-        type: string
+        $ref: '#/components/schemas/StreamSeq'
     StreamClosedRequestHeader:
       name: Stream-Closed
       in: header
@@ -1082,7 +1088,7 @@ components:
       name: path
       in: path
       required: true
-      description: Stream-root-relative path. This value may contain slash-separated path segments.
+      description: Stream-root-relative path. This value may contain slash-separated path segments. TypeSpec models the route with `{+path}` so implementations preserve slashes; OpenAPI 3.1 renders this as `{path}` and cannot fully express reserved expansion.
       schema:
         $ref: '#/components/schemas/StreamRootRelativePath'
     SubscriptionIdParam:
@@ -1135,10 +1141,12 @@ components:
         path:
           allOf:
             - $ref: '#/components/schemas/StreamRootRelativePath'
-          description: Stream-root-relative path. This value may contain slash-separated path segments.
+          description: Stream-root-relative path. This value may contain slash-separated path segments. TypeSpec models the route with `{+path}` so implementations preserve slashes; OpenAPI 3.1 renders this as `{path}` and cannot fully express reserved expansion.
         body:
           type: string
           contentEncoding: base64
+          description: Bytes to append. Servers reject empty append bodies unless the request also closes the stream.
+      description: 'Append bytes to a stream. If `body` is present, `Content-Type` is required. Empty body is only meaningful for close-only requests with `Stream-Closed: true`.'
     BadRequestError:
       type: object
       required:
@@ -1156,10 +1164,25 @@ components:
       examples:
         - code: BAD_REQUEST
           message: offset must be -1, now, or a stream offset
-    Base64Bytes:
+    Base64UrlBytes:
       type: string
-      format: byte
-      description: Base64-encoded bytes.
+      minLength: 1
+      pattern: ^[A-Za-z0-9_-]+={0,2}$
+      description: Base64url-encoded bytes used for non-JSON scheduled append bodies.
+    BinaryScheduleRequest:
+      type: object
+      required:
+        - content_type
+        - body_base64
+      properties:
+        content_type:
+          $ref: '#/components/schemas/MediaType'
+        body_base64:
+          allOf:
+            - $ref: '#/components/schemas/Base64UrlBytes'
+          description: Base64url bytes for non-JSON scheduled appends. Mutually exclusive with `body`; `content_type` must not be `application/json`.
+      allOf:
+        - $ref: '#/components/schemas/ScheduleRequestBase'
     CallbackOk:
       type: object
       required:
@@ -1249,10 +1272,12 @@ components:
         path:
           allOf:
             - $ref: '#/components/schemas/StreamRootRelativePath'
-          description: Stream-root-relative path. This value may contain slash-separated path segments.
+          description: Stream-root-relative path. This value may contain slash-separated path segments. TypeSpec models the route with `{+path}` so implementations preserve slashes; OpenAPI 3.1 renders this as `{path}` and cannot fully express reserved expansion.
         body:
           type: string
           contentEncoding: base64
+          description: 'Initial stream bytes. Empty-body create is allowed, including create-and-close with `Stream-Closed: true`.'
+      description: Create or confirm a stream. If `body` is present, `Content-Type` is required. Fork creation may omit `Content-Type` to inherit the source stream content type, but a provided value must match the source.
     EmptyError:
       type: object
       properties:
@@ -1311,6 +1336,31 @@ components:
           $ref: '#/components/schemas/ProducerEpoch'
         seq:
           $ref: '#/components/schemas/ProducerSeq'
+    JsonScheduleRequest:
+      type: object
+      required:
+        - content_type
+        - body
+      properties:
+        content_type:
+          type: string
+          enum:
+            - application/json
+        body:
+          description: JSON value to append when `content_type` is `application/json`.
+      allOf:
+        - $ref: '#/components/schemas/ScheduleRequestBase'
+      examples:
+        - at: '2026-01-01T00:00:00Z'
+          stream: events/orders
+          content_type: application/json
+          body:
+            type: order.timeout
+            orderId: ord_123
+          producer:
+            id: scheduler
+            epoch: 1
+            seq: 42
     JsonWebKey:
       type: object
       required:
@@ -1444,10 +1494,12 @@ components:
           FENCED: '#/components/schemas/FencedError'
           ALREADY_CLAIMED: '#/components/schemas/AlreadyClaimedError'
           BAD_REQUEST: '#/components/schemas/BadRequestError'
+      description: 'Protocol error body used directly by stream endpoints. Reserved control endpoints wrap some fencing errors in `{ error: ... }` where PROTOCOL.md requires that envelope.'
     PullWakeSubscriptionConfig:
       type: object
       required:
         - type
+        - wake_stream
       properties:
         type:
           type: string
@@ -1498,36 +1550,24 @@ components:
       minLength: 1
       description: Schedule identifier.
     ScheduleRequest:
+      anyOf:
+        - $ref: '#/components/schemas/JsonScheduleRequest'
+        - $ref: '#/components/schemas/BinaryScheduleRequest'
+      title: Scheduled append request. Use `body` for JSON appends and `body_base64` for non-JSON appends.
+    ScheduleRequestBase:
       type: object
       required:
         - at
         - stream
-        - content_type
       properties:
         at:
           $ref: '#/components/schemas/Rfc3339DateTime'
         stream:
           $ref: '#/components/schemas/StreamRootRelativePath'
-        content_type:
-          $ref: '#/components/schemas/MediaType'
-        body: {}
-        body_base64:
-          $ref: '#/components/schemas/Base64Bytes'
         producer:
           $ref: '#/components/schemas/IdempotentProducer'
         close:
           type: boolean
-      examples:
-        - at: '2026-01-01T00:00:00Z'
-          stream: events/orders
-          content_type: application/json
-          body:
-            type: order.timeout
-            orderId: ord_123
-          producer:
-            id: scheduler
-            epoch: 1
-            seq: 42
     ScheduleStatus:
       type: string
       enum:
@@ -1548,6 +1588,10 @@ components:
       type: string
       minLength: 1
       description: Stream-root-relative path. The protocol treats this as an application path, not an absolute URL.
+    StreamSeq:
+      type: string
+      minLength: 1
+      description: Opaque writer sequence for Stream-Seq. Values are compared byte-wise lexicographically by the server.
     StreamSseControl:
       type: object
       required:
@@ -1641,10 +1685,12 @@ components:
           $ref: '#/components/schemas/SubscriptionType'
         pattern:
           type: string
+          description: Glob over stream-root-relative paths. A subscription request must provide at least one of `pattern` or `streams`.
         streams:
           type: array
           items:
             $ref: '#/components/schemas/StreamRootRelativePath'
+          description: Explicit stream-root-relative paths. A subscription request must provide at least one of `pattern` or `streams`.
         filter:
           $ref: '#/components/schemas/WakeFilter'
         lease_ttl_ms:
@@ -1701,6 +1747,10 @@ components:
       examples:
         - code: TOO_MANY_REQUESTS
           message: retry later
+    WaitTimeout:
+      type: string
+      minLength: 1
+      description: Optional long-poll timeout. Servers define the accepted duration syntax and limits.
     WakeFilter:
       type: object
       required:
