@@ -42,21 +42,7 @@ interface ProducerState {
   readonly lastSeq: number
 }
 
-export interface InMemoryStore {
-  readonly create: (request: CreateStream) => Effect.Effect<CreateStreamResult, never>
-  readonly append: (
-    request: AppendStream,
-  ) => Sink.Sink<AppendResult, Uint8Array, Uint8Array, DurableStreamLogError>
-  readonly read: (
-    from: ReadPosition,
-  ) => Effect.Effect<Stream.Stream<StreamRecord, never>, DurableStreamLogError>
-  readonly subscribe: (
-    from: ReadPosition,
-  ) => Effect.Effect<Stream.Stream<StreamRecord, never>, DurableStreamLogError, Scope.Scope>
-  readonly subscribeAll: () => Effect.Effect<Stream.Stream<TailAdvanced, never>, never, Scope.Scope>
-  readonly head: (path: StreamPath) => Effect.Effect<StreamMetadata, StreamNotFoundError>
-  readonly delete: (path: StreamPath) => Effect.Effect<DeleteStreamResult, never>
-}
+export type InMemoryStore = DurableStreamLog
 
 const pubSubCapacity = 256
 

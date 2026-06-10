@@ -15,6 +15,13 @@ export interface ClientServerTransportTestContext {
   readonly makeTestMessage: (type: string, payload: unknown) => TransportMessage
 }
 
+interface StartedTransportPair {
+  readonly context: ClientServerTransportTestContext
+  readonly pair: TransportPair
+  readonly server: ServerTransport
+  readonly client: ClientTransport
+}
+
 const timeout = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   message: string,
@@ -64,6 +71,39 @@ const waitForConnectionState = (
     (effect) => timeout(effect, `Timed out waiting for connection state ${state}`),
   )
 
+const withStartedPair = <A>(
+  makeContext: () => Effect.Effect<ClientServerTransportTestContext>,
+  use: (pair: StartedTransportPair) => Effect.Effect<A, Error, Scope.Scope>,
+) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const context = yield* makeContext()
+      const pair = context.makeTransportPair()
+      const server = yield* pair.makeServer()
+      const client = yield* pair.makeClient()
+      return yield* use({ context, pair, server, client })
+    }),
+  )
+
+const firstConnection = (server: ServerTransport) =>
+  collectConnections(server, 1).pipe(
+    Effect.flatMap((connections) => {
+      const connection = connections[0]
+      return connection === undefined
+        ? Effect.fail(new Error("Expected a server-side connection"))
+        : Effect.succeed(connection)
+    }),
+  )
+
+const firstConnectionMessages = (server: ServerTransport) =>
+  firstConnection(server).pipe(
+    Effect.flatMap((connection) =>
+      connection.transport.subscribe().pipe(
+        Effect.map((messages) => ({ connection, messages })),
+      ),
+    ),
+  )
+
 export const runClientServerTransportTestSuite = (
   name: string,
   makeContext: () => Effect.Effect<ClientServerTransportTestContext>,
@@ -71,15 +111,12 @@ export const runClientServerTransportTestSuite = (
   describe(`${name} ClientServerTransport`, () => {
     it("establishes client/server connections", async () => {
       const connections = await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const context = yield* makeContext()
-            const pair = context.makeTransportPair()
-            const server = yield* pair.makeServer()
-            const client = yield* pair.makeClient()
-            yield* waitForConnectionState(client, "connected")
-            return yield* collectConnections(server, 1)
-          }),
+        withStartedPair(
+          makeContext,
+          ({ client, server }) =>
+            waitForConnectionState(client, "connected").pipe(
+              Effect.zipRight(collectConnections(server, 1)),
+            ),
         ),
       )
 
@@ -88,19 +125,18 @@ export const runClientServerTransportTestSuite = (
 
     it("tracks multiple clients on one server", async () => {
       const connections = await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const context = yield* makeContext()
-            const pair = context.makeTransportPair()
-            const server = yield* pair.makeServer()
-            const client1 = yield* pair.makeClient()
-            const client2 = yield* pair.makeClient()
-            yield* Effect.all([
-              waitForConnectionState(client1, "connected"),
-              waitForConnectionState(client2, "connected"),
-            ])
-            return yield* collectConnections(server, 2)
-          }),
+        withStartedPair(
+          makeContext,
+          ({ client, pair, server }) =>
+            pair.makeClient().pipe(
+              Effect.flatMap((client2) =>
+                Effect.all([
+                  waitForConnectionState(client, "connected"),
+                  waitForConnectionState(client2, "connected"),
+                ]),
+              ),
+              Effect.zipRight(collectConnections(server, 2)),
+            ),
         ),
       )
 
@@ -109,21 +145,14 @@ export const runClientServerTransportTestSuite = (
 
     it("delivers client messages to the server-side connection", async () => {
       const received = await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const context = yield* makeContext()
-            const pair = context.makeTransportPair()
-            const server = yield* pair.makeServer()
-            const client = yield* pair.makeClient()
-            const connection = (yield* collectConnections(server, 1))[0]
-            if (connection === undefined) {
-              return yield* Effect.fail(new Error("Expected a server-side connection"))
-            }
-
-            const messages = yield* connection.transport.subscribe()
-            yield* client.publish(context.makeTestMessage("client.message", { text: "hello" }))
-            return yield* collectMessages(messages, 1)
-          }),
+        withStartedPair(
+          makeContext,
+          ({ client, context, server }) =>
+            Effect.gen(function* () {
+              const { messages } = yield* firstConnectionMessages(server)
+              yield* client.publish(context.makeTestMessage("client.message", { text: "hello" }))
+              return yield* collectMessages(messages, 1)
+            }),
         ),
       )
 
@@ -133,23 +162,21 @@ export const runClientServerTransportTestSuite = (
 
     it("broadcasts server messages to connected clients", async () => {
       const received = await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const context = yield* makeContext()
-            const pair = context.makeTransportPair()
-            const server = yield* pair.makeServer()
-            const client1 = yield* pair.makeClient()
-            const client2 = yield* pair.makeClient()
-            yield* collectConnections(server, 2)
+        withStartedPair(
+          makeContext,
+          ({ client: client1, context, pair, server }) =>
+            Effect.gen(function* () {
+              const client2 = yield* pair.makeClient()
+              yield* collectConnections(server, 2)
 
-            const client1Messages = yield* client1.subscribe()
-            const client2Messages = yield* client2.subscribe()
-            yield* server.broadcast(context.makeTestMessage("server.broadcast", { text: "all" }))
-            return yield* Effect.all([
-              collectMessages(client1Messages, 1),
-              collectMessages(client2Messages, 1),
-            ])
-          }),
+              const client1Messages = yield* client1.subscribe()
+              const client2Messages = yield* client2.subscribe()
+              yield* server.broadcast(context.makeTestMessage("server.broadcast", { text: "all" }))
+              return yield* Effect.all([
+                collectMessages(client1Messages, 1),
+                collectMessages(client2Messages, 1),
+              ])
+            }),
         ),
       )
 
@@ -159,25 +186,18 @@ export const runClientServerTransportTestSuite = (
 
     it("supports bidirectional request/response flow", async () => {
       const received = await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const context = yield* makeContext()
-            const pair = context.makeTransportPair()
-            const server = yield* pair.makeServer()
-            const client = yield* pair.makeClient()
-            const connection = (yield* collectConnections(server, 1))[0]
-            if (connection === undefined) {
-              return yield* Effect.fail(new Error("Expected a server-side connection"))
-            }
-
-            const serverMessages = yield* connection.transport.subscribe()
-            const clientMessages = yield* client.subscribe()
-            yield* client.publish(context.makeTestMessage("client.request", { query: "ping" }))
-            const serverReceived = yield* collectMessages(serverMessages, 1)
-            yield* connection.transport.publish(context.makeTestMessage("server.response", { result: "pong" }))
-            const clientReceived = yield* collectMessages(clientMessages, 1)
-            return { serverReceived, clientReceived }
-          }),
+        withStartedPair(
+          makeContext,
+          ({ client, context, server }) =>
+            Effect.gen(function* () {
+              const serverSide = yield* firstConnectionMessages(server)
+              const clientMessages = yield* client.subscribe()
+              yield* client.publish(context.makeTestMessage("client.request", { query: "ping" }))
+              const serverReceived = yield* collectMessages(serverSide.messages, 1)
+              yield* serverSide.connection.transport.publish(context.makeTestMessage("server.response", { result: "pong" }))
+              const clientReceived = yield* collectMessages(clientMessages, 1)
+              return { serverReceived, clientReceived }
+            }),
         ),
       )
 
@@ -187,20 +207,18 @@ export const runClientServerTransportTestSuite = (
 
     it("filters subscribed messages", async () => {
       const received = await Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const context = yield* makeContext()
-            const pair = context.makeTransportPair()
-            const server = yield* pair.makeServer()
-            const client = yield* pair.makeClient()
-            yield* collectConnections(server, 1)
+        withStartedPair(
+          makeContext,
+          ({ client, context, server }) =>
+            Effect.gen(function* () {
+              yield* collectConnections(server, 1)
 
-            const messages = yield* client.subscribe((message) => message.type.startsWith("important."))
-            yield* server.broadcast(context.makeTestMessage("debug.message", { n: 1 }))
-            yield* server.broadcast(context.makeTestMessage("important.alert", { n: 2 }))
-            yield* server.broadcast(context.makeTestMessage("important.notice", { n: 3 }))
-            return yield* collectMessages(messages, 2)
-          }),
+              const messages = yield* client.subscribe((message) => message.type.startsWith("important."))
+              yield* server.broadcast(context.makeTestMessage("debug.message", { n: 1 }))
+              yield* server.broadcast(context.makeTestMessage("important.alert", { n: 2 }))
+              yield* server.broadcast(context.makeTestMessage("important.notice", { n: 3 }))
+              return yield* collectMessages(messages, 2)
+            }),
         ),
       )
 
