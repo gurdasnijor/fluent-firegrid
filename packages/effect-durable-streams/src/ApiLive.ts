@@ -108,10 +108,10 @@ export const StreamApiLive = HttpApiBuilder.group(
       return handlers
         .handle("createStream", ({ path, headers, request }) =>
           Effect.gen(function* () {
-            const streamPath = yield* applicationStreamPath(path.streamPath)
+            const applicationPath = yield* applicationStreamPath(path.path)
             const body = yield* requestBody(request)
             const req: Protocol.CreateRequest = {
-              path: streamPath,
+              path: applicationPath,
               contentType: normalizeContentType(headers[Api.CONTENT_TYPE]),
               entityBody: body,
               close: isClosed(headers[Api.STREAM_CLOSED_REQUEST]),
@@ -130,11 +130,11 @@ export const StreamApiLive = HttpApiBuilder.group(
         )
         .handle("appendToStream", ({ path, headers, request }) =>
           Effect.gen(function* () {
-            const streamPath = yield* applicationStreamPath(path.streamPath)
+            const applicationPath = yield* applicationStreamPath(path.path)
             const body = yield* requestBody(request)
             const producer = yield* appendProducer(headers)
             const req: Protocol.AppendRequest = {
-              path: streamPath,
+              path: applicationPath,
               contentType: normalizeContentType(headers[Api.CONTENT_TYPE]),
               entityBody: body,
               close: isClosed(headers[Api.STREAM_CLOSED_REQUEST]),
@@ -184,8 +184,8 @@ export const StreamApiLive = HttpApiBuilder.group(
           }),
         )
         .handle("headStream", ({ path }) =>
-          applicationStreamPath(path.streamPath).pipe(
-            Effect.flatMap((streamPath) => lowerStoreError(store.head(streamPath))),
+          applicationStreamPath(path.path).pipe(
+            Effect.flatMap((applicationPath) => lowerStoreError(store.head(applicationPath))),
             Effect.map((tail) =>
               HttpServerResponse.empty({ status: 200 }).pipe(
                 HttpServerResponse.setHeaders({
@@ -198,9 +198,9 @@ export const StreamApiLive = HttpApiBuilder.group(
           ),
         )
         .handle("readStream", ({ path, urlParams }) =>
-          applicationStreamPath(path.streamPath).pipe(
-            Effect.flatMap((streamPath) =>
-              lowerStoreError(store.read(streamPath, urlParams.offset)),
+          applicationStreamPath(path.path).pipe(
+            Effect.flatMap((applicationPath) =>
+              lowerStoreError(store.read(applicationPath, urlParams.offset)),
             ),
             Effect.map((chunk) =>
               HttpServerResponse.uint8Array(chunk.entityBody, {
@@ -219,8 +219,8 @@ export const StreamApiLive = HttpApiBuilder.group(
           ),
         )
         .handle("deleteStream", ({ path }) =>
-          applicationStreamPath(path.streamPath).pipe(
-            Effect.flatMap((streamPath) => lowerStoreError(store.deleteStream(streamPath))),
+          applicationStreamPath(path.path).pipe(
+            Effect.flatMap((applicationPath) => lowerStoreError(store.deleteStream(applicationPath))),
             Effect.asVoid,
           ),
         )

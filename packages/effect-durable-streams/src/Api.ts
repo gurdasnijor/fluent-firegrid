@@ -16,16 +16,16 @@ export const PRODUCER_ID = "producer-id"
 export const PRODUCER_EPOCH_REQUEST = "producer-epoch"
 export const PRODUCER_SEQ_REQUEST = "producer-seq"
 
-const RawStreamPathParams = Schema.Struct({
+const RawStreamUrlPathParams = Schema.Struct({
   "*": Schema.optionalWith(Schema.String, { default: () => "" }),
 })
 
-export const StreamPathParams = Schema.transform(
-  RawStreamPathParams,
-  Schema.Struct({ streamPath: Protocol.StreamPath }),
+export const StreamUrlPathParams = Schema.transform(
+  RawStreamUrlPathParams,
+  Schema.Struct({ path: Protocol.StreamPath }),
   {
-    decode: (params) => ({ streamPath: params["*"] }),
-    encode: ({ streamPath }) => ({ "*": streamPath }),
+    decode: (params) => ({ path: params["*"] }),
+    encode: ({ path }) => ({ "*": path }),
   },
 )
 
@@ -50,7 +50,7 @@ export const AppendHeaders = Schema.Struct({
 const streamEndpoint = <const Name extends string>(
   name: Name,
   method: "GET" | "HEAD" | "POST" | "PUT" | "DELETE",
-) => HttpApiEndpoint.make(method)(name, "/*").setPath(StreamPathParams)
+) => HttpApiEndpoint.make(method)(name, "/*").setPath(StreamUrlPathParams)
 
 export class StreamApi extends HttpApiGroup.make("streams")
   .add(
