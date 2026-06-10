@@ -1,10 +1,5 @@
 import { Chunk, Effect, Fiber, Ref, Stream } from "effect"
-import {
-  decodeProtocolEnvelope,
-  encodeProtocolEnvelope,
-  type DurableStreamsCommand,
-  type DurableStreamsResponse,
-} from "@firegrid/fluent-protocol"
+import * as Protocol from "@firegrid/fluent-protocol"
 import type { ClientTransport } from "@firegrid/fluent-transport"
 import { DurableStreamsClientError, DurableStreamsProtocolFailure } from "./Errors.ts"
 import type { StreamHandle } from "./StreamHandle.ts"
@@ -77,7 +72,9 @@ const transportError = (operation: string) => (cause: unknown) =>
 const bytesToWire = (bytes: Uint8Array) => Array.from(bytes)
 const bytesFromWire = (bytes: readonly number[]) => Uint8Array.from(bytes)
 
-const protocolFailure = (response: Extract<DurableStreamsResponse, { readonly _tag: "Failure" }>) =>
+const protocolFailure = (
+  response: Extract<Protocol.DurableStreamsResponse, { readonly _tag: "Failure" }>,
+) =>
   new DurableStreamsProtocolFailure({
     reason: response.reason,
     message: response.message,
@@ -85,9 +82,9 @@ const protocolFailure = (response: Extract<DurableStreamsResponse, { readonly _t
 
 const expectResponse = <A>(
   operation: string,
-  response: DurableStreamsResponse,
+  response: Protocol.DurableStreamsResponse,
   f: (
-    response: Exclude<DurableStreamsResponse, { readonly _tag: "Failure" }>,
+    response: Exclude<Protocol.DurableStreamsResponse, { readonly _tag: "Failure" }>,
   ) => Effect.Effect<A, DurableStreamsClientError>,
 ): Effect.Effect<A, DurableStreamsClientError | DurableStreamsProtocolFailure> =>
   response._tag === "Failure" ? Effect.fail(protocolFailure(response)) : f(response)
@@ -121,7 +118,7 @@ const responseFor = (
   transport: ClientTransport,
   id: string,
   operation: string,
-): Effect.Effect<DurableStreamsResponse, DurableStreamsClientError> =>
+): Effect.Effect<Protocol.DurableStreamsResponse, DurableStreamsClientError> =>
   transport
     .subscribe((message) => message.id === id)
     .pipe(
@@ -129,7 +126,7 @@ const responseFor = (
       Effect.flatMap((messages) =>
         messages.pipe(
           Stream.mapEffect((message) =>
-            decodeProtocolEnvelope(message).pipe(Effect.mapError(transportError(operation))),
+            Protocol.decodeProtocolEnvelope(message).pipe(Effect.mapError(transportError(operation))),
           ),
           Stream.filter((envelope) => envelope.kind === "response" && envelope.id === id),
           Stream.take(1),
@@ -153,12 +150,12 @@ const sendCommand = (
   transport: ClientTransport,
   nextId: Ref.Ref<number>,
   operation: string,
-  command: DurableStreamsCommand,
-): Effect.Effect<DurableStreamsResponse, DurableStreamsClientError> =>
+  command: Protocol.DurableStreamsCommand,
+): Effect.Effect<Protocol.DurableStreamsResponse, DurableStreamsClientError> =>
   Effect.gen(function* () {
     const id = yield* Ref.modify(nextId, (current) => [`client-command-${current}`, current + 1] as const)
     const responseFiber = yield* responseFor(transport, id, operation).pipe(Effect.fork)
-    const message = yield* encodeProtocolEnvelope({ kind: "command", id, command }).pipe(
+    const message = yield* Protocol.encodeProtocolEnvelope({ kind: "command", id, command }).pipe(
       Effect.mapError(transportError(operation)),
     )
     yield* waitAndPublish(transport, operation, message)

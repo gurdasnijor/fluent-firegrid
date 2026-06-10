@@ -1236,6 +1236,9 @@ export default tseslint.config(
       "**/dist/**",
       ".eslintcache",
       "*.tsbuildinfo",
+      // repos/** contains pinned git submodules used as read-only design references.
+      // They are not part of this repo's build graph.
+      "repos/**",
     ],
   },
   js.configs.recommended,

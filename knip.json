@@ -110,6 +110,8 @@
       "types"
     ]
   },
-  "ignore": [],
+  "ignore": [
+    "repos/**"
+  ],
   "ignoreWorkspaces": []
 }
