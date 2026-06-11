@@ -42,5 +42,5 @@ export interface DurableStreamLog {
 }
 
 export class DurableStreamLogTag extends Context.Service<DurableStreamLogTag, DurableStreamLog>()(
-  "@firegrid/fluent-store/DurableStreamLog",
+  "@firegrid/fluent-stream-log/DurableStreamLog",
 ) {}

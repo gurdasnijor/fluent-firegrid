@@ -1,7 +1,7 @@
 {
-  "name": "@firegrid/fluent-store-inmemory",
+  "name": "@firegrid/fluent-stream-log-inmemory",
   "version": "0.0.0",
-  "description": "In-memory Durable Streams store implementation.",
+  "description": "In-memory Durable Streams byte log implementation.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -22,11 +22,11 @@
   "scripts": {
     "build": "tsc",
     "diagnostics": "effect-language-service diagnostics --project tsconfig.json --severity error",
-    "test": "vitest run --root ../.. --project fluent-store-inmemory",
+    "test": "vitest run --root ../.. --project fluent-stream-log-inmemory",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@firegrid/fluent-store": "workspace:*",
+    "@firegrid/fluent-stream-log": "workspace:*",
     "effect": "4.0.0-beta.78"
   },
   "devDependencies": {

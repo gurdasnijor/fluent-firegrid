@@ -26,38 +26,38 @@ export default defineConfig({
       }),
       defineProject({
         test: {
-          name: "fluent-store",
-          include: ["packages/fluent-store/test/**/*.test.ts"],
+          name: "fluent-stream-log",
+          include: ["packages/fluent-stream-log/test/**/*.test.ts"],
           exclude: ["**/node_modules/**"],
         },
         resolve: {
           alias: {
             ...alias,
-            "@firegrid/fluent-store/testing": path.resolve(
+            "@firegrid/fluent-stream-log/testing": path.resolve(
               __dirname,
-              "./packages/fluent-store/src/testing/durable-stream-log-test-suite.ts"
+              "./packages/fluent-stream-log/src/testing/durable-stream-log-test-suite.ts"
             ),
-            "@firegrid/fluent-store": path.resolve(__dirname, "./packages/fluent-store/src"),
+            "@firegrid/fluent-stream-log": path.resolve(__dirname, "./packages/fluent-stream-log/src"),
           },
         },
       }),
       defineProject({
         test: {
-          name: "fluent-store-inmemory",
-          include: ["packages/fluent-store-inmemory/test/**/*.test.ts"],
+          name: "fluent-stream-log-inmemory",
+          include: ["packages/fluent-stream-log-inmemory/test/**/*.test.ts"],
           exclude: ["**/node_modules/**"],
         },
         resolve: {
           alias: {
             ...alias,
-            "@firegrid/fluent-store/testing": path.resolve(
+            "@firegrid/fluent-stream-log/testing": path.resolve(
               __dirname,
-              "./packages/fluent-store/src/testing/durable-stream-log-test-suite.ts"
+              "./packages/fluent-stream-log/src/testing/durable-stream-log-test-suite.ts"
             ),
-            "@firegrid/fluent-store": path.resolve(__dirname, "./packages/fluent-store/src"),
-            "@firegrid/fluent-store-inmemory": path.resolve(
+            "@firegrid/fluent-stream-log": path.resolve(__dirname, "./packages/fluent-stream-log/src"),
+            "@firegrid/fluent-stream-log-inmemory": path.resolve(
               __dirname,
-              "./packages/fluent-store-inmemory/src"
+              "./packages/fluent-stream-log-inmemory/src"
             ),
           },
         },
@@ -111,10 +111,10 @@ export default defineConfig({
         resolve: {
           alias: {
             ...alias,
-            "@firegrid/fluent-store": path.resolve(__dirname, "./packages/fluent-store/src"),
-            "@firegrid/fluent-store-inmemory": path.resolve(
+            "@firegrid/fluent-stream-log": path.resolve(__dirname, "./packages/fluent-stream-log/src"),
+            "@firegrid/fluent-stream-log-inmemory": path.resolve(
               __dirname,
-              "./packages/fluent-store-inmemory/src"
+              "./packages/fluent-stream-log-inmemory/src"
             ),
             "@firegrid/fluent-transport": path.resolve(
               __dirname,
@@ -136,34 +136,16 @@ export default defineConfig({
         resolve: {
           alias: {
             ...alias,
-            "@firegrid/fluent-store": path.resolve(__dirname, "./packages/fluent-store/src"),
-            "@firegrid/fluent-store-inmemory": path.resolve(
+            "@firegrid/fluent-stream-log": path.resolve(__dirname, "./packages/fluent-stream-log/src"),
+            "@firegrid/fluent-stream-log-inmemory": path.resolve(
               __dirname,
-              "./packages/fluent-store-inmemory/src"
+              "./packages/fluent-stream-log-inmemory/src"
             ),
             "@firegrid/fluent-protocol": path.resolve(
               __dirname,
               "./packages/fluent-protocol/src"
             ),
             "@firegrid/fluent-client": path.resolve(__dirname, "./packages/fluent-client/src"),
-          },
-        },
-      }),
-      defineProject({
-        test: {
-          name: "fluent-server",
-          include: ["packages/fluent-server/test/**/*.test.ts"],
-          exclude: ["**/node_modules/**"],
-        },
-        resolve: {
-          alias: {
-            ...alias,
-            "@firegrid/fluent-store": path.resolve(__dirname, "./packages/fluent-store/src"),
-            "@firegrid/fluent-store-inmemory": path.resolve(
-              __dirname,
-              "./packages/fluent-store-inmemory/src"
-            ),
-            "@firegrid/fluent-server": path.resolve(__dirname, "./packages/fluent-server/src"),
           },
         },
       }),

@@ -30,8 +30,8 @@
     "effect": "4.0.0-beta.78"
   },
   "devDependencies": {
-    "@firegrid/fluent-store": "workspace:*",
-    "@firegrid/fluent-store-inmemory": "workspace:*",
+    "@firegrid/fluent-stream-log": "workspace:*",
+    "@firegrid/fluent-stream-log-inmemory": "workspace:*",
     "typescript": "^5.7.0",
     "vitest": "^3.2.0"
   }

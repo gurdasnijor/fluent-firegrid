@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { Offset, StreamPath } from "@firegrid/fluent-store"
+import { Offset, StreamPath } from "@firegrid/fluent-stream-log"
 import { SequenceNumber } from "./schemaShared.ts"
 
 export class WireRecord extends Schema.Class<WireRecord>("WireRecord")({

@@ -74,93 +74,83 @@ module.exports = {
       },
     },
     {
-      name: "fluent-store-is-leaf-package",
+      name: "fluent-stream-log-is-leaf-package",
       severity: "error",
       comment:
-        "fluent-store mirrors eventsourcing-store: it owns store contracts and must not import transport, protocol, server, client, HTTP/RPC transport, compatibility packages, or execution.",
-      from: { path: "^packages/fluent-store/src/" },
+        "fluent-stream-log mirrors eventsourcing-store's Stream/Sink shape: it owns the byte log contract and must not import transport, protocol, client, HTTP/RPC transport, compatibility packages, or execution.",
+      from: { path: "^packages/fluent-stream-log/src/" },
       to: {
-        path: "^packages/(?:fluent-store-inmemory|fluent-transport|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-server|fluent-client)/src/",
+        path: "^packages/(?:fluent-stream-log-inmemory|fluent-transport|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-client)/src/",
       },
     },
     {
-      name: "fluent-store-inmemory-only-imports-store",
+      name: "fluent-stream-log-inmemory-only-imports-stream-log",
       severity: "error",
       comment:
-        "fluent-store-inmemory mirrors eventsourcing-store-inmemory: production code may import fluent-store, but not transport, protocol, server, client, HTTP/RPC transport, or legacy stores.",
-      from: { path: "^packages/fluent-store-inmemory/src/" },
+        "fluent-stream-log-inmemory mirrors eventsourcing-store-inmemory's concurrency shape: production code may import fluent-stream-log, but not transport, protocol, client, HTTP/RPC transport, or legacy stores.",
+      from: { path: "^packages/fluent-stream-log-inmemory/src/" },
       to: {
-        path: "^packages/(?:fluent-transport|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-server|fluent-client)/src/",
+        path: "^packages/(?:fluent-transport|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-client)/src/",
       },
     },
     {
       name: "fluent-transport-is-leaf-package",
       severity: "error",
       comment:
-        "fluent-transport mirrors eventsourcing-transport: it owns protocol-agnostic transport contracts and must not import store, protocol, server, client, concrete transports, or platform HTTP modules.",
+        "fluent-transport mirrors eventsourcing-transport: it owns protocol-agnostic transport contracts and must not import store, protocol, client, concrete transports, or platform HTTP modules.",
       from: { path: "^packages/fluent-transport/src/" },
       to: {
-        path: "^packages/(?:fluent-store|fluent-store-inmemory|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-server|fluent-client)/src/",
+        path: "^packages/(?:fluent-stream-log|fluent-stream-log-inmemory|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-client)/src/",
       },
     },
     {
       name: "fluent-transport-inmemory-only-imports-transport",
       severity: "error",
       comment:
-        "fluent-transport-inmemory mirrors eventsourcing-transport-inmemory: production code may import fluent-transport only, not protocol, store, server, client, or other concrete transports.",
+        "fluent-transport-inmemory mirrors eventsourcing-transport-inmemory: production code may import fluent-transport only, not protocol, store, client, or other concrete transports.",
       from: { path: "^packages/fluent-transport-inmemory/src/" },
       to: {
-        path: "^packages/(?:fluent-store|fluent-store-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-server|fluent-client)/src/",
+        path: "^packages/(?:fluent-stream-log|fluent-stream-log-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-client)/src/",
       },
     },
     {
       name: "fluent-transport-http-only-imports-transport",
       severity: "error",
       comment:
-        "fluent-transport-http must stay a concrete transport like eventsourcing-transport-websocket: it may import fluent-transport, but not protocol, store, server, client, or other concrete transports.",
+        "fluent-transport-http must stay a concrete transport like eventsourcing-transport-websocket: it may import fluent-transport, but not protocol, store, client, or other concrete transports.",
       from: { path: "^packages/fluent-transport-http/src/" },
       to: {
-        path: "^packages/(?:fluent-store|fluent-store-inmemory|fluent-transport-inmemory|fluent-transport-rpc|fluent-protocol|fluent-server|fluent-client)/src/",
+        path: "^packages/(?:fluent-stream-log|fluent-stream-log-inmemory|fluent-transport-inmemory|fluent-transport-rpc|fluent-protocol|fluent-client)/src/",
       },
     },
     {
       name: "fluent-transport-rpc-only-imports-transport",
       severity: "error",
       comment:
-        "fluent-transport-rpc is a concrete transport: it may import fluent-transport, but not protocol, store, server, client, or other concrete transports.",
+        "fluent-transport-rpc is a concrete transport: it may import fluent-transport, but not protocol, store, client, or other concrete transports.",
       from: { path: "^packages/fluent-transport-rpc/src/" },
       to: {
-        path: "^packages/(?:fluent-store|fluent-store-inmemory|fluent-transport-inmemory|fluent-transport-http|fluent-protocol|fluent-server|fluent-client)/src/",
+        path: "^packages/(?:fluent-stream-log|fluent-stream-log-inmemory|fluent-transport-inmemory|fluent-transport-http|fluent-protocol|fluent-client)/src/",
       },
     },
     {
       name: "fluent-protocol-only-imports-store-and-transport",
       severity: "error",
       comment:
-        "fluent-protocol mirrors eventsourcing-protocol: production code may import fluent-store and fluent-transport, but not concrete implementations, server, client, HTTP/RPC transport, or compatibility packages.",
+        "fluent-protocol mirrors eventsourcing-protocol: production code may import fluent-stream-log and fluent-transport, but not concrete implementations, client, HTTP/RPC transport, or compatibility packages.",
       from: { path: "^packages/fluent-protocol/src/" },
       to: {
-        path: "^packages/(?:fluent-store-inmemory|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-server|fluent-client)/src/",
-      },
-    },
-    {
-      name: "fluent-server-only-imports-store",
-      severity: "error",
-      comment:
-        "fluent-server mirrors eventsourcing-server: production code may import fluent-store only; protocol and concrete transports stay outside the semantic server.",
-      from: { path: "^packages/fluent-server/src/" },
-      to: {
-        path: "^packages/(?:fluent-store-inmemory|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-transport|fluent-protocol|fluent-client)/src/",
+        path: "^packages/(?:fluent-stream-log-inmemory|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-client)/src/",
       },
     },
     {
       name: "fluent-client-no-concrete-or-server-runtime",
       severity: "error",
       comment:
-        "fluent-client may use fluent-protocol only; runtime code must not import raw transport, concrete in-memory transports/stores, server implementation, HTTP/RPC transport internals, compatibility packages, or execution.",
+        "fluent-client may use fluent-protocol only; runtime code must not import raw transport, concrete in-memory transports/stores, HTTP/RPC transport internals, compatibility packages, or execution.",
       from: { path: "^packages/fluent-client/src/" },
       to: {
-        path: "^packages/(?:fluent-store|fluent-store-inmemory|fluent-transport|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-server)/src/",
+        path: "^packages/(?:fluent-stream-log|fluent-stream-log-inmemory|fluent-transport|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc)/src/",
       },
     },
   ],

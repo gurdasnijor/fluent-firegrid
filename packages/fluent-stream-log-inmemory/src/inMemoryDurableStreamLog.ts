@@ -23,7 +23,7 @@ import {
   type StreamPath,
   type StreamRecord,
   type TailAdvanced,
-} from "@firegrid/fluent-store"
+} from "@firegrid/fluent-stream-log"
 
 interface EventStream {
   readonly records: readonly StreamRecord[]
@@ -41,8 +41,6 @@ interface ProducerState {
   readonly epoch: number
   readonly lastSeq: number
 }
-
-export type InMemoryStore = DurableStreamLog
 
 const pubSubCapacity = 256
 
@@ -422,7 +420,7 @@ const subscribeFrom = (
     return historical.pipe(Stream.concat(live))
   })
 
-const makeStore = (value: SynchronizedRef.SynchronizedRef<Value>): InMemoryStore => ({
+const makeStore = (value: SynchronizedRef.SynchronizedRef<Value>): DurableStreamLog => ({
   create: (request) =>
     pipe(
       value,
@@ -484,7 +482,7 @@ const makeStore = (value: SynchronizedRef.SynchronizedRef<Value>): InMemoryStore
     ]),
 })
 
-export const make = (): Effect.Effect<InMemoryStore, never> =>
+export const make = (): Effect.Effect<DurableStreamLog, never> =>
   PubSub.bounded<TailAdvanced>(pubSubCapacity).pipe(
     Effect.flatMap((allTails) =>
       SynchronizedRef.make<Value>({
@@ -496,5 +494,3 @@ export const make = (): Effect.Effect<InMemoryStore, never> =>
       ),
     ),
   )
-
-export const makeDurableStreamLog = (): Effect.Effect<DurableStreamLog, never> => make()
