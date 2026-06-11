@@ -195,6 +195,28 @@ importers:
         specifier: ^3.2.0
         version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
 
+  packages/fluent-durable-streams-spike:
+    dependencies:
+      '@firegrid/fluent-stream-log':
+        specifier: workspace:*
+        version: link:../fluent-stream-log
+      effect:
+        specifier: 4.0.0-beta.78
+        version: 4.0.0-beta.78
+    devDependencies:
+      '@durable-streams/client':
+        specifier: 0.2.6
+        version: 0.2.6
+      '@firegrid/fluent-stream-log-inmemory':
+        specifier: workspace:*
+        version: link:../fluent-stream-log-inmemory
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
+
   packages/fluent-protocol:
     dependencies:
       '@firegrid/fluent-stream-log':
