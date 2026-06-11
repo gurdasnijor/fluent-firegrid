@@ -1,12 +1,11 @@
-/* eslint-disable no-console */
 import { spawn } from "node:child_process"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
 import * as InMemoryStreamLog from "@firegrid/fluent-stream-log-inmemory"
-import { makeServer } from "./server.ts"
-import { startHttpServer } from "./httpServer.ts"
+import { makeServer } from "../src/server.ts"
+import { startHttpServer } from "../src/httpServer.ts"
 
 const run = (
   command: string,
@@ -30,9 +29,10 @@ const main = async () => {
   const configPath = join(temp, "vitest.config.mjs")
   await writeFile(
     configPath,
-    `export default { test: { include: ["src/server/test-runner.ts"], environment: "node", testTimeout: 30000, hookTimeout: 30000 } }\n`,
+    "export default { test: { include: [\"src/server/test-runner.ts\"], environment: \"node\", testTimeout: 30000, hookTimeout: 30000 } }\n",
   )
 
+  // eslint-disable-next-line no-restricted-syntax
   const log = await Effect.runPromise(InMemoryStreamLog.make())
   const server = await startHttpServer(makeServer(log))
   console.log(`Running conformance against ${server.url}`)

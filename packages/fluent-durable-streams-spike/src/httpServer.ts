@@ -1,8 +1,11 @@
-/* eslint-disable effect/no-runPromise */
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
-import { Effect, Stream } from "effect"
-import { durableStreamsHttpMethods } from "./httpApi.ts"
-import type { DurableStreamsServer } from "./model.ts"
+/* eslint-disable effect/no-runPromise, local/no-date-now, local/no-production-js-timers */
+import { NodeHttpServer } from "@effect/platform-node"
+import { createServer, type Server } from "node:http"
+import { Effect, Fiber, Layer, Stream } from "effect"
+import { HttpRouter, HttpServerResponse } from "effect/unstable/http"
+import { HttpApiBuilder } from "effect/unstable/httpapi"
+import { contentTypeEssence, isUtf8ReadableContentType } from "./content.ts"
+import { DurableStreamsHttpApi } from "./httpApi.ts"
 import {
   appendStatusFor,
   badRequest,
@@ -30,46 +33,50 @@ import {
   STREAM_UP_TO_DATE,
   textEncoder,
 } from "./httpShared.ts"
-import { makeHttpServerState } from "./httpServerState.ts"
-import { contentTypeEssence, isUtf8ReadableContentType } from "./content.ts"
-import type { ReadStreamOutcome, StreamEvent, StreamProblem } from "./model.ts"
+import { makeHttpServerState, type HttpServerState } from "./httpServerState.ts"
+import type { DurableStreamsServer, ReadStreamOutcome, StreamProblem } from "./model.ts"
 
 export interface StartedHttpServer {
   readonly url: string
   readonly close: () => Promise<void>
 }
 
-const requestBody = (request: IncomingMessage): Promise<Uint8Array> =>
-  new Promise((resolve, reject) => {
-    const chunks: Buffer[] = []
-    request.on("data", (chunk: Buffer) => chunks.push(chunk))
-    request.on("error", reject)
-    request.on("end", () => resolve(new Uint8Array(Buffer.concat(chunks))))
-  })
-
-const send = (
-  response: ServerResponse,
-  status: number,
-  headers: Record<string, string> = {},
-  body?: string | Uint8Array,
-) => {
-  response.writeHead(status, { ...defaultHeaders, ...headers })
-  response.end(body)
-}
-
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
 const textDecoder = new TextDecoder()
 
 const headerString = (
-  value: string | string[] | undefined,
+  value: string | readonly string[] | undefined,
   fallback: string,
-): string => Array.isArray(value) ? value[0] ?? fallback : value ?? fallback
+): string => typeof value === "string" ? value : value?.[0] ?? fallback
 
-const headerOptional = (value: string | string[] | undefined): string | undefined =>
-  Array.isArray(value) ? value[0] : value
+const headerOptional = (value: string | readonly string[] | undefined): string | undefined =>
+  typeof value === "string" ? value : value?.[0]
+
+const requestBody = (request: { readonly arrayBuffer: Effect.Effect<ArrayBuffer, unknown> }) =>
+  Effect.map(request.arrayBuffer, (buffer) => new Uint8Array(buffer))
+
+const response = (
+  status: number,
+  headers: Record<string, string> = {},
+  body?: string | Uint8Array,
+): HttpServerResponse.HttpServerResponse => {
+  const mergedHeaders = { ...defaultHeaders, ...headers }
+  if (body === undefined) {
+    return HttpServerResponse.empty({ status, headers: mergedHeaders })
+  }
+  return typeof body === "string"
+    ? HttpServerResponse.text(body, { status, headers: mergedHeaders })
+    : HttpServerResponse.uint8Array(body, { status, headers: mergedHeaders })
+}
+
+const problemResponse = (problem: StreamProblem, headers: Record<string, string> = {}) =>
+  response(problemStatus(problem), { ...headers, "content-type": "application/json" }, problemBody(problem))
+
+const streamClosedHeader = (closed: boolean): Record<string, string> =>
+  closed ? { [STREAM_CLOSED]: "true" } : {}
 
 const parseIntegerHeader = (
-  headers: IncomingMessage["headers"],
+  headers: Record<string, string | readonly string[] | undefined>,
   name: string,
 ): number | StreamProblem | undefined => {
   const value = headerOptional(headers[name])
@@ -83,11 +90,11 @@ const parseIntegerHeader = (
 }
 
 const parseProducer = (
-  request: IncomingMessage,
+  headers: Record<string, string | readonly string[] | undefined>,
 ): { readonly producerId: string; readonly epoch: number; readonly seq: number } | StreamProblem | undefined => {
-  const producerId = headerOptional(request.headers[PRODUCER_ID])
-  const epoch = parseIntegerHeader(request.headers, PRODUCER_EPOCH)
-  const seq = parseIntegerHeader(request.headers, PRODUCER_SEQ)
+  const producerId = headerOptional(headers[PRODUCER_ID])
+  const epoch = parseIntegerHeader(headers, PRODUCER_EPOCH)
+  const seq = parseIntegerHeader(headers, PRODUCER_SEQ)
   const present = [
     producerId !== undefined,
     epoch !== undefined,
@@ -122,21 +129,9 @@ const parseLimit = (url: URL): number | StreamProblem | undefined => {
   return Number(value)
 }
 
-const problemResponse = (response: ServerResponse, problem: StreamProblem, headers: Record<string, string> = {}) =>
-  send(response, problemStatus(problem), { ...headers, "content-type": "application/json" }, problemBody(problem))
-
-const locationFor = (request: IncomingMessage, path: string): string => {
-  const host = headerString(request.headers.host, "127.0.0.1")
+const locationFor = (headers: Record<string, string | readonly string[] | undefined>, path: string): string => {
+  const host = headerString(headers.host, "127.0.0.1")
   return `http://${host}/${encodeURI(path).replace(/^\/+/, "")}`
-}
-
-const streamClosedHeader = (closed: boolean): Record<string, string> =>
-  closed ? { [STREAM_CLOSED]: "true" } : {}
-
-interface Lifetime {
-  readonly ttl?: string
-  readonly expiresAt?: string
-  readonly deadline: number
 }
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -181,17 +176,12 @@ const readHeaders = (
   ...extra,
 })
 
-const ensureReadOutcome = (
-  response: ServerResponse,
-  outcome: ReadStreamOutcome,
-): ReadSuccess | undefined => {
+const ensureReadOutcome = (outcome: ReadStreamOutcome): ReadSuccess | HttpServerResponse.HttpServerResponse => {
   if (isProblem(outcome)) {
-    problemResponse(response, outcome)
-    return undefined
+    return problemResponse(outcome)
   }
   if (outcome._tag !== "Read") {
-    send(response, 500, { "content-type": "text/plain" }, "unexpected read outcome")
-    return undefined
+    return response(500, { "content-type": "text/plain" }, "unexpected read outcome")
   }
   return outcome
 }
@@ -209,474 +199,471 @@ const offsetOrdinal = (offset: string): number => {
   return Number(match[1]) + Number(match[2] ?? "0")
 }
 
-export const startHttpServer = async (
+const handleRequest = (
   durableStreams: DurableStreamsServer,
-  options?: { readonly port?: number },
-): Promise<StartedHttpServer> => {
-  const state = makeHttpServerState()
-
-  const handle = async (request: IncomingMessage, response: ServerResponse) => {
-    try {
-      if (request.method === undefined || !durableStreamsHttpMethods.has(request.method)) {
-        send(response, 405)
-        return
+  state: HttpServerState,
+  request: {
+    readonly method: string
+    readonly url: string
+    readonly headers: Record<string, string | readonly string[] | undefined>
+    readonly arrayBuffer: Effect.Effect<ArrayBuffer, unknown>
+  },
+): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
+  Effect.gen(function*() {
+    const url = new URL(request.url, "http://127.0.0.1")
+    const path = yield* pathFromUrl(url)
+    if (state.isExpired(path)) {
+      if (request.method === "PUT" && request.headers[STREAM_FORKED_FROM] === undefined) {
+        yield* durableStreams.delete(path)
+        state.deleteLifetime(path)
+      } else {
+        return problemResponse(notFound("stream expired"))
       }
-      const url = new URL(request.url ?? "/", "http://127.0.0.1")
-      const path = await run(pathFromUrl(url))
-      if (state.isExpired(path)) {
-        if (request.method === "PUT" && request.headers[STREAM_FORKED_FROM] === undefined) {
-          await run(durableStreams.delete(path))
-          state.deleteLifetime(path)
-        } else {
-          problemResponse(response, notFound("stream expired"))
-          return
+    }
+    const rawContentType = headerString(request.headers["content-type"], "application/octet-stream")
+    const contentType = canonicalContentType(rawContentType)
+
+    switch (request.method) {
+      case "PUT": {
+        const body = yield* requestBody(request)
+        const requestedLifetime = state.parseLifetime(request.headers)
+        if (requestedLifetime !== undefined && "_tag" in requestedLifetime) {
+          return problemResponse(requestedLifetime)
         }
-      }
-      const rawContentType = headerString(request.headers["content-type"], "application/octet-stream")
-      const contentType = canonicalContentType(rawContentType)
-
-      switch (request.method) {
-        case "PUT": {
-          const body = await requestBody(request)
-          const requestedLifetime = state.parseLifetime(request.headers)
-          if (requestedLifetime !== undefined && "_tag" in requestedLifetime) {
-            problemResponse(response, requestedLifetime)
-            return
+        const existingLifetime = state.getLifetime(path)
+        if (
+          existingLifetime !== undefined &&
+          requestedLifetime !== undefined &&
+          (existingLifetime.ttl !== requestedLifetime.ttl || existingLifetime.expiresAt !== requestedLifetime.expiresAt)
+        ) {
+          return problemResponse({ _tag: "Conflict", code: "CONFLICT", message: "stream exists with different lifetime" })
+        }
+        const forkedFrom = headerOptional(request.headers[STREAM_FORKED_FROM])
+        const forkSubOffset = headerOptional(request.headers[STREAM_FORK_SUB_OFFSET])
+        if (forkedFrom === undefined && forkSubOffset !== undefined) {
+          return problemResponse(badRequest("stream-fork-sub-offset requires stream-forked-from"))
+        }
+        if (forkedFrom === undefined) {
+          const existingHead = yield* durableStreams.head(path)
+          if (isProblem(existingHead) && existingHead._tag === "Gone") {
+            return problemResponse({ _tag: "Conflict", code: "CONFLICT", message: "stream was soft-deleted" })
           }
-          const existingLifetime = state.getLifetime(path)
+        }
+        if (forkedFrom !== undefined) {
+          const forkSource = yield* pathFromUrl(new URL(forkedFrom, "http://127.0.0.1"))
+          const forkOffset = headerOptional(request.headers[STREAM_FORK_OFFSET])
+          if (forkSubOffset !== undefined && !/^(?:0|[1-9][0-9]*)$/.test(forkSubOffset)) {
+            return problemResponse(badRequest("invalid stream-fork-sub-offset"))
+          }
+          if (forkSubOffset !== undefined && forkSubOffset !== "0" && forkOffset === undefined) {
+            return problemResponse(badRequest("stream-fork-sub-offset requires stream-fork-offset"))
+          }
+          const sourceHead = yield* durableStreams.head(forkSource)
+          if (isProblem(sourceHead)) {
+            return problemResponse(sourceHead._tag === "Gone"
+              ? { _tag: "Conflict", code: "CONFLICT", message: "cannot fork a soft-deleted stream" }
+              : sourceHead)
+          }
+          let normalizedForkOffset = forkOffset === undefined
+            ? undefined
+            : normalizeWireOffset(forkOffset)
           if (
-            existingLifetime !== undefined &&
-            requestedLifetime !== undefined &&
-            (existingLifetime.ttl !== requestedLifetime.ttl || existingLifetime.expiresAt !== requestedLifetime.expiresAt)
+            normalizedForkOffset !== undefined &&
+            offsetOrdinal(normalizedForkOffset) > offsetOrdinal(sourceHead.metadata.tailOffset)
           ) {
-            problemResponse(response, { _tag: "Conflict", code: "CONFLICT", message: "stream exists with different lifetime" })
-            return
+            return problemResponse(badRequest("stream-fork-offset is beyond source tail"))
           }
-          const forkedFrom = headerOptional(request.headers[STREAM_FORKED_FROM])
-          const forkSubOffset = headerOptional(request.headers[STREAM_FORK_SUB_OFFSET])
-          if (forkedFrom === undefined && forkSubOffset !== undefined) {
-            problemResponse(response, badRequest("stream-fork-sub-offset requires stream-forked-from"))
-            return
+          const sourceRead = yield* durableStreams.read({ path: forkSource, offset: "-1" })
+          if (isProblem(sourceRead)) {
+            return problemResponse(sourceRead)
           }
-          if (forkedFrom === undefined) {
-            const existingHead = await run(durableStreams.head(path))
-            if (isProblem(existingHead) && existingHead._tag === "Gone") {
-              problemResponse(response, { _tag: "Conflict", code: "CONFLICT", message: "stream was soft-deleted" })
-              return
-            }
+          if (sourceRead._tag !== "Read") {
+            return response(500, { "content-type": "text/plain" }, "unexpected read outcome")
           }
-          if (forkedFrom !== undefined) {
-            const forkSource = await run(pathFromUrl(new URL(forkedFrom, "http://127.0.0.1")))
-            const forkOffset = headerOptional(request.headers[STREAM_FORK_OFFSET])
-            if (forkSubOffset !== undefined && !/^(?:0|[1-9][0-9]*)$/.test(forkSubOffset)) {
-              problemResponse(response, badRequest("invalid stream-fork-sub-offset"))
-              return
-            }
-            if (forkSubOffset !== undefined && forkSubOffset !== "0" && forkOffset === undefined) {
-              problemResponse(response, badRequest("stream-fork-sub-offset requires stream-fork-offset"))
-              return
-            }
-            const sourceHead = await run(durableStreams.head(forkSource))
-            if (isProblem(sourceHead)) {
-              problemResponse(response, sourceHead._tag === "Gone"
-                ? { _tag: "Conflict", code: "CONFLICT", message: "cannot fork a soft-deleted stream" }
-                : sourceHead)
-              return
-            }
-            let normalizedForkOffset = forkOffset === undefined
-              ? undefined
-              : normalizeWireOffset(forkOffset)
-            if (
-              normalizedForkOffset !== undefined &&
-              offsetOrdinal(normalizedForkOffset) > offsetOrdinal(sourceHead.metadata.tailOffset)
-            ) {
-              problemResponse(response, badRequest("stream-fork-offset is beyond source tail"))
-              return
-            }
-            const sourceRead = await run(durableStreams.read({ path: forkSource, offset: "-1" as never }))
-            if (isProblem(sourceRead)) {
-              problemResponse(response, sourceRead)
-              return
-            }
-            if (sourceRead._tag !== "Read") {
-              send(response, 500, { "content-type": "text/plain" }, "unexpected read outcome")
-              return
-            }
-            const subOffset = forkSubOffset === undefined ? undefined : Number(forkSubOffset)
-            const prefixBodies: Uint8Array[] = []
-            if (subOffset !== undefined && sourceRead.records.length === 0) {
-              problemResponse(response, badRequest("stream-fork-sub-offset requires source data"))
-              return
-            }
-            if (subOffset !== undefined && subOffset > 0) {
-              const anchor = normalizedForkOffset ?? sourceHead.metadata.tailOffset
-              if (contentTypeEssence(sourceHead.metadata.contentType) === "application/json") {
-                const start = sourceRead.records.findIndex((record) => record.fromOffset === anchor)
-                if (start < 0 || start + subOffset > sourceRead.records.length) {
-                  problemResponse(response, badRequest("stream-fork-sub-offset exceeds JSON message count"))
-                  return
-                }
-                normalizedForkOffset = sourceRead.records[start + subOffset - 1]!.nextOffset
+          const subOffset = forkSubOffset === undefined ? undefined : Number(forkSubOffset)
+          const prefixBodies: Uint8Array[] = []
+          if (subOffset !== undefined && sourceRead.records.length === 0) {
+            return problemResponse(badRequest("stream-fork-sub-offset requires source data"))
+          }
+          if (subOffset !== undefined && subOffset > 0) {
+            const anchor = normalizedForkOffset ?? sourceHead.metadata.tailOffset
+            if (contentTypeEssence(sourceHead.metadata.contentType) === "application/json") {
+              const start = sourceRead.records.findIndex((record) => record.fromOffset === anchor)
+              if (start < 0 || start + subOffset > sourceRead.records.length) {
+                return problemResponse(badRequest("stream-fork-sub-offset exceeds JSON message count"))
+              }
+              normalizedForkOffset = sourceRead.records[start + subOffset - 1]!.nextOffset
+            } else {
+              const record = sourceRead.records.find((candidate) => candidate.fromOffset === anchor)
+              if (record === undefined || subOffset > record.bytes.length) {
+                return problemResponse(badRequest("stream-fork-sub-offset exceeds message length"))
+              }
+              if (subOffset === record.bytes.length) {
+                normalizedForkOffset = record.nextOffset
               } else {
-                const record = sourceRead.records.find((candidate) => candidate.fromOffset === anchor)
-                if (record === undefined || subOffset > record.bytes.length) {
-                  problemResponse(response, badRequest("stream-fork-sub-offset exceeds message length"))
-                  return
-                }
-                if (subOffset === record.bytes.length) {
-                  normalizedForkOffset = record.nextOffset
-                } else {
-                  normalizedForkOffset = anchor
-                  prefixBodies.push(record.bytes.slice(0, subOffset))
-                }
+                normalizedForkOffset = anchor
+                prefixBodies.push(record.bytes.slice(0, subOffset))
               }
             }
-            const normalizedForkSubOffset = forkSubOffset === undefined || forkSubOffset === "0" ? "none" : forkSubOffset
-            const forkSpec = `${forkSource}|${normalizedForkOffset ?? "head"}|${normalizedForkSubOffset}|${request.headers["content-type"] === undefined ? "inherit" : contentType}`
-            const existingForkSpec = state.getForkSpec(path)
-            if (existingForkSpec !== undefined && existingForkSpec !== forkSpec) {
-              problemResponse(response, { _tag: "Conflict", code: "CONFLICT", message: "stream exists with different fork configuration" })
-              return
-            }
-            const outcome = await run(durableStreams.fork({
+          }
+          const normalizedForkSubOffset = forkSubOffset === undefined || forkSubOffset === "0" ? "none" : forkSubOffset
+          const forkSpec = `${forkSource}|${normalizedForkOffset ?? "head"}|${normalizedForkSubOffset}|${request.headers["content-type"] === undefined ? "inherit" : contentType}`
+          const existingForkSpec = state.getForkSpec(path)
+          if (existingForkSpec !== undefined && existingForkSpec !== forkSpec) {
+            return problemResponse({ _tag: "Conflict", code: "CONFLICT", message: "stream exists with different fork configuration" })
+          }
+          const outcome = yield* durableStreams.fork({
+            path,
+            source: forkSource,
+            ...(normalizedForkOffset !== undefined && { atOffset: normalizedForkOffset as never }),
+            ...(request.headers["content-type"] !== undefined && { contentType }),
+          })
+          if (isProblem(outcome)) {
+            return problemResponse(outcome)
+          }
+          if (outcome._tag === "AlreadyExists" && request.headers["content-type"] !== undefined && outcome.metadata.contentType !== contentType) {
+            return problemResponse({ _tag: "Conflict", code: "CONFLICT", message: "stream exists with different content-type" })
+          }
+          if (outcome._tag === "Created") {
+            state.setForkSpec(path, forkSpec)
+          }
+          const inheritedLifetime = requestedLifetime === undefined
+            ? state.getLifetime(forkSource)
+            : requestedLifetime
+          if (inheritedLifetime !== undefined) {
+            state.setLifetime(path, inheritedLifetime.ttl !== undefined
+              ? { ttl: inheritedLifetime.ttl, deadline: Date.now() + Number(inheritedLifetime.ttl) * 1000 }
+              : inheritedLifetime)
+          }
+          const prefixAppends = yield* Effect.forEach(prefixBodies, (prefix) =>
+            durableStreams.append({
               path,
-              source: forkSource,
-              ...(normalizedForkOffset !== undefined && { atOffset: normalizedForkOffset as never }),
-              ...(request.headers["content-type"] !== undefined && { contentType }),
+              contentType: outcome.metadata.contentType,
+              body: prefix,
             }))
-            if (isProblem(outcome)) {
-              problemResponse(response, outcome)
-              return
-            }
-            if (outcome._tag === "AlreadyExists" && request.headers["content-type"] !== undefined && outcome.metadata.contentType !== contentType) {
-              problemResponse(response, { _tag: "Conflict", code: "CONFLICT", message: "stream exists with different content-type" })
-              return
-            }
-            if (outcome._tag === "Created") {
-              state.setForkSpec(path, forkSpec)
-            }
-            const inheritedLifetime = requestedLifetime === undefined
-              ? state.getLifetime(forkSource)
-              : requestedLifetime
-            if (inheritedLifetime !== undefined) {
-              state.setLifetime(path, inheritedLifetime.ttl !== undefined
-                ? { ttl: inheritedLifetime.ttl, deadline: Date.now() + Number(inheritedLifetime.ttl) * 1000 }
-                : inheritedLifetime)
-            }
-            for (const prefix of prefixBodies) {
-              const appended = await run(durableStreams.append({
-                path,
-                contentType: outcome.metadata.contentType,
-                body: prefix,
-              }))
-              if (isProblem(appended)) {
-                problemResponse(response, appended)
-                return
-              }
-            }
-            if (body.length > 0) {
-              const appended = await run(durableStreams.append({
-                path,
-                contentType: outcome.metadata.contentType,
-                body,
-              }))
-              if (isProblem(appended)) {
-                problemResponse(response, appended)
-                return
-              }
-            }
-            const headAfterFork = await run(durableStreams.head(path))
-            if (isProblem(headAfterFork)) {
-              problemResponse(response, headAfterFork)
-              return
-            }
-            const metadata = headAfterFork.metadata
-            send(response, outcome._tag === "Created" ? 201 : 200, {
-              "content-type": metadata.contentType,
-              [STREAM_NEXT_OFFSET]: metadata.tailOffset,
-              ...(outcome._tag === "Created" && { location: locationFor(request, path) }),
-              ...streamClosedHeader(metadata.closed),
-              ...state.lifetimeHeaders(path),
+          const prefixProblem = prefixAppends.find(isProblem)
+          if (prefixProblem !== undefined) {
+            return problemResponse(prefixProblem)
+          }
+          if (body.length > 0) {
+            const appended = yield* durableStreams.append({
+              path,
+              contentType: outcome.metadata.contentType,
+              body,
             })
-            return
+            if (isProblem(appended)) {
+              return problemResponse(appended)
+            }
           }
-          const outcome = await run(durableStreams.create({
-            path,
-            contentType,
-            body,
-            closed: request.headers[STREAM_CLOSED] === "true",
-          }))
-          if (isProblem(outcome)) {
-            problemResponse(response, outcome)
-            return
+          const headAfterFork = yield* durableStreams.head(path)
+          if (isProblem(headAfterFork)) {
+            return problemResponse(headAfterFork)
           }
-          if (requestedLifetime !== undefined) {
-            state.setLifetime(path, requestedLifetime)
-          }
-          send(response, outcome._tag === "Created" ? 201 : 200, {
-            "content-type": outcome.metadata.contentType,
-            [STREAM_NEXT_OFFSET]: outcome.metadata.tailOffset,
-            ...(outcome._tag === "Created" && { location: locationFor(request, path) }),
-            ...streamClosedHeader(outcome.metadata.closed),
+          const metadata = headAfterFork.metadata
+          return response(outcome._tag === "Created" ? 201 : 200, {
+            "content-type": metadata.contentType,
+            [STREAM_NEXT_OFFSET]: metadata.tailOffset,
+            ...(outcome._tag === "Created" && { location: locationFor(request.headers, path) }),
+            ...streamClosedHeader(metadata.closed),
             ...state.lifetimeHeaders(path),
           })
-          return
         }
+        const outcome = yield* durableStreams.create({
+          path,
+          contentType,
+          body,
+          closed: request.headers[STREAM_CLOSED] === "true",
+        })
+        if (isProblem(outcome)) {
+          return problemResponse(outcome)
+        }
+        if (requestedLifetime !== undefined) {
+          state.setLifetime(path, requestedLifetime)
+        }
+        return response(outcome._tag === "Created" ? 201 : 200, {
+          "content-type": outcome.metadata.contentType,
+          [STREAM_NEXT_OFFSET]: outcome.metadata.tailOffset,
+          ...(outcome._tag === "Created" && { location: locationFor(request.headers, path) }),
+          ...streamClosedHeader(outcome.metadata.closed),
+          ...state.lifetimeHeaders(path),
+        })
+      }
 
-        case "POST": {
-          const body = await requestBody(request)
-          if (request.headers["content-type"] === undefined && body.length > 0) {
-            problemResponse(response, badRequest("content-type is required"))
-            return
-          }
-          const producer = parseProducer(request)
-          if (producer !== undefined && "_tag" in producer) {
-            problemResponse(response, producer)
-            return
-          }
-          const streamSeq = headerOptional(request.headers[STREAM_SEQ])
-          const outcome = await run(durableStreams.append({
+      case "POST": {
+        const body = yield* requestBody(request)
+        if (request.headers["content-type"] === undefined && body.length > 0) {
+          return problemResponse(badRequest("content-type is required"))
+        }
+        const producer = parseProducer(request.headers)
+        if (producer !== undefined && "_tag" in producer) {
+          return problemResponse(producer)
+        }
+        const streamSeq = headerOptional(request.headers[STREAM_SEQ])
+        const outcome = yield* durableStreams.append({
+          path,
+          contentType,
+          body,
+          close: request.headers[STREAM_CLOSED] === "true",
+          ...(streamSeq !== undefined && { seq: streamSeq }),
+          ...(producer !== undefined && { producer }),
+        })
+        const status = outcome._tag === "SequenceGap" && outcome.expectedSeq === 0
+          ? 400
+          : outcome._tag === "Appended" && producer !== undefined && body.length === 0 && request.headers[STREAM_CLOSED] === "true"
+          ? 204
+          : appendStatusFor(outcome, producer !== undefined)
+        const headers: Record<string, string> = {}
+        switch (outcome._tag) {
+          case "Appended":
+          case "Noop":
+          case "Duplicate":
+            if (outcome._tag === "Appended") {
+              state.touchLifetime(path)
+            }
+            headers[STREAM_NEXT_OFFSET] = outcome.metadata.tailOffset
+            Object.assign(headers, state.lifetimeHeaders(path))
+            Object.assign(headers, streamClosedHeader(outcome.metadata.closed))
+            if (producer !== undefined) {
+              headers[PRODUCER_EPOCH] = String(producer.epoch)
+              headers[PRODUCER_SEQ] = String(outcome._tag === "Duplicate"
+                ? outcome.highestSeq ?? producer.seq
+                : producer.seq)
+            }
+            break
+          case "AlreadyClosed":
+          case "WriteToClosed":
+            headers[STREAM_NEXT_OFFSET] = outcome.finalOffset
+            Object.assign(headers, state.lifetimeHeaders(path))
+            headers[STREAM_CLOSED] = "true"
+            break
+          case "Fenced":
+            headers[PRODUCER_EPOCH] = String(outcome.currentEpoch)
+            break
+          case "SequenceGap":
+            headers[PRODUCER_EXPECTED_SEQ] = String(outcome.expectedSeq)
+            headers[PRODUCER_RECEIVED_SEQ] = String(outcome.receivedSeq)
+            break
+        }
+        return response(
+          status,
+          isProblem(outcome) ? { ...headers, "content-type": "application/json" } : headers,
+          isProblem(outcome) ? problemBody(outcome) : undefined,
+        )
+      }
+
+      case "HEAD": {
+        const outcome = yield* durableStreams.head(path)
+        if (isProblem(outcome)) {
+          return response(problemStatus(outcome))
+        }
+        return response(200, {
+          "cache-control": "no-store",
+          "content-type": outcome.metadata.contentType,
+          [STREAM_NEXT_OFFSET]: outcome.metadata.tailOffset,
+          ...streamClosedHeader(outcome.metadata.closed),
+          ...state.lifetimeHeaders(path),
+        })
+      }
+
+      case "GET": {
+        const offset = url.searchParams.get("offset") ?? undefined
+        const live = url.searchParams.get("live") ?? undefined
+        if ((live === "sse" || live === "long-poll") && offset === undefined) {
+          return problemResponse(badRequest("offset is required for live reads"))
+        }
+        const limit = parseLimit(url)
+        if (limit !== undefined && typeof limit !== "number") {
+          return problemResponse(limit)
+        }
+        const head = yield* durableStreams.head(path)
+        if (isProblem(head)) {
+          return problemResponse(head)
+        }
+        const streamContentType = head.metadata.contentType
+
+        if (live === "long-poll") {
+          const cursor = cursorFor(url)
+          const deadline = Date.now() + 500
+          const readOffset = offset === "now" ? head.metadata.tailOffset : offset
+          let outcome = yield* durableStreams.read({
             path,
-            contentType,
-            body,
-            close: request.headers[STREAM_CLOSED] === "true",
-            ...(streamSeq !== undefined && { seq: streamSeq }),
-            ...(producer !== undefined && { producer }),
-          }))
-          const status = outcome._tag === "SequenceGap" && outcome.expectedSeq === 0
-            ? 400
-            : outcome._tag === "Appended" && producer !== undefined && body.length === 0 && request.headers[STREAM_CLOSED] === "true"
-            ? 204
-            : appendStatusFor(outcome, producer !== undefined)
-          const headers: Record<string, string> = {}
-          switch (outcome._tag) {
-            case "Appended":
-            case "Noop":
-            case "Duplicate":
-              if (outcome._tag === "Appended") {
-                state.touchLifetime(path)
-              }
-              headers[STREAM_NEXT_OFFSET] = outcome.metadata.tailOffset
-              Object.assign(headers, state.lifetimeHeaders(path))
-              Object.assign(headers, streamClosedHeader(outcome.metadata.closed))
-              if (producer !== undefined) {
-                headers[PRODUCER_EPOCH] = String(producer.epoch)
-                headers[PRODUCER_SEQ] = String(outcome._tag === "Duplicate"
-                  ? outcome.highestSeq ?? producer.seq
-                  : producer.seq)
-              }
-              break
-            case "AlreadyClosed":
-            case "WriteToClosed":
-              headers[STREAM_NEXT_OFFSET] = outcome.finalOffset
-              Object.assign(headers, state.lifetimeHeaders(path))
-              headers[STREAM_CLOSED] = "true"
-              break
-            case "Fenced":
-              headers[PRODUCER_EPOCH] = String(outcome.currentEpoch)
-              break
-            case "SequenceGap":
-              headers[PRODUCER_EXPECTED_SEQ] = String(outcome.expectedSeq)
-              headers[PRODUCER_RECEIVED_SEQ] = String(outcome.receivedSeq)
-              break
-          }
-          send(
-            response,
-            status,
-            isProblem(outcome) ? { ...headers, "content-type": "application/json" } : headers,
-            isProblem(outcome) ? problemBody(outcome) : undefined,
-          )
-          return
-        }
-
-        case "HEAD": {
-          const outcome = await run(durableStreams.head(path))
-          if (isProblem(outcome)) {
-            send(response, problemStatus(outcome))
-            return
-          }
-          send(response, 200, {
-            "cache-control": "no-store",
-            "content-type": outcome.metadata.contentType,
-            [STREAM_NEXT_OFFSET]: outcome.metadata.tailOffset,
-            ...streamClosedHeader(outcome.metadata.closed),
-            ...state.lifetimeHeaders(path),
+            offset: readOffset as never,
+            ...(limit !== undefined && { limit }),
           })
-          return
-        }
-
-        case "GET": {
-          const offset = url.searchParams.get("offset") ?? undefined
-          const live = url.searchParams.get("live") ?? undefined
-          if ((live === "sse" || live === "long-poll") && offset === undefined) {
-            problemResponse(response, badRequest("offset is required for live reads"))
-            return
-          }
-          const limit = parseLimit(url)
-          if (limit !== undefined && typeof limit !== "number") {
-            problemResponse(response, limit)
-            return
-          }
-          const head = await run(durableStreams.head(path))
-          if (isProblem(head)) {
-            problemResponse(response, head)
-            return
-          }
-          const contentType = head.metadata.contentType
-
-          if (live === "long-poll") {
-            const cursor = cursorFor(url)
-            const deadline = Date.now() + 500
-            const readOffset = offset === "now" ? head.metadata.tailOffset : offset
-            let outcome = await run(durableStreams.read({
+          while (
+            outcome._tag === "Read" &&
+            outcome.records.length === 0 &&
+            !outcome.closed &&
+            Date.now() < deadline
+          ) {
+            yield* Effect.promise(() => delay(25))
+            outcome = yield* durableStreams.read({
               path,
               offset: readOffset as never,
               ...(limit !== undefined && { limit }),
-            }))
-            while (
-              outcome._tag === "Read" &&
-              outcome.records.length === 0 &&
-              !outcome.closed &&
-              Date.now() < deadline
-            ) {
-              await delay(25)
-              outcome = await run(durableStreams.read({
-                path,
-                offset: readOffset as never,
-                ...(limit !== undefined && { limit }),
-              }))
-            }
-            const read = ensureReadOutcome(response, outcome)
-            if (read === undefined) {
-              return
-            }
-            const body = readBody(contentType, read)
-            state.touchLifetime(path)
-            send(response, body.length === 0 ? 204 : 200, {
-              "cache-control": "no-cache, no-store",
-              [STREAM_CURSOR]: cursor,
-              ...readHeaders(contentType, read),
-              ...state.lifetimeHeaders(path),
-            }, body.length === 0 ? undefined : body)
-            return
+            })
           }
+          const read = ensureReadOutcome(outcome)
+          if ("status" in read) {
+            return read
+          }
+          const body = readBody(streamContentType, read)
+          state.touchLifetime(path)
+          return response(body.length === 0 ? 204 : 200, {
+            "cache-control": "no-cache, no-store",
+            [STREAM_CURSOR]: cursor,
+            ...readHeaders(streamContentType, read),
+            ...state.lifetimeHeaders(path),
+          }, body.length === 0 ? undefined : body)
+        }
 
-          if (live === "sse") {
-            const cursor = cursorFor(url)
-            response.writeHead(200, {
+        if (live === "sse") {
+          const cursor = cursorFor(url)
+          const eventStream = Stream.unwrap(
+            Effect.map(
+              durableStreams.follow({ path, offset: offset as never }),
+              (events) =>
+                Stream.map(events, (event): Uint8Array => {
+                  switch (event._tag) {
+                    case "Records":
+                      return textEncoder.encode(event.records.map((record) =>
+                        sseEvent("data", recordSsePayload(streamContentType, record.bytes)),
+                      ).join(""))
+                    case "CaughtUp":
+                      return textEncoder.encode(sseEvent("control", JSON.stringify({
+                        streamNextOffset: event.offset,
+                        upToDate: true,
+                        streamCursor: cursor,
+                      })))
+                    case "Closed":
+                      return textEncoder.encode(sseEvent("control", JSON.stringify({
+                        streamNextOffset: event.finalOffset,
+                        upToDate: true,
+                        streamClosed: true,
+                      })))
+                  }
+                }),
+            ),
+          )
+          return HttpServerResponse.stream(eventStream, {
+            status: 200,
+            headers: {
               ...defaultHeaders,
               "content-type": "text/event-stream",
               "cache-control": "no-cache, no-store",
               connection: "keep-alive",
-              ...(isUtf8ReadableContentType(contentType) ? {} : { [STREAM_SSE_DATA_ENCODING]: "base64" }),
-            })
-            await run(
-              Effect.scoped(
-                Effect.flatMap(
-                  durableStreams.follow({ path, offset: offset as never }) as Effect.Effect<
-                    Stream.Stream<StreamEvent, StreamProblem>,
-                    StreamProblem
-                  >,
-                  (stream) =>
-                    Stream.runForEach(stream, (event) =>
-                      Effect.sync(() => {
-                        switch (event._tag) {
-                          case "Records":
-                            for (const record of event.records) {
-                              response.write(sseEvent("data", recordSsePayload(contentType, record.bytes)))
-                            }
-                            break
-                          case "CaughtUp":
-                            response.write(sseEvent("control", JSON.stringify({
-                              streamNextOffset: event.offset,
-                              upToDate: true,
-                              streamCursor: cursor,
-                            })))
-                            break
-                          case "Closed":
-                            response.write(sseEvent("control", JSON.stringify({
-                              streamNextOffset: event.finalOffset,
-                              upToDate: true,
-                              streamClosed: true,
-                            })))
-                            break
-                        }
-                      }),
-                    ),
-                ),
-              ),
-            ).catch((error: unknown) => {
-              response.write(sseEvent("control", JSON.stringify({ error: String(error) })))
-            })
-            response.end()
-            return
-          }
-
-          const outcome = await run(durableStreams.read({
-            path,
-            ...(offset !== undefined && { offset: offset as never }),
-            ...(limit !== undefined && { limit }),
-          }))
-          const read = ensureReadOutcome(response, outcome)
-          if (read === undefined) {
-            return
-          }
-          const body = readBody(contentType, read)
-          const etag = etagFor(path, read.nextOffset, read.closed)
-          if (request.headers["if-none-match"] === etag) {
-            send(response, 304, { etag })
-            return
-          }
-          state.touchLifetime(path)
-          send(response, 200, {
-            "cache-control": "no-store",
-            etag,
-            ...readHeaders(contentType, read),
-            ...state.lifetimeHeaders(path),
-          }, body)
-          return
+              ...(isUtf8ReadableContentType(streamContentType) ? {} : { [STREAM_SSE_DATA_ENCODING]: "base64" }),
+            },
+          })
         }
 
-        case "DELETE": {
-          const headBeforeDelete = await run(durableStreams.head(path))
-          if (isProblem(headBeforeDelete) && headBeforeDelete._tag === "Gone") {
-            problemResponse(response, headBeforeDelete)
-            return
-          }
-          const outcome = await run(durableStreams.delete(path))
-          send(response, outcome._tag === "Deleted" ? 204 : problemStatus(outcome), {})
-          return
+        const outcome = yield* durableStreams.read({
+          path,
+          ...(offset !== undefined && { offset: offset as never }),
+          ...(limit !== undefined && { limit }),
+        })
+        const read = ensureReadOutcome(outcome)
+        if ("status" in read) {
+          return read
         }
+        const body = readBody(streamContentType, read)
+        const etag = etagFor(path, read.nextOffset, read.closed)
+        if (request.headers["if-none-match"] === etag) {
+          return response(304, { etag })
+        }
+        state.touchLifetime(path)
+        return response(200, {
+          "cache-control": "no-store",
+          etag,
+          ...readHeaders(streamContentType, read),
+          ...state.lifetimeHeaders(path),
+        }, body)
+      }
 
+      case "DELETE": {
+        const headBeforeDelete = yield* durableStreams.head(path)
+        if (isProblem(headBeforeDelete) && headBeforeDelete._tag === "Gone") {
+          return problemResponse(headBeforeDelete)
+        }
+        const outcome = yield* durableStreams.delete(path)
+        return response(outcome._tag === "Deleted" ? 204 : problemStatus(outcome))
       }
-    } catch (error) {
-      if (response.headersSent) {
-        response.end()
-        return
-      }
-      send(response, 500, { "content-type": "text/plain" }, error instanceof Error ? error.message : String(error))
+
+      default:
+        return response(405)
     }
-  }
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.succeed(response(500, { "content-type": "text/plain" }, String(cause))),
+    ),
+  )
 
-  const server: Server = createServer((request, response) => {
-    void handle(request, response)
-  })
+const makeApiLayer = (
+  durableStreams: DurableStreamsServer,
+  state: HttpServerState,
+  nodeServer: Server,
+  options?: { readonly port?: number },
+) => {
+  const handleRaw = (request: Parameters<typeof handleRequest>[2]) =>
+    handleRequest(durableStreams, state, request)
 
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject)
-    server.listen(options?.port ?? 0, "127.0.0.1", () => resolve())
-  })
+  const GroupLive = HttpApiBuilder.group(
+    DurableStreamsHttpApi,
+    "Streams",
+    (handlers) =>
+      handlers
+        .handleRaw("createStream", ({ request }) => handleRaw(request))
+        .handleRaw("appendStream", ({ request }) => handleRaw(request))
+        .handleRaw("readStream", ({ request }) => handleRaw(request))
+        .handleRaw("headStream", ({ request }) => handleRaw(request))
+        .handleRaw("deleteStream", ({ request }) => handleRaw(request)),
+  )
 
-  const address = server.address()
+  return HttpApiBuilder.layer(DurableStreamsHttpApi).pipe(
+    Layer.provide(GroupLive),
+    HttpRouter.serve,
+    Layer.provide(NodeHttpServer.layer(() => nodeServer, {
+      host: "127.0.0.1",
+      port: options?.port ?? 0,
+    })),
+  )
+}
+
+const waitForListening = (server: Server): Promise<void> =>
+  server.listening
+    ? Promise.resolve()
+    : new Promise((resolve, reject) => {
+      const onListening = () => {
+        server.off("error", onError)
+        resolve()
+      }
+      const onError = (error: Error) => {
+        server.off("listening", onListening)
+        reject(error)
+      }
+      server.once("listening", onListening)
+      server.once("error", onError)
+    })
+
+export const startHttpServer = async (
+  durableStreams: DurableStreamsServer,
+  options?: { readonly port?: number },
+): Promise<StartedHttpServer> => {
+  const nodeServer = createServer()
+  const state = makeHttpServerState()
+  const layer = makeApiLayer(durableStreams, state, nodeServer, options)
+  const fiber = Effect.runFork(Layer.launch(layer))
+
+  await waitForListening(nodeServer)
+
+  const address = nodeServer.address()
   if (address === null || typeof address === "string") {
+    await run(Fiber.interrupt(fiber))
     throw new Error("failed to start HTTP server")
   }
 
   return {
     url: `http://127.0.0.1:${address.port}`,
-    close: () =>
-      new Promise<void>((resolve, reject) => {
-        server.close((error) => error === undefined ? resolve() : reject(error))
-      }),
+    close: () => run(Fiber.interrupt(fiber)).then(() => undefined),
   }
 }

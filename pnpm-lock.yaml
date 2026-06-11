@@ -197,6 +197,9 @@ importers:
 
   packages/fluent-durable-streams-spike:
     dependencies:
+      '@effect/platform-node':
+        specifier: https://pkg.pr.new/Effect-TS/effect-smol/@effect/platform-node@c710049d5812e68a2d935f2a05b4dcb7337a32af
+        version: https://pkg.pr.new/Effect-TS/effect-smol/@effect/platform-node@c710049d5812e68a2d935f2a05b4dcb7337a32af(effect@https://pkg.pr.new/Effect-TS/effect-smol/effect@c710049d5812e68a2d935f2a05b4dcb7337a32af)(ioredis@5.11.1)
       '@firegrid/fluent-stream-log':
         specifier: workspace:*
         version: link:../fluent-stream-log
@@ -405,8 +408,23 @@ packages:
     peerDependencies:
       effect: ^4.0.0-beta.78
 
+  '@effect/platform-node-shared@https://pkg.pr.new/Effect-TS/effect-smol/@effect/platform-node-shared@c710049d5812e68a2d935f2a05b4dcb7337a32af':
+    resolution: {integrity: sha512-AIzmKscrsXnactMITB5jqMTlmv5YbElmNqK0xGYQ0QiRSqRdEGuq3k2XL983xtHdgs4pD6Yshwl5W+6pR6vQ3A==, tarball: https://pkg.pr.new/Effect-TS/effect-smol/@effect/platform-node-shared@c710049d5812e68a2d935f2a05b4dcb7337a32af}
+    version: 4.0.0-beta.78
+    engines: {node: '>=18.0.0'}
+    peerDependencies:
+      effect: ^4.0.0-beta.78
+
   '@effect/platform-node@4.0.0-beta.78':
     resolution: {integrity: sha512-8ONrIS5/R9dq+0BJ6v3kUXNEkfjU6S3GzIYCH5gmHdiriRvIoBhXYNAITfRvZpfx1JPrKuP70cHyuQDjmJcDkQ==}
+    engines: {node: '>=18.0.0'}
+    peerDependencies:
+      effect: ^4.0.0-beta.78
+      ioredis: ^5.7.0
+
+  '@effect/platform-node@https://pkg.pr.new/Effect-TS/effect-smol/@effect/platform-node@c710049d5812e68a2d935f2a05b4dcb7337a32af':
+    resolution: {integrity: sha512-YED5FeX28uz1bTPxaC+W3BrXOjMvOyJV5wgFmjan18fPbW2KrCIAGKT2c5N5JzHs1Uyx65HrrRoZ9zT4s6qyhg==, tarball: https://pkg.pr.new/Effect-TS/effect-smol/@effect/platform-node@c710049d5812e68a2d935f2a05b4dcb7337a32af}
+    version: 4.0.0-beta.78
     engines: {node: '>=18.0.0'}
     peerDependencies:
       effect: ^4.0.0-beta.78
@@ -2385,7 +2403,7 @@ packages:
     resolution: {integrity: sha512-j79Rl9QpHwMz/ZJWLNpZoiVj9N7zHqiLKN5EcYd/A8J1oqejILWQLfc4HPlvqHqKC8SK55LJ+X4gy4ONJ+JpfQ==}
 
   effect@https://pkg.pr.new/Effect-TS/effect-smol/effect@c710049d5812e68a2d935f2a05b4dcb7337a32af:
-    resolution: {integrity: sha512-mV0Tg02IWj09Gm1HiqQD3IqEItBde9FOuyNe5bLdi9Z2TjweQtHVmw7tEPZrPkPLupmYjciANH+NuqsAPmfBeg==, tarball: https://pkg.pr.new/Effect-TS/effect-smol/effect@c710049d5812e68a2d935f2a05b4dcb7337a32af}
+    resolution: {tarball: https://pkg.pr.new/Effect-TS/effect-smol/effect@c710049d5812e68a2d935f2a05b4dcb7337a32af}
     version: 4.0.0-beta.78
 
   emoji-regex@10.6.0:
@@ -4217,10 +4235,30 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
+  '@effect/platform-node-shared@https://pkg.pr.new/Effect-TS/effect-smol/@effect/platform-node-shared@c710049d5812e68a2d935f2a05b4dcb7337a32af(effect@https://pkg.pr.new/Effect-TS/effect-smol/effect@c710049d5812e68a2d935f2a05b4dcb7337a32af)':
+    dependencies:
+      '@types/ws': 8.18.1
+      effect: https://pkg.pr.new/Effect-TS/effect-smol/effect@c710049d5812e68a2d935f2a05b4dcb7337a32af
+      ws: 8.21.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
   '@effect/platform-node@4.0.0-beta.78(effect@4.0.0-beta.78)(ioredis@5.11.1)':
     dependencies:
       '@effect/platform-node-shared': 4.0.0-beta.78(effect@4.0.0-beta.78)
       effect: 4.0.0-beta.78
+      ioredis: 5.11.1
+      mime: 4.1.0
+      undici: 8.4.1
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
+  '@effect/platform-node@https://pkg.pr.new/Effect-TS/effect-smol/@effect/platform-node@c710049d5812e68a2d935f2a05b4dcb7337a32af(effect@https://pkg.pr.new/Effect-TS/effect-smol/effect@c710049d5812e68a2d935f2a05b4dcb7337a32af)(ioredis@5.11.1)':
+    dependencies:
+      '@effect/platform-node-shared': https://pkg.pr.new/Effect-TS/effect-smol/@effect/platform-node-shared@c710049d5812e68a2d935f2a05b4dcb7337a32af(effect@https://pkg.pr.new/Effect-TS/effect-smol/effect@c710049d5812e68a2d935f2a05b4dcb7337a32af)
+      effect: https://pkg.pr.new/Effect-TS/effect-smol/effect@c710049d5812e68a2d935f2a05b4dcb7337a32af
       ioredis: 5.11.1
       mime: 4.1.0
       undici: 8.4.1

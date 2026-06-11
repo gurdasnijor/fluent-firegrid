@@ -1,4 +1,4 @@
-import type { IncomingHttpHeaders } from "node:http"
+/* eslint-disable local/no-date-now */
 import type { StreamProblem } from "./model.ts"
 import {
   badRequest,
@@ -12,14 +12,16 @@ export interface Lifetime {
   readonly deadline: number
 }
 
-const headerOptional = (value: string | string[] | undefined): string | undefined =>
-  Array.isArray(value) ? value[0] : value
+type HeaderMap = Record<string, string | readonly string[] | undefined>
+
+const readonlyHeaderOptional = (value: string | readonly string[] | undefined): string | undefined =>
+  typeof value === "string" ? value : value?.[0]
 
 export interface HttpServerState {
   readonly isExpired: (path: string) => boolean
   readonly touchLifetime: (path: string) => void
   readonly lifetimeHeaders: (path: string) => Record<string, string>
-  readonly parseLifetime: (headers: IncomingHttpHeaders) => Lifetime | StreamProblem | undefined
+  readonly parseLifetime: (headers: HeaderMap) => Lifetime | StreamProblem | undefined
   readonly getLifetime: (path: string) => Lifetime | undefined
   readonly setLifetime: (path: string, lifetime: Lifetime) => void
   readonly deleteLifetime: (path: string) => void
@@ -42,9 +44,9 @@ export const makeHttpServerState = (): HttpServerState => {
     }
   }
 
-  const parseLifetime = (headers: IncomingHttpHeaders): Lifetime | StreamProblem | undefined => {
-    const ttl = headerOptional(headers[STREAM_TTL])
-    const expiresAt = headerOptional(headers[STREAM_EXPIRES_AT])
+  const parseLifetime = (headers: HeaderMap): Lifetime | StreamProblem | undefined => {
+    const ttl = readonlyHeaderOptional(headers[STREAM_TTL])
+    const expiresAt = readonlyHeaderOptional(headers[STREAM_EXPIRES_AT])
     if (ttl !== undefined && expiresAt !== undefined) {
       return badRequest("stream-ttl and stream-expires-at are mutually exclusive")
     }

@@ -22,10 +22,11 @@
     "build": "tsc",
     "diagnostics": "effect-language-service diagnostics --project tsconfig.json --severity error",
     "test": "vitest run --root ../.. --project fluent-durable-streams-spike",
-    "test:conformance": "tsx src/conformance.ts",
+    "test:conformance": "tsx scripts/conformance.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@effect/platform-node": "https://pkg.pr.new/Effect-TS/effect-smol/@effect/platform-node@c710049d5812e68a2d935f2a05b4dcb7337a32af",
     "@firegrid/fluent-stream-log": "workspace:*",
     "effect": "https://pkg.pr.new/Effect-TS/effect-smol/effect@c710049d5812e68a2d935f2a05b4dcb7337a32af"
   },

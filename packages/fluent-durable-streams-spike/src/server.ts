@@ -163,30 +163,32 @@ export const makeServer = (log: DurableStreamLog): DurableStreamsServer => ({
           ...(messages.length === 0 && command.closed !== undefined && { closed: command.closed }),
         }).pipe(
           Effect.flatMap((created) => {
-            if (created._tag === "AlreadyExists") {
-              if (created.metadata.contentType !== command.contentType) {
-                return Effect.succeed(createConflict("stream exists with different content-type"))
-              }
-              if (command.closed !== undefined && created.metadata.closed !== command.closed) {
-                return Effect.succeed(createConflict("stream exists with different closed state"))
-              }
-              return Effect.succeed(createOutcome(created))
+            switch (created._tag) {
+              case "AlreadyExists":
+                if (created.metadata.contentType !== command.contentType) {
+                  return Effect.succeed(createConflict("stream exists with different content-type"))
+                }
+                if (command.closed !== undefined && created.metadata.closed !== command.closed) {
+                  return Effect.succeed(createConflict("stream exists with different closed state"))
+                }
+                return Effect.succeed(createOutcome(created))
+              case "Created":
+                return messages.length === 0 && command.closed !== true
+                  ? Effect.succeed(createOutcome(created))
+                  : log.append({
+                    path: command.path,
+                    contentType: command.contentType,
+                    messages,
+                    ...(command.closed !== undefined && { close: command.closed }),
+                  }).pipe(
+                    Effect.map((appended) =>
+                      createOutcome({
+                        _tag: "Created",
+                        metadata: appended._tag === "Appended" ? appended.metadata : created.metadata,
+                      }),
+                    ),
+                  )
             }
-            return messages.length === 0 && command.closed !== true
-              ? Effect.succeed(createOutcome(created))
-              : log.append({
-                path: command.path,
-                contentType: command.contentType,
-                messages,
-                ...(command.closed !== undefined && { close: command.closed }),
-              }).pipe(
-                Effect.map((appended) =>
-                  createOutcome({
-                    _tag: "Created",
-                    metadata: appended._tag === "Appended" ? appended.metadata : created.metadata,
-                  }),
-                ),
-              )
           }),
         ),
       ),
