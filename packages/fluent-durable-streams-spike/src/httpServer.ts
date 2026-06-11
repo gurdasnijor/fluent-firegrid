@@ -2,6 +2,7 @@
 import { NodeHttpServer } from "@effect/platform-node"
 import { createServer, type Server } from "node:http"
 import { Effect, Fiber, Layer, Stream } from "effect"
+import * as Sse from "effect/unstable/encoding/Sse"
 import { HttpRouter, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { contentTypeEssence, isUtf8ReadableContentType } from "./content.ts"
@@ -149,11 +150,17 @@ const cursorFor = (url: URL): string => {
   return String(base + 1)
 }
 
-const sseDataLines = (data: string): string =>
-  data.split(/\r\n|\r|\n/).map((line) => `data:${line}`).join("\n")
+const sseEventText = (event: string, data: string): string =>
+  // Durable Streams pins `data:` without the optional space and treats CR as a data newline.
+  Sse.encoder.write({
+    _tag: "Event",
+    event,
+    id: undefined,
+    data: data.replace(/\r\n|\r|\n/g, "\n"),
+  }).replace(/(^|\n)data: /g, "$1data:")
 
-const sseEvent = (event: string, data: string): string =>
-  `event: ${event}\n${sseDataLines(data)}\n\n`
+const sseEvent = (event: string, data: string): Uint8Array =>
+  textEncoder.encode(sseEventText(event, data))
 
 const recordSsePayload = (contentType: string, bytes: Uint8Array): string => {
   if (contentTypeEssence(contentType) === "application/json") {
@@ -534,20 +541,20 @@ const handleRequest = (
                   switch (event._tag) {
                     case "Records":
                       return textEncoder.encode(event.records.map((record) =>
-                        sseEvent("data", recordSsePayload(streamContentType, record.bytes)),
+                        sseEventText("data", recordSsePayload(streamContentType, record.bytes)),
                       ).join(""))
                     case "CaughtUp":
-                      return textEncoder.encode(sseEvent("control", JSON.stringify({
+                      return sseEvent("control", JSON.stringify({
                         streamNextOffset: event.offset,
                         upToDate: true,
                         streamCursor: cursor,
-                      })))
+                      }))
                     case "Closed":
-                      return textEncoder.encode(sseEvent("control", JSON.stringify({
+                      return sseEvent("control", JSON.stringify({
                         streamNextOffset: event.finalOffset,
                         upToDate: true,
                         streamClosed: true,
-                      })))
+                      }))
                   }
                 }),
             ),
