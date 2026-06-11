@@ -49,6 +49,7 @@ interface EventStream {
   readonly pubsub: PubSub.PubSub<ChangeEvent>
   readonly metadata: StreamMetadata
   readonly earliestOffset: Offset
+  readonly lastSeq?: string
   readonly producers: ReadonlyMap<string, ProducerState>
   readonly refCount: number
   readonly gone: boolean
@@ -131,6 +132,19 @@ const removeStream = (value: Value, stream: EventStream): Value => ({
   pathToId: new Map([...value.pathToId].filter(([path]) => path !== stream.metadata.path)),
   streamsById: new Map([...value.streamsById].filter(([id]) => id !== stream.id)),
 })
+
+const releaseSourceRef = (value: Value, source: EventStream): Value => {
+  const released: EventStream = { ...source, refCount: Math.max(0, source.refCount - 1) }
+  if (!released.gone || released.refCount > 0) {
+    return updateStream(value, released)
+  }
+  const removed = removeStream(value, released)
+  if (released.fork === undefined) {
+    return removed
+  }
+  const parent = removed.streamsById.get(released.fork.sourceId)
+  return parent === undefined ? removed : releaseSourceRef(removed, parent)
+}
 
 const commitEvents = (events: readonly PublishEvent[]) =>
   Effect.forEach(events, ({ event, pubsub }) => PubSub.publish(pubsub, event), { discard: true })
@@ -286,6 +300,16 @@ const appendCommit = (
     )
   }
 
+  if (request.seq !== undefined && stream.lastSeq !== undefined && request.seq <= stream.lastSeq) {
+    return Effect.fail(
+      new OffsetConflictError({
+        path: request.path,
+        expectedTailOffset: nextOffset(stream.metadata.tailOffset, 1),
+        actualTailOffset: stream.metadata.tailOffset,
+      }),
+    )
+  }
+
   const closed = request.close === true
   const records = request.messages.map((bytes, index): StreamRecord => {
     const fromOffset = nextOffset(stream.metadata.tailOffset, index)
@@ -313,6 +337,7 @@ const appendCommit = (
     ...stream,
     localRecords: [...stream.localRecords, ...records],
     metadata,
+    ...(request.seq !== undefined && { lastSeq: request.seq }),
     producers,
   }
   const events: PublishEvent[] = [
@@ -578,7 +603,7 @@ const makeStore = (value: SynchronizedRef.SynchronizedRef<Value>): DurableStream
       }
       return [
         { _tag: "Deleted", path } satisfies DeleteStreamResult,
-        updateStream(deleted, { ...source, refCount: Math.max(0, source.refCount - 1) }),
+        releaseSourceRef(deleted, source),
       ] as const
     }),
 })

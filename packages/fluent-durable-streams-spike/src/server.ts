@@ -90,6 +90,12 @@ const createOutcome = (result: CreateStreamResult): CreateStreamOutcome => ({
   metadata: result.metadata,
 })
 
+const createConflict = (message: string): CreateStreamOutcome => ({
+  _tag: "Conflict",
+  code: "CONFLICT",
+  message,
+})
+
 const appendError = (error: DurableStreamLogError | InvalidContent): AppendStreamOutcome => {
   if (error instanceof StreamClosedError) {
     return {
@@ -154,21 +160,36 @@ export const makeServer = (log: DurableStreamLog): DurableStreamsServer => ({
         log.create({
           path: command.path,
           contentType: command.contentType,
-          ...(command.closed !== undefined && { closed: command.closed }),
+          ...(messages.length === 0 && command.closed !== undefined && { closed: command.closed }),
         }).pipe(
-          Effect.flatMap((created) =>
-            messages.length === 0 && command.closed !== true
-              ? Effect.succeed(created)
+          Effect.flatMap((created) => {
+            if (created._tag === "AlreadyExists") {
+              if (created.metadata.contentType !== command.contentType) {
+                return Effect.succeed(createConflict("stream exists with different content-type"))
+              }
+              if (command.closed !== undefined && created.metadata.closed !== command.closed) {
+                return Effect.succeed(createConflict("stream exists with different closed state"))
+              }
+              return Effect.succeed(createOutcome(created))
+            }
+            return messages.length === 0 && command.closed !== true
+              ? Effect.succeed(createOutcome(created))
               : log.append({
                 path: command.path,
                 contentType: command.contentType,
                 messages,
                 ...(command.closed !== undefined && { close: command.closed }),
-              }).pipe(Effect.as(created)),
-          ),
+              }).pipe(
+                Effect.map((appended) =>
+                  createOutcome({
+                    _tag: "Created",
+                    metadata: appended._tag === "Appended" ? appended.metadata : created.metadata,
+                  }),
+                ),
+              )
+          }),
         ),
       ),
-      Effect.map(createOutcome),
       Effect.catch((error) => Effect.succeed(streamProblem(error))),
     ),
 
@@ -193,6 +214,7 @@ export const makeServer = (log: DurableStreamLog): DurableStreamsServer => ({
           path: command.path,
           contentType: command.contentType,
           messages,
+          ...(command.seq !== undefined && { seq: command.seq }),
           ...(command.close !== undefined && { close: command.close }),
           ...(command.expectedTailOffset !== undefined && {
             expectedTailOffset: command.expectedTailOffset,

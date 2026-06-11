@@ -22,15 +22,17 @@
     "build": "tsc",
     "diagnostics": "effect-language-service diagnostics --project tsconfig.json --severity error",
     "test": "vitest run --root ../.. --project fluent-durable-streams-spike",
+    "test:conformance": "tsx src/conformance.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@firegrid/fluent-stream-log": "workspace:*",
-    "effect": "4.0.0-beta.78"
+    "effect": "https://pkg.pr.new/Effect-TS/effect-smol/effect@c710049d5812e68a2d935f2a05b4dcb7337a32af"
   },
   "devDependencies": {
     "@durable-streams/client": "0.2.6",
     "@firegrid/fluent-stream-log-inmemory": "workspace:*",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.0",
     "vitest": "^3.2.0"
   }

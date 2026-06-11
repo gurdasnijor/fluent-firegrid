@@ -33,6 +33,7 @@ export interface AppendStreamCommand {
   readonly path: StreamPath
   readonly contentType: string
   readonly body?: StreamBody
+  readonly seq?: string
   readonly close?: boolean
   readonly expectedTailOffset?: Offset
   readonly producer?: ProducerFence

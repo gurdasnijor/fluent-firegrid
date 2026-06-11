@@ -1,15 +1,29 @@
 import { Effect } from "effect"
 import { decodeStreamPath } from "@firegrid/fluent-stream-log"
 import type { AppendStreamOutcome, StreamProblem } from "./model.ts"
+import { contentTypeEssence } from "./content.ts"
 
 export const STREAM_NEXT_OFFSET = "stream-next-offset"
 export const STREAM_CLOSED = "stream-closed"
 export const STREAM_UP_TO_DATE = "stream-up-to-date"
+export const STREAM_SEQ = "stream-seq"
+export const STREAM_CURSOR = "stream-cursor"
+export const STREAM_TTL = "stream-ttl"
+export const STREAM_EXPIRES_AT = "stream-expires-at"
+export const STREAM_FORKED_FROM = "stream-forked-from"
+export const STREAM_FORK_OFFSET = "stream-fork-offset"
+export const STREAM_FORK_SUB_OFFSET = "stream-fork-sub-offset"
+export const STREAM_SSE_DATA_ENCODING = "stream-sse-data-encoding"
 export const PRODUCER_ID = "producer-id"
 export const PRODUCER_EPOCH = "producer-epoch"
 export const PRODUCER_SEQ = "producer-seq"
 export const PRODUCER_EXPECTED_SEQ = "producer-expected-seq"
 export const PRODUCER_RECEIVED_SEQ = "producer-received-seq"
+
+export const defaultHeaders: Record<string, string> = {
+  "x-content-type-options": "nosniff",
+  "cross-origin-resource-policy": "cross-origin",
+}
 
 export const textEncoder = new TextEncoder()
 const textDecoder = new TextDecoder()
@@ -45,13 +59,14 @@ export const appendStatus = (outcome: AppendStreamOutcome): number => {
     case "Noop":
       return 204
     case "Duplicate":
-      return 200
-    case "AlreadyClosed":
+      return 204
     case "WriteToClosed":
     case "ContentMismatch":
     case "OffsetConflict":
     case "SequenceGap":
       return 409
+    case "AlreadyClosed":
+      return 204
     case "Fenced":
       return 403
     case "BadRequest":
@@ -62,8 +77,20 @@ export const appendStatus = (outcome: AppendStreamOutcome): number => {
   }
 }
 
+export const appendStatusFor = (
+  outcome: AppendStreamOutcome,
+  hasProducer: boolean,
+): number =>
+  outcome._tag === "Appended" && hasProducer ? 200 : appendStatus(outcome)
+
+export const canonicalContentType = (contentType: string): string =>
+  contentTypeEssence(contentType)
+
+export const etagFor = (path: string, nextOffset: string, closed: boolean): string =>
+  `"${Buffer.from(`${path}:${nextOffset}:${closed ? "1" : "0"}`).toString("base64url")}"`
+
 export const maybeJson = (contentType: string, bytes: Uint8Array): unknown => {
-  const essence = contentType.split(";")[0]?.trim().toLowerCase()
+  const essence = contentTypeEssence(contentType)
   if (essence !== "application/json") {
     return bytes
   }

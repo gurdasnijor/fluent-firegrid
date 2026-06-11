@@ -21,6 +21,7 @@ export type CreateStreamResult =
 export interface AppendStream {
   readonly path: StreamPath
   readonly contentType: string
+  readonly seq?: string
   readonly expectedTailOffset?: Offset
   readonly close?: boolean
   readonly producer?: ProducerFence

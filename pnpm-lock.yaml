@@ -201,8 +201,8 @@ importers:
         specifier: workspace:*
         version: link:../fluent-stream-log
       effect:
-        specifier: 4.0.0-beta.78
-        version: 4.0.0-beta.78
+        specifier: https://pkg.pr.new/Effect-TS/effect-smol/effect@c710049d5812e68a2d935f2a05b4dcb7337a32af
+        version: https://pkg.pr.new/Effect-TS/effect-smol/effect@c710049d5812e68a2d935f2a05b4dcb7337a32af
     devDependencies:
       '@durable-streams/client':
         specifier: 0.2.6
@@ -210,6 +210,9 @@ importers:
       '@firegrid/fluent-stream-log-inmemory':
         specifier: workspace:*
         version: link:../fluent-stream-log-inmemory
+      tsx:
+        specifier: ^4.19.2
+        version: 4.22.4
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -2380,6 +2383,10 @@ packages:
 
   effect@4.0.0-beta.78:
     resolution: {integrity: sha512-j79Rl9QpHwMz/ZJWLNpZoiVj9N7zHqiLKN5EcYd/A8J1oqejILWQLfc4HPlvqHqKC8SK55LJ+X4gy4ONJ+JpfQ==}
+
+  effect@https://pkg.pr.new/Effect-TS/effect-smol/effect@c710049d5812e68a2d935f2a05b4dcb7337a32af:
+    resolution: {integrity: sha512-mV0Tg02IWj09Gm1HiqQD3IqEItBde9FOuyNe5bLdi9Z2TjweQtHVmw7tEPZrPkPLupmYjciANH+NuqsAPmfBeg==, tarball: https://pkg.pr.new/Effect-TS/effect-smol/effect@c710049d5812e68a2d935f2a05b4dcb7337a32af}
+    version: 4.0.0-beta.78
 
   emoji-regex@10.6.0:
     resolution: {integrity: sha512-toUI84YS5YmxW219erniWD0CIVOo46xGKColeNQRgOzDorgBi1v4D71/OFzgD9GO2UGKIv1C3Sp8DAn0+j5w7A==}
@@ -5921,6 +5928,19 @@ snapshots:
       gopd: 1.2.0
 
   effect@4.0.0-beta.78:
+    dependencies:
+      '@standard-schema/spec': 1.1.0
+      fast-check: 4.8.0
+      find-my-way-ts: 0.1.6
+      ini: 7.0.0
+      kubernetes-types: 1.30.0
+      msgpackr: 2.0.4
+      multipasta: 0.2.7
+      toml: 4.1.1
+      uuid: 14.0.0
+      yaml: 2.9.0
+
+  effect@https://pkg.pr.new/Effect-TS/effect-smol/effect@c710049d5812e68a2d935f2a05b4dcb7337a32af:
     dependencies:
       '@standard-schema/spec': 1.1.0
       fast-check: 4.8.0

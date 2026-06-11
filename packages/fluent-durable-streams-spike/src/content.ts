@@ -101,6 +101,9 @@ export const encodeBody = (
   if (body === undefined) {
     return Effect.succeed([])
   }
+  if ((body instanceof Uint8Array && body.length === 0) || body === "") {
+    return Effect.succeed([])
+  }
 
   if (!isJsonContentType(contentType)) {
     return opaqueBody(body)
@@ -109,16 +112,16 @@ export const encodeBody = (
   return bodyToJson(body).pipe(
     Effect.flatMap((json) => {
       const items = isJsonArray(json) ? json : undefined
+      if (items !== undefined && items.length === 0) {
+        return options?.rejectEmptyJsonArray === true
+          ? Effect.fail(
+            new InvalidContent({
+              message: "application/json append bodies must not be an empty array",
+            }),
+          )
+          : Effect.succeed([])
+      }
       if (items !== undefined) {
-        if (items.length === 0) {
-          return options?.rejectEmptyJsonArray === true
-            ? Effect.fail(
-              new InvalidContent({
-                message: "application/json append bodies must not be an empty array",
-              }),
-            )
-            : Effect.succeed([])
-        }
         return Effect.all(items.map((item) => stringifyJson(item)), { concurrency: "unbounded" })
       }
       return stringifyJson(json).pipe(Effect.map((bytes) => [bytes]))

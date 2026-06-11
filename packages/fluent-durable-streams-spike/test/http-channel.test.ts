@@ -144,8 +144,8 @@ describe("HTTP DurableStreamsChannel", () => {
       body: "gap",
     })
 
-    expect(first.status).toBe(204)
-    expect(duplicate.status).toBe(200)
+    expect(first.status).toBe(200)
+    expect(duplicate.status).toBe(204)
     expect(duplicate.headers.get("producer-seq")).toBe("0")
     expect(gap.status).toBe(409)
     expect(gap.headers.get("producer-expected-seq")).toBe("1")
