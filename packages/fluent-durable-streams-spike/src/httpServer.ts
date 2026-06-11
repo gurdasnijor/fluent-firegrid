@@ -1,13 +1,16 @@
 /* eslint-disable effect/no-runPromise */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
 import { Effect, Stream } from "effect"
+import { durableStreamsHttpMethods } from "./httpApi.ts"
 import type { DurableStreamsServer } from "./model.ts"
 import {
   appendStatusFor,
+  badRequest,
   canonicalContentType,
   defaultHeaders,
   etagFor,
   isProblem,
+  notFound,
   pathFromUrl,
   problemBody,
   problemStatus,
@@ -24,11 +27,10 @@ import {
   STREAM_NEXT_OFFSET,
   STREAM_SEQ,
   STREAM_SSE_DATA_ENCODING,
-  STREAM_EXPIRES_AT,
-  STREAM_TTL,
   STREAM_UP_TO_DATE,
   textEncoder,
 } from "./httpShared.ts"
+import { makeHttpServerState } from "./httpServerState.ts"
 import { contentTypeEssence, isUtf8ReadableContentType } from "./content.ts"
 import type { ReadStreamOutcome, StreamEvent, StreamProblem } from "./model.ts"
 
@@ -65,18 +67,6 @@ const headerString = (
 
 const headerOptional = (value: string | string[] | undefined): string | undefined =>
   Array.isArray(value) ? value[0] : value
-
-const badRequest = (message: string): StreamProblem => ({
-  _tag: "BadRequest",
-  code: "BAD_REQUEST",
-  message,
-})
-
-const notFound = (message: string): StreamProblem => ({
-  _tag: "NotFound",
-  code: "NOT_FOUND",
-  message,
-})
 
 const parseIntegerHeader = (
   headers: IncomingMessage["headers"],
@@ -223,62 +213,20 @@ export const startHttpServer = async (
   durableStreams: DurableStreamsServer,
   options?: { readonly port?: number },
 ): Promise<StartedHttpServer> => {
-  const lifetimes = new Map<string, Lifetime>()
-  const forkSpecs = new Map<string, string>()
-
-  const lifetimeHeaders = (path: string): Record<string, string> => {
-    const lifetime = lifetimes.get(path)
-    if (lifetime === undefined) {
-      return {}
-    }
-    return {
-      ...(lifetime.ttl !== undefined && { [STREAM_TTL]: lifetime.ttl }),
-      ...(lifetime.expiresAt !== undefined && { [STREAM_EXPIRES_AT]: lifetime.expiresAt }),
-    }
-  }
-
-  const parseLifetime = (request: IncomingMessage): Lifetime | StreamProblem | undefined => {
-    const ttl = headerOptional(request.headers[STREAM_TTL])
-    const expiresAt = headerOptional(request.headers[STREAM_EXPIRES_AT])
-    if (ttl !== undefined && expiresAt !== undefined) {
-      return badRequest("stream-ttl and stream-expires-at are mutually exclusive")
-    }
-    if (ttl !== undefined) {
-      if (!/^[1-9][0-9]*$/.test(ttl)) {
-        return badRequest("stream-ttl must be a positive integer without leading zeroes")
-      }
-      return { ttl, deadline: Date.now() + Number(ttl) * 1000 }
-    }
-    if (expiresAt !== undefined) {
-      const deadline = Date.parse(expiresAt)
-      if (!Number.isFinite(deadline)) {
-        return badRequest("stream-expires-at must be a valid timestamp")
-      }
-      return { expiresAt, deadline }
-    }
-    return undefined
-  }
-
-  const isExpired = (path: string): boolean => {
-    const lifetime = lifetimes.get(path)
-    return lifetime !== undefined && Date.now() >= lifetime.deadline
-  }
-
-  const touchLifetime = (path: string): void => {
-    const lifetime = lifetimes.get(path)
-    if (lifetime?.ttl !== undefined) {
-      lifetimes.set(path, { ...lifetime, deadline: Date.now() + Number(lifetime.ttl) * 1000 })
-    }
-  }
+  const state = makeHttpServerState()
 
   const handle = async (request: IncomingMessage, response: ServerResponse) => {
     try {
+      if (request.method === undefined || !durableStreamsHttpMethods.has(request.method)) {
+        send(response, 405)
+        return
+      }
       const url = new URL(request.url ?? "/", "http://127.0.0.1")
       const path = await run(pathFromUrl(url))
-      if (isExpired(path)) {
+      if (state.isExpired(path)) {
         if (request.method === "PUT" && request.headers[STREAM_FORKED_FROM] === undefined) {
           await run(durableStreams.delete(path))
-          lifetimes.delete(path)
+          state.deleteLifetime(path)
         } else {
           problemResponse(response, notFound("stream expired"))
           return
@@ -290,12 +238,12 @@ export const startHttpServer = async (
       switch (request.method) {
         case "PUT": {
           const body = await requestBody(request)
-          const requestedLifetime = parseLifetime(request)
+          const requestedLifetime = state.parseLifetime(request.headers)
           if (requestedLifetime !== undefined && "_tag" in requestedLifetime) {
             problemResponse(response, requestedLifetime)
             return
           }
-          const existingLifetime = lifetimes.get(path)
+          const existingLifetime = state.getLifetime(path)
           if (
             existingLifetime !== undefined &&
             requestedLifetime !== undefined &&
@@ -385,7 +333,7 @@ export const startHttpServer = async (
             }
             const normalizedForkSubOffset = forkSubOffset === undefined || forkSubOffset === "0" ? "none" : forkSubOffset
             const forkSpec = `${forkSource}|${normalizedForkOffset ?? "head"}|${normalizedForkSubOffset}|${request.headers["content-type"] === undefined ? "inherit" : contentType}`
-            const existingForkSpec = forkSpecs.get(path)
+            const existingForkSpec = state.getForkSpec(path)
             if (existingForkSpec !== undefined && existingForkSpec !== forkSpec) {
               problemResponse(response, { _tag: "Conflict", code: "CONFLICT", message: "stream exists with different fork configuration" })
               return
@@ -405,13 +353,13 @@ export const startHttpServer = async (
               return
             }
             if (outcome._tag === "Created") {
-              forkSpecs.set(path, forkSpec)
+              state.setForkSpec(path, forkSpec)
             }
             const inheritedLifetime = requestedLifetime === undefined
-              ? lifetimes.get(forkSource)
+              ? state.getLifetime(forkSource)
               : requestedLifetime
             if (inheritedLifetime !== undefined) {
-              lifetimes.set(path, inheritedLifetime.ttl !== undefined
+              state.setLifetime(path, inheritedLifetime.ttl !== undefined
                 ? { ttl: inheritedLifetime.ttl, deadline: Date.now() + Number(inheritedLifetime.ttl) * 1000 }
                 : inheritedLifetime)
             }
@@ -448,7 +396,7 @@ export const startHttpServer = async (
               [STREAM_NEXT_OFFSET]: metadata.tailOffset,
               ...(outcome._tag === "Created" && { location: locationFor(request, path) }),
               ...streamClosedHeader(metadata.closed),
-              ...lifetimeHeaders(path),
+              ...state.lifetimeHeaders(path),
             })
             return
           }
@@ -463,14 +411,14 @@ export const startHttpServer = async (
             return
           }
           if (requestedLifetime !== undefined) {
-            lifetimes.set(path, requestedLifetime)
+            state.setLifetime(path, requestedLifetime)
           }
           send(response, outcome._tag === "Created" ? 201 : 200, {
             "content-type": outcome.metadata.contentType,
             [STREAM_NEXT_OFFSET]: outcome.metadata.tailOffset,
             ...(outcome._tag === "Created" && { location: locationFor(request, path) }),
             ...streamClosedHeader(outcome.metadata.closed),
-            ...lifetimeHeaders(path),
+            ...state.lifetimeHeaders(path),
           })
           return
         }
@@ -506,10 +454,10 @@ export const startHttpServer = async (
             case "Noop":
             case "Duplicate":
               if (outcome._tag === "Appended") {
-                touchLifetime(path)
+                state.touchLifetime(path)
               }
               headers[STREAM_NEXT_OFFSET] = outcome.metadata.tailOffset
-              Object.assign(headers, lifetimeHeaders(path))
+              Object.assign(headers, state.lifetimeHeaders(path))
               Object.assign(headers, streamClosedHeader(outcome.metadata.closed))
               if (producer !== undefined) {
                 headers[PRODUCER_EPOCH] = String(producer.epoch)
@@ -521,7 +469,7 @@ export const startHttpServer = async (
             case "AlreadyClosed":
             case "WriteToClosed":
               headers[STREAM_NEXT_OFFSET] = outcome.finalOffset
-              Object.assign(headers, lifetimeHeaders(path))
+              Object.assign(headers, state.lifetimeHeaders(path))
               headers[STREAM_CLOSED] = "true"
               break
             case "Fenced":
@@ -552,7 +500,7 @@ export const startHttpServer = async (
             "content-type": outcome.metadata.contentType,
             [STREAM_NEXT_OFFSET]: outcome.metadata.tailOffset,
             ...streamClosedHeader(outcome.metadata.closed),
-            ...lifetimeHeaders(path),
+            ...state.lifetimeHeaders(path),
           })
           return
         }
@@ -603,12 +551,12 @@ export const startHttpServer = async (
               return
             }
             const body = readBody(contentType, read)
-            touchLifetime(path)
+            state.touchLifetime(path)
             send(response, body.length === 0 ? 204 : 200, {
               "cache-control": "no-cache, no-store",
               [STREAM_CURSOR]: cursor,
               ...readHeaders(contentType, read),
-              ...lifetimeHeaders(path),
+              ...state.lifetimeHeaders(path),
             }, body.length === 0 ? undefined : body)
             return
           }
@@ -679,12 +627,12 @@ export const startHttpServer = async (
             send(response, 304, { etag })
             return
           }
-          touchLifetime(path)
+          state.touchLifetime(path)
           send(response, 200, {
             "cache-control": "no-store",
             etag,
             ...readHeaders(contentType, read),
-            ...lifetimeHeaders(path),
+            ...state.lifetimeHeaders(path),
           }, body)
           return
         }
@@ -700,8 +648,6 @@ export const startHttpServer = async (
           return
         }
 
-        default:
-          send(response, 405)
       }
     } catch (error) {
       if (response.headersSent) {

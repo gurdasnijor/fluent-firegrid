@@ -25,6 +25,18 @@ export const defaultHeaders: Record<string, string> = {
   "cross-origin-resource-policy": "cross-origin",
 }
 
+export const badRequest = (message: string): StreamProblem => ({
+  _tag: "BadRequest",
+  code: "BAD_REQUEST",
+  message,
+})
+
+export const notFound = (message: string): StreamProblem => ({
+  _tag: "NotFound",
+  code: "NOT_FOUND",
+  message,
+})
+
 export const textEncoder = new TextEncoder()
 const textDecoder = new TextDecoder()
 
