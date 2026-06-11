@@ -5,12 +5,11 @@ Owner: Firegrid / Durable Streams
 Primary protocol source: `PROTOCOL.md`
 Current core-slice implementation targets:
 
-- `packages/fluent-store`
-- `packages/fluent-store-inmemory`
+- `packages/fluent-stream-log`
+- `packages/fluent-stream-log-inmemory`
 - `packages/fluent-transport`
 - `packages/fluent-transport-inmemory`
 - `packages/fluent-protocol`
-- `packages/fluent-server`
 - `packages/fluent-client`
 
 Deferred Phase 6 implementation target:
@@ -49,16 +48,16 @@ semantic stream log
 Most implementation work should happen before HTTP exists. HTTP headers,
 routes, SSE framing, ETags, cache cursors, and reserved path precedence are
 HTTP transport concerns. Producer fencing, offsets, stream closure, forks,
-subscriptions, leases, schedules, and JSON message boundaries are store/protocol
-concerns.
+subscriptions, leases, schedules, and JSON message boundaries are
+stream-log/protocol concerns.
 
 This SDD defines that split and gives the agents a concrete build target. The
-build is intentionally serial until the in-memory store can provide a usable
+build is intentionally serial until the in-memory stream log can provide a usable
 protocol client. Parallel work before that point creates fake surfaces.
 
 The first mergeable slice must stop at a production-shaped in-memory path:
-store, in-memory store, transport, in-memory transport, protocol, semantic
-server, and client. HTTP helpers that do not implement `ClientTransport` or
+stream log, in-memory stream log, transport, in-memory transport, protocol, and
+client. HTTP helpers that do not implement `ClientTransport` or
 `ServerTransport` should not ship under `fluent-transport-http`; Phase 6 starts
 only when HTTP can plug into the transport contracts.
 
@@ -162,15 +161,16 @@ Layer 3 Durable Streams Protocol
 Layer 2 Transport
   protocol-agnostic request/response and subscription message delivery
 
-Layer 1 Store
+Layer 1 Stream Log
   append-only byte log, stream metadata, offsets, tail notifications
 
 Layer 0 Backend
   memory now, durable backend later
 ```
 
-HTTP is a transport implementation of `PROTOCOL.md`. Users plug
-`fluent-transport-http` into `fluent-server`; HTTP is not Layer 1, 2, or 3.
+HTTP is a transport implementation of `PROTOCOL.md`. `fluent-transport-http`
+is the network server/client boundary for `PROTOCOL.md`; HTTP is not Layer 1,
+2, or 3.
 
 ## Package Layout And Dependency Rules
 
@@ -184,20 +184,18 @@ package.
 
 File naming rule:
 
-- source modules use camelCase: `streamTypes.ts`, `streamLog.ts`,
+- source modules use camelCase: `streamTypes.ts`, `operations.ts`,
   `serverProtocol.ts`;
-- class constructors may be PascalCase only when the file primarily exports that
-  constructor and mirrors the reference, e.g. `InMemoryStore.ts`;
 - test files use kebab-case with `.test.ts`;
 - do not mix kebab and camel inside source module names.
 
 ### Package Map
 
 ```text
-packages/fluent-store
+packages/fluent-stream-log
   mirrors repos/eventsourcing/packages/eventsourcing-store
 
-packages/fluent-store-inmemory
+packages/fluent-stream-log-inmemory
   mirrors repos/eventsourcing/packages/eventsourcing-store-inmemory
 
 packages/fluent-transport
@@ -208,9 +206,6 @@ packages/fluent-transport-inmemory
 
 packages/fluent-protocol
   mirrors repos/eventsourcing/packages/eventsourcing-protocol
-
-packages/fluent-server
-  mirrors repos/eventsourcing/packages/eventsourcing-server
 
 packages/fluent-transport-http
   HTTP transport implementation for PROTOCOL.md, analogous to
@@ -223,19 +218,18 @@ packages/fluent-client
   public Effect-native client over the protocol/transport packages
 ```
 
-### `fluent-store`
+### `fluent-stream-log`
 
 Owns the semantic stream log contract. It has no transport, protocol, HTTP, or
 server dependencies.
 
 ```text
-packages/fluent-store/src/
+packages/fluent-stream-log/src/
   domainTypes.ts
   streamTypes.ts
   errors.ts
-  services.ts
-  streamLog.ts
-  encodedStreamLog.ts
+  durableStreamLog.ts
+  operations.ts
   testing/
     durable-stream-log-test-suite.ts
   index.ts
@@ -249,21 +243,18 @@ Forbidden dependencies:
 
 - `fluent-protocol`
 - `fluent-transport`
-- `fluent-server`
 - `effect-durable-streams`
 - `fluent-client`
 - `@effect/platform`
 
-### `fluent-store-inmemory`
+### `fluent-stream-log-inmemory`
 
-Owns the clean in-memory store implementation, following
+Owns the clean in-memory stream-log implementation, following
 `eventsourcing-store-inmemory`.
 
 ```text
-packages/fluent-store-inmemory/src/
-  InMemoryStore.ts
-  inMemoryStreamLog.ts
-  subscriptionManager.ts
+packages/fluent-stream-log-inmemory/src/
+  inMemoryDurableStreamLog.ts
   layer.ts
   index.ts
 ```
@@ -271,13 +262,12 @@ packages/fluent-store-inmemory/src/
 Allowed dependencies:
 
 - `effect`
-- `fluent-store`
+- `fluent-stream-log`
 
 Forbidden dependencies:
 
 - `fluent-protocol`
 - `fluent-transport`
-- `fluent-server`
 - `effect-durable-streams`
 - current `packages/effect-durable-streams/src/Store.ts`
 - current `packages/effect-durable-streams/src/MemoryStore.ts`
@@ -301,9 +291,8 @@ Allowed dependencies:
 
 Forbidden dependencies:
 
-- `fluent-store`
+- `fluent-stream-log`
 - `fluent-protocol`
-- `fluent-server`
 - `fluent-client`
 - `@effect/platform`
 
@@ -327,8 +316,7 @@ Allowed dependencies:
 Forbidden dependencies:
 
 - `fluent-protocol`
-- `fluent-store`
-- `fluent-server`
+- `fluent-stream-log`
 - `fluent-client`
 
 ### `fluent-protocol`
@@ -351,14 +339,13 @@ packages/fluent-protocol/src/
 Allowed dependencies:
 
 - `effect`
-- `fluent-store`
+- `fluent-stream-log`
 - `fluent-transport`
 
 Forbidden dependencies:
 
-- `fluent-store-inmemory`
+- `fluent-stream-log-inmemory`
 - `fluent-transport-inmemory`
-- `fluent-server`
 - `effect-durable-streams`
 - `fluent-client`
 - `@effect/platform`
@@ -367,43 +354,11 @@ The current `packages/effect-durable-streams/src/Protocol.ts` is not source
 material for this package. Build `fluent-protocol` from the transport/protocol
 reference shape and `PROTOCOL.md` semantics instead.
 
-### `fluent-server`
-
-Owns server-side store-backed services: stream server and event bus.
-Subscription server starts in Phase 5, when subscription semantics are real.
-Protocol binding lives in `fluent-protocol`; HTTP, RPC, and
-in-memory transport/store assembly live outside `fluent-server`.
-
-```text
-packages/fluent-server/src/
-  streamServer.ts
-  eventBus.ts
-  layer.ts
-  index.ts
-```
-
-Allowed dependencies:
-
-- `effect`
-- `fluent-store`
-
-Forbidden dependencies:
-
-- `effect-durable-streams`
-- `fluent-client`
-- `@effect/platform` HTTP server/client modules
-- `fluent-store-inmemory`
-- `fluent-transport`
-- `fluent-transport-inmemory`
-- `fluent-transport-http`
-- `fluent-transport-rpc`
-- `fluent-protocol`
-
 ### `fluent-transport-http`
 
 Owns the HTTP transport implementation for `PROTOCOL.md`. It is a transport
-package, not the privileged server surface. Users plug it into `fluent-server`
-the same way a WebSocket transport would be plugged in.
+package, not a facade over the stream log. It is the HTTP server/client
+transport analogous to eventsourcing WebSocket transport.
 
 The reference shape is
 `repos/eventsourcing/packages/eventsourcing-transport-websocket/src/lib/websocket-server.ts`,
@@ -471,7 +426,7 @@ Current file disposition:
 | Current file | Fate |
 | --- | --- |
 | `src/Store.ts` | do not port; endpoint-shaped legacy store |
-| `src/MemoryStore.ts` | do not port; replace with `fluent-store-inmemory` |
+| `src/MemoryStore.ts` | do not port; replace with `fluent-stream-log-inmemory` |
 | `src/Protocol.ts` | do not port; replace with `fluent-protocol` |
 | `src/Api.ts` | do not port; incompatible with target HTTP transport architecture |
 | `src/ApiLive.ts` | do not port; incompatible with target HTTP transport architecture |
@@ -508,15 +463,14 @@ Allowed dependencies:
 
 - `effect`
 - `@effect/platform` in `src/http/*` only
-- `fluent-store`
+- `fluent-stream-log`
 - `fluent-transport`
 - `fluent-protocol`
 
 Forbidden dependencies:
 
-- `fluent-store-inmemory`
+- `fluent-stream-log-inmemory`
 - `fluent-transport-inmemory`
-- `fluent-server`
 - `fluent-transport-http` internals
 - `effect-durable-streams`
 - `effect-durable-execution`
@@ -529,13 +483,13 @@ Runtime client code may not.
 Tests live with the package that owns the contract:
 
 ```text
-packages/fluent-store/test/
+packages/fluent-stream-log/test/
   durable-stream-log.contract.test.ts
   offsets.test.ts
   json-boundaries.test.ts
   producer-fencing.test.ts
 
-packages/fluent-store-inmemory/test/
+packages/fluent-stream-log-inmemory/test/
   in-memory-stream-log.test.ts
 
 packages/fluent-transport/test/
@@ -547,10 +501,6 @@ packages/fluent-transport-inmemory/test/
 packages/fluent-protocol/test/
   in-memory-transport.test.ts
 
-packages/fluent-server/test/
-  subscription-service.contract.test.ts
-  in-memory-server.integration.test.ts
-
 packages/fluent-transport-http/test/
   http-transport.conformance.test.ts
 
@@ -561,7 +511,7 @@ packages/fluent-client/test/
 ```
 
 Contract tests belong at the lowest package that can express the behavior. Do
-not test producer fencing first through HTTP. Test it through store/protocol
+not test producer fencing first through HTTP. Test it through stream-log/protocol
 first, then add HTTP conformance coverage later.
 
 ### Composition Direction
@@ -569,19 +519,15 @@ first, then add HTTP conformance coverage later.
 The semantic import graph mirrors eventsourcing:
 
 ```text
-store
+stream-log
   ↑
-store-inmemory
-
-store
-  ↑
-server
+stream-log-inmemory
 
 transport
   ↑
 transport-inmemory
 
-transport + store
+transport + stream-log
   ↑
 protocol
 ```
@@ -597,10 +543,10 @@ transport-inmemory │
           imports both sides
 ```
 
-HTTP and public client surfaces sit above the protocol/server surfaces:
+HTTP and public client surfaces sit above the protocol and transport surfaces:
 
 ```text
-protocol client / server
+protocol handler / transport
   ↑
 client public API
   ↑
@@ -615,11 +561,11 @@ passed as a callback/interface.
 
 These are the Durable Streams concepts that must exist without HTTP.
 
-| `PROTOCOL.md` concept | Store/protocol owner | Transport projection |
+| `PROTOCOL.md` concept | Stream-log/protocol owner | Transport projection |
 | --- | --- | --- |
 | stream path | branded `StreamPath` | URL path extraction/encoding |
 | content type | stream metadata | `Content-Type` header |
-| create/ensure stream | protocol command + store metadata | HTTP `PUT` |
+| create/ensure stream | protocol command + stream metadata | HTTP `PUT` |
 | append bytes | `Sink` into stream log | HTTP `POST` body streaming |
 | close stream | monotonic stream state transition | `Stream-Closed` header |
 | read catch-up | historical `Stream` from offset | HTTP `GET` response body |
@@ -630,7 +576,7 @@ These are the Durable Streams concepts that must exist without HTTP.
 | offsets | offset service/codec | query/header serialization |
 | forks | stream graph + read stitching | fork headers |
 | JSON boundaries | content-type-aware record codec | JSON response array |
-| producer fencing | protocol/store atomic decision | producer headers |
+| producer fencing | protocol/stream-log atomic decision | producer headers |
 | subscriptions | subscription state machine | `__ds` control endpoints |
 | wake delivery | delivery manager | webhook HTTP, pull-wake stream |
 | leases/generation | subscription state machine | callback/ack/release endpoints |
@@ -638,9 +584,9 @@ These are the Durable Streams concepts that must exist without HTTP.
 | caching/cursors/ETags | HTTP transport metadata from offsets/state | HTTP cache headers |
 | route precedence | HTTP transport only | router ordering |
 
-## Store Contract
+## Stream Log Contract
 
-The first implementation target is a stream-native store contract modeled after
+The first implementation target is a stream-native byte-log contract modeled after
 `eventsourcing-store`, adapted for Durable Streams bytes and offsets.
 
 ```ts
@@ -854,7 +800,7 @@ transport payloads, not HTTP request DTOs.
 
 ## Producer Fencing
 
-Producer state is part of the core protocol/store transaction, not an HTTP
+Producer state is part of the core protocol/stream-log transaction, not an HTTP
 header concern.
 
 ```ts
@@ -957,9 +903,7 @@ Requirements:
 - filtered subscriptions maintain public ack cursor and internal evaluated
   cursor separately.
 
-The first implementation can defer webhook transport and schedules, but it must
-not design subscriptions as HTTP routes. `fluent-transport-http` calls this
-service through `fluent-server`.
+The first implementation can defer webhook transport and schedules, but it must not design subscriptions as HTTP routes. HTTP should project these semantics through `fluent-transport-http` once the protocol service exists.
 
 ## Transport Contracts
 
@@ -994,7 +938,7 @@ The local protocol transport is the first client/server integration target:
 fluent-client
   -> fluent-protocol DurableTransport
   -> fluent-protocol handler
-  -> fluent-store-inmemory
+  -> fluent-stream-log-inmemory
 ```
 
 This gives client work a real local target before HTTP server work exists. The
@@ -1023,7 +967,7 @@ TypeSpec remains valuable, but only for this HTTP transport surface.
 
 The build is driven by contract suites, not endpoint snapshots.
 
-### Store Contract
+### Stream Log Contract
 
 Clone/customize `repos/eventsourcing/packages/eventsourcing-store/src/lib/testing/eventstore-test-suite.ts`.
 
@@ -1034,7 +978,7 @@ Required cases:
 - append at returned end position;
 - read all historical records from beginning;
 - read historical records from mid-stream;
-- read empty/non-existent raw store stream as empty where applicable;
+- read empty/non-existent raw stream-log stream as empty where applicable;
 - read immediately after write;
 - subscribe returns historical then live records;
 - multiple subscribers receive the same live records;
@@ -1118,7 +1062,7 @@ Deliverables:
 - stop assigning implementation work directly against HTTP/TypeSpec until
   Phase 6.
 
-### Phase 1: Store
+### Phase 1: Stream Log
 
 Owner: Agent3.
 
@@ -1130,7 +1074,7 @@ Deliverables:
 - subscription/live stream support adapted from
   `repos/eventsourcing/packages/eventsourcing-store-inmemory/src/lib/subscriptionManager.ts`
   where useful;
-- customized store contract suite;
+- customized stream-log contract suite;
 - tests for historical read and live subscribe.
 - a minimal in-process read/write client over `DurableStreamLog` so
   consumers can prove create/append/read/subscribe without protocol transport.
@@ -1177,7 +1121,7 @@ Deliverables:
 - transport contract tests;
 - protocol client/server running over in-memory transport.
 - the same basic client from Phase 1 backed by in-memory protocol
-  transport instead of direct store calls.
+  transport instead of direct stream-log calls.
 
 ### Phase 4: Effect Client Over Protocol Transport
 
@@ -1191,8 +1135,8 @@ Deliverables:
 - producer resource owning producer id/epoch/seq;
 - typed schema wrapper using `Schema` at the client boundary;
 - tests against in-memory protocol server.
-- no runtime dependency on `fluent-store-inmemory`,
-  `fluent-transport-inmemory`, or `fluent-server`.
+- no runtime dependency on `fluent-stream-log-inmemory`,
+  or `fluent-transport-inmemory`.
 
 Non-deliverables:
 
@@ -1233,7 +1177,7 @@ Deliverables:
 Deliverables:
 
 - persistent backend implementing `DurableStreamLog`;
-- same store/producer/subscription contract suites;
+- same stream-log/producer/subscription contract suites;
 - documented atomicity for producer state + appends.
 
 ### Phase 8: Execution
@@ -1268,7 +1212,7 @@ Agent2 should build client against in-memory protocol:
 
 ## Open Questions
 
-1. Should store/protocol/transport be separate workspace packages immediately?
+1. Should stream-log/protocol/transport be separate workspace packages immediately?
 
    Decision: yes. These boundaries are now fixed by the Package Map. Do not
    stage package-neutral store, protocol, or transport code inside
@@ -1277,7 +1221,7 @@ Agent2 should build client against in-memory protocol:
 2. Should raw byte append records be chunked by request, by backend chunk, or by
    content message?
 
-   Recommendation: store logical records with byte ranges; JSON mode stores
+   Recommendation: persist stream-log records with byte ranges; JSON mode stores
    message boundaries, binary/text can store backend chunks as long as offsets
    stay stable.
 
@@ -1297,8 +1241,8 @@ The architecture is on track when:
 
 - an in-memory server and client can create, append, read, and subscribe without
   opening an HTTP port;
-- the in-memory store passes an eventstore-style contract suite;
+- the in-memory stream log passes an eventstore-style contract suite;
 - producer fencing is tested without HTTP headers;
 - subscription claim/ack/release is tested without HTTP endpoints;
 - HTTP becomes a transport implementation over tagged protocol responses;
-- TypeSpec/OpenAPI documents the HTTP transport, not store/protocol.
+- TypeSpec/OpenAPI documents the HTTP transport, not stream-log/protocol.

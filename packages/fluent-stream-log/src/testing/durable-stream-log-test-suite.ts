@@ -1,10 +1,10 @@
 /* eslint-disable effect/no-runPromise -- Reusable Vitest contract suite runs Effects at test boundaries. */
 import { Effect, Fiber, Stream, pipe } from "effect"
 import { describe, expect, it } from "vitest"
-import { appendBytes, appendEmpty, beginning, readCollect } from "../streamLog.ts"
+import { appendBytes, appendEmpty, beginning, readCollect } from "../operations.ts"
 import { ContentTypeMismatchError, StreamNotFoundError } from "../errors.ts"
 import { decodeStreamPath } from "../domainTypes.ts"
-import type { DurableStreamLog } from "../services.ts"
+import type { DurableStreamLog } from "../durableStreamLog.ts"
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()

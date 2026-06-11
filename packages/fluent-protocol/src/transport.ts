@@ -2,7 +2,7 @@ import { Context, Schema } from "effect"
 import type { Cause, Queue } from "effect"
 import type { Effect, Scope } from "effect"
 import { TransportError } from "@firegrid/fluent-transport"
-import { Offset } from "@firegrid/fluent-store"
+import { Offset } from "@firegrid/fluent-stream-log"
 import type { Append, Close, Create, Delete, Head, Read, ReadLive, Request } from "./request.ts"
 import type {
   AppendResponse,

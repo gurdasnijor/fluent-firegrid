@@ -1,6 +1,6 @@
 import { Effect, Stream, pipe } from "effect"
 import { BeginningOffset, NowOffset, type Offset, type StreamPath } from "./domainTypes.ts"
-import type { DurableStreamLog } from "./services.ts"
+import type { DurableStreamLog } from "./durableStreamLog.ts"
 import type { AppendStream, ReadPosition, StreamMetadata } from "./streamTypes.ts"
 
 export const beginning = (path: StreamPath): ReadPosition => ({

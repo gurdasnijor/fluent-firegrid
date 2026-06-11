@@ -4,7 +4,7 @@ import {
   type DurableStreamLog,
   type Offset,
   type StreamRecord,
-} from "@firegrid/fluent-store"
+} from "@firegrid/fluent-stream-log"
 import { TransportError } from "@firegrid/fluent-transport"
 import { handle, readPosition, wireRecord } from "./handler.ts"
 import type { Request } from "./request.ts"

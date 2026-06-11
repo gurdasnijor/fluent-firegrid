@@ -1,7 +1,7 @@
 {
-  "name": "@firegrid/fluent-server",
+  "name": "@firegrid/fluent-stream-log",
   "version": "0.0.0",
-  "description": "Store-backed Durable Streams server semantics.",
+  "description": "Transport-agnostic Durable Streams byte log contract.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -10,6 +10,10 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./testing": {
+      "types": "./src/testing/durable-stream-log-test-suite.ts",
+      "default": "./src/testing/durable-stream-log-test-suite.ts"
     }
   },
   "files": [
@@ -22,15 +26,13 @@
   "scripts": {
     "build": "tsc",
     "diagnostics": "effect-language-service diagnostics --project tsconfig.json --severity error",
-    "test": "vitest run --root ../.. --project fluent-server",
+    "test": "vitest run --root ../.. --project fluent-stream-log",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@firegrid/fluent-store": "workspace:*",
     "effect": "4.0.0-beta.78"
   },
   "devDependencies": {
-    "@firegrid/fluent-store-inmemory": "workspace:*",
     "typescript": "^5.7.0",
     "vitest": "^3.2.0"
   }

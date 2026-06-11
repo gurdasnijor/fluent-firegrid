@@ -182,12 +182,12 @@ importers:
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78
     devDependencies:
-      '@firegrid/fluent-store':
+      '@firegrid/fluent-stream-log':
         specifier: workspace:*
-        version: link:../fluent-store
-      '@firegrid/fluent-store-inmemory':
+        version: link:../fluent-stream-log
+      '@firegrid/fluent-stream-log-inmemory':
         specifier: workspace:*
-        version: link:../fluent-store-inmemory
+        version: link:../fluent-stream-log-inmemory
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -197,9 +197,9 @@ importers:
 
   packages/fluent-protocol:
     dependencies:
-      '@firegrid/fluent-store':
+      '@firegrid/fluent-stream-log':
         specifier: workspace:*
-        version: link:../fluent-store
+        version: link:../fluent-stream-log
       '@firegrid/fluent-transport':
         specifier: workspace:*
         version: link:../fluent-transport
@@ -207,9 +207,9 @@ importers:
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78
     devDependencies:
-      '@firegrid/fluent-store-inmemory':
+      '@firegrid/fluent-stream-log-inmemory':
         specifier: workspace:*
-        version: link:../fluent-store-inmemory
+        version: link:../fluent-stream-log-inmemory
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -217,26 +217,7 @@ importers:
         specifier: ^3.2.0
         version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
 
-  packages/fluent-server:
-    dependencies:
-      '@firegrid/fluent-store':
-        specifier: workspace:*
-        version: link:../fluent-store
-      effect:
-        specifier: 4.0.0-beta.78
-        version: 4.0.0-beta.78
-    devDependencies:
-      '@firegrid/fluent-store-inmemory':
-        specifier: workspace:*
-        version: link:../fluent-store-inmemory
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
-
-  packages/fluent-store:
+  packages/fluent-stream-log:
     dependencies:
       effect:
         specifier: 4.0.0-beta.78
@@ -249,11 +230,11 @@ importers:
         specifier: ^3.2.0
         version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
 
-  packages/fluent-store-inmemory:
+  packages/fluent-stream-log-inmemory:
     dependencies:
-      '@firegrid/fluent-store':
+      '@firegrid/fluent-stream-log':
         specifier: workspace:*
-        version: link:../fluent-store
+        version: link:../fluent-stream-log
       effect:
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78

@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect"
-import { BeginningOffset, NowOffset, Offset, StreamPath } from "@firegrid/fluent-store"
+import { BeginningOffset, NowOffset, Offset, StreamPath } from "@firegrid/fluent-stream-log"
 import { SequenceNumber } from "./schemaShared.ts"
 
 export class ProducerFence extends Schema.Class<ProducerFence>("ProducerFence")({

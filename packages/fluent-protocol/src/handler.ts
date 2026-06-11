@@ -17,7 +17,7 @@ import {
   type ReadPosition,
   type StreamMetadata,
   type StreamRecord,
-} from "@firegrid/fluent-store"
+} from "@firegrid/fluent-stream-log"
 import type * as Req from "./request.ts"
 import * as Res from "./response.ts"
 import type { ResponseOf } from "./transport.ts"

@@ -1,7 +1,7 @@
 import { Effect, Queue } from "effect"
 import { describe, expect, it } from "vitest"
-import { decodeStreamPath } from "@firegrid/fluent-store"
-import * as InMemoryStreamLog from "@firegrid/fluent-store-inmemory"
+import { decodeStreamPath } from "@firegrid/fluent-stream-log"
+import * as InMemoryStreamLog from "@firegrid/fluent-stream-log-inmemory"
 import {
   Append,
   Close,
@@ -15,11 +15,11 @@ import {
 const enc = new TextEncoder()
 
 describe("DurableTransport in-memory", () => {
-  it("maps store operations to typed protocol outcomes", async () => {
+  it("maps stream-log operations to typed protocol outcomes", async () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const path = yield* decodeStreamPath("protocol/orders")
-        const log = yield* InMemoryStreamLog.makeInMemoryStreamLog()
+        const log = yield* InMemoryStreamLog.make()
         const transport = yield* makeLocalTransport(log)
 
         const created = yield* transport.call(new Create({ path, contentType: "text/plain" }))
@@ -54,7 +54,7 @@ describe("DurableTransport in-memory", () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const path = yield* decodeStreamPath("protocol/close")
-        const log = yield* InMemoryStreamLog.makeInMemoryStreamLog()
+        const log = yield* InMemoryStreamLog.make()
         const transport = yield* makeLocalTransport(log)
         yield* transport.call(new Create({ path, contentType: "text/plain" }))
         yield* transport.call(new Append({ path, contentType: "text/plain", bytes: enc.encode("one") }))
@@ -95,7 +95,7 @@ describe("DurableTransport in-memory", () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const path = yield* decodeStreamPath("protocol/producers")
-        const log = yield* InMemoryStreamLog.makeInMemoryStreamLog()
+        const log = yield* InMemoryStreamLog.make()
         const transport = yield* makeLocalTransport(log)
         yield* transport.call(new Create({ path, contentType: "text/plain" }))
 
@@ -155,7 +155,7 @@ describe("DurableTransport in-memory", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const path = yield* decodeStreamPath("protocol/live")
-          const log = yield* InMemoryStreamLog.makeInMemoryStreamLog()
+          const log = yield* InMemoryStreamLog.make()
           const transport = yield* makeLocalTransport(log)
           yield* transport.call(new Create({ path, contentType: "text/plain" }))
 

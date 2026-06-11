@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
-import { decodeStreamPath, initialOffset } from "@firegrid/fluent-store"
-import * as InMemoryStreamLog from "@firegrid/fluent-store-inmemory"
+import { decodeStreamPath, initialOffset } from "@firegrid/fluent-stream-log"
+import * as InMemoryStreamLog from "@firegrid/fluent-stream-log-inmemory"
 import * as Protocol from "@firegrid/fluent-protocol"
 import * as DurableStreamsClient from "../../src/client/DurableStreamsClient.ts"
 import { makeProducer } from "../../src/client/Producer.ts"
@@ -15,7 +15,7 @@ describe("DurableStreamsClient", () => {
       Effect.scoped(
         Effect.gen(function* () {
           const path = yield* decodeStreamPath("client/orders")
-          const log = yield* InMemoryStreamLog.makeInMemoryStreamLog()
+          const log = yield* InMemoryStreamLog.make()
           const transport = yield* Protocol.makeLocalTransport(log)
           const client = DurableStreamsClient.make(transport)
 
@@ -56,7 +56,7 @@ describe("DurableStreamsClient", () => {
     const outcome = await Effect.runPromise(
       Effect.gen(function* () {
         const path = yield* decodeStreamPath("client/mismatch")
-        const log = yield* InMemoryStreamLog.makeInMemoryStreamLog()
+        const log = yield* InMemoryStreamLog.make()
           const transport = yield* Protocol.makeLocalTransport(log)
         const client = DurableStreamsClient.make(transport)
 
@@ -112,7 +112,7 @@ describe("DurableStreamsClient", () => {
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         const path = yield* decodeStreamPath("client/producer-autoclaim")
-        const log = yield* InMemoryStreamLog.makeInMemoryStreamLog()
+        const log = yield* InMemoryStreamLog.make()
         const transport = yield* Protocol.makeLocalTransport(log)
         yield* transport.call(new Protocol.Create({ path, contentType: "text/plain" }))
         yield* transport.call(
