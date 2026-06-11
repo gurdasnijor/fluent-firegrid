@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Cause, Effect, Queue } from "effect"
 import { describe, expect, it } from "vitest"
 import { decodeStreamPath, initialOffset } from "@firegrid/fluent-stream-log"
 import * as InMemoryStreamLog from "@firegrid/fluent-stream-log-inmemory"
@@ -57,7 +57,7 @@ describe("DurableStreamsClient", () => {
       Effect.gen(function* () {
         const path = yield* decodeStreamPath("client/mismatch")
         const log = yield* InMemoryStreamLog.make()
-          const transport = yield* Protocol.makeLocalTransport(log)
+        const transport = yield* Protocol.makeLocalTransport(log)
         const client = DurableStreamsClient.make(transport)
 
         yield* client.create(path, "text/plain")
@@ -71,6 +71,39 @@ describe("DurableStreamsClient", () => {
       expected: "text/plain",
       actual: "application/json",
     })
+  })
+
+  it("tail emits caught-up, closed control, then completes", async () => {
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const path = yield* decodeStreamPath("client/tail-close")
+          const log = yield* InMemoryStreamLog.make()
+          const transport = yield* Protocol.makeLocalTransport(log)
+          const client = DurableStreamsClient.make(transport)
+
+          yield* client.create(path, "text/plain")
+          const tail = yield* client.tail(path, "-1")
+          const caughtUp = yield* Queue.take(tail)
+          yield* client.close(path)
+          const closed = yield* Queue.take(tail)
+          const done = yield* Queue.take(tail).pipe(Effect.flip)
+          return { caughtUp, closed, done }
+        }),
+      ),
+    )
+
+    expect(result.caughtUp).toMatchObject({
+      _tag: "Control",
+      upToDate: true,
+      closed: false,
+    })
+    expect(result.closed).toMatchObject({
+      _tag: "Control",
+      upToDate: true,
+      closed: true,
+    })
+    expect(Cause.isDone(result.done)).toBe(true)
   })
 
   it("producer retries transport failures with the same fence tuple", async () => {

@@ -185,7 +185,7 @@ package.
 File naming rule:
 
 - source modules use camelCase: `streamTypes.ts`, `operations.ts`,
-  `serverProtocol.ts`;
+  `localTransport.ts`;
 - test files use kebab-case with `.test.ts`;
 - do not mix kebab and camel inside source module names.
 

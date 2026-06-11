@@ -1,4 +1,4 @@
-import { Effect, Stream, pipe } from "effect"
+import { Effect, pipe } from "effect"
 import { BeginningOffset, NowOffset, type Offset, type StreamPath } from "./domainTypes.ts"
 import type { DurableStreamLog } from "./durableStreamLog.ts"
 import type { AppendStream, ReadPosition, StreamMetadata } from "./streamTypes.ts"
@@ -22,27 +22,29 @@ export const appendBytes = (
   log: DurableStreamLog,
   request: AppendStream,
   bytes: Uint8Array,
-) => Stream.make(bytes).pipe(Stream.run(log.append(request)))
+) => log.append({ ...request, messages: bytes.length === 0 ? [] : [bytes] })
 
 export const appendEmpty = (log: DurableStreamLog, request: AppendStream) =>
-  Stream.empty.pipe(Stream.run(log.append(request)))
+  log.append({ ...request, messages: [] })
 
 export const readCollect = (log: DurableStreamLog, position: ReadPosition) =>
-  pipe(position, log.read, Effect.flatMap(Stream.runCollect))
+  pipe(
+    position,
+    log.read,
+    Effect.map((window) => window.records),
+  )
 
 export const readBytes = (log: DurableStreamLog, position: ReadPosition) =>
   pipe(
     position,
     log.read,
-    Effect.flatMap((records) =>
-      records.pipe(
-        Stream.runFold(() => new Uint8Array(), (acc, record) => {
-          const out = new Uint8Array(acc.length + record.bytes.length)
-          out.set(acc, 0)
-          out.set(record.bytes, acc.length)
-          return out
-        }),
-      ),
+    Effect.map((window) =>
+      window.records.reduce((acc, record) => {
+        const out = new Uint8Array(acc.length + record.bytes.length)
+        out.set(acc, 0)
+        out.set(record.bytes, acc.length)
+        return out
+      }, new Uint8Array()),
     ),
   )
 

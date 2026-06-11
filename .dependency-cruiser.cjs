@@ -117,10 +117,10 @@ module.exports = {
       name: "fluent-transport-http-only-imports-transport",
       severity: "error",
       comment:
-        "fluent-transport-http must stay a concrete transport like eventsourcing-transport-websocket: it may import fluent-transport, but not protocol, store, client, or other concrete transports.",
+        "fluent-transport-http implements DurableTransport over HTTP/SSE: it may import fluent-protocol and Effect platform, but not stream-log internals, raw transport, concrete stores/transports, or client.",
       from: { path: "^packages/fluent-transport-http/src/" },
       to: {
-        path: "^packages/(?:fluent-stream-log|fluent-stream-log-inmemory|fluent-transport-inmemory|fluent-transport-rpc|fluent-protocol|fluent-client)/src/",
+        path: "^packages/(?:fluent-stream-log|fluent-stream-log-inmemory|fluent-transport|fluent-transport-inmemory|fluent-transport-rpc|fluent-client)/src/",
       },
     },
     {
@@ -134,13 +134,13 @@ module.exports = {
       },
     },
     {
-      name: "fluent-protocol-only-imports-store-and-transport",
+      name: "fluent-protocol-only-imports-stream-log",
       severity: "error",
       comment:
-        "fluent-protocol mirrors eventsourcing-protocol: production code may import fluent-stream-log and fluent-transport, but not concrete implementations, client, HTTP/RPC transport, or compatibility packages.",
+        "fluent-protocol owns Durable Streams protocol algebra and may import fluent-stream-log only; raw transport, concrete transports, concrete stores, and client stay outside.",
       from: { path: "^packages/fluent-protocol/src/" },
       to: {
-        path: "^packages/(?:fluent-stream-log-inmemory|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-client)/src/",
+        path: "^packages/(?:fluent-stream-log-inmemory|fluent-transport|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-client)/src/",
       },
     },
     {

@@ -1,84 +1,59 @@
-import { Effect, Queue, Ref, Stream, type Cause } from "effect"
-import {
-  initialOffset,
-  type DurableStreamLog,
-  type Offset,
-  type StreamRecord,
-} from "@firegrid/fluent-stream-log"
-import { TransportError } from "@firegrid/fluent-transport"
+import { Effect, Queue, Stream, type Cause } from "effect"
+import type { ChangeEvent, DurableStreamLog } from "@firegrid/fluent-stream-log"
+import { Control, RecordBatch, TransportError, type DurableTransportService, type ReadEvent } from "./transport.ts"
 import { handle, readPosition, wireRecord } from "./handler.ts"
 import type { Request } from "./request.ts"
-import { Control, RecordBatch, type DurableTransportService, type ReadEvent } from "./transport.ts"
-
-interface StreamState {
-  readonly nextOffset: Offset
-  readonly closed: boolean
-}
 
 const transportError = (cause: unknown) =>
   new TransportError({
-    message: "Durable protocol local stream failed",
+    message: "Durable stream local transport failed",
     cause,
   })
 
-const offerRecord = (
+const offerChange = (
   queue: Queue.Queue<ReadEvent, TransportError | Cause.Done<void>>,
-  state: Ref.Ref<StreamState>,
-  record: StreamRecord,
-) =>
-  Ref.set(state, {
-    nextOffset: record.nextOffset,
-    closed: record.closed,
-  }).pipe(
-    Effect.andThen(Queue.offer(queue, new RecordBatch({ records: [wireRecord(record)] }))),
-    Effect.asVoid,
-  )
+  change: ChangeEvent,
+) => {
+  switch (change._tag) {
+    case "Chunk":
+      return Queue.offer(queue, new RecordBatch({ records: [wireRecord(change.record)] })).pipe(Effect.asVoid)
+    case "CaughtUp":
+      return Queue.offer(
+        queue,
+        new Control({
+          nextOffset: change.offset,
+          upToDate: true,
+          closed: false,
+        }),
+      ).pipe(Effect.asVoid)
+    case "Closed":
+      return Queue.offer(
+        queue,
+        new Control({
+          nextOffset: change.finalOffset,
+          upToDate: true,
+          closed: true,
+        }),
+      ).pipe(Effect.andThen(Queue.end(queue)), Effect.asVoid)
+  }
+}
 
-const endIfClosed = (
-  queue: Queue.Queue<ReadEvent, TransportError | Cause.Done<void>>,
-  state: Ref.Ref<StreamState>,
-) =>
-  Ref.get(state).pipe(
-    Effect.flatMap((current) =>
-      current.closed
-        ? Queue.offer(
-            queue,
-            new Control({
-              nextOffset: current.nextOffset,
-              upToDate: true,
-              closed: true,
-            }),
-          ).pipe(Effect.andThen(Queue.end(queue)), Effect.asVoid)
-        : Effect.void,
-    ),
-  )
-
-export const makeLocalTransport = (log: DurableStreamLog): Effect.Effect<DurableTransportService> =>
+export const makeLocalTransport = (
+  log: DurableStreamLog,
+): Effect.Effect<DurableTransportService> =>
   Effect.succeed({
-    call: <R extends Request>(request: R) =>
-      handle(log, request),
+    call: <R extends Request>(request: R) => handle(log, request),
     stream: (request) =>
       Effect.acquireRelease(
         Queue.make<ReadEvent, TransportError | Cause.Done<void>>({ capacity: 256 }),
         (queue) => Queue.shutdown(queue),
       ).pipe(
         Effect.tap((queue) =>
-          Ref.make<StreamState>({ nextOffset: initialOffset, closed: false }).pipe(
-            Effect.flatMap((state) =>
-              log.subscribe(readPosition(request)).pipe(
-                Effect.flatMap((records) =>
-                  records.pipe(
-                    Stream.takeUntil((record) => record.closed),
-                    Stream.runForEach((record) => offerRecord(queue, state, record)),
-                  ),
-                ),
-                Effect.andThen(endIfClosed(queue, state)),
-                Effect.catch((error) => Queue.fail(queue, transportError(error)).pipe(Effect.asVoid)),
-                Effect.forkScoped,
-              ),
-            ),
+          log.changes(readPosition(request)).pipe(
+            Effect.flatMap((events) => events.pipe(Stream.runForEach((event) => offerChange(queue, event)))),
+            Effect.catch((error) => Queue.fail(queue, transportError(error)).pipe(Effect.asVoid)),
+            Effect.forkScoped,
           ),
         ),
-        Effect.map((queue) => queue),
       ),
   })

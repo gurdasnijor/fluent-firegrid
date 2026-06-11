@@ -200,16 +200,10 @@ importers:
       '@firegrid/fluent-stream-log':
         specifier: workspace:*
         version: link:../fluent-stream-log
-      '@firegrid/fluent-transport':
-        specifier: workspace:*
-        version: link:../fluent-transport
       effect:
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78
     devDependencies:
-      '@firegrid/fluent-stream-log-inmemory':
-        specifier: workspace:*
-        version: link:../fluent-stream-log-inmemory
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

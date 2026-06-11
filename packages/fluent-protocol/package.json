@@ -1,7 +1,7 @@
 {
   "name": "@firegrid/fluent-protocol",
   "version": "0.0.0",
-  "description": "Durable Streams protocol envelopes over protocol-agnostic transport.",
+  "description": "Durable Streams protocol algebra, handler, and client-facing transport contract.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -27,11 +27,9 @@
   },
   "dependencies": {
     "@firegrid/fluent-stream-log": "workspace:*",
-    "@firegrid/fluent-transport": "workspace:*",
     "effect": "4.0.0-beta.78"
   },
   "devDependencies": {
-    "@firegrid/fluent-stream-log-inmemory": "workspace:*",
     "typescript": "^5.7.0",
     "vitest": "^3.2.0"
   }
