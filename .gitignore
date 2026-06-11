@@ -11,3 +11,6 @@ coverage/
 *.log
 *.tsbuildinfo
 tsp-output/
+
+# Vendored source for reference only - not checked in
+repos/
