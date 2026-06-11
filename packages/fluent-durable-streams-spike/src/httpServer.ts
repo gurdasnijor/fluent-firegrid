@@ -52,6 +52,9 @@ const headerString = (
 const headerOptional = (value: string | readonly string[] | undefined): string | undefined =>
   typeof value === "string" ? value : value?.[0]
 
+const trueHeader = (value: string | readonly string[] | undefined): boolean =>
+  headerOptional(value)?.toLowerCase() === "true"
+
 const requestBody = (request: { readonly arrayBuffer: Effect.Effect<ArrayBuffer, unknown> }) =>
   Effect.map(request.arrayBuffer, (buffer) => new Uint8Array(buffer))
 
@@ -86,7 +89,11 @@ const parseIntegerHeader = (
   if (!/^(?:0|[1-9][0-9]*)$/.test(value)) {
     return badRequest(`invalid ${name}`)
   }
-  return Number(value)
+  const parsed = Number(value)
+  if (parsed > Number.MAX_SAFE_INTEGER) {
+    return badRequest(`invalid ${name}`)
+  }
+  return parsed
 }
 
 const parseProducer = (
@@ -172,7 +179,7 @@ const readHeaders = (
   "content-type": contentType,
   [STREAM_NEXT_OFFSET]: outcome.nextOffset,
   ...(outcome.upToDate && { [STREAM_UP_TO_DATE]: "true" }),
-  ...streamClosedHeader(outcome.closed),
+  ...streamClosedHeader(outcome.closed && outcome.upToDate),
   ...extra,
 })
 
@@ -372,7 +379,7 @@ const handleRequest = (
           path,
           contentType,
           body,
-          closed: request.headers[STREAM_CLOSED] === "true",
+          closed: trueHeader(request.headers[STREAM_CLOSED]),
         })
         if (isProblem(outcome)) {
           return problemResponse(outcome)
@@ -403,13 +410,13 @@ const handleRequest = (
           path,
           contentType,
           body,
-          close: request.headers[STREAM_CLOSED] === "true",
+          close: trueHeader(request.headers[STREAM_CLOSED]),
           ...(streamSeq !== undefined && { seq: streamSeq }),
           ...(producer !== undefined && { producer }),
         })
         const status = outcome._tag === "SequenceGap" && outcome.expectedSeq === 0
           ? 400
-          : outcome._tag === "Appended" && producer !== undefined && body.length === 0 && request.headers[STREAM_CLOSED] === "true"
+          : outcome._tag === "Appended" && producer !== undefined && body.length === 0 && trueHeader(request.headers[STREAM_CLOSED])
           ? 204
           : appendStatusFor(outcome, producer !== undefined)
         const headers: Record<string, string> = {}
@@ -568,13 +575,14 @@ const handleRequest = (
         }
         const body = readBody(streamContentType, read)
         const etag = etagFor(path, read.nextOffset, read.closed)
-        if (request.headers["if-none-match"] === etag) {
+        const canValidateEtag = offset !== "now"
+        if (canValidateEtag && request.headers["if-none-match"] === etag) {
           return response(304, { etag })
         }
         state.touchLifetime(path)
         return response(200, {
           "cache-control": "no-store",
-          etag,
+          ...(canValidateEtag && { etag }),
           ...readHeaders(streamContentType, read),
           ...state.lifetimeHeaders(path),
         }, body)

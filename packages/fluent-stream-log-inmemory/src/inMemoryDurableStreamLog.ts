@@ -82,6 +82,8 @@ const streamId = (nextId: number): StreamId => `stream-${nextId}` as StreamId
 
 const offsetNumber = (offset: Offset): number => Number(offset)
 
+const isInMemoryOffset = (offset: string): boolean => /^[0-9]+$/.test(offset)
+
 const nextOffset = (offset: Offset, by: number): Offset => makeOffset(offsetNumber(offset) + by)
 
 const metadataFor = (request: CreateStream): StreamMetadata => ({
@@ -208,7 +210,7 @@ const validateConcreteOffset = (
     ? stream.metadata.tailOffset
     : position.offset
 
-  if (Number.isNaN(offsetNumber(offset))) {
+  if (!isInMemoryOffset(offset) || Number.isNaN(offsetNumber(offset))) {
     return Effect.fail(new InvalidOffsetError({ path: position.path, offset }))
   }
   if (offset > stream.metadata.tailOffset) {

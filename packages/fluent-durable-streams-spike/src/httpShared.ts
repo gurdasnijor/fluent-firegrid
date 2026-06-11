@@ -31,6 +31,12 @@ export const badRequest = (message: string): StreamProblem => ({
   message,
 })
 
+export const gone = (message: string): StreamProblem => ({
+  _tag: "Gone",
+  code: "GONE",
+  message,
+})
+
 export const notFound = (message: string): StreamProblem => ({
   _tag: "NotFound",
   code: "NOT_FOUND",

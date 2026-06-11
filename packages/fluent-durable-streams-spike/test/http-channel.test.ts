@@ -151,4 +151,104 @@ describe("HTTP DurableStreamsChannel", () => {
     expect(gap.headers.get("producer-expected-seq")).toBe("1")
     expect(gap.headers.get("producer-received-seq")).toBe("2")
   })
+
+  it("treats Stream-Closed true case-insensitively and ignores non-true values", async () => {
+    const started = await start()
+    const closedUrl = `${started.url}/closed-case`
+    const openUrl = `${started.url}/closed-false`
+
+    const closed = await fetch(closedUrl, {
+      method: "PUT",
+      headers: {
+        "content-type": "text/plain",
+        "stream-closed": "TRUE",
+      },
+      body: "done",
+    })
+    const open = await fetch(openUrl, {
+      method: "PUT",
+      headers: {
+        "content-type": "text/plain",
+        "stream-closed": "false",
+      },
+    })
+
+    expect(closed.status).toBe(201)
+    expect(closed.headers.get("stream-closed")).toBe("true")
+    expect(open.status).toBe(201)
+    expect(open.headers.get("stream-closed")).toBeNull()
+  })
+
+  it("does not signal closed on partial reads before the tail", async () => {
+    const started = await start()
+    const url = `${started.url}/closed-partial`
+
+    await fetch(url, {
+      method: "PUT",
+      headers: { "content-type": "text/plain" },
+      body: "first",
+    })
+    await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "second",
+    })
+    await fetch(url, {
+      method: "POST",
+      headers: { "stream-closed": "true" },
+    })
+
+    const partial = await fetch(`${url}?offset=-1&chunk-size=1`)
+    const full = await fetch(url)
+
+    expect(partial.status).toBe(200)
+    expect(await partial.text()).toBe("first")
+    expect(partial.headers.get("stream-up-to-date")).toBeNull()
+    expect(partial.headers.get("stream-closed")).toBeNull()
+    expect(full.headers.get("stream-closed")).toBe("true")
+  })
+
+  it("does not emit or validate ETags for offset=now responses", async () => {
+    const started = await start()
+    const url = `${started.url}/etag-now`
+
+    await fetch(url, {
+      method: "PUT",
+      headers: { "content-type": "text/plain" },
+      body: "current",
+    })
+    const read = await fetch(url)
+    const etag = read.headers.get("etag")
+    const now = await fetch(`${url}?offset=now`, {
+      headers: etag === null ? {} : { "if-none-match": etag },
+    })
+
+    expect(read.status).toBe(200)
+    expect(etag).toBeTruthy()
+    expect(now.status).toBe(200)
+    expect(now.headers.get("etag")).toBeNull()
+    expect(await now.text()).toBe("")
+  })
+
+  it("rejects producer integer headers above Number.MAX_SAFE_INTEGER", async () => {
+    const started = await start()
+    const url = `${started.url}/producer-safe-integer`
+
+    await fetch(url, {
+      method: "PUT",
+      headers: { "content-type": "text/plain" },
+    })
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "text/plain",
+        "producer-id": "writer",
+        "producer-epoch": "9007199254740992",
+        "producer-seq": "0",
+      },
+      body: "first",
+    })
+
+    expect(response.status).toBe(400)
+  })
 })

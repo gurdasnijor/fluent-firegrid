@@ -76,7 +76,7 @@ const streamProblem = (error: DurableStreamLogError | InvalidContent): StreamPro
     return badRequest(`invalid offset: ${error.offset}`)
   }
   if (error instanceof OffsetTrimmedError) {
-    return badRequest(`offset was trimmed; earliest readable offset is ${error.earliest}`)
+    return gone(`offset was trimmed; earliest readable offset is ${error.earliest}`)
   }
   return conflict(error._tag)
 }

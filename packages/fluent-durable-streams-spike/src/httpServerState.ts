@@ -51,8 +51,8 @@ export const makeHttpServerState = (): HttpServerState => {
       return badRequest("stream-ttl and stream-expires-at are mutually exclusive")
     }
     if (ttl !== undefined) {
-      if (!/^[1-9][0-9]*$/.test(ttl)) {
-        return badRequest("stream-ttl must be a positive integer without leading zeroes")
+      if (!/^(?:0|[1-9][0-9]*)$/.test(ttl)) {
+        return badRequest("stream-ttl must be a non-negative integer without leading zeroes")
       }
       return { ttl, deadline: Date.now() + Number(ttl) * 1000 }
     }
