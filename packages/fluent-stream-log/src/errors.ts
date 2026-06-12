@@ -63,6 +63,13 @@ export class StreamGoneError extends Data.TaggedError("StreamGoneError")<
   }>
 > {}
 
+export class PayloadTooLargeError extends Data.TaggedError("PayloadTooLargeError")<
+  Readonly<{
+    readonly path: StreamPath
+    readonly limit?: number
+  }>
+> {}
+
 export class OffsetTrimmedError extends Data.TaggedError("OffsetTrimmedError")<
   Readonly<{
     readonly path: StreamPath
@@ -86,6 +93,7 @@ export type DurableStreamLogError =
   | ProducerSequenceGapError
   | StreamNotFoundError
   | StreamGoneError
+  | PayloadTooLargeError
   | OffsetTrimmedError
   | InvalidOffsetError
 
@@ -98,5 +106,6 @@ export const isDurableStreamLogError = (error: unknown): error is DurableStreamL
   Predicate.isTagged(error, "ProducerSequenceGapError") ||
   Predicate.isTagged(error, "StreamNotFoundError") ||
   Predicate.isTagged(error, "StreamGoneError") ||
+  Predicate.isTagged(error, "PayloadTooLargeError") ||
   Predicate.isTagged(error, "OffsetTrimmedError") ||
   Predicate.isTagged(error, "InvalidOffsetError")

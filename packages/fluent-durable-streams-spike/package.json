@@ -23,6 +23,7 @@
     "diagnostics": "effect-language-service diagnostics --project tsconfig.json --severity error",
     "test": "vitest run --root ../.. --project fluent-durable-streams-spike",
     "test:conformance": "tsx scripts/conformance.ts",
+    "test:conformance:s2-lite": "tsx scripts/conformance-s2-lite.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -33,6 +34,7 @@
   "devDependencies": {
     "@durable-streams/client": "0.2.6",
     "@firegrid/fluent-stream-log-inmemory": "workspace:*",
+    "@firegrid/fluent-stream-log-s2-lite": "workspace:*",
     "tsx": "^4.19.2",
     "typescript": "^5.7.0",
     "vitest": "^3.2.0"

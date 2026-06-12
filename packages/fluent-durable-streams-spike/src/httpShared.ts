@@ -31,12 +31,6 @@ export const badRequest = (message: string): StreamProblem => ({
   message,
 })
 
-export const gone = (message: string): StreamProblem => ({
-  _tag: "Gone",
-  code: "GONE",
-  message,
-})
-
 export const notFound = (message: string): StreamProblem => ({
   _tag: "NotFound",
   code: "NOT_FOUND",
@@ -59,6 +53,8 @@ export const problemStatus = (problem: StreamProblem): number => {
       return 404
     case "Gone":
       return 410
+    case "PayloadTooLarge":
+      return 413
   }
 }
 
@@ -69,9 +65,10 @@ export const isProblem = (outcome: { readonly _tag: string }): outcome is Stream
   outcome._tag === "BadRequest" ||
   outcome._tag === "Conflict" ||
   outcome._tag === "NotFound" ||
-  outcome._tag === "Gone"
+  outcome._tag === "Gone" ||
+  outcome._tag === "PayloadTooLarge"
 
-export const appendStatus = (outcome: AppendStreamOutcome): number => {
+const appendStatus = (outcome: AppendStreamOutcome): number => {
   switch (outcome._tag) {
     case "Appended":
     case "Noop":
@@ -91,6 +88,7 @@ export const appendStatus = (outcome: AppendStreamOutcome): number => {
     case "Conflict":
     case "NotFound":
     case "Gone":
+    case "PayloadTooLarge":
       return problemStatus(outcome)
   }
 }

@@ -1,0 +1,38 @@
+{
+  "name": "@firegrid/fluent-stream-log-s2-lite",
+  "version": "0.0.0",
+  "description": "S2 Lite-backed Durable Streams byte log spike.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "diagnostics": "effect-language-service diagnostics --project tsconfig.json --severity error",
+    "test": "tsx scripts/smoke.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@firegrid/fluent-stream-log": "workspace:*",
+    "@s2-dev/streamstore": "0.24.1",
+    "effect": "4.0.0-beta.78"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.0"
+  }
+}

@@ -54,6 +54,8 @@ const problem = (status: number, message: string): StreamProblem => {
       return { _tag: "Gone", code: "GONE", message }
     case 400:
       return { _tag: "BadRequest", code: "BAD_REQUEST", message }
+    case 413:
+      return { _tag: "PayloadTooLarge", code: "PAYLOAD_TOO_LARGE", message }
     default:
       return { _tag: "Conflict", code: "CONFLICT", message }
   }
@@ -88,6 +90,8 @@ const problemStatusCode = (failure: StreamProblem): number => {
       return 404
     case "Gone":
       return 410
+    case "PayloadTooLarge":
+      return 413
     case "Conflict":
       return 409
   }

@@ -71,6 +71,11 @@ export type StreamProblem =
       readonly code: "GONE"
       readonly message: string
     }
+  | {
+      readonly _tag: "PayloadTooLarge"
+      readonly code: "PAYLOAD_TOO_LARGE"
+      readonly message: string
+    }
 
 export type CreateStreamOutcome =
   | {

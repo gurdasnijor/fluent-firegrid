@@ -6,7 +6,7 @@ import {
   STREAM_TTL,
 } from "./httpShared.ts"
 
-export interface Lifetime {
+interface Lifetime {
   readonly ttl?: string
   readonly expiresAt?: string
   readonly deadline: number

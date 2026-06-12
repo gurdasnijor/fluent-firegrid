@@ -6,6 +6,7 @@ import {
   InvalidOffsetError,
   OffsetConflictError,
   OffsetTrimmedError,
+  PayloadTooLargeError,
   ProducerEpochRegressionError,
   ProducerSequenceGapError,
   StreamClosedError,
@@ -56,6 +57,12 @@ const gone = (message = "stream was deleted"): StreamProblem => ({
   message,
 })
 
+const payloadTooLarge = (message = "payload too large"): StreamProblem => ({
+  _tag: "PayloadTooLarge",
+  code: "PAYLOAD_TOO_LARGE",
+  message,
+})
+
 const readPosition = (command: ReadStreamCommand | FollowStreamCommand): ReadPosition => ({
   path: command.path,
   offset: command.offset ?? BeginningOffset,
@@ -77,6 +84,9 @@ const streamProblem = (error: DurableStreamLogError | InvalidContent): StreamPro
   }
   if (error instanceof OffsetTrimmedError) {
     return gone(`offset was trimmed; earliest readable offset is ${error.earliest}`)
+  }
+  if (error instanceof PayloadTooLargeError) {
+    return payloadTooLarge()
   }
   return conflict(error._tag)
 }

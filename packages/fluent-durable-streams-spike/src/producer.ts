@@ -63,6 +63,7 @@ const producerFailure = (
     case "Conflict":
     case "NotFound":
     case "Gone":
+    case "PayloadTooLarge":
       return { _tag: "ProducerAppendRejected", outcome }
   }
 }
