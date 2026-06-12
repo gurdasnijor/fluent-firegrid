@@ -18,7 +18,8 @@
     "**/*.test.mts",
     "**/__tests__/**",
     "packages/firelab/**",
-    "packages/conformance/**"
+    "packages/conformance/**",
+    "packages/fluent-stream-log-s2-lite/**"
   ],
   "reporters": [
     "console",

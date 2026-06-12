@@ -1,13 +1,15 @@
-import { Effect, Stream } from "effect"
+import { Effect } from "effect"
 import {
   appendBytes,
   appendEmpty,
   ContentTypeMismatchError,
   InvalidOffsetError,
+  OffsetTrimmedError,
   OffsetConflictError,
   ProducerEpochRegressionError,
   ProducerSequenceGapError,
   StreamClosedError,
+  StreamGoneError,
   StreamNotFoundError,
   type AppendResult,
   type AppendStream,
@@ -55,7 +57,9 @@ export const readPosition = (request: Req.Read | Req.ReadLive): ReadPosition => 
   offset: request.offset,
 })
 
-const appended = (result: AppendResult): Res.Appended | Res.AppendDuplicate =>
+type CommittedAppendResult = Extract<AppendResult, { readonly _tag: "Appended" | "Duplicate" }>
+
+const appended = (result: CommittedAppendResult): Res.Appended | Res.AppendDuplicate =>
   result._tag === "Duplicate"
     ? new Res.AppendDuplicate({
         nextOffset: result.metadata.tailOffset,
@@ -105,6 +109,40 @@ type SharedWriteFailure =
   | Res.EpochFenced
   | Res.SequenceGap
   | Res.StreamNotFound
+  | Res.StreamGone
+
+const sharedWriteResult = (
+  result: AppendResult,
+): Res.Appended | Res.AppendDuplicate | Res.Closed | Res.EpochFenced | Res.SequenceGap => {
+  switch (result._tag) {
+    case "Appended":
+    case "Duplicate":
+      return appended(result)
+    case "Fenced":
+      return new Res.EpochFenced({ currentEpoch: result.currentEpoch })
+    case "SequenceGap":
+      return new Res.SequenceGap({
+        expectedSeq: result.expectedSeq,
+        receivedSeq: result.receivedSeq,
+      })
+    case "AlreadyClosed":
+      return new Res.Closed({ finalOffset: result.finalOffset })
+    case "Noop":
+      return new Res.Appended({
+        nextOffset: result.metadata.tailOffset,
+        closed: result.metadata.closed,
+      })
+  }
+}
+
+const appendResult = (
+  result: AppendResult,
+): Res.Appended | Res.AppendDuplicate | Res.EpochFenced | Res.SequenceGap => {
+  const response = sharedWriteResult(result)
+  return response._tag === "Closed"
+    ? new Res.Appended({ nextOffset: response.finalOffset, closed: true })
+    : response
+}
 
 const sharedWriteError = (error: unknown): Effect.Effect<SharedWriteFailure> => {
   if (error instanceof ContentTypeMismatchError) {
@@ -121,6 +159,9 @@ const sharedWriteError = (error: unknown): Effect.Effect<SharedWriteFailure> => 
   }
   if (error instanceof StreamNotFoundError) {
     return Effect.succeed(new Res.StreamNotFound())
+  }
+  if (error instanceof StreamGoneError) {
+    return Effect.succeed(new Res.StreamGone())
   }
   return defect(error)
 }
@@ -139,12 +180,20 @@ const readError = (error: unknown): Effect.Effect<Res.ReadResponse> => {
   if (error instanceof StreamNotFoundError) {
     return Effect.succeed(new Res.StreamNotFound())
   }
+  if (error instanceof OffsetTrimmedError) {
+    return Effect.succeed(new Res.InvalidOffset({ offset: error.earliest }))
+  }
+  if (error instanceof StreamGoneError) {
+    return Effect.succeed(new Res.StreamGone())
+  }
   return defect(error)
 }
 
 const headError = (error: unknown): Effect.Effect<Res.HeadResponse> =>
   error instanceof StreamNotFoundError
     ? Effect.succeed(new Res.StreamNotFound())
+    : error instanceof StreamGoneError
+    ? Effect.succeed(new Res.StreamGone())
     : defect(error)
 
 const closeError = (error: unknown): Effect.Effect<Res.CloseResponse> => {
@@ -165,6 +214,9 @@ const catchUnexpectedStoreErrors = {
   ProducerEpochRegressionError: unexpectedStoreError,
   ProducerSequenceGapError: unexpectedStoreError,
   StreamNotFoundError: unexpectedStoreError,
+  StreamGoneError: unexpectedStoreError,
+  PayloadTooLargeError: unexpectedStoreError,
+  OffsetTrimmedError: unexpectedStoreError,
   InvalidOffsetError: unexpectedStoreError,
 } as const
 
@@ -181,7 +233,7 @@ const create = (log: DurableStreamLog, request: Req.Create): Effect.Effect<Res.C
 
 const append = (log: DurableStreamLog, request: Req.Append): Effect.Effect<Res.AppendResponse> =>
   appendBytes(log, appendRequest(request), request.bytes).pipe(
-    Effect.map(appended),
+    Effect.map(appendResult),
     Effect.catchTags({
       StreamClosedError: appendError,
       ContentTypeMismatchError: appendError,
@@ -189,7 +241,10 @@ const append = (log: DurableStreamLog, request: Req.Append): Effect.Effect<Res.A
       ProducerEpochRegressionError: appendError,
       ProducerSequenceGapError: appendError,
       StreamNotFoundError: appendError,
+      StreamGoneError: appendError,
+      PayloadTooLargeError: unexpectedStoreError,
       InvalidOffsetError: unexpectedStoreError,
+      OffsetTrimmedError: unexpectedStoreError,
       StreamLogError: unexpectedStoreError,
     }),
   )
@@ -198,7 +253,7 @@ const closeAppend = (
   log: DurableStreamLog,
   request: Req.Close,
   metadata: StreamMetadata,
-): Effect.Effect<Res.Closed | Res.Appended | Res.AppendDuplicate, DurableStreamLogError> =>
+): Effect.Effect<Res.CloseResponse, DurableStreamLogError> =>
   metadata.closed
     ? Effect.succeed(new Res.Closed({ finalOffset: metadata.tailOffset }))
     : appendEmpty(log, {
@@ -208,7 +263,7 @@ const closeAppend = (
         ...(request.producer !== undefined && {
           producer: request.producer,
         }),
-      }).pipe(Effect.map(appended))
+      }).pipe(Effect.map(sharedWriteResult))
 
 const close = (log: DurableStreamLog, request: Req.Close): Effect.Effect<Res.CloseResponse> =>
   log.head(request.path).pipe(
@@ -220,31 +275,30 @@ const close = (log: DurableStreamLog, request: Req.Close): Effect.Effect<Res.Clo
       ProducerEpochRegressionError: closeError,
       ProducerSequenceGapError: closeError,
       StreamNotFoundError: closeError,
+      StreamGoneError: closeError,
+      PayloadTooLargeError: unexpectedStoreError,
       InvalidOffsetError: unexpectedStoreError,
+      OffsetTrimmedError: unexpectedStoreError,
       StreamLogError: unexpectedStoreError,
     }),
   )
 
 const read = (log: DurableStreamLog, request: Req.Read): Effect.Effect<Res.ReadResponse> =>
-  log.head(request.path).pipe(
-    Effect.flatMap((metadata) =>
-      log.read(readPosition(request)).pipe(
-        Effect.flatMap(Stream.runCollect),
-        Effect.map((records) => {
-          const wired = records.map(wireRecord)
-          const last = wired[wired.length - 1]
-          return new Res.ReadResult({
-            records: wired,
-            nextOffset: last?.nextOffset ?? metadata.tailOffset,
-            upToDate: true,
-            closed: last?.closed ?? metadata.closed,
-          })
-        }),
-      ),
+  log.read(readPosition(request)).pipe(
+    Effect.map((window) =>
+      new Res.ReadResult({
+        records: window.records.map(wireRecord),
+        nextOffset: window.nextOffset,
+        upToDate: window.upToDate,
+        closed: window.closed,
+      }),
     ),
     Effect.catchTags({
       InvalidOffsetError: readError,
       StreamNotFoundError: readError,
+      StreamGoneError: readError,
+      PayloadTooLargeError: unexpectedStoreError,
+      OffsetTrimmedError: readError,
       StreamClosedError: unexpectedStoreError,
       ContentTypeMismatchError: unexpectedStoreError,
       OffsetConflictError: unexpectedStoreError,
@@ -273,7 +327,10 @@ const head = (log: DurableStreamLog, request: Req.Head): Effect.Effect<Res.HeadR
 const deleteStream = (log: DurableStreamLog, request: Req.Delete): Effect.Effect<Res.DeleteResponse> =>
   log.delete(request.path).pipe(
     Effect.map((result) => result._tag === "Deleted" ? new Res.Deleted() : new Res.StreamNotFound()),
-    Effect.catchTags(catchUnexpectedStoreErrors),
+    Effect.catchTags({
+      ...catchUnexpectedStoreErrors,
+      StreamGoneError: () => Effect.succeed(new Res.StreamGone()),
+    }),
   )
 
 export function handle<R extends Req.Request>(

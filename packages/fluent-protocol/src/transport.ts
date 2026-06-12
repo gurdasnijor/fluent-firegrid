@@ -1,7 +1,6 @@
-import { Context, Schema } from "effect"
+import { Context, Data, Schema } from "effect"
 import type { Cause, Queue } from "effect"
 import type { Effect, Scope } from "effect"
-import { TransportError } from "@firegrid/fluent-transport"
 import { Offset } from "@firegrid/fluent-stream-log"
 import type { Append, Close, Create, Delete, Head, Read, ReadLive, Request } from "./request.ts"
 import type {
@@ -36,6 +35,16 @@ export class Control extends Schema.TaggedClass<Control>("Control")("Control", {
 
 export const ReadEvent = Schema.Union([RecordBatch, Control])
 export type ReadEvent = typeof ReadEvent.Type
+
+export class TransportError extends Data.TaggedError("TransportError")<
+  Readonly<{
+    readonly message: string
+    readonly cause?: unknown
+  }>
+> {}
+
+// Effect v4 beta in this repo does not expose effect/Mailbox yet. This queue is
+// the local stand-in for the same scoped live-read session semantics.
 export type ReadEventQueue = Queue.Dequeue<ReadEvent, TransportError | Cause.Done<void>>
 
 export interface DurableTransportService {
@@ -48,5 +57,3 @@ export interface DurableTransportService {
 export class DurableTransport extends Context.Service<DurableTransport, DurableTransportService>()(
   "@firegrid/fluent-protocol/DurableTransport",
 ) {}
-
-export { TransportError }

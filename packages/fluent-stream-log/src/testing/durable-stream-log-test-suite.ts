@@ -5,6 +5,7 @@ import { appendBytes, appendEmpty, beginning, readCollect } from "../operations.
 import { ContentTypeMismatchError, StreamNotFoundError } from "../errors.ts"
 import { decodeStreamPath } from "../domainTypes.ts"
 import type { DurableStreamLog } from "../durableStreamLog.ts"
+import type { ChangeEvent } from "../streamTypes.ts"
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -21,7 +22,7 @@ export const runDurableStreamLogTestSuite = (
   makeLog: () => Effect.Effect<DurableStreamLog, never>,
   options: DurableStreamLogTestOptions = {},
 ) => {
-  const { supportsMissingHistoricalRead = true } = options
+  const { supportsMissingHistoricalRead = false } = options
 
   describe(`${name} DurableStreamLog`, () => {
     it("creates a stream and exposes metadata through head", async () => {
@@ -69,17 +70,17 @@ export const runDurableStreamLogTestSuite = (
       expect(error).toBeInstanceOf(ContentTypeMismatchError)
     })
 
-    it("subscribes with historical replay followed by live records", async () => {
-      const records = await Effect.runPromise(
+    it("changes emits historical replay, caught-up control, then live records", async () => {
+      const events = await Effect.runPromise(
         Effect.gen(function* () {
           const log = yield* makeLog()
-          const path = yield* decodeStreamPath("contract/subscribe")
+          const path = yield* decodeStreamPath("contract/changes")
           yield* log.create({ path, contentType: "text/plain" })
           yield* appendBytes(log, { path, contentType: "text/plain" }, bytes("historical"))
           return yield* Effect.scoped(
             Effect.gen(function* () {
-              const stream = yield* log.subscribe(beginning(path))
-              const fiber = yield* pipe(stream, Stream.take(2), Stream.runCollect, Effect.forkChild)
+              const stream = yield* log.changes(beginning(path))
+              const fiber = yield* pipe(stream, Stream.take(3), Stream.runCollect, Effect.forkChild)
               yield* appendBytes(log, { path, contentType: "text/plain" }, bytes("live"))
               return yield* Fiber.join(fiber)
             }),
@@ -87,15 +88,18 @@ export const runDurableStreamLogTestSuite = (
         }),
       )
 
-      expect(records.map((record) => text(record.bytes))).toEqual(["historical", "live"])
+      const output = events.map((event: ChangeEvent) =>
+        event._tag === "Chunk" ? text(event.record.bytes) : event._tag,
+      )
+      expect(output).toEqual(["historical", "CaughtUp", "live"])
     })
 
-    it("does not create missing streams through subscribe", async () => {
+    it("does not create missing streams through changes", async () => {
       const result = await Effect.runPromise(
         Effect.gen(function* () {
           const log = yield* makeLog()
-          const path = yield* decodeStreamPath("contract/missing-subscribe")
-          const error = yield* Effect.scoped(log.subscribe(beginning(path))).pipe(Effect.flip)
+          const path = yield* decodeStreamPath("contract/missing-changes")
+          const error = yield* Effect.scoped(log.changes(beginning(path))).pipe(Effect.flip)
           const created = yield* log.create({ path, contentType: "text/plain" })
           const append = yield* appendBytes(log, { path, contentType: "text/plain" }, bytes("created"))
           return { error, created, append }
@@ -108,29 +112,32 @@ export const runDurableStreamLogTestSuite = (
       expect(result.append._tag).toBe("Appended")
     })
 
-    it("subscribeAll is live-only and emits tail advancement", async () => {
-      const tail = await Effect.runPromise(
+    it("multiple changes subscribers receive the same live records", async () => {
+      const result = await Effect.runPromise(
         Effect.gen(function* () {
           const log = yield* makeLog()
-          const path = yield* decodeStreamPath("contract/all")
+          const path = yield* decodeStreamPath("contract/multiple-subscribers")
           yield* log.create({ path, contentType: "text/plain" })
           return yield* Effect.scoped(
             Effect.gen(function* () {
-              const stream = yield* log.subscribeAll()
-              const fiber = yield* pipe(stream, Stream.take(1), Stream.runCollect, Effect.forkChild)
+              const left = yield* log.changes(beginning(path))
+              const right = yield* log.changes(beginning(path))
+              const leftFiber = yield* pipe(left, Stream.take(2), Stream.runCollect, Effect.forkChild)
+              const rightFiber = yield* pipe(right, Stream.take(2), Stream.runCollect, Effect.forkChild)
               yield* appendBytes(log, { path, contentType: "text/plain" }, bytes("x"))
-              const tails = yield* Fiber.join(fiber)
-              return tails[0]
+              const leftEvents = yield* Fiber.join(leftFiber)
+              const rightEvents = yield* Fiber.join(rightFiber)
+              return { leftEvents, rightEvents }
             }),
           )
         }),
       )
 
-      expect(tail?.closed).toBe(false)
-      expect(tail?.path).toBe("contract/all")
+      expect(result.leftEvents.map((event: ChangeEvent) => event._tag)).toEqual(["CaughtUp", "Chunk"])
+      expect(result.rightEvents.map((event: ChangeEvent) => event._tag)).toEqual(["CaughtUp", "Chunk"])
     })
 
-    it("close-only append advances the tail and is observable in read and head", async () => {
+    it("close-only append is observable through read, head, and changes EOF", async () => {
       const result = await Effect.runPromise(
         Effect.gen(function* () {
           const log = yield* makeLog()
@@ -138,13 +145,21 @@ export const runDurableStreamLogTestSuite = (
           yield* log.create({ path, contentType: "text/plain" })
           yield* appendEmpty(log, { path, contentType: "text/plain", close: true })
           const metadata = yield* log.head(path)
-          const records = yield* readCollect(log, beginning(path))
-          return { metadata, records }
+          const window = yield* log.read(beginning(path))
+          const events = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const stream = yield* log.changes(beginning(path))
+              return yield* pipe(stream, Stream.runCollect)
+            }),
+          )
+          return { metadata, window, events }
         }),
       )
 
       expect(result.metadata.closed).toBe(true)
-      expect(result.records[0]?.closed).toBe(true)
+      expect(result.window.closed).toBe(true)
+      expect(result.window.records).toEqual([])
+      expect(result.events.map((event: ChangeEvent) => event._tag)).toEqual(["CaughtUp", "Closed"])
     })
 
     if (supportsMissingHistoricalRead) {

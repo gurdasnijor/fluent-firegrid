@@ -1,15 +1,17 @@
-import { Context, type Effect, type Scope, type Sink, type Stream } from "effect"
+import { Context, type Effect, type Scope, type Stream } from "effect"
 import type { DurableStreamLogError } from "./errors.ts"
 import type {
+  AppendRequest,
   AppendResult,
-  AppendStream,
+  ChangeEvent,
   CreateStream,
   CreateStreamResult,
   DeleteStreamResult,
+  ForkStream,
   ReadPosition,
+  ReadWindow,
   StreamMetadata,
-  StreamRecord,
-  TailAdvanced,
+  TrimStream,
 } from "./streamTypes.ts"
 import type { StreamPath } from "./domainTypes.ts"
 
@@ -19,24 +21,22 @@ export interface DurableStreamLog {
   ) => Effect.Effect<CreateStreamResult, DurableStreamLogError>
 
   readonly append: (
-    request: AppendStream,
-  ) => Sink.Sink<AppendResult, Uint8Array, Uint8Array, DurableStreamLogError>
+    request: AppendRequest,
+  ) => Effect.Effect<AppendResult, DurableStreamLogError>
 
   readonly read: (
     from: ReadPosition,
-  ) => Effect.Effect<Stream.Stream<StreamRecord, DurableStreamLogError>, DurableStreamLogError>
+  ) => Effect.Effect<ReadWindow, DurableStreamLogError>
 
-  readonly subscribe: (
+  readonly changes: (
     from: ReadPosition,
-  ) => Effect.Effect<Stream.Stream<StreamRecord, DurableStreamLogError>, DurableStreamLogError, Scope.Scope>
-
-  readonly subscribeAll: () => Effect.Effect<
-    Stream.Stream<TailAdvanced, DurableStreamLogError>,
-    DurableStreamLogError,
-    Scope.Scope
-  >
+  ) => Effect.Effect<Stream.Stream<ChangeEvent, DurableStreamLogError>, DurableStreamLogError, Scope.Scope>
 
   readonly head: (path: StreamPath) => Effect.Effect<StreamMetadata, DurableStreamLogError>
+
+  readonly fork: (request: ForkStream) => Effect.Effect<CreateStreamResult, DurableStreamLogError>
+
+  readonly trim: (request: TrimStream) => Effect.Effect<void, DurableStreamLogError>
 
   readonly delete: (path: StreamPath) => Effect.Effect<DeleteStreamResult, DurableStreamLogError>
 }

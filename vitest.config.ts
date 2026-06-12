@@ -80,6 +80,27 @@ export default defineConfig({
       }),
       defineProject({
         test: {
+          name: "fluent-durable-streams-spike",
+          include: ["packages/fluent-durable-streams-spike/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"],
+        },
+        resolve: {
+          alias: {
+            ...alias,
+            "@firegrid/fluent-stream-log": path.resolve(__dirname, "./packages/fluent-stream-log/src"),
+            "@firegrid/fluent-stream-log-inmemory": path.resolve(
+              __dirname,
+              "./packages/fluent-stream-log-inmemory/src"
+            ),
+            "@firegrid/fluent-durable-streams-spike": path.resolve(
+              __dirname,
+              "./packages/fluent-durable-streams-spike/src"
+            ),
+          },
+        },
+      }),
+      defineProject({
+        test: {
           name: "fluent-transport-inmemory",
           include: ["packages/fluent-transport-inmemory/test/**/*.test.ts"],
           exclude: ["**/node_modules/**"],

@@ -4,6 +4,7 @@ import type { Offset, StreamPath } from "./domainTypes.ts"
 export class StreamLogError extends Data.TaggedError("StreamLogError")<
   Readonly<{
     readonly operation: "create" | "append" | "read" | "subscribe" | "head" | "delete"
+      | "changes" | "fork" | "trim"
     readonly path?: string
     readonly details: string
     readonly cause?: unknown
@@ -56,6 +57,26 @@ export class StreamNotFoundError extends Data.TaggedError("StreamNotFoundError")
   }>
 > {}
 
+export class StreamGoneError extends Data.TaggedError("StreamGoneError")<
+  Readonly<{
+    readonly path: StreamPath
+  }>
+> {}
+
+export class PayloadTooLargeError extends Data.TaggedError("PayloadTooLargeError")<
+  Readonly<{
+    readonly path: StreamPath
+    readonly limit?: number
+  }>
+> {}
+
+export class OffsetTrimmedError extends Data.TaggedError("OffsetTrimmedError")<
+  Readonly<{
+    readonly path: StreamPath
+    readonly earliest: Offset
+  }>
+> {}
+
 export class InvalidOffsetError extends Data.TaggedError("InvalidOffsetError")<
   Readonly<{
     readonly path: StreamPath
@@ -71,6 +92,9 @@ export type DurableStreamLogError =
   | ProducerEpochRegressionError
   | ProducerSequenceGapError
   | StreamNotFoundError
+  | StreamGoneError
+  | PayloadTooLargeError
+  | OffsetTrimmedError
   | InvalidOffsetError
 
 export const isDurableStreamLogError = (error: unknown): error is DurableStreamLogError =>
@@ -81,4 +105,7 @@ export const isDurableStreamLogError = (error: unknown): error is DurableStreamL
   Predicate.isTagged(error, "ProducerEpochRegressionError") ||
   Predicate.isTagged(error, "ProducerSequenceGapError") ||
   Predicate.isTagged(error, "StreamNotFoundError") ||
+  Predicate.isTagged(error, "StreamGoneError") ||
+  Predicate.isTagged(error, "PayloadTooLargeError") ||
+  Predicate.isTagged(error, "OffsetTrimmedError") ||
   Predicate.isTagged(error, "InvalidOffsetError")

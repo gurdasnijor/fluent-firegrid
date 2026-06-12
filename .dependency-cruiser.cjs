@@ -80,7 +80,7 @@ module.exports = {
         "fluent-stream-log mirrors eventsourcing-store's Stream/Sink shape: it owns the byte log contract and must not import transport, protocol, client, HTTP/RPC transport, compatibility packages, or execution.",
       from: { path: "^packages/fluent-stream-log/src/" },
       to: {
-        path: "^packages/(?:fluent-stream-log-inmemory|fluent-transport|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-client)/src/",
+        path: "^packages/(?:fluent-stream-log-inmemory|fluent-stream-log-s2-lite|fluent-transport|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-client)/src/",
       },
     },
     {
@@ -90,7 +90,17 @@ module.exports = {
         "fluent-stream-log-inmemory mirrors eventsourcing-store-inmemory's concurrency shape: production code may import fluent-stream-log, but not transport, protocol, client, HTTP/RPC transport, or legacy stores.",
       from: { path: "^packages/fluent-stream-log-inmemory/src/" },
       to: {
-        path: "^packages/(?:fluent-transport|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-client)/src/",
+        path: "^packages/(?:fluent-stream-log-s2-lite|fluent-transport|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-client)/src/",
+      },
+    },
+    {
+      name: "fluent-stream-log-s2-lite-only-imports-stream-log",
+      severity: "error",
+      comment:
+        "fluent-stream-log-s2-lite is a concrete byte-log backend: production code may import fluent-stream-log, but not transport, protocol, client, HTTP/RPC transport, or other concrete stores.",
+      from: { path: "^packages/fluent-stream-log-s2-lite/src/" },
+      to: {
+        path: "^packages/(?:fluent-stream-log-inmemory|fluent-transport|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-client)/src/",
       },
     },
     {
@@ -100,7 +110,7 @@ module.exports = {
         "fluent-transport mirrors eventsourcing-transport: it owns protocol-agnostic transport contracts and must not import store, protocol, client, concrete transports, or platform HTTP modules.",
       from: { path: "^packages/fluent-transport/src/" },
       to: {
-        path: "^packages/(?:fluent-stream-log|fluent-stream-log-inmemory|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-client)/src/",
+        path: "^packages/(?:fluent-stream-log|fluent-stream-log-inmemory|fluent-stream-log-s2-lite|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-client)/src/",
       },
     },
     {
@@ -110,17 +120,17 @@ module.exports = {
         "fluent-transport-inmemory mirrors eventsourcing-transport-inmemory: production code may import fluent-transport only, not protocol, store, client, or other concrete transports.",
       from: { path: "^packages/fluent-transport-inmemory/src/" },
       to: {
-        path: "^packages/(?:fluent-stream-log|fluent-stream-log-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-client)/src/",
+        path: "^packages/(?:fluent-stream-log|fluent-stream-log-inmemory|fluent-stream-log-s2-lite|fluent-transport-http|fluent-transport-rpc|fluent-protocol|fluent-client)/src/",
       },
     },
     {
       name: "fluent-transport-http-only-imports-transport",
       severity: "error",
       comment:
-        "fluent-transport-http must stay a concrete transport like eventsourcing-transport-websocket: it may import fluent-transport, but not protocol, store, client, or other concrete transports.",
+        "fluent-transport-http implements DurableTransport over HTTP/SSE: it may import fluent-protocol and Effect platform, but not stream-log internals, raw transport, concrete stores/transports, or client.",
       from: { path: "^packages/fluent-transport-http/src/" },
       to: {
-        path: "^packages/(?:fluent-stream-log|fluent-stream-log-inmemory|fluent-transport-inmemory|fluent-transport-rpc|fluent-protocol|fluent-client)/src/",
+        path: "^packages/(?:fluent-stream-log|fluent-stream-log-inmemory|fluent-stream-log-s2-lite|fluent-transport|fluent-transport-inmemory|fluent-transport-rpc|fluent-client)/src/",
       },
     },
     {
@@ -130,17 +140,17 @@ module.exports = {
         "fluent-transport-rpc is a concrete transport: it may import fluent-transport, but not protocol, store, client, or other concrete transports.",
       from: { path: "^packages/fluent-transport-rpc/src/" },
       to: {
-        path: "^packages/(?:fluent-stream-log|fluent-stream-log-inmemory|fluent-transport-inmemory|fluent-transport-http|fluent-protocol|fluent-client)/src/",
+        path: "^packages/(?:fluent-stream-log|fluent-stream-log-inmemory|fluent-stream-log-s2-lite|fluent-transport-inmemory|fluent-transport-http|fluent-protocol|fluent-client)/src/",
       },
     },
     {
-      name: "fluent-protocol-only-imports-store-and-transport",
+      name: "fluent-protocol-only-imports-stream-log",
       severity: "error",
       comment:
-        "fluent-protocol mirrors eventsourcing-protocol: production code may import fluent-stream-log and fluent-transport, but not concrete implementations, client, HTTP/RPC transport, or compatibility packages.",
+        "fluent-protocol owns Durable Streams protocol algebra and may import fluent-stream-log only; raw transport, concrete transports, concrete stores, and client stay outside.",
       from: { path: "^packages/fluent-protocol/src/" },
       to: {
-        path: "^packages/(?:fluent-stream-log-inmemory|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-client)/src/",
+        path: "^packages/(?:fluent-stream-log-inmemory|fluent-stream-log-s2-lite|fluent-transport|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc|fluent-client)/src/",
       },
     },
     {
@@ -150,7 +160,7 @@ module.exports = {
         "fluent-client may use fluent-protocol only; runtime code must not import raw transport, concrete in-memory transports/stores, HTTP/RPC transport internals, compatibility packages, or execution.",
       from: { path: "^packages/fluent-client/src/" },
       to: {
-        path: "^packages/(?:fluent-stream-log|fluent-stream-log-inmemory|fluent-transport|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc)/src/",
+        path: "^packages/(?:fluent-stream-log|fluent-stream-log-inmemory|fluent-stream-log-s2-lite|fluent-transport|fluent-transport-inmemory|fluent-transport-http|fluent-transport-rpc)/src/",
       },
     },
   ],

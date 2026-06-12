@@ -1,7 +1,7 @@
 {
-  "name": "@firegrid/fluent-protocol",
+  "name": "@firegrid/fluent-stream-log-s2-lite",
   "version": "0.0.0",
-  "description": "Durable Streams protocol algebra, handler, and client-facing transport contract.",
+  "description": "S2 Lite-backed Durable Streams byte log spike.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -22,15 +22,17 @@
   "scripts": {
     "build": "tsc",
     "diagnostics": "effect-language-service diagnostics --project tsconfig.json --severity error",
-    "test": "vitest run --root ../.. --project fluent-protocol",
+    "test": "tsx scripts/smoke.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@firegrid/fluent-stream-log": "workspace:*",
+    "@s2-dev/streamstore": "0.24.1",
     "effect": "4.0.0-beta.78"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
-    "vitest": "^3.2.0"
+    "@types/node": "^24.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.0"
   }
 }

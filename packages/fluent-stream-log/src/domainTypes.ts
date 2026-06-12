@@ -7,6 +7,13 @@ export const StreamPath = pipe(
 )
 export type StreamPath = typeof StreamPath.Type
 
+export const StreamId = pipe(
+  Schema.String,
+  Schema.check(Schema.isNonEmpty()),
+  Schema.brand("StreamId"),
+)
+export type StreamId = typeof StreamId.Type
+
 export const Offset = Schema.String.pipe(
   Schema.check(Schema.isPattern(/^(?!-1$)(?!now$)[^,&=?/]+$/u)),
   Schema.brand("Offset"),
