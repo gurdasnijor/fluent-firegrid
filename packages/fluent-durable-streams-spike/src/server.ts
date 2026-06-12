@@ -163,6 +163,16 @@ const changeEvent = (event: ChangeEvent): StreamEvent => {
   }
 }
 
+const bodyBytesLength = (body: unknown): number => {
+  if (body === undefined || body === null) {
+    return 0
+  }
+  if (body instanceof Uint8Array) {
+    return body.byteLength
+  }
+  return new TextEncoder().encode(typeof body === "string" ? body : JSON.stringify(body)).byteLength
+}
+
 export const makeServer = (log: DurableStreamLog): DurableStreamsServer => ({
   create: (command) =>
     encodeBody(command.contentType, command.body).pipe(
@@ -203,6 +213,13 @@ export const makeServer = (log: DurableStreamLog): DurableStreamsServer => ({
         ),
       ),
       Effect.catch((error) => Effect.succeed(streamProblem(error))),
+      Effect.withSpan("durable_streams.server.create", {
+        attributes: {
+          "stream.content_type": command.contentType,
+          "stream.body_bytes": bodyBytesLength(command.body),
+          "stream.closed_requested": command.closed === true,
+        },
+      }),
     ),
 
   fork: (command) =>
@@ -214,6 +231,11 @@ export const makeServer = (log: DurableStreamLog): DurableStreamsServer => ({
     }).pipe(
       Effect.map(createOutcome),
       Effect.catch((error) => Effect.succeed(streamProblem(error))),
+      Effect.withSpan("durable_streams.server.fork", {
+        attributes: {
+          "stream.at_offset": command.atOffset ?? "head",
+        },
+      }),
     ),
 
   append: (command) =>
@@ -236,12 +258,21 @@ export const makeServer = (log: DurableStreamLog): DurableStreamsServer => ({
       }),
       Effect.map(appendOutcome),
       Effect.catch((error) => Effect.succeed(appendError(error))),
+      Effect.withSpan("durable_streams.server.append", {
+        attributes: {
+          "stream.content_type": command.contentType,
+          "stream.body_bytes": bodyBytesLength(command.body),
+          "stream.close_requested": command.close === true,
+          "stream.has_producer": command.producer !== undefined,
+        },
+      }),
     ),
 
   head: (path) =>
     log.head(path).pipe(
       Effect.map((metadata): HeadStreamOutcome => ({ _tag: "Head", metadata })),
       Effect.catch((error) => Effect.succeed(streamProblem(error))),
+      Effect.withSpan("durable_streams.server.head"),
     ),
 
   read: (command) =>
@@ -254,6 +285,12 @@ export const makeServer = (log: DurableStreamLog): DurableStreamsServer => ({
         closed: window.closed,
       })),
       Effect.catch((error) => Effect.succeed(streamProblem(error))),
+      Effect.withSpan("durable_streams.server.read", {
+        attributes: {
+          "stream.offset": command.offset ?? BeginningOffset,
+          "stream.limit": command.limit ?? "none",
+        },
+      }),
     ),
 
   readJson: (command) =>
@@ -270,12 +307,23 @@ export const makeServer = (log: DurableStreamLog): DurableStreamsServer => ({
         ),
       ),
       Effect.catch((error) => Effect.succeed(streamProblem(error))),
+      Effect.withSpan("durable_streams.server.read_json", {
+        attributes: {
+          "stream.offset": command.offset ?? BeginningOffset,
+          "stream.limit": command.limit ?? "none",
+        },
+      }),
     ),
 
   follow: (command) =>
     log.changes(readPosition(command)).pipe(
       Effect.map((events) => events.pipe(Stream.map(changeEvent), Stream.mapError(streamProblem))),
       Effect.mapError(streamProblem),
+      Effect.withSpan("durable_streams.server.follow", {
+        attributes: {
+          "stream.offset": command.offset ?? BeginningOffset,
+        },
+      }),
     ),
 
   delete: (path) =>
@@ -286,6 +334,7 @@ export const makeServer = (log: DurableStreamLog): DurableStreamsServer => ({
           : notFound(),
       ),
       Effect.catch((error) => Effect.succeed(streamProblem(error))),
+      Effect.withSpan("durable_streams.server.delete"),
     ),
 })
 

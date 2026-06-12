@@ -608,6 +608,11 @@ const handleRequest = (
         return response(405)
     }
   }).pipe(
+    Effect.withSpan("durable_streams.http.request", {
+      attributes: {
+        "http.request.method": request.method,
+      },
+    }),
     Effect.catchCause((cause) =>
       Effect.succeed(response(500, { "content-type": "text/plain" }, String(cause))),
     ),
@@ -662,12 +667,18 @@ const waitForListening = (server: Server): Promise<void> =>
 
 export const startHttpServer = async (
   durableStreams: DurableStreamsServer,
-  options?: { readonly port?: number },
+  options?: {
+    readonly port?: number
+    readonly telemetry?: Layer.Layer<never, unknown>
+  },
 ): Promise<StartedHttpServer> => {
   const nodeServer = createServer()
   const state = makeHttpServerState()
   const layer = makeApiLayer(durableStreams, state, nodeServer, options)
-  const fiber = Effect.runFork(Layer.launch(layer))
+  const launch = options?.telemetry === undefined
+    ? Layer.launch(layer)
+    : Layer.launch(layer).pipe(Effect.provide(options.telemetry))
+  const fiber = Effect.runFork(launch)
 
   await waitForListening(nodeServer)
 

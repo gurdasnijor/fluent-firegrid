@@ -12,5 +12,9 @@ coverage/
 *.tsbuildinfo
 tsp-output/
 
+# Generated benchmark artifacts
+docs/reference/durable-streams/docs/benchmark-results-*.json
+docs/reference/durable-streams/docs/benchmark-trace-*.jsonl
+
 # Vendored source for reference only - not checked in
 repos/

@@ -264,7 +264,13 @@ const makeClient = (options: S2LiteStreamLogOptions): S2Client => {
         await s2.basins.ensure({ basin: basinName })
       },
       catch: (cause) => streamLogError("create", "S2 basin ensure failed", cause, basinName),
-    }),
+    }).pipe(
+      Effect.withSpan("durable_stream_log.s2_lite.sdk.ensure_basin", {
+        attributes: {
+          "s2.basin": basinName,
+        },
+      }),
+    ),
 
     ensureStorage: (storage) =>
       Effect.tryPromise({
@@ -273,7 +279,14 @@ const makeClient = (options: S2LiteStreamLogOptions): S2Client => {
           return ensuredStream.result === "created" ? "created" as const : "exists" as const
         },
         catch: (cause) => sdkStreamLogError("create", basinName, storage, cause),
-      }),
+      }).pipe(
+        Effect.withSpan("durable_stream_log.s2_lite.sdk.ensure_stream", {
+          attributes: {
+            "s2.basin": basinName,
+            "s2.stream": storage.streamName,
+          },
+        }),
+      ),
 
     appendRecords: (storage, request) =>
       appendInput(basinName, storage, request.records, request.matchSeqNum).pipe(
@@ -294,6 +307,15 @@ const makeClient = (options: S2LiteStreamLogOptions): S2Client => {
             },
           }),
         ),
+        Effect.withSpan("durable_stream_log.s2_lite.sdk.append_records", {
+          attributes: {
+            "s2.basin": basinName,
+            "s2.stream": storage.streamName,
+            "s2.record_count": request.records.length,
+            "s2.record_bytes": request.records.reduce((sum, bytes) => sum + bytes.byteLength, 0),
+            "s2.match_seq_num": request.matchSeqNum,
+          },
+        }),
       ),
 
     readRecords: (storage, request) =>
@@ -320,6 +342,14 @@ const makeClient = (options: S2LiteStreamLogOptions): S2Client => {
             return Effect.succeed(tail === undefined ? { records: [] } : { records: [], tail })
           },
         ),
+        Effect.withSpan("durable_stream_log.s2_lite.sdk.read_records", {
+          attributes: {
+            "s2.basin": basinName,
+            "s2.stream": storage.streamName,
+            "s2.seq_num": request.seqNum,
+            "s2.limit": request.count ?? "none",
+          },
+        }),
       ),
 
     deleteStorage: (storage) =>
@@ -332,6 +362,12 @@ const makeClient = (options: S2LiteStreamLogOptions): S2Client => {
           () => Effect.void,
         ),
         Effect.mapError((cause) => sdkStreamLogError("delete", basinName, storage, cause)),
+        Effect.withSpan("durable_stream_log.s2_lite.sdk.delete_stream", {
+          attributes: {
+            "s2.basin": basinName,
+            "s2.stream": storage.streamName,
+          },
+        }),
       ),
   }
 }
@@ -755,6 +791,12 @@ const makeStore = (
             )
           }),
         ),
+        Effect.withSpan("durable_stream_log.s2_lite.create", {
+          attributes: {
+            "stream.content_type": request.contentType,
+            "stream.closed_requested": request.closed === true,
+          },
+        }),
       ),
 
     append: (request) =>
@@ -770,6 +812,16 @@ const makeStore = (
             ),
           ),
         ),
+      ).pipe(
+        Effect.withSpan("durable_stream_log.s2_lite.append", {
+          attributes: {
+            "stream.content_type": request.contentType,
+            "stream.message_count": request.messages.length,
+            "stream.message_bytes": request.messages.reduce((sum, bytes) => sum + bytes.byteLength, 0),
+            "stream.close_requested": request.close === true,
+            "stream.has_producer": request.producer !== undefined,
+          },
+        }),
       ),
 
     read: (position) =>
@@ -795,6 +847,12 @@ const makeStore = (
             ),
           ),
         ),
+        Effect.withSpan("durable_stream_log.s2_lite.read", {
+          attributes: {
+            "stream.offset": position.offset,
+            "stream.limit": position.limit ?? "none",
+          },
+        }),
       ),
 
     changes: (
@@ -835,12 +893,20 @@ const makeStore = (
           Stream.takeUntil((event) => event._tag === "Closed"),
         )
         return Stream.fromIterable([...backlogEvents, caughtUp]).pipe(Stream.concat(live))
-      }),
+      }).pipe(
+        Effect.withSpan("durable_stream_log.s2_lite.changes", {
+          attributes: {
+            "stream.offset": position.offset,
+            "stream.limit": position.limit ?? "none",
+          },
+        }),
+      ),
 
     head: (path) =>
       SynchronizedRef.get(value).pipe(
         Effect.flatMap((current) => getLocalStream(current, path)),
         Effect.map((stream) => stream.metadata),
+        Effect.withSpan("durable_stream_log.s2_lite.head"),
       ),
 
     fork: (request: ForkStream) =>
@@ -903,6 +969,11 @@ const makeStore = (
             })
           }),
         ),
+        Effect.withSpan("durable_stream_log.s2_lite.fork", {
+          attributes: {
+            "stream.at_offset": request.atOffset ?? "head",
+          },
+        }),
       ),
 
     trim: (request: TrimStream) =>
@@ -930,6 +1001,12 @@ const makeStore = (
             return Effect.succeed([undefined, updateStream(current, updated)] as const)
           }),
         ),
+      ).pipe(
+        Effect.withSpan("durable_stream_log.s2_lite.trim", {
+          attributes: {
+            "stream.before": request.before,
+          },
+        }),
       ),
 
     delete: (path) =>
@@ -971,6 +1048,7 @@ const makeStore = (
           Effect.forEach(commit.deletedStorage, (storage) => client.deleteStorage(storage), { discard: true }),
         ),
         Effect.map((commit) => commit.result),
+        Effect.withSpan("durable_stream_log.s2_lite.delete"),
       ),
   }
 }
@@ -985,4 +1063,4 @@ export const make = (options: S2LiteStreamLogOptions): Effect.Effect<DurableStre
       streamsById: new Map<StreamId, LocalStream>(),
     })
     return makeStore(value, client, options)
-  })
+  }).pipe(Effect.withSpan("durable_stream_log.s2_lite.make"))

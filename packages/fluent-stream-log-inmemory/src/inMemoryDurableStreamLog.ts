@@ -465,6 +465,12 @@ const makeStore = (value: SynchronizedRef.SynchronizedRef<Value>): DurableStream
           ] as const
         }),
       ),
+      Effect.withSpan("durable_stream_log.inmemory.create", {
+        attributes: {
+          "stream.content_type": request.contentType,
+          "stream.closed_requested": request.closed === true,
+        },
+      }),
     ),
 
   append: (request) =>
@@ -479,7 +485,18 @@ const makeStore = (value: SynchronizedRef.SynchronizedRef<Value>): DurableStream
             ),
         }),
       ),
-    ).pipe(Effect.map((commit) => commit.result)),
+    ).pipe(
+      Effect.map((commit) => commit.result),
+      Effect.withSpan("durable_stream_log.inmemory.append", {
+        attributes: {
+          "stream.content_type": request.contentType,
+          "stream.message_count": request.messages.length,
+          "stream.message_bytes": request.messages.reduce((sum, bytes) => sum + bytes.byteLength, 0),
+          "stream.close_requested": request.close === true,
+          "stream.has_producer": request.producer !== undefined,
+        },
+      }),
+    ),
 
   read: (position) =>
     pipe(
@@ -490,15 +507,30 @@ const makeStore = (value: SynchronizedRef.SynchronizedRef<Value>): DurableStream
           Effect.flatMap((stream) => readWindow(current, position, stream)),
         ),
       ),
+      Effect.withSpan("durable_stream_log.inmemory.read", {
+        attributes: {
+          "stream.offset": position.offset,
+          "stream.limit": position.limit ?? "none",
+        },
+      }),
     ),
 
-  changes: (position) => changesFrom(value, position),
+  changes: (position) =>
+    changesFrom(value, position).pipe(
+      Effect.withSpan("durable_stream_log.inmemory.changes", {
+        attributes: {
+          "stream.offset": position.offset,
+          "stream.limit": position.limit ?? "none",
+        },
+      }),
+    ),
 
   head: (path) =>
     pipe(
       value,
       SynchronizedRef.get,
       Effect.flatMap((current) => getStream(path, current).pipe(Effect.map((stream) => stream.metadata))),
+      Effect.withSpan("durable_stream_log.inmemory.head"),
     ),
 
   fork: (request: ForkStream) =>
@@ -553,6 +585,11 @@ const makeStore = (value: SynchronizedRef.SynchronizedRef<Value>): DurableStream
           )
         }),
       ),
+      Effect.withSpan("durable_stream_log.inmemory.fork", {
+        attributes: {
+          "stream.at_offset": request.atOffset ?? "head",
+        },
+      }),
     ),
 
   trim: (request: TrimStream) =>
@@ -581,6 +618,12 @@ const makeStore = (value: SynchronizedRef.SynchronizedRef<Value>): DurableStream
           return Effect.succeed([undefined, updateStream(current, updated)] as const)
         }),
       ),
+    ).pipe(
+      Effect.withSpan("durable_stream_log.inmemory.trim", {
+        attributes: {
+          "stream.before": request.before,
+        },
+      }),
     ),
 
   delete: (path) =>
@@ -607,7 +650,7 @@ const makeStore = (value: SynchronizedRef.SynchronizedRef<Value>): DurableStream
         { _tag: "Deleted", path } satisfies DeleteStreamResult,
         releaseSourceRef(deleted, source),
       ] as const
-    }),
+    }).pipe(Effect.withSpan("durable_stream_log.inmemory.delete")),
 })
 
 export const make = (): Effect.Effect<DurableStreamLog> =>
