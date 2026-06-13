@@ -1,0 +1,40 @@
+{
+  "name": "@firegrid/fluent-s2-workflow-engine",
+  "version": "0.0.0",
+  "description": "S2-native WorkflowEngine implementation for Firegrid.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "diagnostics": "effect-language-service diagnostics --project tsconfig.json --severity error",
+    "test": "vitest run --root ../.. --project fluent-s2-workflow-engine",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@s2-dev/streamstore": "0.24.1"
+  },
+  "peerDependencies": {
+    "effect": ">=4.0.0-beta.75 <5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.21",
+    "effect": "4.0.0-beta.78",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.0"
+  }
+}

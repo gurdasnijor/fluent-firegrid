@@ -149,6 +149,22 @@ export default defineConfig({
           },
         },
       }),
+      defineProject({
+        test: {
+          name: "fluent-s2-workflow-engine",
+          include: ["packages/fluent-s2-workflow-engine/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"],
+        },
+        resolve: {
+          alias: {
+            ...alias,
+            "@firegrid/fluent-s2-workflow-engine": path.resolve(
+              __dirname,
+              "./packages/fluent-s2-workflow-engine/src"
+            ),
+          },
+        },
+      }),
     ],
   },
 })
