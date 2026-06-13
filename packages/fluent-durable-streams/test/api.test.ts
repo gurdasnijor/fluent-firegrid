@@ -17,5 +17,11 @@ describe("DurableStreamsApi", () => {
         query: { seqNum: 10, count: 5, ignoreCommandRecords: true },
       }),
     ).toBe("http://localhost:3000/streams/events-a/records?seqNum=10&count=5&ignoreCommandRecords=true")
+    expect(
+      client.State.readState({
+        params: { stream: "state-users" },
+        query: { seqNum: 0, count: 100 },
+      }),
+    ).toBe("http://localhost:3000/state/state-users/records?seqNum=0&count=100")
   })
 })
