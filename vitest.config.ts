@@ -149,6 +149,22 @@ export default defineConfig({
           },
         },
       }),
+      defineProject({
+        test: {
+          name: "fluent-durable-streams",
+          include: ["packages/fluent-durable-streams/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"],
+        },
+        resolve: {
+          alias: {
+            ...alias,
+            "@firegrid/fluent-durable-streams": path.resolve(
+              __dirname,
+              "./packages/fluent-durable-streams/src"
+            ),
+          },
+        },
+      }),
     ],
   },
 })
