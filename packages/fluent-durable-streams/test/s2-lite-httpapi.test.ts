@@ -50,7 +50,62 @@ describeLite("S2 Lite HTTPAPI", () => {
     const result = await Effect.runPromise(runnable)
 
     expect(result.records).toHaveLength(1)
-    expect(atob(result.records[0]!.bodyBase64)).toBe("hello")
+    expect(atob(result.records[0]!.body)).toBe("hello")
+    expect(result.records[0]!.kind).toBe("data")
+    expect(result.records[0]!.headers).toEqual([])
+  })
+
+  it("surfaces tail and close records through the HTTPAPI handlers backed by S2 Lite", async () => {
+    const runnable = Effect.scoped(
+      Effect.gen(function*() {
+        const client = yield* HttpApiTest.groups(DurableStreamsApi, ["Streams"] as const)
+        const stream = `close-smoke-${Date.now().toString(36)}`
+
+        const ack = yield* client.Streams.appendRaw({
+          params: { stream },
+          query: {},
+          payload: new TextEncoder().encode("before-close"),
+        })
+        const closeAck = yield* client.Streams.close({
+          params: { stream },
+          query: { matchSeqNum: ack.tail.seqNum },
+        })
+        const tail = yield* client.Streams.checkTail({ params: { stream } })
+        const read = yield* client.Streams.read({
+          params: { stream },
+          query: { seqNum: ack.start.seqNum, count: 2 },
+        })
+        return { closeAck, read, tail }
+      }),
+    ).pipe(
+      Effect.provide(StreamsLive),
+      Effect.provide(layerProfile),
+      Effect.provide(
+        layerConfig({
+          accessToken: process.env["S2_ACCESS_TOKEN"] ?? "ignored",
+          basin: process.env["S2_LITE_BASIN"] ?? "fluent-dev",
+          endpoints: {
+            account: endpoint!,
+            basin: endpoint!,
+          },
+        }),
+      ),
+    ) as unknown as Effect.Effect<{
+      readonly closeAck: {
+        readonly tail: { readonly seqNum: number }
+      }
+      readonly read: ReadBatch
+      readonly tail: {
+        readonly tail: { readonly seqNum: number }
+      }
+    }, unknown, never>
+
+    const result = await Effect.runPromise(runnable)
+
+    expect(result.tail.tail.seqNum).toBe(result.closeAck.tail.seqNum)
+    expect(result.read.closed).toBe(true)
+    expect(result.read.records.map((record) => record.kind)).toEqual(["data", "close"])
+    expect(atob(result.read.records[0]!.body)).toBe("before-close")
   })
 
   it("appends and reads state messages through the HTTPAPI handlers backed by S2 Lite", async () => {
