@@ -132,6 +132,13 @@ jobs:
       - name: Setup pnpm + Node + install
         uses: ./.github/actions/setup
 
+      - name: Install S2 CLI
+        run: |
+          export VERSION=0.36.6
+          curl -fsSL https://s2.dev/install.sh | bash
+          echo "$HOME/.s2/bin" >> "$GITHUB_PATH"
+          "$HOME/.s2/bin/s2" --version
+
       - name: Restore Turbo cache
         uses: actions/cache@v4
         with:

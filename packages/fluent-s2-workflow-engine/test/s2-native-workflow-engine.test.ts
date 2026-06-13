@@ -95,7 +95,7 @@ const startLite = async (): Promise<LiteServer> => {
   const output: Array<string> = []
   child.stdout.on("data", (chunk) => output.push(String(chunk)))
   child.stderr.on("data", (chunk) => output.push(String(chunk)))
-  child.once("exit", (code) => {
+  child.once("exit", (code: number | null) => {
     if (!abort.signal.aborted && code !== 0) {
       output.push(`s2 lite exited with ${String(code)}`)
     }
