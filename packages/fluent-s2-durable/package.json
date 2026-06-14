@@ -1,0 +1,35 @@
+{
+  "name": "@firegrid/fluent-s2-durable",
+  "version": "0.0.0",
+  "description": "Spike: S2-backed durable execution runtime for Effect (replay-based, exactly-once steps, durable sleep/await).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "diagnostics": "effect-language-service diagnostics --project tsconfig.json --severity error",
+    "test": "vitest run --root ../.. --project fluent-s2-durable",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "effect": "4.0.0-beta.78"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.0"
+  }
+}
