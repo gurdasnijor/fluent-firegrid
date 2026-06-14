@@ -26,6 +26,22 @@ export default defineConfig({
       }),
       defineProject({
         test: {
+          name: "fluent-s2-durable",
+          include: ["packages/fluent-s2-durable/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"],
+        },
+        resolve: {
+          alias: {
+            ...alias,
+            "@firegrid/fluent-s2-durable": path.resolve(
+              __dirname,
+              "./packages/fluent-s2-durable/src"
+            ),
+          },
+        },
+      }),
+      defineProject({
+        test: {
           name: "fluent-stream-log",
           include: ["packages/fluent-stream-log/test/**/*.test.ts"],
           exclude: ["**/node_modules/**"],
