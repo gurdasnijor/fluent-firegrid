@@ -6,6 +6,7 @@ export {
   type ProducerConfig,
   type S2AppendSession,
   type S2ClientApi,
+  type S2OperationOptions,
   type S2Producer,
 } from "./S2Client.ts"
 export { conditionalAppend, publish, readDecoded } from "./Channel.ts"
@@ -19,16 +20,16 @@ export {
   fromUnknown,
   type S2ClientError,
 } from "./S2Error.ts"
-export { AppendInput, AppendRecord } from "./internal/sdk.ts"
-export type {
-  AppendAck,
-  AppendSessionOptions,
-  BytesAppendRecord,
-  ReadOptions,
-  S2RetryConfig,
-  SdkAppendInput,
-  SdkAppendRecord,
-  StreamInfo,
-  Tail,
+export {
+  AppendInput,
+  AppendRecord,
+  BatchTransform,
+  Producer,
+  S2Environment,
+  SdkS2Error,
+  SeqNumMismatchError,
+  FencingTokenMismatchError,
+  RangeNotSatisfiableError,
 } from "./internal/sdk.ts"
+export type * from "./internal/sdk.ts"
 export type { S2Record, S2RecordBytes } from "./internal/record.ts"

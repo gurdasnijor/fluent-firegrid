@@ -10,7 +10,7 @@ class Order extends Schema.Class<Order>("Order")({
 const streamName = `effect-s2-orders-${Date.now()}`
 
 const program = Effect.gen(function*() {
-  yield* S2Client.createStream(streamName)
+  yield* S2Client.createStream({ stream: streamName })
   yield* publish(streamName, Order, Order.make({ id: "o-1", total: 42 }))
   const orders = yield* readDecoded(streamName, Order, {
     start: { from: { seqNum: 0 } },

@@ -1,23 +1,23 @@
 import { NodeRuntime } from "@effect/platform-node"
 import { Console, Effect, Stream } from "effect"
-import { AppendRecord, S2Client } from "../src/index.ts"
+import { AppendInput, AppendRecord, S2Client } from "../src/index.ts"
 
 const streamName = `effect-s2-session-${Date.now()}`
 
 const program = Effect.gen(function*() {
-  yield* S2Client.createStream(streamName)
+  yield* S2Client.createStream({ stream: streamName })
   const session = yield* S2Client.appendSession(streamName, {
     maxInflightBytes: 1024 * 1024,
     maxInflightBatches: 2,
   })
 
-  const first = yield* session.submit([
+  const first = yield* session.submit(AppendInput.create([
     AppendRecord.string({ body: "session-a" }),
     AppendRecord.string({ body: "session-b" }),
-  ])
-  const second = yield* session.submit([
+  ]))
+  const second = yield* session.submit(AppendInput.create([
     AppendRecord.string({ body: "session-c" }),
-  ])
+  ]))
 
   const records = yield* S2Client.read(streamName, {
     start: { from: { seqNum: first.start.seqNum } },

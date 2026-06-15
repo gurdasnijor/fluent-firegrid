@@ -1,5 +1,5 @@
 import { S2Client, type AppendOptions } from "./S2Client.ts"
-import { AppendRecord, type AppendAck, type ReadOptions } from "./internal/sdk.ts"
+import { AppendInput, AppendRecord, type AppendAck, type ReadOptions } from "./internal/sdk.ts"
 import type { S2ClientError } from "./S2Error.ts"
 import { Effect, Schema, Stream } from "effect"
 
@@ -17,7 +17,7 @@ export const publish = <A, I, RD, RE>(
   Effect.gen(function*() {
     const encoded = yield* Schema.encodeEffect(schema)(value)
     const body = yield* Schema.encodeEffect(JsonValue)(encoded)
-    return yield* S2Client.append(name, [AppendRecord.string({ body })])
+    return yield* S2Client.append(name, AppendInput.create([AppendRecord.string({ body })]))
   })
 
 export const readDecoded = <A, I, RD, RE>(
@@ -51,5 +51,8 @@ export const conditionalAppend = <A, I, RD, RE>(
     const encoded = yield* Schema.encodeEffect(schema)(value)
     const body = yield* Schema.encodeEffect(JsonValue)(encoded)
     const options: AppendOptions = { matchSeqNum }
-    return yield* S2Client.append(name, [AppendRecord.string({ body })], options)
+    return yield* S2Client.append(
+      name,
+      AppendInput.create([AppendRecord.string({ body })], options),
+    )
   })

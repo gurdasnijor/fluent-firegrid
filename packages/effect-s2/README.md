@@ -4,8 +4,8 @@ Effect-native facade for the S2 TypeScript SDK.
 
 `effect-s2` wraps `@s2-dev/streamstore` in a behavioral Effect service. The
 public API is service-owned (`S2Client.*`), scoped resources are closed by
-Effect, SDK errors are mapped into typed errors, and `effect-s2/testing`
-provides an offline in-memory implementation for deterministic tests.
+Effect, SDK errors are mapped into typed errors, and SDK input/output types are
+preserved.
 
 ## Install
 
@@ -26,11 +26,18 @@ Optional SDK endpoint variables such as `S2_ACCOUNT_ENDPOINT` and
 
 ## Service Model
 
-All data-plane operations are exposed through the `S2Client` service:
+SDK operations are exposed through the `S2Client` service:
 
 ```ts
+S2Client.listBasins(args)
+S2Client.createBasin(args)
+S2Client.ensureBasin(args)
+S2Client.deleteBasin(name)
+S2Client.listStreams(args)
 S2Client.createStream(name)
+S2Client.deleteStream(name)
 S2Client.checkTail(name)
+S2Client.readBatch(name, options)
 S2Client.append(name, records, options)
 S2Client.appendSession(name, config)
 S2Client.read(name, options)
@@ -38,6 +45,11 @@ S2Client.readBytes(name, options)
 S2Client.producer(name, config)
 S2Client.sink(producer)
 ```
+
+Account-scoped SDK surfaces are covered as Effect methods: basins, access
+tokens, locations, and metrics. Basin/stream-scoped surfaces are covered with
+the configured `S2_BASIN` as the default basin; pass `{ basinName }` in the
+operation options to target another basin.
 
 Use `S2Client.layerConfig` when reading configuration from the environment:
 
@@ -209,27 +221,6 @@ import { conditionalAppend } from "effect-s2"
 yield* conditionalAppend("orders", Schema.String, "created", expectedSeqNum)
 ```
 
-## Testing
-
-`effect-s2/testing` exports an in-memory `S2Client` layer. It preserves ordering,
-tail positions, conditional append conflicts, live followers, append sessions,
-producer submits, and string/byte read projections without making network calls.
-
-```ts
-import { Effect, Stream } from "effect"
-import { AppendRecord, S2Client } from "effect-s2"
-import * as TestS2 from "effect-s2/testing"
-
-const testProgram = Effect.gen(function*() {
-  yield* S2Client.createStream("events")
-  yield* S2Client.append("events", [AppendRecord.string({ body: "test" })])
-  return yield* S2Client.read("events", {
-    start: { from: { seqNum: 0 } },
-    stop: { limits: { count: 1 } },
-  }).pipe(Stream.runCollect)
-}).pipe(Effect.provide(TestS2.layer))
-```
-
 ## Examples
 
 The repository includes runnable examples:
@@ -242,7 +233,8 @@ The repository includes runnable examples:
 - `examples/06-append-session.ts`: scoped append-session batch submits
 - `examples/07-read-bytes.ts`: binary records and byte reads
 - `examples/08-session-conditional-append.ts`: session CAS with `matchSeqNum`
-- `examples/09-test-layer.ts`: offline usage with `effect-s2/testing`
+- `examples/09-control-plane.ts`: stream list/config/delete wrappers
+- `examples/10-command-records.ts`: `AppendRecord.fence`, `AppendRecord.trim`, and command filtering
 
 Run an example from the package directory with `tsx`, after setting the S2
 environment variables for live examples.

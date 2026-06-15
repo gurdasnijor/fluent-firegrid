@@ -28,17 +28,17 @@ Build a thin, idiomatic Effect facade over the S2 TypeScript SDK. The facade tur
 
 **Goals**
 
-- G1. Every SDK data-plane verb (`append`, `read`/`readSession`, `checkTail`, `appendSession`/`Producer`) is reachable through an Effect-native surface with typed errors.
+- G1. Every public SDK operation family (basins, streams, access tokens, locations, metrics, append/read/session/producer) is reachable through an Effect-native surface with SDK-native input/output types and typed errors.
 - G2. Read sessions are exposed as `Stream`; their underlying connection is released by the enclosing `Scope` (no manual `close()` in user code).
 - G3. Append throughput path (Producer/batcher) is exposed as a scoped handle and as a `Sink`, preserving the SDK's batching and backpressure.
 - G4. A `Schema`-typed channel layer: encode/decode record bodies so a stream reads as `Stream<A>` and publishes `A`, with decode failures isolated to the error channel.
 - G5. First-class exactly-once support via `matchSeqNum` (compare-and-set append) surfaced as a typed conflict, suitable for journal/replay callers.
-- G6. Fully testable offline via an in-memory `S2Client` implementation (§8).
+- G6. Avoid duplicating upstream SDK behavioral tests; this package verifies wrapper surface and typing, while transport/service behavior remains the SDK's responsibility.
 
 ## 2. Non-goals
 
 - N1. **Do not** reimplement the S2 wire protocol (S2S framing / HTTP-2 transport). The SDK owns transport. This library is a facade.
-- N2. **Do not** implement control-plane breadth (access tokens, basin reconfigure, metrics) beyond `createStream`. Out of scope for v1; leave extension points.
+- N2. **Do not** re-test or reimplement SDK control-plane behavior. The facade wraps those operations one-to-one; upstream SDK tests remain the behavioral oracle.
 - N3. **Do not** add an Effect-level retry/backoff layer that duplicates the SDK's transport retries (see §7.4 for the division of responsibility).
 - N4. No browser-specific build target in v1 (the SDK supports it; we do not block on it). Code MUST NOT depend on Node-only globals in `src/` so a browser build remains possible later.
 
@@ -129,12 +129,8 @@ packages/effect-s2/
     internal/
       record.ts           # S2Record schema/codecs, body (string|bytes) handling
     index.ts              # public barrel
-    TestS2.ts             # in-memory S2Client implementation for tests (§8)
   test/
-    Reader.test.ts
-    Writer.test.ts
-    Channel.test.ts
-    conformance.test.ts   # contract-level assertions against the in-memory impl
+    api-coverage.test.ts  # wrapper surface and SDK constructor re-export coverage
   examples/
     01-quickstart.ts
     02-config-and-tail.ts
@@ -323,28 +319,24 @@ Service-method implementations are `Effect.fn`-named (`"S2.append"`, `"S2.read"`
 
 ---
 
-## 8. The in-memory `S2Client` (`TestS2.ts`) — required deliverable
+## 8. Test strategy
 
-Tests MUST run without network. Provide `TestS2.layer: Layer<S2Client>` implementing `S2ClientApi` over in-memory state.
+This package does not ship a fake S2 implementation. The wrapper delegates to
+the official SDK, and the SDK's own tests are the behavioral oracle for service
+semantics such as append ordering, sessions, trim/fence commands, retry, and
+control-plane responses.
 
-Design:
+Package tests MUST stay focused on facade coverage:
 
-- State: `Ref<HashMap<string, StreamState>>` where `StreamState = { records: Array<StoredRecord>; pubsub: PubSub<StoredRecord> }`. `StoredRecord` preserves string and bytes bodies; `read`/`readBytes` project that storage into `S2Record`/`S2RecordBytes`. (`PubSub` per stream powers live followers.)
-- `createStream`: idempotent; creating an existing stream fails with a synthetic `S2Conflict` (status 409) to exercise the catch path.
-- `append`: assigns sequential `seqNum` starting at current length, sets `timestamp` from `Clock`, appends to `records`, publishes each to `pubsub`. Returns `AppendAck`-shaped `{ start, end }`.
-- `conditionalAppend` semantics live here too: if `matchSeqNum !== records.length`, fail `S2Conflict` carrying expected/observed.
-- `read`/`readBytes`: replay the slice implied by `start` (`seqNum`/`tailOffset`; `timestamp` MAY be approximated or unsupported-with-defect in the fake — document), then, if no stop condition, `Stream.concat` a subscription to `pubsub` for live follow; honor `stop` (`count`/`untilTimestamp`/`waitSecs`) by terminating appropriately. Releasing the stream's scope MUST unsubscribe (mirrors V1 teardown).
-- `appendSession`: scoped; `submit` delegates to `append` of the supplied batch so conditional append behavior, validation, and ack ranges match unary append.
-- `producer`: scoped; `submit` delegates to `append` of a single-record batch (batching is a no-op in the fake; that's fine — the contract is per-record durability + ordering).
-- `checkTail`: `{ tail: { seqNum: records.length } }`.
-
-The fake is the conformance oracle: §9 scenarios run against it deterministically; a thin set of integration tests (gated by `S2_ACCESS_TOKEN` env, skipped in CI by default via `it.effect.skipIf`) run the same scenarios against live S2 to confirm the fake's fidelity.
+- every public SDK operation family has a corresponding `S2Client.*` Effect or Stream accessor;
+- SDK-native input/output types are exported from the package barrel;
+- SDK value constructors used at the wrapper boundary (`AppendInput`, `AppendRecord.string`, `AppendRecord.bytes`, `AppendRecord.fence`, `AppendRecord.trim`) are re-exported.
 
 ---
 
 ## 9. Acceptance scenarios (Gherkin)
 
-These are the behavioral contract. Implement them in `test/` against `TestS2.layer`; mark the live-S2 variants `skipIf(no token)`. Where your trace-oracle tooling applies, assert the expected span tree (`S2.append`, `S2.read`, `S2.producer.submit`) and seqNum annotations in addition to return values.
+These are delegated to upstream SDK tests for behavioral semantics. This package may include live examples for smoke testing, but it MUST NOT rebuild an alternate S2 implementation solely to duplicate SDK coverage.
 
 ```gherkin
 Feature: Read-back roundtrip
@@ -413,7 +405,7 @@ Ordered; later milestones depend on earlier. Each task ships with tests; a miles
 - **T-020** `internal/record.ts`: SDK record → `S2Record` normalization (headers to string pairs; body string handling; bytes decision D5).
 - **T-021** `Reader.ts` `read`: `Stream.unwrapScoped` + `acquireRelease` session, `fromAsyncIterable` mapping (per V2), release per V1, `Stream.withSpan`.
 - **T-022** `readDecoded` (in `Channel.ts`, but read-side): `Stream.mapEffect` + `Schema.decodeUnknownEffect`.
-- **Gate M2**: scenarios *Read-back roundtrip*, *Live tailing*, *Scope teardown*, *Poison record isolation* pass against `TestS2`; live variants pass when token present.
+- **Gate M2**: wrapper read APIs type-check and map SDK records to `S2Record`/`S2RecordBytes`; live smoke examples may be run with credentials.
 
 ### M3 — Write path *(depends V3, V5)*
 - **T-030** `Writer.ts` `append`: `Effect.fn` + `tryPromise` + span annotate seqNum.
@@ -429,9 +421,8 @@ Ordered; later milestones depend on earlier. Each task ships with tests; a miles
 
 ### M5 — DX & examples
 - **T-050** `index.ts` barrel + SDK value-constructor re-exports.
-- **T-051** `TestS2.ts` finalized and exported under a `effect-s2/testing` subpath (not the main barrel).
-- **T-052** Examples 01–05 (from the design conversation), each runnable with `NodeRuntime.runMain` and provided `S2Client.layerConfig`.
-- **Gate M5**: examples type-check and run against live S2 with env set; `effect-s2/testing` importable.
+- **T-051** Examples 01–10, each runnable with `NodeRuntime.runMain` and provided `S2Client.layerConfig`.
+- **Gate M5**: examples type-check and run against live S2 with env set.
 
 ### M6 — Hardening
 - **T-060** Property tests (`it.effect.prop` with `Schema.toArbitrary`): append-then-read preserves order and bodies for arbitrary record batches; encode∘decode roundtrip for the channel schema.
@@ -469,16 +460,16 @@ Any divergence from §4.1 MUST also edit §4.1 and the affected §6 signature, w
 | D4 | Errors are schema-tagged with status-narrowed variants. | `catchTag` ergonomics for 404/409/412/429; `Schema.Defect` preserves the SDK cause. |
 | D5 | Expose both normalized string reads and byte-oriented reads. | The SDK supports mixed string/bytes records and `readSession(..., { as: "bytes" })`; `S2Client.read` remains ergonomic for JSON/string workflows while `S2Client.readBytes` preserves binary payloads and headers. |
 | D6 | Do not adopt `@s2-dev/streamstore-patterns` in v1 `Channel`. | The package's helpers are bytes/framing/dedupe sessions; the locked channel API only needs schema JSON encode/decode over string records. |
-| D7 | `createStream` returns synthetic `StreamInfo` after the SDK create call succeeds. | SDK `CreateStreamResponse` is empty, while the frozen service contract returns `StreamInfo`; returning `{ name, createdAt }` preserves the contract without an extra control-plane read. |
+| D7 | `createStream` returns the SDK `CreateStreamResponse`. | The facade preserves SDK-native input/output types instead of synthesizing alternate response models. |
 
 ## 13. Definition of done
 
 - All milestone gates pass; Verification Log complete with sourced citations.
 - `tsc --noEmit` clean under strict; lint clean; no `any`/`as`/non-null-assertion/`namespace` in `src/`.
-- All §9 scenarios pass against `TestS2`; live variants pass with a token.
+- Package API coverage tests pass; live examples can be run with a token for smoke testing.
 - Public surface matches §6 exactly (or a §12 entry justifies each change).
 - Examples 01–05 run against live S2.
-- Package README links this SDD; `effect-s2` and `effect-s2/testing` both importable.
+- Package README links this SDD; `effect-s2` importable.
 
 ---
 

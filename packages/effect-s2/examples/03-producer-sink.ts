@@ -5,7 +5,7 @@ import { AppendRecord, S2Client } from "../src/index.ts"
 const streamName = `effect-s2-producer-${Date.now()}`
 
 const program = Effect.gen(function*() {
-  yield* S2Client.createStream(streamName)
+  yield* S2Client.createStream({ stream: streamName })
   const p = yield* S2Client.producer(streamName, {
     lingerDurationMillis: 5,
     maxBatchRecords: 100,
