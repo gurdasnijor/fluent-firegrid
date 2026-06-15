@@ -1,14 +1,35 @@
-import { Cause, Clock, Effect, Exit, type Layer, Option, Ref, Result, Stream } from "effect"
+import {
+  Array,
+  Cause,
+  Clock,
+  Effect,
+  Exit,
+  HashMap,
+  type Layer,
+  Match,
+  Option,
+  Ref,
+  Result,
+  Schema,
+  Stream,
+  pipe,
+} from "effect"
 import { isSuspend, makeCtx, type Handler, type Suspend } from "./context.ts"
 import { deterministicLayers } from "./determinism.ts"
-import { LostLeaseError, S2Error, StepFailure, type WfError } from "./errors.ts"
+import { CodecError, LostLeaseError, S2Error, StepFailure, type WfError } from "./errors.ts"
 import { fold, type Journal } from "./journal.ts"
 import {
+  Awakeable,
+  AwakeableDone,
+  Completed,
+  Ok,
+  Seed,
+  Snapshot,
+  TimerFired,
+  TimerSet,
   decodeRecord,
   encodeRecords,
   type JournalRecord,
-  type SeedData,
-  type SnapshotState,
 } from "./record.ts"
 import { Dispatch } from "./dispatch.ts"
 import { S2 } from "./s2.ts"
@@ -19,15 +40,15 @@ export type TickOutcome = "idle" | "suspended" | "completed"
 export interface Worker<I, O> {
   /** Genesis: write the seed (clock/random + input) once, then poke. */
   readonly start: (execId: string, input: I) => Effect.Effect<void, WfError>
-  /** Drive one execution forward by one lease+fold+run cycle. */
+  /** Drive one execution forward by one lease+fold+run cycle (one StateMachine step). */
   readonly tick: (execId: string) => Effect.Effect<TickOutcome, WfError>
-  /** Resolve a `waitForEvent` by appending to the unfenced inbox, then poke. */
+  /** Resolve an `awakeable` by appending to the unfenced inbox, then poke. */
   readonly resolveEvent: (
     execId: string,
     name: string,
     value: unknown,
-  ) => Effect.Effect<void, S2Error>
-  /** Block until the execution records a `completed`, returning its result. */
+  ) => Effect.Effect<void, S2Error | CodecError>
+  /** Block until the execution records a `Completed`, returning its result. */
   readonly awaitResult: (execId: string) => Effect.Effect<O, WfError>
   /** Re-poke active executions after a (re)start so they fold + re-arm. */
   readonly boot: (execIds: ReadonlyArray<string>) => Effect.Effect<void>
@@ -42,15 +63,23 @@ export interface WorkerConfig<I, O, R> {
   readonly handlerLayer: Layer.Layer<R>
 }
 
-interface InboxMessage {
-  readonly name: string
-  readonly value: unknown
-}
+class InboxMessage extends Schema.Class<InboxMessage>("InboxMessage")({
+  name: Schema.String,
+  value: Schema.Unknown,
+}) {}
 
+const inboxCodec = Schema.fromJsonString(InboxMessage)
+const encodeInboxJson = Schema.encodeEffect(inboxCodec)
+const decodeInboxJson = Schema.decodeEffect(inboxCodec)
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
-const encodeInbox = (m: InboxMessage): Uint8Array => encoder.encode(JSON.stringify(m))
-const decodeInbox = (bytes: Uint8Array): InboxMessage => JSON.parse(decoder.decode(bytes)) as InboxMessage
+const toCodecError = (cause: unknown): CodecError =>
+  new CodecError({ details: "inbox message codec failure", cause })
+
+const encodeInbox = (m: InboxMessage): Effect.Effect<Uint8Array, CodecError> =>
+  encodeInboxJson(m).pipe(Effect.map((s) => encoder.encode(s)), Effect.mapError(toCodecError))
+const decodeInbox = (bytes: Uint8Array): Effect.Effect<InboxMessage, CodecError> =>
+  decodeInboxJson(decoder.decode(bytes)).pipe(Effect.mapError(toCodecError))
 
 const wf = (execId: string): string => `wf/${execId}`
 const inbox = (execId: string): string => `wf/${execId}/inbox`
@@ -67,21 +96,23 @@ export const make = <I, O, R>(
     // replayed) and seeds the epoch — real time, not the frozen replay clock.
     const hostClock = yield* Effect.service(Clock.Clock)
     const wallNow = (): number => hostClock.currentTimeMillisUnsafe()
-    // process-unique, monotonic epoch base so a later-started worker fences out an older one.
     const epochRef = yield* Ref.make(wallNow())
 
     /**
      * Acquire a lease strictly greater than the stream's current fence. Seeding
-     * the epoch from `Date.now()` alone is *not* enough: two workers started in
-     * the same millisecond (e.g. a fast restart, or deploy overlap) collide, and
-     * a dead worker's higher token would lock out the newcomer. Reading the
-     * journal's fence makes lease issuance monotonic across restarts — the
-     * journal itself is the coordination point.
+     * the epoch from the wall clock alone is *not* enough: two workers started in
+     * the same millisecond (a fast restart, or deploy overlap) collide, and a
+     * dead worker's higher token would lock out the newcomer. Reading the
+     * journal's fence makes lease issuance monotonic across restarts — the journal
+     * itself is the coordination point (Restate leadership ≈ Bifrost sealing).
      */
     const acquireLease = (stream: string): Effect.Effect<string, S2Error> =>
       Effect.gen(function* () {
         const current = yield* s2.checkFence(stream)
-        const currentEpoch = current === null ? 0 : Number(current)
+        const currentEpoch = Option.match(Option.fromNullOr(current), {
+          onNone: () => 0,
+          onSome: (token) => Number(token),
+        })
         const local = yield* Ref.getAndUpdate(epochRef, (n) => n + 1)
         const epoch = Math.max(local, currentEpoch + 1)
         const lease = String(epoch).padStart(20, "0")
@@ -97,27 +128,34 @@ export const make = <I, O, R>(
       lease: string,
       matchSeqNum: bigint,
       recs: ReadonlyArray<JournalRecord>,
-    ): Effect.Effect<{ readonly tail: bigint }, LostLeaseError | S2Error> =>
-      Effect.catchTag(
-        s2.append(wf(execId), encodeRecords(recs), { fencingToken: lease, matchSeqNum }),
-        "AppendCondFailed",
-        (e) =>
-          Effect.fail(
-            e.reason === "fence-mismatch"
-              ? new LostLeaseError({ execId, lease })
-              : new S2Error({
-                  operation: "append",
-                  stream: wf(execId),
-                  details: `unexpected position-taken at ${matchSeqNum} (tail=${e.actualSeqNum})`,
-                }),
-          ),
-      )
+    ): Effect.Effect<{ readonly tail: bigint }, LostLeaseError | S2Error | CodecError> =>
+      Effect.gen(function* () {
+        const bytes = yield* encodeRecords(recs)
+        return yield* Effect.catchTag(
+          s2.append(wf(execId), bytes, { fencingToken: lease, matchSeqNum }),
+          "AppendCondFailed",
+          (e) =>
+            Effect.fail(
+              Match.value(e.reason).pipe(
+                Match.when("fence-mismatch", () => new LostLeaseError({ execId, lease })),
+                Match.orElse(
+                  () =>
+                    new S2Error({
+                      operation: "append",
+                      stream: wf(execId),
+                      details: `unexpected position-taken at ${matchSeqNum} (tail=${e.actualSeqNum})`,
+                    }),
+                ),
+              ),
+            ),
+        )
+      })
 
     const readInbox = (execId: string): Effect.Effect<ReadonlyArray<InboxMessage>, WfError> =>
-      s2.read(inbox(execId), 0n).pipe(
-        Stream.map((r) => decodeInbox(r.data)),
-        Stream.runCollect,
-      )
+      s2.read(inbox(execId), 0n).pipe(Stream.mapEffect((r) => decodeInbox(r.data)), Stream.runCollect)
+
+    const ops = (journal: Journal): ReadonlyArray<JournalRecord> =>
+      Array.fromIterable(HashMap.values(journal.byName))
 
     /** Fire elapsed timers + fold matching inbox messages into the journal. */
     const reconcile = (
@@ -127,48 +165,51 @@ export const make = <I, O, R>(
     ): Effect.Effect<Journal, WfError> =>
       Effect.gen(function* () {
         const now = wallNow()
-        const records = [...journal.byOp.values()]
-        const firedTimers: ReadonlyArray<JournalRecord> = records
-          .filter(
-            (r): r is Extract<JournalRecord, { kind: "timer-set" }> =>
-              r.kind === "timer-set" && r.fireAt <= now,
-          )
-          .map((r) => ({ kind: "timer-fired", op: r.op }))
-
-        const pending = records.filter(
-          (r): r is Extract<JournalRecord, { kind: "awakeable" }> => r.kind === "awakeable",
+        const all = ops(journal)
+        const firedTimers: ReadonlyArray<JournalRecord> = pipe(
+          all,
+          Array.filter(Schema.is(TimerSet)),
+          Array.filter((t) => t.fireAt <= now),
+          Array.map((t) => new TimerFired({ name: t.name })),
         )
+        const pending = pipe(all, Array.filter(Schema.is(Awakeable)))
         const resolved: ReadonlyArray<JournalRecord> =
           pending.length === 0
             ? []
             : yield* readInbox(execId).pipe(
-                Effect.map((messages) => {
-                  // match each pending awakeable to one unconsumed inbox message by name
-                  const consumed = new Set<number>()
-                  return pending.flatMap((aw) => {
-                    const idx = messages.findIndex((m, i) => !consumed.has(i) && m.name === aw.name)
-                    if (idx < 0) return []
-                    consumed.add(idx)
-                    return [{ kind: "awakeable-done" as const, op: aw.op, value: messages[idx]!.value }]
-                  })
-                }),
+                Effect.map((messages) =>
+                  pipe(
+                    pending,
+                    Array.flatMap((aw) =>
+                      Option.match(Array.findFirst(messages, (m) => m.name === aw.name), {
+                        onNone: () => [],
+                        onSome: (m) => [new AwakeableDone({ name: aw.name, value: m.value })],
+                      }),
+                    ),
+                  ),
+                ),
               )
 
         const toAppend = [...firedTimers, ...resolved]
         if (toAppend.length === 0) return journal
-        yield* appendUnderLease(execId, lease, journal.tail, toAppend)
+        // physical tail, not the fold: fence/trim command records consume seq
+        // numbers and are filtered out of the fold, so the two can diverge.
+        const tail = yield* s2.checkTail(wf(execId))
+        yield* appendUnderLease(execId, lease, tail, toAppend)
         return yield* foldStream(execId)
       })
 
     const armWaits = (execId: string, journal: Journal): Effect.Effect<void> =>
       Effect.forEach(
-        [...journal.byOp.values()],
+        ops(journal),
         (rec) =>
-          rec.kind === "timer-set"
-            ? rec.fireAt <= wallNow()
-              ? dispatch.poke(execId)
-              : timers.arm({ fireAt: rec.fireAt, execId, op: rec.op })
-            : Effect.void,
+          Match.value(rec).pipe(
+            Match.tag("TimerSet", (t) => {
+              if (t.fireAt <= wallNow()) return dispatch.poke(execId)
+              return timers.arm({ fireAt: t.fireAt, execId, name: t.name })
+            }),
+            Match.orElse(() => Effect.void),
+          ),
         { discard: true },
       )
 
@@ -176,22 +217,22 @@ export const make = <I, O, R>(
      * §4.2 — translate inbox writes (possibly from another process) into a host
      * poke. On suspend with pending awakeables, follow the inbox; when a matching
      * message lands — already present or arriving later — poke this host's
-     * Dispatch so the next tick folds it into the journal. Replaying history
-     * first means a pre-delivered event fires immediately. Detached, one-shot
-     * (`take(1)`), and torn down with the runtime on crash.
+     * Dispatch so the next tick folds it into the journal. Detached, one-shot
+     * (`take(1)`), torn down with the runtime on crash.
      */
     const watchInbox = (execId: string, journal: Journal): Effect.Effect<void> =>
       Effect.gen(function* () {
-        const pendingNames = new Set(
-          [...journal.byOp.values()]
-            .filter((r): r is Extract<JournalRecord, { kind: "awakeable" }> => r.kind === "awakeable")
-            .map((r) => r.name),
+        const all = ops(journal)
+        const pendingNames = pipe(
+          all,
+          Array.filter(Schema.is(Awakeable)),
+          Array.map((a) => a.name),
         )
-        if (pendingNames.size === 0) return
-        yield* Effect.forkDetach(
+        if (pendingNames.length === 0) return
+        yield* Effect.forkChild(
           s2.read(inbox(execId), 0n, { follow: true }).pipe(
-            Stream.map((r) => decodeInbox(r.data)),
-            Stream.filter((m) => pendingNames.has(m.name)),
+            Stream.mapEffect((r) => decodeInbox(r.data)),
+            Stream.filter((m) => Array.contains(pendingNames, m.name)),
             Stream.take(1),
             Stream.runDrain,
             Effect.andThen(dispatch.poke(execId)),
@@ -220,12 +261,11 @@ export const make = <I, O, R>(
       execId: string,
       lease: string,
       journal: Journal,
-      seed: SeedData,
+      seed: Seed,
     ): Effect.Effect<TickOutcome, WfError> =>
       Effect.gen(function* () {
-        const opRef = yield* Ref.make(0)
-        const tailRef = yield* Ref.make(journal.tail)
-        const ctx = makeCtx({ s2, stream: wf(execId), execId, lease, journal, opRef, tailRef, wallNow })
+        const tailRef = yield* Ref.make(yield* s2.checkTail(wf(execId)))
+        const ctx = makeCtx({ s2, stream: wf(execId), execId, lease, journal, tailRef, wallNow })
         const exit = yield* config.handler(ctx, journal.input as I).pipe(
           Effect.provide(deterministicLayers(seed)),
           Effect.provide(config.handlerLayer),
@@ -234,7 +274,7 @@ export const make = <I, O, R>(
         if (Exit.isSuccess(exit)) {
           const tail = yield* Ref.get(tailRef)
           yield* appendUnderLease(execId, lease, tail, [
-            { kind: "completed", outcome: { _tag: "ok", value: exit.value } },
+            new Completed({ outcome: new Ok({ value: exit.value }) }),
           ])
           return "completed" as const
         }
@@ -251,25 +291,37 @@ export const make = <I, O, R>(
       Effect.gen(function* () {
         const lease = yield* acquireLease(wf(execId))
         const j0 = yield* foldStream(execId)
-        if (j0.status === "completed") return "completed" as const
-        const seed = j0.seed
-        if (seed === null) return "idle" as const
-        const journal = yield* reconcile(execId, lease, j0)
-        if (journal.status === "completed") return "completed" as const
-        return yield* runHandler(execId, lease, journal, seed)
+        if (Option.isSome(j0.completed)) return "completed" as const
+        return yield* Option.match(j0.seed, {
+          onNone: () => Effect.succeed("idle" as const),
+          onSome: (seed) =>
+            Effect.gen(function* () {
+              const journal = yield* reconcile(execId, lease, j0)
+              if (Option.isSome(journal.completed)) return "completed" as const
+              return yield* runHandler(execId, lease, journal, seed)
+            }),
+        })
       })
 
     const start = (execId: string, input: I): Effect.Effect<void, WfError> =>
       Effect.gen(function* () {
         const lease = yield* acquireLease(wf(execId))
-        const tail = yield* s2.checkTail(wf(execId))
-        if (tail === 0n) {
-          const seed: SeedData = {
-            epochMillis: wallNow(),
-            random: Math.floor(Math.random() * 0x100000000),
-          }
-          yield* appendUnderLease(execId, lease, 0n, [{ kind: "seed", seed, input }])
-        }
+        // Genesis = no seed yet. We can't key off the physical tail because
+        // acquireLease has already appended a fence command record.
+        const journal = yield* foldStream(execId)
+        yield* Option.match(journal.seed, {
+          onSome: () => Effect.void,
+          onNone: () =>
+            Effect.gen(function* () {
+              const seed = new Seed({
+                epochMillis: wallNow(),
+                random: Math.floor(Math.random() * 0x100000000),
+                input,
+              })
+              const tail = yield* s2.checkTail(wf(execId))
+              yield* appendUnderLease(execId, lease, tail, [seed])
+            }),
+        })
         yield* dispatch.poke(execId)
       })
 
@@ -277,32 +329,34 @@ export const make = <I, O, R>(
       execId: string,
       name: string,
       value: unknown,
-    ): Effect.Effect<void, S2Error> =>
-      Effect.catchTag(
-        s2.append(inbox(execId), [encodeInbox({ name, value })]),
-        "AppendCondFailed",
-        (e) => Effect.fail(new S2Error({ operation: "append", stream: inbox(execId), details: e.reason })),
-      ).pipe(Effect.andThen(dispatch.poke(execId)))
+    ): Effect.Effect<void, S2Error | CodecError> =>
+      Effect.gen(function* () {
+        const bytes = yield* encodeInbox(new InboxMessage({ name, value }))
+        yield* Effect.catchTag(s2.append(inbox(execId), [bytes]), "AppendCondFailed", (e) =>
+          Effect.fail(new S2Error({ operation: "append", stream: inbox(execId), details: e.reason })),
+        )
+        yield* dispatch.poke(execId)
+      })
 
     const awaitResult = (execId: string): Effect.Effect<O, WfError> =>
       Effect.gen(function* () {
         const head = yield* s2.read(wf(execId), 0n, { follow: true }).pipe(
           Stream.mapEffect((r) => decodeRecord(r.data)),
-          Stream.filter((rec) => rec.kind === "completed"),
+          Stream.filter(Schema.is(Completed)),
           Stream.runHead,
         )
-        if (Option.isNone(head)) {
-          return yield* Effect.fail(
-            new S2Error({ operation: "read", stream: wf(execId), details: "stream ended before completion" }),
-          )
-        }
-        const rec = head.value
-        if (rec.kind === "completed" && rec.outcome._tag === "ok") {
-          return rec.outcome.value as O
-        }
-        return yield* Effect.fail(
-          new StepFailure({ name: "<completed>", error: rec.kind === "completed" ? rec.outcome : rec }),
-        )
+        return yield* Option.match(head, {
+          onNone: () =>
+            Effect.fail(
+              new S2Error({ operation: "read", stream: wf(execId), details: "stream ended before completion" }),
+            ),
+          onSome: (rec) =>
+            Match.value(rec.outcome).pipe(
+              Match.tag("Ok", (o) => Effect.succeed(o.value as O)),
+              Match.tag("Err", (e) => Effect.fail(new StepFailure({ name: "<completed>", error: e.error }))),
+              Match.exhaustive,
+            ),
+        })
       })
 
     const boot = (execIds: ReadonlyArray<string>): Effect.Effect<void> =>
@@ -312,16 +366,15 @@ export const make = <I, O, R>(
       Effect.gen(function* () {
         const lease = yield* acquireLease(wf(execId))
         const journal = yield* foldStream(execId)
-        const cursor = journal.tail
-        const state: SnapshotState = {
-          records: [...journal.byOp.values()],
-          seed: journal.seed,
+        const cursor = yield* s2.checkTail(wf(execId))
+        const snap = new Snapshot({
+          covers: Number(cursor),
+          records: Array.fromIterable(HashMap.values(journal.byName)),
+          seed: Option.getOrElse(journal.seed, () => null),
           input: journal.input,
-        }
+        })
         // atomic-ish: snapshot record lands at `cursor`, then trim everything below it.
-        yield* appendUnderLease(execId, lease, cursor, [
-          { kind: "snapshot", covers: Number(cursor), state },
-        ])
+        yield* appendUnderLease(execId, lease, cursor, [snap])
         yield* s2.trim(wf(execId), cursor)
       })
 

@@ -67,7 +67,7 @@ export const makeOrderHandler = (
     Effect.gen(function* () {
       const charge = yield* ctx.run("charge", chargeCard(book, input.orderId, input.amount))
       yield* ctx.sleep("cooloff", cooloff)
-      const approved = yield* ctx.waitForEvent<boolean>("approval")
+      const approved = yield* ctx.awakeable<boolean>("approval")
       if (!approved) return { status: "rejected" } satisfies Receipt
       const receipt = yield* ctx.run("fulfill", fulfill(book, charge))
       return { status: "fulfilled", chargeId: receipt } satisfies Receipt

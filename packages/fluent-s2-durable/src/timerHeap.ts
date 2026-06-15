@@ -4,7 +4,7 @@ import { Dispatch } from "./dispatch.ts"
 export interface TimerEntry {
   readonly fireAt: number
   readonly execId: string
-  readonly op: number
+  readonly name: string
 }
 
 /**
@@ -32,7 +32,7 @@ const make: Effect.Effect<TimerHeapService, never, Dispatch> = Effect.gen(functi
     arm: (entry) =>
       Clock.currentTimeMillis.pipe(
         Effect.flatMap((now) =>
-          Effect.forkDetach(
+          Effect.forkChild(
             Effect.sleep(Duration.millis(Math.max(0, entry.fireAt - now))).pipe(
               Effect.andThen(dispatch.poke(entry.execId)),
             ),

@@ -5,6 +5,9 @@
     "@typespec/rest",
     "tslib"
   ],
+  "ignoreBinaries": [
+    "s2"
+  ],
   "workspaces": {
     "packages/fluent-acp-process": {
       "entry": [

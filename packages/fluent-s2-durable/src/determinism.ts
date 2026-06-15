@@ -1,5 +1,5 @@
 import { Clock, Effect, Layer, Random } from "effect"
-import type { SeedData } from "./record.ts"
+import type { Seed } from "./record.ts"
 
 /**
  * §5.4 — replay-deterministic `Clock`/`Random`, sourced from the journal `seed`.
@@ -21,7 +21,7 @@ const mulberry32 = (seedInt: number): (() => number) => {
   }
 }
 
-const deterministicClock = (seed: SeedData): Clock.Clock => {
+const deterministicClock = (seed: Seed): Clock.Clock => {
   const ms = seed.epochMillis
   const nanos = BigInt(ms) * 1_000_000n
   return {
@@ -33,7 +33,7 @@ const deterministicClock = (seed: SeedData): Clock.Clock => {
   }
 }
 
-const deterministicRandom = (seed: SeedData): typeof Random.Random.Service => {
+const deterministicRandom = (seed: Seed): typeof Random.Random.Service => {
   const next = mulberry32(seed.random)
   return {
     nextDoubleUnsafe: () => next(),
@@ -42,7 +42,7 @@ const deterministicRandom = (seed: SeedData): typeof Random.Random.Service => {
 }
 
 /** Clock + Random layers wired to a journal seed; provide around handler execution. */
-export const deterministicLayers = (seed: SeedData): Layer.Layer<never> =>
+export const deterministicLayers = (seed: Seed): Layer.Layer<never> =>
   Layer.merge(
     Layer.succeed(Clock.Clock, deterministicClock(seed)),
     Layer.succeed(Random.Random, deterministicRandom(seed)),

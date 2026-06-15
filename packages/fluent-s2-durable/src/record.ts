@@ -1,84 +1,117 @@
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { CodecError } from "./errors.ts"
 
 /**
- * The §4.3 record taxonomy. In a production build `kind`/`op`/`name` live in S2
- * record *headers* (arbitrary bytes) and the payload in the body; for the spike
- * we keep the whole record self-describing and lean on a JSON codec. The S2
- * service stays byte-oriented (matching the repo's `DurableStreamLog`); decoding
- * happens only in `fold`.
+ * §4.3 record taxonomy, modeled Schema-first. Each variant is a `TaggedClass`,
+ * so the wire codec is `Schema.fromJsonString` (no hand-rolled JSON) and all
+ * branching is exhaustive `Match.tag`.
+ *
+ * Entries are keyed by a stable **name**, not a positional index. Name-addressing
+ * is what lets durable ops compose under Effect's concurrency (`Effect.all`,
+ * `Effect.fork`, `Effect.race`) — the order fibers issue ops in no longer has to
+ * be deterministic, only the names do. (This dissolves SDD Q5 and is the property
+ * the user-facing combinator API is built on.) Names must be unique per
+ * invocation; reusing a name for a different op kind is a divergence.
+ *
+ * Step results / workflow input / event payloads are genuinely opaque here (the
+ * SDK is generic over them), so `Schema.Unknown` is the honest type.
  */
 
-export type StepOutcome =
-  | { readonly _tag: "ok"; readonly value: unknown }
-  | { readonly _tag: "error"; readonly error: unknown }
+export class Ok extends Schema.TaggedClass<Ok>("Ok")("Ok", {
+  value: Schema.Unknown,
+}) {}
 
-export type SeedData = {
+export class Err extends Schema.TaggedClass<Err>("Err")("Err", {
+  error: Schema.Unknown,
+}) {}
+
+export const StepOutcome = Schema.Union([Ok, Err])
+export type StepOutcome = typeof StepOutcome.Type
+
+export class Seed extends Schema.TaggedClass<Seed>("Seed")("Seed", {
   /** base wall-clock for the deterministic Clock */
-  readonly epochMillis: number
+  epochMillis: Schema.Number,
   /** seed for the deterministic Random PRNG */
-  readonly random: number
-}
+  random: Schema.Number,
+  /** genesis input for the workflow handler */
+  input: Schema.Unknown,
+}) {}
 
-/** A folded checkpoint: the op-bearing records (+seed) needed to resume from head. */
-export type SnapshotState = {
-  readonly records: ReadonlyArray<JournalRecord>
-  readonly seed: SeedData | null
-  readonly input: unknown
-}
+export class Step extends Schema.TaggedClass<Step>("Step")("Step", {
+  name: Schema.String,
+  outcome: StepOutcome,
+}) {}
 
-export type JournalRecord =
-  | { readonly kind: "lease-fenced"; readonly epoch: string }
-  | { readonly kind: "seed"; readonly seed: SeedData; readonly input: unknown }
-  | { readonly kind: "step"; readonly op: number; readonly name: string; readonly outcome: StepOutcome }
-  | { readonly kind: "timer-set"; readonly op: number; readonly name: string; readonly fireAt: number }
-  | { readonly kind: "timer-fired"; readonly op: number }
-  | { readonly kind: "awakeable"; readonly op: number; readonly name: string; readonly id: string }
-  | { readonly kind: "awakeable-done"; readonly op: number; readonly value: unknown }
-  | { readonly kind: "snapshot"; readonly covers: number; readonly state: SnapshotState }
-  | { readonly kind: "completed"; readonly outcome: StepOutcome }
+export class TimerSet extends Schema.TaggedClass<TimerSet>("TimerSet")("TimerSet", {
+  name: Schema.String,
+  fireAt: Schema.Number,
+}) {}
 
-export type RecordKind = JournalRecord["kind"]
+export class TimerFired extends Schema.TaggedClass<TimerFired>("TimerFired")("TimerFired", {
+  name: Schema.String,
+}) {}
 
-/** The op-index a record is keyed by in the journal, if any. */
-export const recordOp = (rec: JournalRecord): number | null => {
-  switch (rec.kind) {
-    case "step":
-    case "timer-set":
-    case "timer-fired":
-    case "awakeable":
-    case "awakeable-done":
-      return rec.op
-    default:
-      return null
-  }
-}
+export class Awakeable extends Schema.TaggedClass<Awakeable>("Awakeable")("Awakeable", {
+  name: Schema.String,
+}) {}
 
-/** A short `(kind,name)` signature used for divergence detection (AC-2). */
-export const recordSignature = (rec: JournalRecord): string => {
-  switch (rec.kind) {
-    case "step":
-    case "timer-set":
-    case "awakeable":
-      return `${rec.kind}:${rec.name}`
-    default:
-      return rec.kind
-  }
-}
+export class AwakeableDone extends Schema.TaggedClass<AwakeableDone>("AwakeableDone")("AwakeableDone", {
+  name: Schema.String,
+  value: Schema.Unknown,
+}) {}
 
+/** Records keyed by name in `byName` (a snapshot never nests another snapshot). */
+export const OpRecord = Schema.Union([Step, TimerSet, TimerFired, Awakeable, AwakeableDone])
+export type OpRecord = typeof OpRecord.Type
+
+export class Snapshot extends Schema.TaggedClass<Snapshot>("Snapshot")("Snapshot", {
+  covers: Schema.Number,
+  records: Schema.Array(OpRecord),
+  seed: Schema.NullOr(Seed),
+  input: Schema.Unknown,
+}) {}
+
+export class Completed extends Schema.TaggedClass<Completed>("Completed")("Completed", {
+  outcome: StepOutcome,
+}) {}
+
+export const JournalRecord = Schema.Union([
+  Seed,
+  Step,
+  TimerSet,
+  TimerFired,
+  Awakeable,
+  AwakeableDone,
+  Snapshot,
+  Completed,
+])
+export type JournalRecord = typeof JournalRecord.Type
+
+/** The name an op-record is keyed by. */
+export const recordKey = (rec: OpRecord): string => rec.name
+
+/** The kind signature used for divergence detection (AC-2): same name, different tag. */
+export const recordSignature = (rec: JournalRecord): string => rec._tag
+
+const codec = Schema.fromJsonString(JournalRecord)
+const decodeJson = Schema.decodeEffect(codec)
+const encodeJson = Schema.encodeEffect(codec)
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
-export const encodeRecord = (rec: JournalRecord): Uint8Array =>
-  encoder.encode(JSON.stringify(rec))
+const toCodecError = (cause: unknown): CodecError =>
+  new CodecError({ details: "journal record codec failure", cause })
+
+export const encodeRecord = (rec: JournalRecord): Effect.Effect<Uint8Array, CodecError> =>
+  encodeJson(rec).pipe(
+    Effect.map((json) => encoder.encode(json)),
+    Effect.mapError(toCodecError),
+  )
 
 export const encodeRecords = (
   recs: ReadonlyArray<JournalRecord>,
-): ReadonlyArray<Uint8Array> => recs.map(encodeRecord)
+): Effect.Effect<ReadonlyArray<Uint8Array>, CodecError> => Effect.forEach(recs, encodeRecord)
 
 export const decodeRecord = (bytes: Uint8Array): Effect.Effect<JournalRecord, CodecError> =>
-  Effect.try({
-    try: () => JSON.parse(decoder.decode(bytes)) as JournalRecord,
-    catch: (cause) =>
-      new CodecError({ details: "failed to decode journal record", cause }),
-  })
+  decodeJson(decoder.decode(bytes)).pipe(Effect.mapError(toCodecError))
+

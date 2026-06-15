@@ -40,14 +40,14 @@ export class CodecError extends Data.TaggedError("CodecError")<
 > {}
 
 /**
- * Replay divergence: the handler issued an op at index `op` whose
- * `(kind,name)` does not match what the journal recorded there. Fail loudly —
- * never silently corrupt (AC-2).
+ * Replay divergence: the handler issued an entry named `op` whose kind does not
+ * match what the journal recorded under that name. Fail loudly — never silently
+ * corrupt (AC-2).
  */
 export class DivergenceError extends Data.TaggedError("DivergenceError")<
   Readonly<{
     readonly execId: string
-    readonly op: number
+    readonly op: string
     readonly expected: string
     readonly actual: string
   }>

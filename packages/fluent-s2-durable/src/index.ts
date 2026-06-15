@@ -1,7 +1,8 @@
 export * from "./errors.ts"
 export * from "./record.ts"
 export { S2, type S2Service, type S2Record, type AppendOptions } from "./s2.ts"
-export * as S2InMemory from "./s2InMemory.ts"
+export * as S2Live from "./s2Live.ts"
+export type { S2LiteConfig } from "./s2Live.ts"
 export { fold, foldRecords, emptyJournal, type Journal } from "./journal.ts"
 export { deterministicLayers } from "./determinism.ts"
 export {
