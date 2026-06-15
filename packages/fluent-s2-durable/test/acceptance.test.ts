@@ -268,25 +268,35 @@ layer(S2LiteLive, { excludeTestServices: true, timeout: Duration.seconds(30) })(
         const s2 = yield* Effect.service(S2)
         const enc = (s: string): Uint8Array => new TextEncoder().encode(s)
         const stream = "wf/fence1"
-        // fence + trim are real records that consume seq numbers, so positions are
-        // read from checkTail, never hardcoded.
-        yield* s2.fence(stream, "00000000000000000010")
-        const seedAt = yield* s2.checkTail(stream)
-        yield* s2.append(stream, [S2Write.Record({ body: enc("seed") })], {
-          fencingToken: "00000000000000000010",
-          matchSeqNum: seedAt,
-        })
-        // a newer worker takes the lease
-        yield* s2.fence(stream, "00000000000000000020")
+        // The lease is acquired as a conditional fence append; fence/trim are real
+        // records that consume seq numbers, so positions come from checkTail.
+        const fence = (token: string) =>
+          Effect.gen(function* () {
+            const at = yield* s2.checkTail(stream)
+            yield* s2.append(stream, [S2Write.Fence({ token })], { matchSeqNum: at })
+          })
+        const record = (token: string, body: string) =>
+          Effect.gen(function* () {
+            const at = yield* s2.checkTail(stream)
+            return yield* s2.append(stream, [S2Write.Record({ body: enc(body) })], {
+              fencingToken: token,
+              matchSeqNum: at,
+            })
+          })
+        yield* fence("ownerA")
+        yield* record("ownerA", "seed")
+        // a newer worker takes over the lease
+        yield* fence("ownerB")
+        // the stale owner A cannot commit; owner B can, at the same position
         const contested = yield* s2.checkTail(stream)
         const zombie = yield* s2
           .append(stream, [S2Write.Record({ body: enc("zombie") })], {
-            fencingToken: "00000000000000000010",
+            fencingToken: "ownerA",
             matchSeqNum: contested,
           })
           .pipe(Effect.exit)
         const owner = yield* s2.append(stream, [S2Write.Record({ body: enc("owner") })], {
-          fencingToken: "00000000000000000020",
+          fencingToken: "ownerB",
           matchSeqNum: contested,
         })
 

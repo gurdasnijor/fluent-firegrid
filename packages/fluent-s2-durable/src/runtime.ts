@@ -8,6 +8,7 @@ import {
   type Layer,
   Match,
   Option,
+  Predicate,
   Ref,
   Result,
   Schema,
@@ -94,31 +95,41 @@ export const make = <I, O, R>(
     const timers = yield* Effect.service(TimerHeap)
     // The host's *live* clock, captured before any deterministic Clock is provided
     // to a handler. `wallNow` stamps durable timers (journaled once, never
-    // replayed) and seeds the epoch — real time, not the frozen replay clock.
+    // replayed) — real time, not the frozen replay clock.
     const hostClock = yield* Effect.service(Clock.Clock)
     const wallNow = (): number => hostClock.currentTimeMillisUnsafe()
-    const epochRef = yield* Ref.make(wallNow())
+    // Per-worker token namespace + counter, so each lease token is unique. It does
+    // NOT need to be monotonic vs the journal: the *acquisition* is a conditional
+    // fence append (below), so S2's match_seq_num decides the race, not the token.
+    const workerId = Math.floor(Math.random() * 0xffffffff).toString(36)
+    const tokenRef = yield* Ref.make(0)
 
     /**
-     * Acquire a lease strictly greater than the stream's current fence. Seeding
-     * the epoch from the wall clock alone is *not* enough: two workers started in
-     * the same millisecond (a fast restart, or deploy overlap) collide, and a
-     * dead worker's higher token would lock out the newcomer. Reading the
-     * journal's fence makes lease issuance monotonic across restarts — the journal
-     * itself is the coordination point (Restate leadership ≈ Bifrost sealing).
+     * Acquire the lease as a **conditional fence append** at the current tail. The
+     * fence token is just an owner-id; whoever wins the `match_seq_num` race owns
+     * the stream, and a superseded writer's later appends fail `fence-mismatch`.
+     * (This is the conditional-append-is-the-lock pattern — no epoch arithmetic.)
+     *
+     * `position-taken` here means the tail moved between checkTail and the fence —
+     * a *transient* race (e.g. a crashed worker's in-flight append still landing),
+     * not a lost lease — so re-read and retry. Only persistent contention (another
+     * live owner) exhausts the retries and surfaces as `LostLeaseError`.
      */
-    const acquireLease = (stream: string): Effect.Effect<string, S2Error> =>
+    const acquireLease = (execId: string): Effect.Effect<string, S2Error | LostLeaseError> =>
       Effect.gen(function* () {
-        const current = yield* s2.checkFence(stream)
-        const currentEpoch = Option.match(Option.fromNullOr(current), {
-          onNone: () => 0,
-          onSome: (token) => Number(token),
-        })
-        const local = yield* Ref.getAndUpdate(epochRef, (n) => n + 1)
-        const epoch = Math.max(local, currentEpoch + 1)
-        const lease = String(epoch).padStart(20, "0")
-        yield* s2.fence(stream, lease)
-        return lease
+        const n = yield* Ref.getAndUpdate(tokenRef, (x) => x + 1)
+        const token = `${workerId}-${n}`
+        const fenceAtTail = Effect.flatMap(s2.checkTail(wf(execId)), (tail) =>
+          s2.append(wf(execId), [S2Write.Fence({ token })], { matchSeqNum: tail }),
+        )
+        yield* fenceAtTail.pipe(
+          Effect.retry({
+            while: (e) => Predicate.isTagged(e, "AppendCondFailed") && e.reason === "position-taken",
+            times: 8,
+          }),
+          Effect.catchTag("AppendCondFailed", () => Effect.fail(new LostLeaseError({ execId, lease: token }))),
+        )
+        return token
       })
 
     const foldStream = (execId: string): Effect.Effect<Journal, WfError> =>
@@ -299,7 +310,7 @@ export const make = <I, O, R>(
 
     const tick = (execId: string): Effect.Effect<TickOutcome, WfError> =>
       Effect.gen(function* () {
-        const lease = yield* acquireLease(wf(execId))
+        const lease = yield* acquireLease(execId)
         const j0 = yield* foldStream(execId)
         if (Option.isSome(j0.completed)) return "completed" as const
         return yield* Option.match(j0.seed, {
@@ -315,7 +326,7 @@ export const make = <I, O, R>(
 
     const start = (execId: string, input: I): Effect.Effect<void, WfError> =>
       Effect.gen(function* () {
-        const lease = yield* acquireLease(wf(execId))
+        const lease = yield* acquireLease(execId)
         // Genesis = no seed yet. We can't key off the physical tail because
         // acquireLease has already appended a fence command record.
         const journal = yield* foldStream(execId)
@@ -376,7 +387,7 @@ export const make = <I, O, R>(
 
     const snapshot = (execId: string): Effect.Effect<void, WfError> =>
       Effect.gen(function* () {
-        const lease = yield* acquireLease(wf(execId))
+        const lease = yield* acquireLease(execId)
         const journal = yield* foldStream(execId)
         const cursor = yield* s2.checkTail(wf(execId))
         const snap = new Snapshot({
