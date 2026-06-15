@@ -1,0 +1,30 @@
+export {
+  AppendInput,
+  AppendRecord,
+  BatchTransform,
+  Producer,
+  S2,
+  S2Environment,
+  S2Error as SdkS2Error,
+  SeqNumMismatchError,
+  FencingTokenMismatchError,
+  RangeNotSatisfiableError,
+} from "@s2-dev/streamstore"
+
+export type {
+  AppendAck,
+  AppendSessionOptions,
+  AppendInput as SdkAppendInput,
+  AppendRecord as SdkAppendRecord,
+  AppendRetryPolicy,
+  BatchTransformOptions,
+  BytesAppendRecord,
+  ReadInput as ReadOptions,
+  ReadRecord,
+  RetryConfig as S2RetryConfig,
+  S2ClientOptions,
+  StreamInfo,
+  StreamOptions,
+  StringAppendRecord,
+  TailResponse as Tail,
+} from "@s2-dev/streamstore"

@@ -1,0 +1,43 @@
+{
+  "name": "effect-s2",
+  "version": "0.0.0",
+  "description": "Effect-native facade for S2 durable streams.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./testing": {
+      "types": "./src/TestS2.ts",
+      "default": "./src/TestS2.ts"
+    }
+  },
+  "files": [
+    "src",
+    "examples",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "diagnostics": "effect-language-service diagnostics --project tsconfig.json --severity error",
+    "test": "vitest run --root ../.. --project effect-s2",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@s2-dev/streamstore": "0.24.1",
+    "effect": "4.0.0-beta.78"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "4.0.0-beta.78",
+    "@effect/vitest": "4.0.0-beta.78",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.0"
+  }
+}

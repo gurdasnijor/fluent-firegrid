@@ -120,6 +120,28 @@ importers:
         specifier: ^5.0.0
         version: 5.9.3
 
+  packages/effect-s2:
+    dependencies:
+      '@s2-dev/streamstore':
+        specifier: 0.24.1
+        version: 0.24.1
+      effect:
+        specifier: 4.0.0-beta.78
+        version: 4.0.0-beta.78
+    devDependencies:
+      '@effect/platform-node':
+        specifier: 4.0.0-beta.78
+        version: 4.0.0-beta.78(effect@4.0.0-beta.78)(ioredis@5.11.1)
+      '@effect/vitest':
+        specifier: 4.0.0-beta.78
+        version: 4.0.0-beta.78(effect@4.0.0-beta.78)(vitest@3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0))
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
+
   packages/firelab:
     dependencies:
       '@agentclientprotocol/sdk':
@@ -392,6 +414,12 @@ packages:
     peerDependencies:
       effect: ^4.0.0-beta.78
       ioredis: ^5.7.0
+
+  '@effect/vitest@4.0.0-beta.78':
+    resolution: {integrity: sha512-5KQsQYrQ/o7mfOVAxRtNnfD9M0W4OI6yQd0n/m2N7OOLxTdX4FwN4s/X4obykBC7ZEwH+bzMrFJiB4pq9lrQKQ==}
+    peerDependencies:
+      effect: ^4.0.0-beta.78
+      vitest: ^3.0.0 || ^4.0.0
 
   '@emnapi/core@1.10.0':
     resolution: {integrity: sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==}
@@ -1442,6 +1470,9 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@protobuf-ts/runtime@2.11.1':
+    resolution: {integrity: sha512-KuDaT1IfHkugM2pyz+FwiY80ejWrkH1pAtOBOZFuR6SXEFTsnb/jiQWQ1rCIrcKx2BtyxnxW6BWwsVSA/Ie+WQ==}
+
   '@quansync/fs@1.0.0':
     resolution: {integrity: sha512-4TJ3DFtlf1L5LDMaM6CanJ/0lckGNtJcMjQ1NAV6zDmA0tEHKZtxNKin8EgPaVX1YzljbxckyT2tJrpQKAtngQ==}
 
@@ -1629,6 +1660,9 @@ packages:
     resolution: {integrity: sha512-X+zaP2x+j4RXGfbp/seSoRHWnPxzApilDszisZxbYH5C/jTxFhCtDNdPGZb9lJyYPs24wGxruPF7Y+sIXt9Gzw==}
     cpu: [x64]
     os: [win32]
+
+  '@s2-dev/streamstore@0.24.1':
+    resolution: {integrity: sha512-TjKPgyL3BKCB5LciUDbqEs5CoFlG5cGedsOux00oHvaQCrfoQlGnQoTlFx3x+2K6bhbk9KkCwJBRyxbmrEXT+g==}
 
   '@scalar/helpers@0.8.2':
     resolution: {integrity: sha512-qNbqUjSB3S4Gr4A0oANcm5G1Ip+EqBxICYKhe9YzmnaBpbmW6shxqpiivApTvvuDf+uIhR3uMwWyVQbYcGLsxA==}
@@ -4205,6 +4239,11 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
+  '@effect/vitest@4.0.0-beta.78(effect@4.0.0-beta.78)(vitest@3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0))':
+    dependencies:
+      effect: 4.0.0-beta.78
+      vitest: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
+
   '@emnapi/core@1.10.0':
     dependencies:
       '@emnapi/wasi-threads': 1.2.1
@@ -4918,6 +4957,8 @@ snapshots:
   '@oxc-transform/binding-win32-x64-msvc@0.67.0':
     optional: true
 
+  '@protobuf-ts/runtime@2.11.1': {}
+
   '@quansync/fs@1.0.0':
     dependencies:
       quansync: 1.0.0
@@ -5034,6 +5075,13 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.61.1':
     optional: true
+
+  '@s2-dev/streamstore@0.24.1':
+    dependencies:
+      '@protobuf-ts/runtime': 2.11.1
+      debug: 4.4.3
+    transitivePeerDependencies:
+      - supports-color
 
   '@scalar/helpers@0.8.2': {}
 
