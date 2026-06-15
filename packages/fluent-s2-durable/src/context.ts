@@ -21,7 +21,7 @@ import {
   type OpRecord,
   type StepOutcome,
 } from "./record.ts"
-import type { S2Service } from "./s2.ts"
+import { S2Write, type S2Service } from "./s2.ts"
 
 /**
  * §6.3 — the suspend signal. Raised as a *defect* (`Effect.die`) so user-level
@@ -117,7 +117,11 @@ const appendLive = (
     const tail = yield* Ref.get(deps.tailRef)
     const bytes = yield* encodeRecords(recs)
     const res = yield* Effect.catchTag(
-      deps.s2.append(deps.stream, bytes, { fencingToken: deps.lease, matchSeqNum: tail }),
+      deps.s2.append(
+        deps.stream,
+        bytes.map((body) => S2Write.Record({ body })),
+        { fencingToken: deps.lease, matchSeqNum: tail },
+      ),
       "AppendCondFailed",
       (e) =>
         Match.value(e.reason).pipe(

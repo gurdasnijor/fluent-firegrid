@@ -2,6 +2,7 @@ import { Array, Effect, Fiber, Latch, Layer, Match, Option, Ref } from "effect"
 import {
   DispatchLayer,
   S2,
+  S2Write,
   TimerHeapLayer,
   decodeRecord,
   makeWorker,
@@ -53,12 +54,12 @@ export const makeFaultyS2: Effect.Effect<FaultyS2, never, S2> = Effect.gen(funct
   const latch = yield* Latch.make(false)
 
   const firstRecord = (
-    records: ReadonlyArray<Uint8Array>,
+    writes: ReadonlyArray<S2Write>,
   ): Effect.Effect<Option.Option<JournalRecord>> =>
-    Option.match(Array.head(records), {
+    Option.match(Array.findFirst(writes, S2Write.$is("Record")), {
       onNone: () => Effect.succeed(Option.none<JournalRecord>()),
-      onSome: (bytes) =>
-        decodeRecord(bytes).pipe(
+      onSome: (w) =>
+        decodeRecord(w.body).pipe(
           Effect.map(Option.some),
           Effect.orElseSucceed(() => Option.none<JournalRecord>()),
         ),

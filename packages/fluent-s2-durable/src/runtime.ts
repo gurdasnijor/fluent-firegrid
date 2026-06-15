@@ -28,11 +28,12 @@ import {
   TimerFired,
   TimerSet,
   decodeRecord,
+  encodeRecord,
   encodeRecords,
   type JournalRecord,
 } from "./record.ts"
 import { Dispatch } from "./dispatch.ts"
-import { S2 } from "./s2.ts"
+import { S2, S2Write } from "./s2.ts"
 import { TimerHeap } from "./timerHeap.ts"
 
 export type TickOutcome = "idle" | "suspended" | "completed"
@@ -123,33 +124,42 @@ export const make = <I, O, R>(
     const foldStream = (execId: string): Effect.Effect<Journal, WfError> =>
       fold(s2.read(wf(execId), 0n))
 
+    const commitWrites = (
+      execId: string,
+      lease: string,
+      matchSeqNum: bigint,
+      writes: ReadonlyArray<S2Write>,
+    ): Effect.Effect<{ readonly tail: bigint }, LostLeaseError | S2Error> =>
+      Effect.catchTag(
+        s2.append(wf(execId), writes, { fencingToken: lease, matchSeqNum }),
+        "AppendCondFailed",
+        (e) =>
+          Effect.fail(
+            Match.value(e.reason).pipe(
+              Match.when("fence-mismatch", () => new LostLeaseError({ execId, lease })),
+              Match.orElse(
+                () =>
+                  new S2Error({
+                    operation: "append",
+                    stream: wf(execId),
+                    details: `unexpected position-taken at ${matchSeqNum} (tail=${e.actualSeqNum})`,
+                  }),
+              ),
+            ),
+          ),
+      )
+
     const appendUnderLease = (
       execId: string,
       lease: string,
       matchSeqNum: bigint,
       recs: ReadonlyArray<JournalRecord>,
     ): Effect.Effect<{ readonly tail: bigint }, LostLeaseError | S2Error | CodecError> =>
-      Effect.gen(function* () {
-        const bytes = yield* encodeRecords(recs)
-        return yield* Effect.catchTag(
-          s2.append(wf(execId), bytes, { fencingToken: lease, matchSeqNum }),
-          "AppendCondFailed",
-          (e) =>
-            Effect.fail(
-              Match.value(e.reason).pipe(
-                Match.when("fence-mismatch", () => new LostLeaseError({ execId, lease })),
-                Match.orElse(
-                  () =>
-                    new S2Error({
-                      operation: "append",
-                      stream: wf(execId),
-                      details: `unexpected position-taken at ${matchSeqNum} (tail=${e.actualSeqNum})`,
-                    }),
-                ),
-              ),
-            ),
-        )
-      })
+      encodeRecords(recs).pipe(
+        Effect.flatMap((bytes) =>
+          commitWrites(execId, lease, matchSeqNum, bytes.map((body) => S2Write.Record({ body }))),
+        ),
+      )
 
     const readInbox = (execId: string): Effect.Effect<ReadonlyArray<InboxMessage>, WfError> =>
       s2.read(inbox(execId), 0n).pipe(Stream.mapEffect((r) => decodeInbox(r.data)), Stream.runCollect)
@@ -332,8 +342,10 @@ export const make = <I, O, R>(
     ): Effect.Effect<void, S2Error | CodecError> =>
       Effect.gen(function* () {
         const bytes = yield* encodeInbox(new InboxMessage({ name, value }))
-        yield* Effect.catchTag(s2.append(inbox(execId), [bytes]), "AppendCondFailed", (e) =>
-          Effect.fail(new S2Error({ operation: "append", stream: inbox(execId), details: e.reason })),
+        yield* Effect.catchTag(
+          s2.append(inbox(execId), [S2Write.Record({ body: bytes })]),
+          "AppendCondFailed",
+          (e) => Effect.fail(new S2Error({ operation: "append", stream: inbox(execId), details: e.reason })),
         )
         yield* dispatch.poke(execId)
       })
@@ -373,9 +385,15 @@ export const make = <I, O, R>(
           seed: Option.getOrElse(journal.seed, () => null),
           input: journal.input,
         })
-        // atomic-ish: snapshot record lands at `cursor`, then trim everything below it.
-        yield* appendUnderLease(execId, lease, cursor, [snap])
-        yield* s2.trim(wf(execId), cursor)
+        const snapBytes = yield* encodeRecord(snap)
+        // S2's single-record snapshot recipe: one atomic batch at match_seq_num=cursor
+        // — a trim command (head advances to the snapshot) and the snapshot record,
+        // durable together. Trim lands at `cursor`, snapshot at `cursor+1`; trimming
+        // below `cursor+1` leaves the snapshot as the new head.
+        yield* commitWrites(execId, lease, cursor, [
+          S2Write.Trim({ upTo: cursor + 1n }),
+          S2Write.Record({ body: snapBytes }),
+        ])
       })
 
     // Stay alive across a bad tick (fold the journal, try again) but let

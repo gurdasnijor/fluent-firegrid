@@ -8,9 +8,9 @@ import {
   type ReadRecord,
   type S2Stream,
 } from "@s2-dev/streamstore"
-import { Effect, Layer, Stream } from "effect"
+import { Array, Effect, Layer, Option, Stream } from "effect"
 import { AppendCondFailed, S2Error } from "./errors.ts"
-import { S2 as S2Tag, type S2Record, type S2Service } from "./s2.ts"
+import { S2 as S2Tag, S2Write, type S2Record, type S2Service } from "./s2.ts"
 
 /**
  * The real `S2` Layer — a thin wrapper over the S2 TS SDK, validated against a
@@ -81,6 +81,16 @@ const mapAppendError = (
         })
       : sdkError("append", stream)(e)
 
+const FENCE_HEADER = "fence"
+const isFenceRecord = (r: ReadRecord<"bytes">): boolean =>
+  r.headers.some(([k, v]) => dec.decode(k) === "" && dec.decode(v) === FENCE_HEADER)
+
+const toSdkRecord = S2Write.$match({
+  Record: ({ body }) =>
+    AppendRecord.bytes({ body, headers: [[enc.encode(MARKER_KEY), enc.encode(MARKER_VALUE)]] }),
+  Trim: ({ upTo }) => AppendRecord.trim(Number(upTo)),
+})
+
 const makeService = (handle: (stream: string) => S2Stream): S2Service => {
   const drain = (stream: string, from: bigint): Effect.Effect<ReadonlyArray<ReadRecord<"bytes">>, S2Error> =>
     Effect.tryPromise({
@@ -94,20 +104,29 @@ const makeService = (handle: (stream: string) => S2Stream): S2Service => {
       ),
     )
 
+  // Read the last `count` records (cheap tail-offset read — single-digit ms),
+  // falling back to a full scan only if the answer isn't in the tail window.
+  const readTail = (stream: string, count: number): Effect.Effect<ReadonlyArray<ReadRecord<"bytes">>, S2Error> =>
+    Effect.tryPromise({
+      try: () => handle(stream).read({ start: { from: { tailOffset: count } } }, { as: "bytes" }),
+      catch: (e) => (isNotFound(e) ? null : sdkError("read", stream)(e)),
+    }).pipe(
+      Effect.map((batch) => batch.records),
+      Effect.catchIf((e): e is null => e === null, () => Effect.succeed([] as ReadonlyArray<ReadRecord<"bytes">>)),
+    )
+
+  const latestFence = (records: ReadonlyArray<ReadRecord<"bytes">>): Option.Option<string> =>
+    Option.map(Array.findLast(records, isFenceRecord), (r) => dec.decode(r.body))
+
   return {
-    append: (stream, records, opts) =>
+    append: (stream, writes, opts) =>
       Effect.tryPromise({
         try: () =>
           handle(stream).append(
-            AppendInput.create(
-              records.map((body) =>
-                AppendRecord.bytes({ body, headers: [[enc.encode(MARKER_KEY), enc.encode(MARKER_VALUE)]] }),
-              ),
-              {
-                ...(opts?.matchSeqNum !== undefined ? { matchSeqNum: Number(opts.matchSeqNum) } : {}),
-                ...(opts?.fencingToken !== undefined ? { fencingToken: opts.fencingToken } : {}),
-              },
-            ),
+            AppendInput.create(writes.map(toSdkRecord), {
+              ...(opts?.matchSeqNum !== undefined ? { matchSeqNum: Number(opts.matchSeqNum) } : {}),
+              ...(opts?.fencingToken !== undefined ? { fencingToken: opts.fencingToken } : {}),
+            }),
           ),
         catch: (e) => mapAppendError(e, stream, opts),
       }).pipe(Effect.map((ack) => ({ tail: BigInt(ack.tail.seqNum) }))),
@@ -142,27 +161,25 @@ const makeService = (handle: (stream: string) => S2Stream): S2Service => {
       ),
 
     checkFence: (stream) =>
-      drain(stream, 0n).pipe(
-        Effect.map((records) => {
-          // fence command records: empty header key, value "fence", body = token.
-          const fences = records.filter((r) =>
-            r.headers.some(([k, v]) => dec.decode(k) === "" && dec.decode(v) === "fence"),
-          )
-          const last = fences[fences.length - 1]
-          return last === undefined ? null : dec.decode(last.body)
-        }),
+      // The current fence is the latest fence record, appended at lease time near
+      // the tail — so a tail-offset read finds it cheaply; only fall back to a full
+      // scan if the tail window didn't contain one.
+      readTail(stream, 256).pipe(
+        Effect.flatMap((tail) =>
+          Option.match(latestFence(tail), {
+            onSome: (token) => Effect.succeed<string | null>(token),
+            onNone: () =>
+              drain(stream, 0n).pipe(
+                Effect.map((all) => Option.getOrElse(latestFence(all), () => null)),
+              ),
+          }),
+        ),
       ),
 
     fence: (stream, token) =>
       Effect.tryPromise({
         try: () => handle(stream).append(AppendInput.create([AppendRecord.fence(token)])),
         catch: sdkError("fence", stream),
-      }).pipe(Effect.asVoid),
-
-    trim: (stream, upTo) =>
-      Effect.tryPromise({
-        try: () => handle(stream).append(AppendInput.create([AppendRecord.trim(Number(upTo))])),
-        catch: sdkError("trim", stream),
       }).pipe(Effect.asVoid),
   }
 }

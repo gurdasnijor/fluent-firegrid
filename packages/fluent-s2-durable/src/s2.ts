@@ -1,4 +1,4 @@
-import { Context, type Effect, type Stream } from "effect"
+import { Context, Data, type Effect, type Stream } from "effect"
 import type { AppendCondFailed, S2Error } from "./errors.ts"
 
 /** A record as read back from S2: the S2-assigned `seqNum` plus opaque bytes. */
@@ -7,25 +7,38 @@ export interface S2Record {
   readonly data: Uint8Array
 }
 
+/**
+ * One entry in an append batch. Faithful to S2: a batch is a list of records,
+ * each of which is either a data record or a *command* (here, `trim`; `fence` has
+ * its own method as it is set-once-per-lease). Modelling the batch this way lets
+ * the snapshot-and-follow recipe append a `trim` command and the snapshot record
+ * **atomically** in one batch, as the S2 docs require.
+ */
+export type S2Write = Data.TaggedEnum<{
+  Record: { readonly body: Uint8Array }
+  Trim: { readonly upTo: bigint }
+}>
+export const S2Write = Data.taggedEnum<S2Write>()
+
 export interface AppendOptions {
   /** The executor lease. Presented on every journal write (coarse zombie-stopper). */
   readonly fencingToken?: string
   /**
    * Exactly-once guard: the append commits only if S2's next assignable seq_num
-   * equals this. This is the load-bearing precondition (Q1 fallback path).
+   * equals this — S2's optimistic concurrency control, the load-bearing precondition.
    */
   readonly matchSeqNum?: bigint
 }
 
 /**
- * §5.1 — thin Layer over the S2 TS SDK (here, the in-memory `s2-lite`
- * emulation). The two concurrency primitives are surfaced as append options;
- * everything else is read/observe.
+ * §5.1 — thin Layer over the S2 TS SDK. The two concurrency primitives are
+ * surfaced as append options; everything else is read/observe. This is the
+ * "Bifrost" seam (S2 is the log).
  */
 export interface S2Service {
   readonly append: (
     stream: string,
-    records: ReadonlyArray<Uint8Array>,
+    writes: ReadonlyArray<S2Write>,
     opts?: AppendOptions,
   ) => Effect.Effect<{ readonly tail: bigint }, AppendCondFailed | S2Error>
 
@@ -41,11 +54,8 @@ export interface S2Service {
   /** The fencing token S2 currently holds for the stream (null if never fenced). */
   readonly checkFence: (stream: string) => Effect.Effect<string | null, S2Error>
 
-  /** Issue a fence command record; the highest token presented wins thereafter. */
+  /** Issue a fence command record. Cooperative, last-write-wins (S2 does not enforce monotonicity). */
   readonly fence: (stream: string, token: string) => Effect.Effect<void, S2Error>
-
-  /** Trim everything strictly below `upTo`; the record at `upTo` becomes the new head. */
-  readonly trim: (stream: string, upTo: bigint) => Effect.Effect<void, S2Error>
 }
 
 export class S2 extends Context.Service<S2, S2Service>()(

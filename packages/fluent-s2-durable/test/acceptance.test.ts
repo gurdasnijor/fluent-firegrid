@@ -17,6 +17,7 @@ import { expect, layer } from "@effect/vitest"
 import {
   Awakeable,
   S2,
+  S2Write,
   Snapshot,
   Step,
   TimerFired,
@@ -271,14 +272,20 @@ layer(S2LiteLive, { excludeTestServices: true, timeout: Duration.seconds(30) })(
         // read from checkTail, never hardcoded.
         yield* s2.fence(stream, "00000000000000000010")
         const seedAt = yield* s2.checkTail(stream)
-        yield* s2.append(stream, [enc("seed")], { fencingToken: "00000000000000000010", matchSeqNum: seedAt })
+        yield* s2.append(stream, [S2Write.Record({ body: enc("seed") })], {
+          fencingToken: "00000000000000000010",
+          matchSeqNum: seedAt,
+        })
         // a newer worker takes the lease
         yield* s2.fence(stream, "00000000000000000020")
         const contested = yield* s2.checkTail(stream)
         const zombie = yield* s2
-          .append(stream, [enc("zombie")], { fencingToken: "00000000000000000010", matchSeqNum: contested })
+          .append(stream, [S2Write.Record({ body: enc("zombie") })], {
+            fencingToken: "00000000000000000010",
+            matchSeqNum: contested,
+          })
           .pipe(Effect.exit)
-        const owner = yield* s2.append(stream, [enc("owner")], {
+        const owner = yield* s2.append(stream, [S2Write.Record({ body: enc("owner") })], {
           fencingToken: "00000000000000000020",
           matchSeqNum: contested,
         })
