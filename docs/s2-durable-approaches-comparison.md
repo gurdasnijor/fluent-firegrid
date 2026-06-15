@@ -129,15 +129,24 @@ Fencing is identical in both (epoch-tagged conditional append); PR #15 just
 
 ---
 
-## Concrete adoptions for this build (Path B), regardless of the fork
+## Concrete adoptions for this build (Path B) — applied
 
-1. Switch reads to **`ignoreCommandRecords: true`** and drop the manual header filter.
-2. Replace `acquireLease`'s "mint above current fence" with **`matchSeqNum`-gated
-   fence acquisition** (`SeqNumMismatchError` ⇒ raced/lost). Removes the
-   monotonic-epoch logic entirely.
-3. **Paginate `read`/`fold`** to the tail (handle the 1000-record cap).
-4. Keep the snapshot-and-follow and the Schema codec (PR #15 lacks both).
+1. ✅ **`matchSeqNum`-gated fence acquisition** replaces the "mint above current
+   fence" epoch arithmetic; the token is a plain owner-id and the race is decided
+   by the conditional append. (One delta found vs PR #15: a *transient*
+   `position-taken` — a crashed worker's in-flight append still landing, which
+   interruption can't cancel — must be **retried**, not treated as a lost lease.)
+2. ✅ **Paginate reads to the tail**, bounded by an up-front `checkTail`. Resumes by
+   *physical* seq number and filters command records in code, because per-tick
+   fencing makes command records dense — `ignoreCommandRecords` alone can't resume
+   past an all-command window (it stays on the follow read, which has no
+   resumption problem).
+3. ✅ **Atomic single-record snapshot** (`[trim, snapshot]` in one batch).
+4. ✅ **Collapsed the S2 boundary onto SDK types** — the `S2` Effect service now
+   carries the SDK's `AppendRecord`/`ReadRecord` and `number` positions directly
+   (no `S2Write`/`S2Record` re-modeling), keeping only the Effect conversion +
+   typed errors + DI/fault-injection seam.
+5. Kept the snapshot-and-follow and the Schema record codec (PR #15 lacks both).
 
-These would put PR #16 and PR #15 on equal footing for the S2-persistence layer,
-leaving the only real difference the intended one: build-the-runtime vs.
-back-Effect's-engine.
+This puts PR #16 and PR #15 on equal footing for the S2-persistence layer, leaving
+the only real difference the intended one: build-the-runtime vs. back-Effect's-engine.

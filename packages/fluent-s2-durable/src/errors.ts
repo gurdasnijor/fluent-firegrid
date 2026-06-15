@@ -10,9 +10,9 @@ export class AppendCondFailed extends Data.TaggedError("AppendCondFailed")<
   Readonly<{
     readonly stream: string
     /** what we tried to write against */
-    readonly expectedSeqNum?: bigint
+    readonly expectedSeqNum?: number
     /** the actual tail S2 would assign next */
-    readonly actualSeqNum: bigint
+    readonly actualSeqNum: number
     /** the fencing token S2 currently holds for the stream */
     readonly currentFencingToken?: string
     /** the token we presented */

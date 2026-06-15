@@ -1,3 +1,4 @@
+import type { ReadRecord } from "@s2-dev/streamstore"
 import { Array, Effect, HashMap, Match, Option, Stream } from "effect"
 import type { CodecError } from "./errors.ts"
 import {
@@ -8,7 +9,6 @@ import {
   type Seed,
   type StepOutcome,
 } from "./record.ts"
-import type { S2Record } from "./s2.ts"
 
 /**
  * §5.2 — the folded view of a journal (Restate's StateMachine, scoped to one
@@ -58,10 +58,10 @@ export const foldRecords = (records: ReadonlyArray<JournalRecord>): Journal =>
 
 /** Fold an S2 read session (from a snapshot cursor, then deltas) into a `Journal`. */
 export const fold = <E>(
-  records: Stream.Stream<S2Record, E>,
+  records: Stream.Stream<ReadRecord<"bytes">, E>,
 ): Effect.Effect<Journal, E | CodecError> =>
   records.pipe(
     Stream.runCollect,
-    Effect.flatMap((collected) => Effect.forEach(collected, (rec) => decodeRecord(rec.data))),
+    Effect.flatMap((collected) => Effect.forEach(collected, (rec) => decodeRecord(rec.body))),
     Effect.map(foldRecords),
   )

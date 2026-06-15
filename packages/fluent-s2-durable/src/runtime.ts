@@ -34,7 +34,8 @@ import {
   type JournalRecord,
 } from "./record.ts"
 import { Dispatch } from "./dispatch.ts"
-import { S2, S2Write } from "./s2.ts"
+import { AppendRecord } from "@s2-dev/streamstore"
+import { S2 } from "./s2.ts"
 import { TimerHeap } from "./timerHeap.ts"
 
 export type TickOutcome = "idle" | "suspended" | "completed"
@@ -120,7 +121,7 @@ export const make = <I, O, R>(
         const n = yield* Ref.getAndUpdate(tokenRef, (x) => x + 1)
         const token = `${workerId}-${n}`
         const fenceAtTail = Effect.flatMap(s2.checkTail(wf(execId)), (tail) =>
-          s2.append(wf(execId), [S2Write.Fence({ token })], { matchSeqNum: tail }),
+          s2.append(wf(execId), [AppendRecord.fence(token)], { matchSeqNum: tail }),
         )
         yield* fenceAtTail.pipe(
           Effect.retry({
@@ -133,14 +134,14 @@ export const make = <I, O, R>(
       })
 
     const foldStream = (execId: string): Effect.Effect<Journal, WfError> =>
-      fold(s2.read(wf(execId), 0n))
+      fold(s2.read(wf(execId), 0))
 
     const commitWrites = (
       execId: string,
       lease: string,
-      matchSeqNum: bigint,
-      writes: ReadonlyArray<S2Write>,
-    ): Effect.Effect<{ readonly tail: bigint }, LostLeaseError | S2Error> =>
+      matchSeqNum: number,
+      writes: ReadonlyArray<AppendRecord>,
+    ): Effect.Effect<{ readonly tail: number }, LostLeaseError | S2Error> =>
       Effect.catchTag(
         s2.append(wf(execId), writes, { fencingToken: lease, matchSeqNum }),
         "AppendCondFailed",
@@ -163,17 +164,17 @@ export const make = <I, O, R>(
     const appendUnderLease = (
       execId: string,
       lease: string,
-      matchSeqNum: bigint,
+      matchSeqNum: number,
       recs: ReadonlyArray<JournalRecord>,
-    ): Effect.Effect<{ readonly tail: bigint }, LostLeaseError | S2Error | CodecError> =>
+    ): Effect.Effect<{ readonly tail: number }, LostLeaseError | S2Error | CodecError> =>
       encodeRecords(recs).pipe(
         Effect.flatMap((bytes) =>
-          commitWrites(execId, lease, matchSeqNum, bytes.map((body) => S2Write.Record({ body }))),
+          commitWrites(execId, lease, matchSeqNum, bytes.map((body) => AppendRecord.bytes({ body }))),
         ),
       )
 
     const readInbox = (execId: string): Effect.Effect<ReadonlyArray<InboxMessage>, WfError> =>
-      s2.read(inbox(execId), 0n).pipe(Stream.mapEffect((r) => decodeInbox(r.data)), Stream.runCollect)
+      s2.read(inbox(execId), 0).pipe(Stream.mapEffect((r) => decodeInbox(r.body)), Stream.runCollect)
 
     const ops = (journal: Journal): ReadonlyArray<JournalRecord> =>
       Array.fromIterable(HashMap.values(journal.byName))
@@ -251,8 +252,8 @@ export const make = <I, O, R>(
         )
         if (pendingNames.length === 0) return
         yield* Effect.forkChild(
-          s2.read(inbox(execId), 0n, { follow: true }).pipe(
-            Stream.mapEffect((r) => decodeInbox(r.data)),
+          s2.read(inbox(execId), 0, { follow: true }).pipe(
+            Stream.mapEffect((r) => decodeInbox(r.body)),
             Stream.filter((m) => Array.contains(pendingNames, m.name)),
             Stream.take(1),
             Stream.runDrain,
@@ -265,7 +266,7 @@ export const make = <I, O, R>(
     const handleSuspend = (
       execId: string,
       lease: string,
-      tailRef: Ref.Ref<bigint>,
+      tailRef: Ref.Ref<number>,
       susp: Suspend,
     ): Effect.Effect<void, WfError> =>
       Effect.gen(function* () {
@@ -354,7 +355,7 @@ export const make = <I, O, R>(
       Effect.gen(function* () {
         const bytes = yield* encodeInbox(new InboxMessage({ name, value }))
         yield* Effect.catchTag(
-          s2.append(inbox(execId), [S2Write.Record({ body: bytes })]),
+          s2.append(inbox(execId), [AppendRecord.bytes({ body: bytes })]),
           "AppendCondFailed",
           (e) => Effect.fail(new S2Error({ operation: "append", stream: inbox(execId), details: e.reason })),
         )
@@ -363,8 +364,8 @@ export const make = <I, O, R>(
 
     const awaitResult = (execId: string): Effect.Effect<O, WfError> =>
       Effect.gen(function* () {
-        const head = yield* s2.read(wf(execId), 0n, { follow: true }).pipe(
-          Stream.mapEffect((r) => decodeRecord(r.data)),
+        const head = yield* s2.read(wf(execId), 0, { follow: true }).pipe(
+          Stream.mapEffect((r) => decodeRecord(r.body)),
           Stream.filter(Schema.is(Completed)),
           Stream.runHead,
         )
@@ -402,8 +403,8 @@ export const make = <I, O, R>(
         // durable together. Trim lands at `cursor`, snapshot at `cursor+1`; trimming
         // below `cursor+1` leaves the snapshot as the new head.
         yield* commitWrites(execId, lease, cursor, [
-          S2Write.Trim({ upTo: cursor + 1n }),
-          S2Write.Record({ body: snapBytes }),
+          AppendRecord.trim(cursor + 1),
+          AppendRecord.bytes({ body: snapBytes }),
         ])
       })
 

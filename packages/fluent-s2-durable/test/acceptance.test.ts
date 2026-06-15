@@ -13,11 +13,11 @@ import {
   Schema,
   Stream,
 } from "effect"
+import { AppendRecord } from "@s2-dev/streamstore"
 import { expect, layer } from "@effect/vitest"
 import {
   Awakeable,
   S2,
-  S2Write,
   Snapshot,
   Step,
   TimerFired,
@@ -51,7 +51,7 @@ const config = (
 const wf = (execId: string): string => `wf/${execId}`
 
 const journalOf = (s2: S2Service, execId: string): Effect.Effect<Journal, never> =>
-  fold(s2.read(wf(execId), 0n)).pipe(Effect.orDie)
+  fold(s2.read(wf(execId), 0)).pipe(Effect.orDie)
 
 const ops = (j: Journal): ReadonlyArray<JournalRecord> => Array.fromIterable(HashMap.values(j.byName))
 const hasStep = (name: string) => (j: Journal): boolean =>
@@ -248,8 +248,8 @@ layer(S2LiteLive, { excludeTestServices: true, timeout: Duration.seconds(30) })(
         // A Snapshot record was written, and folding the stream reseeds byName
         // from it — recovery is bounded by the snapshot, not pre-snapshot history.
         // (Physical trim is eventual on S2, so we don't assert immediate truncation.)
-        const physical = yield* s2.read(wf("snap1"), 0n).pipe(
-          Stream.mapEffect((r) => decodeRecord(r.data)),
+        const physical = yield* s2.read(wf("snap1"), 0).pipe(
+          Stream.mapEffect((r) => decodeRecord(r.body)),
           Stream.runCollect,
         )
         expect(Array.some(physical, Schema.is(Snapshot))).toBe(true)
@@ -273,12 +273,12 @@ layer(S2LiteLive, { excludeTestServices: true, timeout: Duration.seconds(30) })(
         const fence = (token: string) =>
           Effect.gen(function* () {
             const at = yield* s2.checkTail(stream)
-            yield* s2.append(stream, [S2Write.Fence({ token })], { matchSeqNum: at })
+            yield* s2.append(stream, [AppendRecord.fence(token)], { matchSeqNum: at })
           })
         const record = (token: string, body: string) =>
           Effect.gen(function* () {
             const at = yield* s2.checkTail(stream)
-            return yield* s2.append(stream, [S2Write.Record({ body: enc(body) })], {
+            return yield* s2.append(stream, [AppendRecord.bytes({ body: enc(body) })], {
               fencingToken: token,
               matchSeqNum: at,
             })
@@ -290,12 +290,12 @@ layer(S2LiteLive, { excludeTestServices: true, timeout: Duration.seconds(30) })(
         // the stale owner A cannot commit; owner B can, at the same position
         const contested = yield* s2.checkTail(stream)
         const zombie = yield* s2
-          .append(stream, [S2Write.Record({ body: enc("zombie") })], {
+          .append(stream, [AppendRecord.bytes({ body: enc("zombie") })], {
             fencingToken: "ownerA",
             matchSeqNum: contested,
           })
           .pipe(Effect.exit)
-        const owner = yield* s2.append(stream, [S2Write.Record({ body: enc("owner") })], {
+        const owner = yield* s2.append(stream, [AppendRecord.bytes({ body: enc("owner") })], {
           fencingToken: "ownerB",
           matchSeqNum: contested,
         })
@@ -309,7 +309,7 @@ layer(S2LiteLive, { excludeTestServices: true, timeout: Duration.seconds(30) })(
           : undefined
         expect(reason).toBe("fence-mismatch")
         // owner committed exactly once at the contested position; no double-commit.
-        expect(owner.tail).toBe(contested + 1n)
+        expect(owner.tail).toBe(contested + 1)
       }))
   },
 )

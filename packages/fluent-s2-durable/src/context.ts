@@ -1,3 +1,4 @@
+import { AppendRecord } from "@s2-dev/streamstore"
 import { Cause, Duration, Effect, Exit, HashMap, Match, Option, Ref } from "effect"
 import {
   DivergenceError,
@@ -9,6 +10,7 @@ import {
   type WfError,
 } from "./errors.ts"
 import { fold, type Journal } from "./journal.ts"
+import type { S2Service } from "./s2.ts"
 import {
   Awakeable,
   Err,
@@ -21,7 +23,6 @@ import {
   type OpRecord,
   type StepOutcome,
 } from "./record.ts"
-import { S2Write, type S2Service } from "./s2.ts"
 
 /**
  * §6.3 — the suspend signal. Raised as a *defect* (`Effect.die`) so user-level
@@ -81,7 +82,7 @@ export interface CtxDeps {
   readonly execId: string
   readonly lease: string
   readonly journal: Journal
-  readonly tailRef: Ref.Ref<bigint>
+  readonly tailRef: Ref.Ref<number>
   /** real wall-clock, used only to stamp durable timers (journaled once, never replayed). */
   readonly wallNow: () => number
 }
@@ -119,7 +120,7 @@ const appendLive = (
     const res = yield* Effect.catchTag(
       deps.s2.append(
         deps.stream,
-        bytes.map((body) => S2Write.Record({ body })),
+        bytes.map((body) => AppendRecord.bytes({ body })),
         { fencingToken: deps.lease, matchSeqNum: tail },
       ),
       "AppendCondFailed",
@@ -137,7 +138,7 @@ const appendLive = (
 /** §6.2 idempotent resume: a position-taken append means the record already landed. */
 const reloadStep = <A>(deps: CtxDeps, name: string): Effect.Effect<A, WfError> =>
   Effect.gen(function* () {
-    const journal = yield* fold(deps.s2.read(deps.stream, 0n))
+    const journal = yield* fold(deps.s2.read(deps.stream, 0))
     return yield* Option.match(HashMap.get(journal.byName, name), {
       onNone: () =>
         Effect.fail(

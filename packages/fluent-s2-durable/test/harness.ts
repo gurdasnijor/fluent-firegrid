@@ -1,8 +1,8 @@
+import type { AppendRecord } from "@s2-dev/streamstore"
 import { Array, Effect, Fiber, Latch, Layer, Match, Option, Ref } from "effect"
 import {
   DispatchLayer,
   S2,
-  S2Write,
   TimerHeapLayer,
   decodeRecord,
   makeWorker,
@@ -54,15 +54,18 @@ export const makeFaultyS2: Effect.Effect<FaultyS2, never, S2> = Effect.gen(funct
   const latch = yield* Latch.make(false)
 
   const firstRecord = (
-    writes: ReadonlyArray<S2Write>,
+    records: ReadonlyArray<AppendRecord>,
   ): Effect.Effect<Option.Option<JournalRecord>> =>
-    Option.match(Array.findFirst(writes, S2Write.$is("Record")), {
+    Option.match(Array.head(records), {
       onNone: () => Effect.succeed(Option.none<JournalRecord>()),
-      onSome: (w) =>
-        decodeRecord(w.body).pipe(
-          Effect.map(Option.some),
-          Effect.orElseSucceed(() => Option.none<JournalRecord>()),
-        ),
+      // command records (fence) are string-bodied; journal records are bytes.
+      onSome: (r) =>
+        typeof r.body === "string"
+          ? Effect.succeed(Option.none<JournalRecord>())
+          : decodeRecord(r.body).pipe(
+              Effect.map(Option.some),
+              Effect.orElseSucceed(() => Option.none<JournalRecord>()),
+            ),
     })
 
   const append: S2Service["append"] = (stream, records, opts) =>
