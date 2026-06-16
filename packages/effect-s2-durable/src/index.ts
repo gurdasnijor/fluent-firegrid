@@ -33,6 +33,7 @@ export {
   DeferredRow,
   ExecutionId,
   ExecutionRow,
+  ObjectInboxRow,
   ObjectStateDb,
   RosterDb,
   RosterRow,

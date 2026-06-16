@@ -1,9 +1,46 @@
 import { expect, layer } from "@effect/vitest"
-import { Duration, Effect, Schema } from "effect"
-import { attach, awakeable, resolveAwakeable, resolveSignal, sendClient, service, serviceLayer, signal } from "../src/index.ts"
+import { Duration, Effect, Option, Schedule, Schema } from "effect"
+import { primaryKey, Table } from "effect-s2-stream-db"
+import {
+  attach,
+  awakeable,
+  client,
+  object,
+  resolveAwakeable,
+  resolveSignal,
+  sendClient,
+  service,
+  serviceLayer,
+  signal,
+  state,
+} from "../src/index.ts"
 import { S2LiteLive } from "./s2lite.ts"
 
 const Approval = Schema.Struct({ approved: Schema.Boolean })
+
+class Balance extends Table<Balance>("balance")({
+  id: Schema.String.pipe(primaryKey),
+  value: Schema.Number,
+}) {}
+
+// a virtual object whose `deposit` does a read-modify-write then PARKS (so it stays
+// incomplete) — used to force two queued same-key invocations across a restart.
+const ledger = object({
+  name: "ledger",
+  handlers: {
+    *deposit(amount: number) {
+      const bal = state(Balance)
+      const cur = Option.match(yield* bal.get("b"), { onNone: () => 0, onSome: (r) => r.value })
+      yield* bal.set({ id: "b", value: cur + amount })
+      yield* signal("posted", Schema.Boolean) // park until released, keeping it incomplete
+      return cur + amount
+    },
+    *total() {
+      const bal = state(Balance)
+      return Option.match(yield* bal.get("b"), { onNone: () => 0, onSome: (r) => r.value })
+    },
+  },
+})
 
 // Recovery lives in its own file (separate vitest worker = isolated `process.env`,
 // since `s2lite` configures the SDK via env). Crucially there is NO long-lived
@@ -64,6 +101,39 @@ layer(S2LiteLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
         }).pipe(Effect.provide(engine), Effect.scoped)
 
         expect(approved).toBe(true)
+      }))
+
+    it.effect("object: queued same-key methods drain in order across a restart (no lost update)", () =>
+      Effect.gen(function*() {
+        const engine = serviceLayer(ledger)
+
+        // process 1: enqueue two deposits on ONE key, then tear the engine down before
+        // either completes (they park). Both invocations live in the durable inbox.
+        const [idA, idB] = yield* Effect.gen(function*() {
+          const a = yield* sendClient(ledger, "acct").deposit(5)
+          const b = yield* sendClient(ledger, "acct").deposit(3)
+          return [a, b] as const
+        }).pipe(Effect.provide(engine), Effect.scoped)
+
+        // process 2: a fresh engine drains the inbox IN ORDER — A then B — so B's RMW
+        // sees A's committed write. Pre-fix, recovery re-raced both incomplete
+        // executions and a reordered replay of A's journaled read could clobber B.
+        const result = yield* Effect.gen(function*() {
+          const release = (id: string) =>
+            resolveSignal(id, "posted", Schema.Boolean, true).pipe(
+              Effect.retry({ schedule: Schedule.spaced(Duration.millis(20)), times: 100 }),
+            )
+          yield* release(idA)
+          const ra = yield* attach(idA, Schema.Number)
+          yield* release(idB) // B only starts once A completes (single-writer per key)
+          const rb = yield* attach(idB, Schema.Number)
+          const total = yield* client(ledger, "acct").total()
+          return { ra, rb, total }
+        }).pipe(Effect.provide(engine), Effect.scoped)
+
+        expect(result.ra).toBe(5)
+        expect(result.rb).toBe(8) // B observed A's write — order preserved
+        expect(result.total).toBe(8) // 0 + 5 + 3, nothing lost
       }))
   },
 )

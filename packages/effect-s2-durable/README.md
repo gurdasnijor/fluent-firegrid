@@ -132,8 +132,14 @@ differences are durable and per **key**:
 - **Persistent per-key state.** Each `(name, key)` has its own `state(Table)` store on
   a stream (`obj/<name:key>`) that is **not** dropped when a method finishes, so state
   survives across calls (a service's state lives in its per-call stream and is dropped).
-- **Exclusive methods.** A key's methods run **single-writer** (serialized, the lock held
-  across awaits/parks) — so a read-modify-write across concurrent calls can't lose updates.
+- **Exclusive methods (crash-safe).** A key's methods run **single-writer** via
+  *admission control*, not a lock over racing bodies: each call is appended to a durable
+  **FIFO inbox** (in the key's own stream) and a serial drainer runs them one at a time,
+  head to completion. So **at most one invocation per key is ever in flight** — and after
+  a crash, recovery drains that ordered queue rather than re-racing several incomplete
+  executions. That's what makes a read-modify-write across concurrent calls lose-update-free
+  *including across a restart* (a parked exclusive method holds the key until it resolves,
+  exactly like Restate).
 
 ```ts
 import { client, object, state } from "effect-s2-durable"
@@ -165,10 +171,11 @@ yield* client(counter, "user-1").value()  // → 5  (state persisted across call
 yield* client(counter, "user-2").value()  // → 0  (a different key is isolated)
 ```
 
-Exclusivity is in-process (one engine owns a key), the same scope as the per-execution
-single-writer model; cross-process key leasing is out of scope. Object-method executions
-recover like any other (`serviceLayer(counter)` registers them) — the per-key state stream
-is durable, and a recovered method re-opens it and re-acquires the key lock.
+The *ordering* is durable (the inbox is on the key's stream), so it survives a restart;
+what's in-process is the drainer fiber, which recovery restarts per key. One engine owns a
+key at a time — the same single-writer scope as the per-execution model; cross-process key
+leasing is out of scope. Register objects with `serviceLayer(counter)` so recovery can
+re-drive their inboxes by handler name.
 
 ## Park-and-resume primitives
 
