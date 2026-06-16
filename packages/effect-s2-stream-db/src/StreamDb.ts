@@ -277,7 +277,10 @@ const openStream = <T extends Tables>(
       Effect.catch((cause) => (cause instanceof S2Conflict ? Effect.void : Effect.fail(cause))),
       Effect.mapError(toError("createStream")),
     )
-    yield* preloadFrom(0).pipe(
+    // An empty stream (tail 0) is a 416 on read and a never-appended one is a 404 —
+    // both mean "nothing to fold". `checkTail` distinguishes empty from non-empty.
+    yield* client.checkTail(stream).pipe(
+      Effect.flatMap((tail) => (tail.tail.seqNum === 0 ? Ref.set(tailRef, 0) : preloadFrom(0))),
       Effect.catch((cause) => (cause instanceof S2NotFound ? Ref.set(tailRef, 0) : Effect.fail(cause))),
       Effect.mapError(toError("preload")),
     )
