@@ -11,12 +11,13 @@ map, the completion ordering, and (in later slices) timers + recovery.
 
 ## Authoring surface
 
-The ergonomic surface is **restate-sdk-gen-shaped**: group handlers in a `service`,
-write each as `(input) => Effect` (the input is the argument — no `handlerRequest`
-boilerplate), and call through a typed `client` that hides the execution id and the
-submit/attach dance. Handler bodies are ordinary `Effect.gen` using the **free
-primitives** (`run`/`sleep`/`state`/`signal`/`awakeable`/`deferred`) — no `ctx` object;
-they read an internal active-invocation slot and delegate to `DurableExecutionRuntime`.
+The ergonomic surface is **restate-sdk-gen-shaped**: group handlers in a `service` as
+**generator methods** (`*greet(input) { … }`) — the input is the argument (no
+`handlerRequest`, no `Effect.gen` wrapper) — and call through a typed `client` that
+hides the execution id and the submit/attach dance. Inside, `yield* run(...)` etc. stay
+typed (an Effect is `yield*`-able); the **free primitives**
+(`run`/`sleep`/`state`/`signal`/`awakeable`/`deferred`) read an internal
+active-invocation slot and delegate to `DurableExecutionRuntime` — no `ctx` object.
 
 ```ts
 import { Duration, Effect, Layer, Schema } from "effect"
@@ -26,14 +27,13 @@ import { client, DurableExecutionRuntime, run, service } from "effect-s2-durable
 const greeter = service({
   name: "greeter",
   handlers: {
-    greet: (req: { name: string }) =>
-      Effect.gen(function*() {
-        const greeting = yield* run("compose", composeGreeting(req.name), {
-          output: Schema.String,
-          retry: { maxAttempts: 3, initialInterval: Duration.millis(100) },
-        })
-        return { greeting }
-      }),
+    *greet(req: { name: string }) {
+      const greeting = yield* run("compose", composeGreeting(req.name), {
+        output: Schema.String,
+        retry: { maxAttempts: 3, initialInterval: Duration.millis(100) },
+      })
+      return { greeting }
+    },
   },
 })
 

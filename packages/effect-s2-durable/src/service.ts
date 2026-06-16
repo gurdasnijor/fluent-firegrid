@@ -9,18 +9,21 @@ import type { Handler } from "./types.ts"
 
 /**
  * The ergonomic authoring surface (restate-sdk-gen shape) over the engine
- * primitives. A handler is `(input) => Effect` — the input is the argument (no
- * `handlerRequest`), the body is ordinary `Effect.gen` using the free primitives
- * (so yields stay typed). `service({ name, handlers })` groups them; `client(def)`
- * is the typed call surface that hides `submit`/`attach`/execution-id.
+ * primitives. A handler is a **generator method** — `*greet(input) { … }` — the
+ * input is the argument (no `handlerRequest`, no `Effect.gen` wrapper), and
+ * `yield* run(...)` etc. stay typed because an Effect is `yield*`-able (its
+ * iterator returns the success). `service({ name, handlers })` groups them;
+ * `client(def)` is the typed call surface that hides `submit`/`attach`/exec-id.
  */
 
-/** A handler body: takes the decoded input, returns a durable program. */
-type HandlerFn = (input: any) => Effect.Effect<any, any, any>
+/** A handler body: a generator method receiving the decoded input. */
+type HandlerFn = (input: any) => Generator<any, any, any>
 export type Handlers = Record<string, HandlerFn>
 
-export type HandlerInput<H> = H extends (input: infer I) => any ? I : void
-export type HandlerOutput<H> = H extends (...args: any[]) => Effect.Effect<infer O, any, any> ? O : never
+// extract the declared argument / generator-return types of a handler method
+export type HandlerInput<H> = Parameters<H extends (...args: any[]) => any ? H : never> extends [infer I, ...any[]] ? I
+  : void
+export type HandlerOutput<H> = H extends (...args: any[]) => Generator<any, infer O, any> ? O : never
 
 /** Optional durable I/O schemas for a handler (default: opaque JSON via `Schema.Unknown`). */
 export interface HandlerSchemas<I = any, O = any> {
@@ -62,9 +65,10 @@ const compileHandlers = (
     Object.entries(handlers).map(([method, fn]) => {
       const input = schemas?.[method]?.input ?? Schema.Unknown
       const output = schemas?.[method]?.output ?? Schema.Unknown
-      // fetch the decoded input (internal), then apply the handler body — the user
-      // never writes `handlerRequest`; the input is just their argument.
-      const program = handlerRequest(input).pipe(Effect.flatMap((decoded) => fn(decoded)))
+      // fetch the decoded input (internal), then run the generator body with it —
+      // the user writes neither `handlerRequest` nor an `Effect.gen` wrapper.
+      const body = Effect.fnUntraced(fn)
+      const program = handlerRequest(input).pipe(Effect.flatMap((decoded) => body(decoded)))
       const compiledHandler = handler(`${name}/${method}`, { input, output })(program) as Handler<
         unknown,
         unknown,

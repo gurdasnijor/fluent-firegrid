@@ -191,11 +191,10 @@ layer(TestLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
         const greeter = service({
           name: "greeter",
           handlers: {
-            greet: (req: { name: string }) =>
-              Effect.gen(function*() {
-                const n = yield* run("bump", Effect.sync(() => ++sideEffects.count), { output: Schema.Number })
-                return { greeting: `hi ${req.name}`, count: n }
-              }),
+            *greet(req: { name: string }) {
+              const n = yield* run("bump", Effect.sync(() => ++sideEffects.count), { output: Schema.Number })
+              return { greeting: `hi ${req.name}`, count: n }
+            },
           },
         })
         const out = yield* client(greeter).greet({ name: "ada" })
