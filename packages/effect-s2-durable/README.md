@@ -28,9 +28,10 @@ const greeter = service({
   name: "greeter",
   handlers: {
     *greet(req: { name: string }) {
-      // run(action, options?) — name optional (defaults to journal position)
-      const greeting = yield* run(composeGreeting(req.name), {
-        output: Schema.String,
+      // `run(action, options?)` — the action is any Effect (typically an external
+      // call); it runs once, its result is journaled and replayed. The name is
+      // optional (defaults to the step's journal position).
+      const greeting = yield* run(Effect.sync(() => `Hello, ${req.name}!`), {
         retry: { maxAttempts: 3, initialInterval: Duration.millis(100) },
       })
       return { greeting }
@@ -50,24 +51,26 @@ program.pipe(
 ```
 
 `sendClient(greeter).greet(input)` is the fire-and-forget form (returns the execution
-id). Pass `{ idempotencyKey }` to pin the id (idempotent invocation). Optional
-per-handler `schemas: { greet: { input, output } }` set the durable encode/decode
-boundary (default: opaque JSON).
+id); pair it with `attach(id, schema)` (block for the result) or `poll(id, schema)`
+(non-blocking). Pass `{ idempotencyKey }` to pin the id (idempotent invocation).
+Optional per-handler `schemas: { greet: { input, output } }` set the durable
+encode/decode boundary (default: opaque JSON).
 
 ### Low-level primitives
 
 `service`/`client` are a thin layer over the engine primitives, which are also public:
 `handler(name, { input, output })(program)` (the definition primitive; `program` uses
-`handlerRequest(Schema)` to read the input) and `DurableExecutionRuntime.submit` /
-`attach` / `poll`. Reach for these only when you need to manage execution ids yourself.
+`handlerRequest(Schema)` to read the input), `DurableExecutionRuntime.submit(handler,
+id, input)`, and the by-id `attach(id, schema)` / `poll(id, schema)`. Reach for these
+only when you want to manage execution ids yourself.
 
 ## Semantics
 
-- **`run(key, action, options?)`** is the durable step / replay boundary. A `steps` row
-  for `key` is a terminal fact: on replay it returns the recorded value (or replays a
-  recorded typed failure) and never re-runs. No row → the action runs (retry is
-  pre-terminal); a crash before the row is written re-runs it (at-least-once, which is
-  why side effects should carry an `idempotencyKey`).
+- **`run(action, { name? })`** is the durable step / replay boundary. The step's
+  `steps` row (keyed by `name`, else by journal position) is a terminal fact: on replay
+  it returns the recorded value (or replays a recorded typed failure) and never re-runs.
+  No row → the action runs (retry is pre-terminal); a crash before the row is written
+  re-runs it (at-least-once).
 - **Effect Schema is the only serialization boundary.** `output`/`error` are discharged
   schemas (`Schema<A, I, never>`); storage holds encoded values.
 - **Completion** writes the result to the roster, awaits its ack, drops the execution
@@ -83,7 +86,7 @@ engine's own tables in the one stream. It returns the binding **synchronously**
 `get`/`set`/`delete` (`set` is upsert; the primary key is a row field).
 
 ```ts
-import { handler, handlerRequest, state } from "effect-s2-durable"
+import { service, state } from "effect-s2-durable"
 import { primaryKey, Table } from "effect-s2-stream-db"
 
 class Cart extends Table<Cart>("cart")({
@@ -91,14 +94,17 @@ class Cart extends Table<Cart>("cart")({
   items: Schema.Array(Schema.String),
 }) {}
 
-export const checkout = handler("checkout", { input: Request, output: Result })(
-  Effect.gen(function*() {
-    const cart = state(Cart)                    // synchronous; reusable as a value
-    yield* cart.set({ cartId: "c1", items: ["apple"] })
-    const current = yield* cart.get("c1")       // read-after-ack sees the write
-    // ...
-  }),
-)
+export const checkout = service({
+  name: "checkout",
+  handlers: {
+    *go(_req: { user: string }) {
+      const cart = state(Cart)                    // synchronous; reusable as a value
+      yield* cart.set({ cartId: "c1", items: ["apple"] })
+      const current = yield* cart.get("c1")       // read-after-ack sees the write
+      // ...
+    },
+  },
+})
 ```
 
 A `run` action **cannot** use durable primitives (`run`/`sleep`/`state`/`signal`):

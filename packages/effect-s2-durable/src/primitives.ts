@@ -1,4 +1,4 @@
-import { type Duration, Effect, type Schema } from "effect"
+import { type Duration, Effect, type Option, type Schema } from "effect"
 import type { AnyTable, RowOf } from "effect-s2-stream-db"
 import type { DurableExecutionError } from "./errors.ts"
 import { DurableExecutionRuntime } from "./Runtime.ts"
@@ -96,3 +96,17 @@ export const resolveSignal: IngressResolve = (executionId, name, schema, value) 
 /** Ingress door: resolve an `awakeable()` by its `id` on `executionId`. */
 export const resolveAwakeable: IngressResolve = (executionId, id, schema, value) =>
   Effect.flatMap(DurableExecutionRuntime, (rt) => rt.resolveExternal(executionId, id, schema, value))
+
+/** Block until `executionId` finishes, decoding its output via `schema` (restate's `attach`). */
+export const attach = <A, I>(
+  executionId: string,
+  schema: Schema.Codec<A, I, never, never>,
+): Effect.Effect<A, DurableExecutionError, DurableExecutionRuntime> =>
+  Effect.flatMap(DurableExecutionRuntime, (rt) => rt.attach(executionId, schema))
+
+/** Non-blocking read of `executionId`'s completed output, decoded via `schema`. */
+export const poll = <A, I>(
+  executionId: string,
+  schema: Schema.Codec<A, I, never, never>,
+): Effect.Effect<Option.Option<A>, DurableExecutionError, DurableExecutionRuntime> =>
+  Effect.flatMap(DurableExecutionRuntime, (rt) => rt.poll(executionId, schema))

@@ -1,6 +1,18 @@
 export { DurableExecutionError } from "./errors.ts"
 export { handler } from "./handler.ts"
-export { awakeable, deferred, handlerRequest, resolveAwakeable, resolveSignal, run, signal, sleep, state } from "./primitives.ts"
+export {
+  attach,
+  awakeable,
+  deferred,
+  handlerRequest,
+  poll,
+  resolveAwakeable,
+  resolveSignal,
+  run,
+  signal,
+  sleep,
+  state,
+} from "./primitives.ts"
 export { DurableExecutionRuntime } from "./Runtime.ts"
 export type { DurableExecutionRuntimeApi } from "./Runtime.ts"
 export { client, sendClient, service } from "./service.ts"

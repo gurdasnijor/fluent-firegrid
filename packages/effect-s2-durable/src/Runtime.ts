@@ -93,16 +93,16 @@ export interface DurableExecutionRuntimeApi {
     executionId: string,
     input: I,
   ) => Effect.Effect<void, DurableExecutionError, R>
-  /** Block until the execution finishes; return its decoded output (or fail). */
-  readonly attach: <I, O, E, R>(
-    handler: Handler<I, O, E, R>,
+  /** Block until the execution finishes; decode its output via `schema` (or fail). */
+  readonly attach: <A, I>(
     executionId: string,
-  ) => Effect.Effect<O, DurableExecutionError>
-  /** Non-blocking read of the completed output, if any. */
-  readonly poll: <I, O, E, R>(
-    handler: Handler<I, O, E, R>,
+    schema: Schema.Codec<A, I, never, never>,
+  ) => Effect.Effect<A, DurableExecutionError>
+  /** Non-blocking read of the completed output, decoded via `schema`, if any. */
+  readonly poll: <A, I>(
     executionId: string,
-  ) => Effect.Effect<Option.Option<O>, DurableExecutionError>
+    schema: Schema.Codec<A, I, never, never>,
+  ) => Effect.Effect<Option.Option<A>, DurableExecutionError>
   /** The durable `run` step (delegated to by the `run` free primitive). */
   readonly runStep: <A, E, R, EncodedA, EncodedE>(
     action: Effect.Effect<A, E, R>,
@@ -492,16 +492,17 @@ const makeRuntime: Effect.Effect<DurableExecutionRuntimeApi, DurableExecutionErr
         yield* Ref.update(running, HashMap.set(executionId, entry))
       })
 
-    const attach = <I, O, E, R>(
-      handler: Handler<I, O, E, R>,
+    const attach = <A, I>(
       executionId: string,
-    ): Effect.Effect<O, DurableExecutionError> =>
+      schema: Schema.Codec<A, I, never, never>,
+    ): Effect.Effect<A, DurableExecutionError> =>
       Effect.gen(function*() {
         const live = yield* Ref.get(running)
         const entry = HashMap.get(live, executionId)
         if (Option.isSome(entry)) {
+          // the running waiter holds the handler's *decoded* return value
           const exit = yield* Deferred.await(entry.value.deferred)
-          if (Exit.isSuccess(exit)) return exit.value as O
+          if (Exit.isSuccess(exit)) return exit.value as A
           return yield* Effect.fail(
             new DurableExecutionError({
               operation: "attach",
@@ -512,22 +513,20 @@ const makeRuntime: Effect.Effect<DurableExecutionRuntimeApi, DurableExecutionErr
         }
         const row = yield* roster.get(executionId).pipe(Effect.mapError(toError("attach")))
         if (Option.isNone(row)) return yield* fail("attach", `unknown execution: ${executionId}`)
-        if (row.value.status === "completed") {
-          return yield* decode(handler.output as Schema.Codec<O, unknown, never, never>, row.value.result)
-        }
+        if (row.value.status === "completed") return yield* decode(schema, row.value.result)
         if (row.value.status === "failed") return yield* fail("attach", row.value.error ?? "execution failed")
         return yield* fail("attach", `execution ${executionId} is ${row.value.status} with no local waiter`)
       })
 
-    const poll = <I, O, E, R>(
-      handler: Handler<I, O, E, R>,
+    const poll = <A, I>(
       executionId: string,
-    ): Effect.Effect<Option.Option<O>, DurableExecutionError> =>
+      schema: Schema.Codec<A, I, never, never>,
+    ): Effect.Effect<Option.Option<A>, DurableExecutionError> =>
       roster.get(executionId).pipe(
         Effect.mapError(toError("poll")),
         Effect.flatMap((row) =>
           Option.isSome(row) && row.value.status === "completed"
-            ? decode(handler.output as Schema.Codec<O, unknown, never, never>, row.value.result).pipe(
+            ? decode(schema, row.value.result).pipe(
               Effect.map(Option.some),
             )
             : Effect.succeedNone,

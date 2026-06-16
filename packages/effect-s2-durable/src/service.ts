@@ -149,7 +149,8 @@ const makeProxy = <Name extends string, H extends Handlers, T>(
 /** A typed call client: `client(def).method(input)` submits + attaches, returning the result. */
 export const client = <Name extends string, H extends Handlers>(def: ServiceDefinition<Name, H>): ServiceClient<H> =>
   // eslint-disable-next-line local/no-launder-cast -- dynamic proxy; each Effect<unknown> is the typed Effect<HandlerOutput> recovered structurally by ServiceClient<H>
-  makeProxy(def, (compiled, { id, rt }) => rt.attach(compiled.handler, id)) as unknown as ServiceClient<H>
+  makeProxy(def, (compiled, { id, rt }) =>
+    rt.attach(id, compiled.handler.output as Schema.Codec<unknown, unknown, never, never>)) as unknown as ServiceClient<H>
 
 /** A typed fire-and-forget client: `sendClient(def).method(input)` submits, returning the execution id. */
 export const sendClient = <Name extends string, H extends Handlers>(def: ServiceDefinition<Name, H>): SendClient<H> =>
