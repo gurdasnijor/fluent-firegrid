@@ -1,5 +1,14 @@
 import { Effect, Option, Ref, Schema, SchemaAST, Semaphore } from "effect"
-import { AppendInput, AppendRecord, S2Client, S2Conflict, S2NotFound } from "effect-s2"
+import {
+  AppendInput,
+  AppendRecord,
+  S2Client,
+  type S2ClientError,
+  S2Conflict,
+  S2NotFound,
+  type StreamConfig,
+  type StreamInfo,
+} from "effect-s2"
 import * as ChangeMessage from "./ChangeMessage.ts"
 import { MaterializedState } from "./MaterializedState.ts"
 import { S2StreamDbError } from "./errors.ts"
@@ -120,11 +129,24 @@ export type StreamDbInstance<T extends Tables> =
     readonly table: <Tbl extends AnyTable>(table: Tbl) => TableFacade<RowOf<Tbl>>
     /** Commit writes across tables atomically (one S2 batch). */
     readonly transact: <A>(body: (tx: Transaction) => A) => Effect.Effect<A, S2StreamDbError>
+    /**
+     * Append a snapshot of the live set at the current tail, then trim records
+     * before it — the first-class checkpoint (today's `compact`, surfaced). This is
+     * latest-value projection GC, not an event-log read.
+     */
+    readonly checkpoint: Effect.Effect<void, S2StreamDbError>
+    /** Explicitly trim records before `cursor` (an S2 `seq_num`). */
+    readonly trim: (cursor: number) => Effect.Effect<void, S2StreamDbError>
     /** In-stream snapshot + trim; preload cost becomes bounded by live-key count. */
     readonly compact: Effect.Effect<void, S2StreamDbError>
     /** Drop the stream entirely. */
     readonly drop: Effect.Effect<void, S2StreamDbError>
   }
+
+/** Options for `StreamDb.open` — an optional per-stream config for create-if-absent. */
+export interface OpenOptions {
+  readonly config?: StreamConfig
+}
 
 // ── StreamDb — `class X extends StreamDb<X>("base")({ tables }) {}` ───────────
 
@@ -140,8 +162,25 @@ export interface StreamDbClass<T extends Tables, Key extends KeySchema> {
   /**
    * Open the db over the stream `${basePath}/${encode(key)}` (one S2 stream).
    * The key is validated + encoded to its path segment through `key`'s schema.
+   * `options.config` is applied to the create-if-absent (inherits basin defaults
+   * when omitted).
    */
-  readonly open: (key: Key["Type"]) => Effect.Effect<StreamDbInstance<T>, S2StreamDbError, S2Client>
+  readonly open: (key: Key["Type"], options?: OpenOptions) => Effect.Effect<StreamDbInstance<T>, S2StreamDbError, S2Client>
+  /**
+   * The instance keys that currently exist as streams under `basePath`
+   * (discovery, not name construction): list by prefix, strip `basePath`, decode
+   * each suffix through `key`. `keyPrefix` narrows enumeration to matching keys;
+   * streams being deleted are excluded.
+   */
+  readonly list: (
+    options?: { readonly keyPrefix?: string },
+  ) => Effect.Effect<ReadonlyArray<Key["Type"]>, S2StreamDbError, S2Client>
+  /** Whether `key`'s stream exists, without creating it (`checkTail`). */
+  readonly exists: (key: Key["Type"]) => Effect.Effect<boolean, S2StreamDbError, S2Client>
+  /** Open `key` only if its stream already exists; never creates (unlike `open`). */
+  readonly openExisting: (
+    key: Key["Type"],
+  ) => Effect.Effect<Option.Option<StreamDbInstance<T>>, S2StreamDbError, S2Client>
 }
 
 /**
@@ -162,15 +201,53 @@ export const StreamDb =
     const keySchema = (key ?? Schema.String) as Schema.Codec<unknown, string>
     const encodeKey = (value: unknown) =>
       Schema.encodeUnknownEffect(keySchema)(value)
+    const decodeKey = (segment: string) =>
+      Schema.decodeUnknownEffect(keySchema)(segment) as Effect.Effect<Key["Type"], Schema.SchemaError>
+    const prefix = `${basePath}/`
     class StreamDbImpl {
       static readonly basePath = basePath
       static readonly key = keySchema
       static readonly tables = tables
-      static readonly open = (value: Key["Type"]): Effect.Effect<StreamDbInstance<T>, S2StreamDbError, S2Client> =>
+      static readonly open = (
+        value: Key["Type"],
+        options?: OpenOptions,
+      ): Effect.Effect<StreamDbInstance<T>, S2StreamDbError, S2Client> =>
         encodeKey(value).pipe(
           Effect.mapError(toError("open")),
-          Effect.flatMap((segment) => openStream(`${basePath}/${segment}`, tables)),
+          Effect.flatMap((segment) =>
+            openStream(`${basePath}/${segment}`, tables, options?.config === undefined ? {} : { config: options.config })),
         )
+      static readonly list = (
+        options?: { readonly keyPrefix?: string },
+      ): Effect.Effect<ReadonlyArray<Key["Type"]>, S2StreamDbError, S2Client> =>
+        listStreamInfos(`${prefix}${options?.keyPrefix ?? ""}`, undefined, []).pipe(
+          Effect.flatMap((infos) =>
+            Effect.forEach(
+              infos.filter((info) => info.deletedAt == null),
+              (info) => decodeKey(info.name.slice(prefix.length)),
+            ),
+          ),
+          Effect.withSpan("effect-s2-stream-db.list", { attributes: { basePath } }),
+          Effect.mapError(toError("list")),
+        )
+      static readonly exists = (value: Key["Type"]): Effect.Effect<boolean, S2StreamDbError, S2Client> =>
+        encodeKey(value).pipe(
+          Effect.flatMap((segment) => S2Client.checkTail(`${basePath}/${segment}`).pipe(Effect.as(true))),
+          Effect.catch((cause) => (cause instanceof S2NotFound ? Effect.succeed(false) : Effect.fail(cause))),
+          Effect.withSpan("effect-s2-stream-db.exists", { attributes: { basePath } }),
+          Effect.mapError(toError("exists")),
+        )
+      static readonly openExisting = (
+        value: Key["Type"],
+      ): Effect.Effect<Option.Option<StreamDbInstance<T>>, S2StreamDbError, S2Client> =>
+        Effect.flatMap(StreamDbImpl.exists(value), (present) =>
+          present
+            ? encodeKey(value).pipe(
+              Effect.mapError(toError("openExisting")),
+              Effect.flatMap((segment) => openStream(`${basePath}/${segment}`, tables, { create: false })),
+              Effect.map(Option.some),
+            )
+            : Effect.succeedNone)
     }
     // eslint-disable-next-line local/no-launder-cast -- class-factory: the static shape (typed `open`/`tables`/`key` + `new()`) can't be expressed structurally on a class declaration
     return StreamDbImpl as unknown as StreamDbClass<T, Key>
@@ -184,6 +261,22 @@ const toError = (operation: string) => (cause: unknown): S2StreamDbError =>
     message: cause instanceof Error ? cause.message : String(cause),
     cause,
   })
+
+/** Paginate `listStreams` by prefix into one array (discovery for `StreamDb.list`). */
+const listStreamInfos = (
+  prefix: string,
+  startAfter: string | undefined,
+  acc: ReadonlyArray<StreamInfo>,
+): Effect.Effect<ReadonlyArray<StreamInfo>, S2ClientError, S2Client> =>
+  S2Client.listStreams({ prefix, ...(startAfter === undefined ? {} : { startAfter }) }).pipe(
+    Effect.flatMap((response) => {
+      const records = [...acc, ...response.streams]
+      const last = response.streams.at(-1)
+      return response.hasMore && last !== undefined
+        ? listStreamInfos(prefix, last.name, records)
+        : Effect.succeed(records)
+    }),
+  )
 
 /** Command records (fence/trim) carry an empty-name header; data records do not. */
 const isCommandRecord = (headers: ReadonlyArray<readonly [string, string]>): boolean =>
@@ -226,6 +319,7 @@ const metaOf = (table: AnyTable): TableMeta => ({
 const openStream = <T extends Tables>(
   stream: string,
   tables: T,
+  options?: { readonly create?: boolean; readonly config?: StreamConfig },
 ): Effect.Effect<StreamDbInstance<T>, S2StreamDbError, S2Client> =>
   Effect.gen(function*() {
     const client = yield* S2Client
@@ -273,10 +367,14 @@ const openStream = <T extends Tables>(
         ),
       )
 
-    yield* client.createStream({ stream }).pipe(
-      Effect.catch((cause) => (cause instanceof S2Conflict ? Effect.void : Effect.fail(cause))),
-      Effect.mapError(toError("createStream")),
-    )
+    // `create: false` (openExisting) never provisions; default ensures-if-absent,
+    // applying `config` when given (basin defaults otherwise).
+    if (options?.create !== false) {
+      yield* client.createStream({ stream, ...(options?.config === undefined ? {} : { config: options.config }) }).pipe(
+        Effect.catch((cause) => (cause instanceof S2Conflict ? Effect.void : Effect.fail(cause))),
+        Effect.mapError(toError("createStream")),
+      )
+    }
     // An empty stream (tail 0) is a 416 on read and a never-appended one is a 404 —
     // both mean "nothing to fold". `checkTail` distinguishes empty from non-empty.
     yield* client.checkTail(stream).pipe(
@@ -413,22 +511,16 @@ const openStream = <T extends Tables>(
         Effect.mapError(toError("transact")),
       )
 
-    const compact = lock.withPermits(1)(
+    // snapshot the live set at the tail + trim before it, as one atomic batch
+    // (the trim only lands if the snapshot does — durable-before-trim).
+    const runCheckpoint = lock.withPermits(1)(
       Effect.gen(function*() {
         const cursor = yield* Ref.get(tailRef)
         const entries = state.entries()
-        yield* Effect.annotateCurrentSpan({
-          stream,
-          cursor,
-          liveEntries: entries.length,
-        })
+        yield* Effect.annotateCurrentSpan({ stream, cursor, liveEntries: entries.length })
         if (entries.length + 3 > MAX_BATCH_RECORDS) {
           return yield* Effect.fail(
-            new S2StreamDbError({
-              operation: "compact",
-              message: `snapshot of ${entries.length} live keys exceeds one atomic batch (${MAX_BATCH_RECORDS})`,
-              cause: undefined,
-            }),
+            new Error(`snapshot of ${entries.length} live keys exceeds one atomic batch (${MAX_BATCH_RECORDS})`),
           )
         }
         const startBody = yield* ChangeMessage.encode(control("snapshot-start", cursor))
@@ -444,8 +536,32 @@ const openStream = <T extends Tables>(
         ]
         const ack = yield* client.append(stream, AppendInput.create(records, { matchSeqNum: cursor }))
         yield* Ref.set(tailRef, ack.tail.seqNum)
-      }).pipe(Effect.mapError(toError("compact"))),
-    ).pipe(Effect.withSpan("effect-s2-stream-db.compact", { attributes: { stream } }))
+      }),
+    )
+
+    const checkpoint = runCheckpoint.pipe(
+      Effect.withSpan("effect-s2-stream-db.checkpoint", { attributes: { stream } }),
+      Effect.mapError(toError("checkpoint")),
+    )
+
+    // `compact` is the original name for `checkpoint`, kept for backward compat.
+    const compact = runCheckpoint.pipe(
+      Effect.withSpan("effect-s2-stream-db.compact", { attributes: { stream } }),
+      Effect.mapError(toError("compact")),
+    )
+
+    const trim = (cursor: number) =>
+      lock.withPermits(1)(
+        Effect.gen(function*() {
+          const tail = yield* Ref.get(tailRef)
+          yield* Effect.annotateCurrentSpan({ stream, cursor })
+          const ack = yield* client.append(stream, AppendInput.create([AppendRecord.trim(cursor)], { matchSeqNum: tail }))
+          yield* Ref.set(tailRef, ack.tail.seqNum)
+        }),
+      ).pipe(
+        Effect.withSpan("effect-s2-stream-db.trim", { attributes: { stream } }),
+        Effect.mapError(toError("trim")),
+      )
 
     const drop = client.deleteStream({ stream }).pipe(
       Effect.withSpan("effect-s2-stream-db.drop", { attributes: { stream } }),
@@ -453,5 +569,5 @@ const openStream = <T extends Tables>(
     )
 
     // eslint-disable-next-line local/no-launder-cast -- the dynamic `facades` record (typed per-table at the type level) can't be proven to match the mapped `StreamDbInstance<T>` shape structurally
-    return { ...facades, table, transact, compact, drop } as unknown as StreamDbInstance<T>
+    return { ...facades, table, transact, checkpoint, trim, compact, drop } as unknown as StreamDbInstance<T>
   }).pipe(Effect.withSpan("effect-s2-stream-db.open", { attributes: { stream } }))

@@ -154,7 +154,7 @@ Each entry in `requirements` maps to one feature requirement:
 
 ```ts
 {
-  id: "ORDERED_READ.3",
+  id: "PROJECTION.1",
   description: "latest-value materialized reads remain available for state",
   evidence: 'spans.exists(s, named(s, "effect-s2-stream-db.table.query"))',
   claim: ({ db }) =>
@@ -166,7 +166,7 @@ Each entry in `requirements` maps to one feature requirement:
 
 Firelab compiles this into a coverage gate with id
 `<feature.name>.<requirement.id>`, for example
-`storage-primitives.ORDERED_READ.3`.
+`storage-primitives.PROJECTION.1`.
 
 The `claim` is the executable behavior check. It passes when it returns `true`
 or completes without throwing. Use `packages/firelab/src/assertions.ts` helpers

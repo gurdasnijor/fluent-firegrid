@@ -119,5 +119,5 @@ constraints:
 
   DEPENDENCIES:
     requirements:
-      1: This engine consumes the storage primitives storage-primitives.ENUMERATE (recovery scan), storage-primitives.EXISTENCE (probes), storage-primitives.ORDERED_READ (the ActorEvent log per LAYERING.6), and storage-primitives.CHECKPOINT (CHECKPOINTING), behind the DurableStore port — policy (basin, retention, namespace) is injected, not hardcoded.
+      1: This engine consumes the storage primitives storage-primitives.ENUMERATE (recovery scan), storage-primitives.EXISTENCE (probes), and storage-primitives.CHECKPOINT (CHECKPOINTING) behind the DurableStore port; the ordered ActorEvent log (LAYERING.6) is read via effect-s2.readDecoded (typed decode preserving seq_num) as a schema-owned actor-log in effect-s2-durable, not a stream-db ordered-log lens. Policy (basin, retention, namespace) is injected, not hardcoded.
       2: Runtime/control-plane basins are provisioned via resource-spec.SPEC_RECONCILE with createStreamOnAppend false, which is what makes ENUMERATE-based recovery trustworthy.

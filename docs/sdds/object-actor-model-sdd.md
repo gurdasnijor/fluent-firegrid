@@ -94,8 +94,9 @@ single **serial drainer** per key runs exclusive calls (`EXECUTION.1`).
 > `seq_num`. The latest-value table fold materializes user state and the result/pending views
 > *from* that log; it is not where engine-event order comes from. This supersedes "several
 > independent latest-value tables in one stream," and is the resolution of the earlier
-> event-log-vs-table question. (The ordered-log read it needs is specified one layer down as
-> `storage-primitives.ORDERED_READ`, alongside the latest-value fold.)
+> event-log-vs-table question. (That ordered log is read via `effect-s2.readDecoded` — a typed
+> decode that preserves `seq_num`/metadata — folded as a schema-owned actor-log in this layer; the
+> latest-value table fold, one layer down, is the projection lens, not the source of event order.)
 
 At the `effect-s2-durable` layer, the internal shape is approximately:
 
@@ -474,8 +475,9 @@ first is what makes the leasing pass tractable.
 - Cross-process leasing/fencing (its own SDD; this model is the prerequisite).
 - **Storage primitives** (one layer down, behind the `DurableStore` port — policy injected, not
   hardcoded): the engine consumes `storage-primitives` `ENUMERATE` (recovery), `EXISTENCE`
-  (probes), `ORDERED_READ` (the ActorEvent log), `CHECKPOINT` (GC), and `resource-spec`
-  `SPEC_RECONCILE` (basin provisioning). See
+  (probes), and `CHECKPOINT` (GC), reads the ordered ActorEvent log via `effect-s2.readDecoded`
+  (typed decode preserving `seq_num`), and uses `resource-spec` `SPEC_RECONCILE` (basin
+  provisioning). See
   [`s2-resource-provisioning-sdd.md`](./s2-resource-provisioning-sdd.md).
 - **Not borrowed** (per the Encore note): no `Actor.fromObject(...)` public API, no Effect Cluster
   `MessageStorage`/`deleteEnvelope` as the durable mailbox, no mutable completion-status row, no

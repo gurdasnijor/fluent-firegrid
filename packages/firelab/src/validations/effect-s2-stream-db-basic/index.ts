@@ -45,7 +45,7 @@ export default defineValidation({
         }),
     },
     {
-      id: "ORDERED_READ.3",
+      id: "PROJECTION.1",
       description: "latest-value materialized reads remain available for state",
       evidence: 'spans.exists(s, named(s, "effect-s2-stream-db.transact")) && spans.exists(s, named(s, "effect-s2-stream-db.table.get")) && spans.exists(s, named(s, "effect-s2-stream-db.table.query"))',
       claim: ({ db }) =>

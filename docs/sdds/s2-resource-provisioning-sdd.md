@@ -54,7 +54,7 @@ and a **data plane** (dynamic, `open`-time).
 | `StreamDb.open({ config })` — per-stream `StreamConfig` | **effect-s2-stream-db** | `open` already creates the stream; it just needs to pass config. |
 | `StreamDb.list({ keyPrefix })` — enumerate instances | **effect-s2-stream-db** | It owns the `basePath`/key → stream-name mapping. |
 | Non-creating `exists` / `openExisting` | **effect-s2-stream-db** | Probes must not materialize a stream as a side effect. |
-| **Ordered-log read** (records by `seq_num`) | **effect-s2-stream-db** | Event-log consumers need order the latest-value fold doesn't give. |
+| **Ordered event-log read** (records by `seq_num`) | **effect-s2** (`readDecoded`) → **effect-s2-durable** actor-log | Typed decode preserving `seq_num`/metadata; the actor-log is schema-owned. NOT a stream-db lens — stream-db owns the latest-value projection only. |
 | **Checkpoint + trim** (snapshot live set, trim history) | **effect-s2-stream-db** | Bounded replay for persistent streams; surfaces existing `compact`. |
 | Which basins, what retention, recovery policy | **effect-s2-durable** | Policy + the durable model; consumes the above via `DurableStore`. |
 
@@ -117,14 +117,22 @@ ResultDb.exists(id)        // Effect<boolean>           — checkTail, never cre
 ResultDb.openExisting(id)  // Effect<Option<Instance>>  — None if the stream doesn't exist
 ```
 
-**(d) Ordered-log read.** Alongside the latest-value fold, expose records in **`seq_num` order**,
-so an event-log consumer can fold a tagged event stream and use `seq_num` as the authoritative
-order. (The fold remains the right lens for materialized state; this is the lens for ordered
-events.)
+**(d) Ordered event-log read — NOT a stream-db primitive.** Ordered replay (records in `seq_num`
+order) is owned by **`effect-s2.readDecoded`**, which decodes each record to a typed value while
+**preserving its S2 metadata** (`seqNum`, `timestamp`, `headers`, `body`). The actor engine folds
+that typed, ordered stream as a **schema-owned actor-log in `effect-s2-durable`**; the latest-value
+table fold here stays the projection lens for materialized state, never the source of event order
+(object-actor-model `LAYERING.6`). Stream-db deliberately does **not** expose a `readLog`/ordered-log
+lens — that would conflate the table-projection layer with the event-log layer and would leak
+checkpoint/snapshot records as if they were domain events.
 
 ```ts
-SomeDb.readLog(key)                     // → Stream<{ seqNum: number; record: Encoded }>  (ascending)
-SomeDb.readLog(key, { from: cursor })   // resume from a checkpoint cursor
+import { readDecoded } from "effect-s2"
+// the actor-log LogEntry { seqNum, event } is just a metadata-preserving typed read:
+const entries = readDecoded(streamName, ActorEvent, {
+  start: { from: { seqNum: from ?? 0 }, clamp: true },
+  ignoreCommandRecords: true,
+}) // → Stream<{ seqNum; timestamp; headers; body; value: ActorEvent }>
 ```
 
 **(e) Checkpoint + trim.** Surface the snapshot-and-trim pattern (today's internal `compact`) as a
