@@ -16,6 +16,7 @@ import {
   type Scope,
 } from "effect"
 import { S2Client } from "effect-s2"
+import type { AnyTable, RowOf } from "effect-s2-stream-db"
 import { DurableExecutionError } from "./errors.ts"
 import { ExecutionId, RosterDb, WorkflowDb } from "./schema.ts"
 import type { AnyHandler, Handler, RetryPolicy, RunOptions } from "./types.ts"
@@ -100,6 +101,13 @@ export interface DurableExecutionRuntimeApi {
   ) => Effect.Effect<A, DurableExecutionError>
   /** The durable timer (delegated to by the `sleep` free primitive). */
   readonly sleepStep: (name: string, duration: Duration.Duration) => Effect.Effect<void, DurableExecutionError>
+  /** State ops (delegated to by the `state(Table)` binding's methods). */
+  readonly stateGet: <Tbl extends AnyTable>(
+    table: Tbl,
+    key: string,
+  ) => Effect.Effect<Option.Option<RowOf<Tbl>>, DurableExecutionError>
+  readonly stateSet: <Tbl extends AnyTable>(table: Tbl, row: RowOf<Tbl>) => Effect.Effect<void, DurableExecutionError>
+  readonly stateDelete: <Tbl extends AnyTable>(table: Tbl, key: string) => Effect.Effect<void, DurableExecutionError>
 }
 
 export class DurableExecutionRuntime
@@ -155,7 +163,10 @@ const makeRuntime: Effect.Effect<DurableExecutionRuntimeApi, never, S2Client | S
         const error = options?.error ? yield* decode(options.error, row.error) : (row.error as E)
         return yield* Effect.fail(error)
       }
-      // no terminal fact: run (retry is pre-terminal), then record the outcome
+      // no terminal fact: run (retry is pre-terminal), then record the outcome.
+      // (A run action cannot use durable primitives — the public `run` type forbids
+      // `DurableExecutionRuntime` in the action's `R` — so there's no in-step state
+      // write that could desync from this terminal fact; nothing to guard at runtime.)
       const attempted = options?.retry
         ? action.pipe(Effect.retry({ schedule: scheduleOf(options.retry), times: Math.max(0, options.retry.maxAttempts - 1) }))
         : action
@@ -220,6 +231,42 @@ const makeRuntime: Effect.Effect<DurableExecutionRuntimeApi, never, S2Client | S
       if (remaining > 0) yield* Effect.sleep(Duration.millis(remaining))
       yield* db.clockWakeups.upsert({ name, deadlineMs, status: "fired" }).pipe(Effect.mapError(toError("sleep")))
     })
+
+  // ── user-defined durable state (`state(Table)`) ─────────────────────────────
+  // A user state collection is just a sibling `Table` over this execution's
+  // stream, reached through `db.table` (SDD: state lowers onto the substrate's
+  // collection helper — here `effect-s2-stream-db`). Scoped structurally: the ops
+  // only ever touch the active execution's own db. No in-run guard is needed — the
+  // public `run` type forbids durable primitives inside a run action.
+  const withActive = (operation: string): Effect.Effect<Invocation> =>
+    Effect.flatMap(ActiveInvocation, (opt) =>
+      Option.isNone(opt)
+        ? Effect.die(
+          new DurableExecutionError({ operation, message: `${operation} called outside an active handler`, cause: undefined }),
+        )
+        : Effect.succeed(opt.value)
+    )
+
+  const stateGet = <Tbl extends AnyTable>(
+    table: Tbl,
+    key: string,
+  ): Effect.Effect<Option.Option<RowOf<Tbl>>, DurableExecutionError> =>
+    withActive("state.get").pipe(
+      Effect.flatMap((active) => active.db.table(table).get(key)),
+      Effect.mapError(toError("state.get")),
+    )
+
+  const stateSet = <Tbl extends AnyTable>(table: Tbl, row: RowOf<Tbl>): Effect.Effect<void, DurableExecutionError> =>
+    withActive("state.set").pipe(
+      Effect.flatMap((active) => active.db.table(table).upsert(row)),
+      Effect.mapError(toError("state.set")),
+    )
+
+  const stateDelete = <Tbl extends AnyTable>(table: Tbl, key: string): Effect.Effect<void, DurableExecutionError> =>
+    withActive("state.delete").pipe(
+      Effect.flatMap((active) => active.db.table(table).delete(key)),
+      Effect.mapError(toError("state.delete")),
+    )
 
   // ── completion (SDD §B6): the result must outlive the dropped stream ─────────
   const complete = (
@@ -356,6 +403,16 @@ const makeRuntime: Effect.Effect<DurableExecutionRuntimeApi, never, S2Client | S
       ),
     )
 
-  const api: DurableExecutionRuntimeApi = { submit, attach, poll, runStep, handlerRequest, sleepStep }
+  const api: DurableExecutionRuntimeApi = {
+    submit,
+    attach,
+    poll,
+    runStep,
+    handlerRequest,
+    sleepStep,
+    stateGet,
+    stateSet,
+    stateDelete,
+  }
   return api
 })

@@ -1,6 +1,7 @@
 import { expect, layer } from "@effect/vitest"
 import { Clock, Duration, Effect, Layer, Option, Schema } from "effect"
-import { DurableExecutionRuntime, handler, handlerRequest, run, sleep } from "../src/index.ts"
+import { primaryKey, Table } from "effect-s2-stream-db"
+import { DurableExecutionRuntime, handler, handlerRequest, run, sleep, state } from "../src/index.ts"
 import { S2LiteLive } from "./s2lite.ts"
 
 // One long-lived engine for the whole suite, over a real s2 lite server.
@@ -10,6 +11,11 @@ const GreetInput = Schema.Struct({ name: Schema.String })
 const GreetOutput = Schema.Struct({ greeting: Schema.String, count: Schema.Number })
 
 class BoomError extends Schema.TaggedErrorClass<BoomError>()("BoomError", { why: Schema.String }) {}
+
+class Cart extends Table<Cart>("cart")({
+  cartId: Schema.String.pipe(primaryKey),
+  items: Schema.Array(Schema.String),
+}) {}
 
 layer(TestLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
   "effect-s2-durable engine over s2 lite",
@@ -78,6 +84,24 @@ layer(TestLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
         yield* rt.submit(boom, "boom-1", { name: "z" })
         const exit = yield* Effect.exit(rt.attach(boom, "boom-1"))
         expect(exit._tag).toBe("Failure")
+      }))
+
+    it.effect("state(Table) is a mutable durable record across steps", () =>
+      Effect.gen(function*() {
+        const shopper = handler("shopper", { input: GreetInput, output: Schema.Number })(
+          Effect.gen(function*() {
+            yield* handlerRequest(GreetInput)
+            const cart = state(Cart) // synchronous — no yield to obtain the binding
+            yield* cart.set({ cartId: "c1", items: ["apple"] })
+            const after1 = yield* cart.get("c1") // read-after-ack sees the write
+            yield* cart.set({ cartId: "c1", items: [...Option.getOrThrow(after1).items, "pear"] })
+            const final = Option.getOrThrow(yield* cart.get("c1"))
+            return final.items.length
+          }),
+        )
+        const rt = yield* DurableExecutionRuntime
+        yield* rt.submit(shopper, "shop-1", { name: "q" })
+        expect(yield* rt.attach(shopper, "shop-1")).toBe(2)
       }))
 
     it.effect("sleep durably delays the handler before completing", () =>

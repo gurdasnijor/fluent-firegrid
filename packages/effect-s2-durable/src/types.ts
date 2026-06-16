@@ -1,4 +1,4 @@
-import type { Duration, Effect, Schema } from "effect"
+import type { Duration, Effect, Option, Schema } from "effect"
 import type { DurableExecutionError } from "./errors.ts"
 import type { DurableExecutionRuntime } from "./Runtime.ts"
 
@@ -21,13 +21,33 @@ export interface RunOptions<A, E = never, EncodedA = unknown, EncodedE = unknown
   readonly idempotencyKey?: string
 }
 
-/** The `run` free primitive (a durable, replay-aware side-effect boundary). */
+declare const RunActionViolationId: unique symbol
+
+/**
+ * The type a `run` call resolves to when its action illegally requires the
+ * durable runtime — a non-`Effect` brand so `yield*`-ing it is a compile error at
+ * the `run` call site. Carries a human-readable message in `M`.
+ */
+export interface RunActionViolation<M extends string> {
+  readonly [RunActionViolationId]: M
+}
+
+/**
+ * The `run` free primitive (a durable, replay-aware side-effect boundary). A run
+ * action may use the caller's own services, but **not** the durable runtime: if
+ * the action requires `DurableExecutionRuntime` (i.e. it calls `run`/`sleep`/
+ * `state`/`signal`), `run` resolves to a `RunActionViolation` instead of an
+ * `Effect`, so the misuse is a type error here rather than a runtime fault. This
+ * is the Effect analog of Restate's ctx-less `run` closure.
+ */
 export interface Run {
   <A, E, R, EncodedA = unknown, EncodedE = unknown>(
     key: string,
     action: Effect.Effect<A, E, R>,
     options?: RunOptions<A, E, EncodedA, EncodedE>,
-  ): Effect.Effect<A, E | DurableExecutionError, R | DurableExecutionRuntime>
+  ): [DurableExecutionRuntime] extends [R]
+    ? RunActionViolation<"a run action cannot use durable primitives (run/sleep/state/signal); use them in the handler body">
+    : Effect.Effect<A, E | DurableExecutionError, R | DurableExecutionRuntime>
 }
 
 /**
@@ -51,3 +71,19 @@ export interface Handler<I, O, E = never, R = never> {
 
 /** Any handler definition (existential over its type parameters). */
 export type AnyHandler = Handler<any, any, any, any>
+
+/**
+ * A handle to one user-defined durable state collection, scoped to the active
+ * execution's stream. `state(Table)` returns this synchronously (it's pure — it
+ * just names a table); the *operations* are the Effects. v1 surface is
+ * `get`/`set`/`delete` (Restate's minimal key→record shape — `set` is upsert with
+ * the primary key carried as a row field). Writes commit on their own ack (a crash
+ * can't desync them from the journal because they're ordered after the writes
+ * before them). State mutations inside a `run` action are rejected — perform them
+ * in the handler body.
+ */
+export interface StateBinding<Row> {
+  readonly get: (key: string) => Effect.Effect<Option.Option<Row>, DurableExecutionError, DurableExecutionRuntime>
+  readonly set: (row: Row) => Effect.Effect<void, DurableExecutionError, DurableExecutionRuntime>
+  readonly delete: (key: string) => Effect.Effect<void, DurableExecutionError, DurableExecutionRuntime>
+}

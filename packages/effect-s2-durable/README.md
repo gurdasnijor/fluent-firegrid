@@ -67,6 +67,38 @@ program.pipe(
   stream, then marks `resultAcked` — so the result outlives the stream (SDD §B6).
 - **Single-writer:** one in-process owner per execution (the `running` map).
 
+## User-defined durable state
+
+`state(Table)` gives a handler a mutable durable record store scoped to its own
+execution — any `effect-s2-stream-db` `Table`, whose rows live alongside the
+engine's own tables in the one stream. It returns the binding **synchronously**
+(it just names a table); only the operations are Effects. v1 surface is
+`get`/`set`/`delete` (`set` is upsert; the primary key is a row field).
+
+```ts
+import { handler, handlerRequest, state } from "effect-s2-durable"
+import { primaryKey, Table } from "effect-s2-stream-db"
+
+class Cart extends Table<Cart>("cart")({
+  cartId: Schema.String.pipe(primaryKey),
+  items: Schema.Array(Schema.String),
+}) {}
+
+export const checkout = handler("checkout", { input: Request, output: Result })(
+  Effect.gen(function*() {
+    const cart = state(Cart)                    // synchronous; reusable as a value
+    yield* cart.set({ cartId: "c1", items: ["apple"] })
+    const current = yield* cart.get("c1")       // read-after-ack sees the write
+    // ...
+  }),
+)
+```
+
+A `run` action **cannot** use durable primitives (`run`/`sleep`/`state`/`signal`):
+its type forbids `DurableExecutionRuntime` in `R`, so `run("x", state(Cart).set(…))`
+is a *compile* error at the `run` call — the Effect analog of Restate's ctx-less
+run closure. Perform durable work in the handler body, not inside a `run` action.
+
 ## Status
 
 Built + tested against `s2 lite`:
@@ -74,6 +106,8 @@ Built + tested against `s2 lite`:
   facts), `submit` / `attach` / `poll`, completion ordering.
 - Slice 2 — `sleep` (durable timer: a `clockWakeups` row, `pending`→`fired`; replay
   short-circuits a fired wakeup and recomputes the remaining delay of a pending one).
+- Slice 3 (part) — `state(Table)` user-defined durable records (`get`/`set`/`delete`)
+  over `db.table`, with a type-level guard against durable ops inside a `run` action.
 
-Next slices: `signal` / `awakeable` / `deferred`, `state`, and roster-driven boot
-recovery (which re-arms pending wakeups into the engine scope).
+Next: `signal` / `awakeable` / `deferred`, then roster-driven boot recovery (which
+re-arms pending wakeups into the engine scope).
