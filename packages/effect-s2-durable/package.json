@@ -1,0 +1,39 @@
+{
+  "name": "effect-s2-durable",
+  "version": "0.0.0",
+  "description": "A thin durable-execution engine over effect-s2-stream-db — one S2StreamDb per execution plus a shared roster.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "diagnostics": "effect-language-service diagnostics --project tsconfig.json --severity error",
+    "test": "vitest run --root ../.. --project effect-s2-durable",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "effect": "4.0.0-beta.78",
+    "effect-s2": "workspace:*",
+    "effect-s2-stream-db": "workspace:*"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "4.0.0-beta.78",
+    "@effect/vitest": "4.0.0-beta.78",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.0"
+  }
+}

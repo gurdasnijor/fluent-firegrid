@@ -101,11 +101,14 @@ of scope here; the consumer guarantees single-writer (Part B does this in-proces
 
 ## A3. Table surface
 
-Each table exposes a typed facade (`CollectionFacade<Row, Key>` in the code); the db
-adds db-wide `transact` / `compact` / `drop`.
+Each table exposes a typed facade (`TableFacade<Row, Key>`); the db adds `db.table(T)`
+(the runtime parallel to the declared `db.<name>` accessors — a pure facade derived
+from any self-describing `Table` class, declared on the db or not) plus db-wide
+`transact` / `compact` / `drop`. `transact` is **table-keyed** (`tx.upsert(T, row)`), so
+any `Table` can join one atomic batch.
 
 ```ts
-export interface CollectionFacade<Row, Key extends string = string> {
+export interface TableFacade<Row, Key extends string = string> {
   readonly insert: (row: Row) => Effect.Effect<void, S2StreamDbError>
   readonly insertOrGet: (row: Row) => Effect.Effect<InsertOrGetResult<Row>, S2StreamDbError>
   readonly upsert: (row: Row) => Effect.Effect<void, S2StreamDbError>
