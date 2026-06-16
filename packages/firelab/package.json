@@ -18,11 +18,13 @@
     "validate": "tsx src/index.ts",
     "validate:list": "tsx src/index.ts list",
     "validate:run": "tsx src/index.ts run",
+    "validate:all": "tsx src/index.ts run-all",
     "validate:runs": "tsx src/index.ts runs",
     "validate:show": "tsx src/index.ts show",
     "validate:perf": "tsx src/index.ts perf",
     "validate:gaps": "tsx src/index.ts gaps",
-    "validate:seams": "tsx src/index.ts seams"
+    "validate:seams": "tsx src/index.ts seams",
+    "validate:proofs": "tsx src/index.ts proofs"
   },
   "dependencies": {
     "@effect/opentelemetry": "4.0.0-beta.78",
@@ -39,7 +41,8 @@
     "@opentelemetry/semantic-conventions": "^1.41.1",
     "effect": "4.0.0-beta.78",
     "effect-s2": "workspace:*",
-    "effect-s2-stream-db": "workspace:*"
+    "effect-s2-stream-db": "workspace:*",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

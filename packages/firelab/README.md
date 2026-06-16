@@ -32,6 +32,9 @@ pnpm --filter firelab validate:list
 # Run a validation by id
 pnpm --filter firelab validate:run effect-s2-stream-db-storage-primitives --timeout-ms 120000
 
+# Run every discovered validation
+pnpm --filter firelab validate:all --timeout-ms 120000
+
 # List recorded runs
 pnpm --filter firelab validate:runs
 
@@ -47,6 +50,18 @@ pnpm --filter firelab validate:gaps 2026-06-16T22-38-35-781Z__effect-s2-stream-d
 
 # Re-judge a saved run against the current validation definition
 pnpm --filter firelab validate:seams effect-s2-stream-db-storage-primitives 2026-06-16T22-38-35-781Z__effect-s2-stream-db-storage-primitives
+
+# Check proof wiring for a feature while it is still under construction
+pnpm --filter firelab validate:proofs check effect-s2-stream-db/storage-primitives --allow-missing
+
+# Strictly require every feature requirement to have a well-formed proof
+pnpm --filter firelab validate:proofs check effect-s2-stream-db/storage-primitives
+
+# Bootstrap a validation module from an existing feature spec
+pnpm --filter firelab validate:proofs init effect-s2/resource-spec
+
+# Generate requirement proof stubs for missing feature requirements
+pnpm --filter firelab validate:proofs scaffold effect-s2-stream-db/storage-primitives
 
 # Package checks
 pnpm --filter firelab typecheck
@@ -174,6 +189,81 @@ evidence spans emitted by the system under test or Firelab runtime, such as:
 The coverage oracle rejects vacuous gates: a gate that passes without firing
 any referenced evidence span does not prove production-path coverage.
 
+## Feature Proof Workflow
+
+Feature files are the normative requirement list. Firelab validations are the
+executable proof layer over those requirements.
+
+```text
+features/<product>/<name>.feature.yaml
+        │
+        ├─ requirement ids: GROUP.1, GROUP.2, ...
+        │
+        ▼
+packages/firelab/src/validations/<validation-id>/index.ts
+        │
+        ├─ defineValidation({ feature: { product, name }, requirements: [...] })
+        │
+        ▼
+firelab proofs check
+```
+
+Use `proofs check` during authoring:
+
+```bash
+# Draft mode: validates existing proofs and lists missing requirements.
+pnpm --filter firelab validate:proofs check effect-s2-stream-db/storage-primitives --allow-missing
+
+# Strict mode: exits non-zero if any feature requirement has no proof.
+pnpm --filter firelab validate:proofs check effect-s2-stream-db/storage-primitives
+
+# Check one validation module against its declared feature.
+pnpm --filter firelab validate:proofs check effect-s2-stream-db-storage-primitives --allow-missing
+
+# Check every validation-backed feature.
+pnpm --filter firelab validate:proofs check --all --allow-missing
+```
+
+Use `proofs init` when a feature has no validation module yet:
+
+```bash
+# Print the file that would be generated.
+pnpm --filter firelab validate:proofs init effect-s2/resource-spec --dry-run
+
+# Create packages/firelab/src/validations/effect-s2-resource-spec/index.ts.
+pnpm --filter firelab validate:proofs init effect-s2/resource-spec
+```
+
+`proofs init` parses the feature YAML, infers the validation id from
+`<product>-<feature.name>`, and writes a `defineValidation(...)` module with a
+placeholder component plus one proof stub per requirement. It refuses to
+overwrite an existing validation unless `--force` is passed.
+
+CI runs `pnpm --filter firelab validate:all --timeout-ms 120000`, so every
+validation under `packages/firelab/src/validations/<id>/index.ts` is a merge
+gate once committed.
+
+A well-formed proof has:
+
+- a local feature requirement id such as `CHECKPOINT.1`;
+- a non-empty description;
+- a non-empty CEL evidence expression;
+- at least one named production evidence span;
+- no references to non-evidence driver spans;
+- a claim function.
+
+Use `proofs scaffold` to generate requirement entries for the missing
+requirements in a feature:
+
+```bash
+pnpm --filter firelab validate:proofs scaffold effect-s2-stream-db/storage-primitives
+```
+
+The scaffold output is intentionally not considered complete proof work. Paste
+the entries into a validation, replace the `TODO` evidence span with real
+production-path evidence, and replace the failing claim with the executable
+behavior check.
+
 ## Artifacts
 
 Each run writes artifacts under `packages/firelab/.simulate/runs/<run-id>/`.
@@ -199,7 +289,8 @@ artifact directory.
 `validate:perf` summarizes slow spans and idle gaps.
 
 `validate:gaps` prints the instrumentation map: observed span names,
-evidence-span classification, and evidence spans not exercised by that run.
+evidence-span classification, and evidence named by the validation but not
+observed in that run.
 
 `validate:seams` re-runs the coverage oracle over a saved `trace.jsonl` and
 `observations.json`. This is useful when tightening evidence gates without
