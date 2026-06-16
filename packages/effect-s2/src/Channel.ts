@@ -5,6 +5,16 @@ import { Effect, Schema, Stream } from "effect"
 
 const JsonValue = Schema.UnknownFromJsonString
 
+const encodedRecord = <A, I, RD, RE>(
+  schema: Schema.Codec<A, I, RD, RE>,
+  value: A,
+) =>
+  Effect.gen(function*() {
+    const encoded = yield* Schema.encodeEffect(schema)(value)
+    const body = yield* Schema.encodeEffect(JsonValue)(encoded)
+    return AppendRecord.string({ body })
+  })
+
 export const publish = <A, I, RD, RE>(
   name: string,
   schema: Schema.Codec<A, I, RD, RE>,
@@ -15,9 +25,8 @@ export const publish = <A, I, RD, RE>(
   S2Client | RE
 > =>
   Effect.gen(function*() {
-    const encoded = yield* Schema.encodeEffect(schema)(value)
-    const body = yield* Schema.encodeEffect(JsonValue)(encoded)
-    return yield* S2Client.append(name, AppendInput.create([AppendRecord.string({ body })]))
+    const record = yield* encodedRecord(schema, value)
+    return yield* S2Client.append(name, AppendInput.create([record]))
   })
 
 export const readDecoded = <A, I, RD, RE>(
@@ -48,11 +57,10 @@ export const conditionalAppend = <A, I, RD, RE>(
   S2Client | RE
 > =>
   Effect.gen(function*() {
-    const encoded = yield* Schema.encodeEffect(schema)(value)
-    const body = yield* Schema.encodeEffect(JsonValue)(encoded)
     const options: AppendOptions = { matchSeqNum }
+    const record = yield* encodedRecord(schema, value)
     return yield* S2Client.append(
       name,
-      AppendInput.create([AppendRecord.string({ body })], options),
+      AppendInput.create([record], options),
     )
   })

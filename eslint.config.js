@@ -1275,7 +1275,6 @@ export default tseslint.config(
   },
   {
     files: [
-      "packages/conformance/**/*.ts",
       "packages/**/test/**/*.ts",
     ],
     rules: {
@@ -1416,8 +1415,6 @@ export default tseslint.config(
   },
   {
     files: [
-      "packages/conformance/**/*.ts",
-      "packages/conformance/**/*.mjs",
       "packages/**/test/**/*.ts",
     ],
     rules: {
