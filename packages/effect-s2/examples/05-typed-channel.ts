@@ -16,7 +16,7 @@ const program = Effect.gen(function*() {
     start: { from: { seqNum: 0 } },
     stop: { limits: { count: 1 } },
   }).pipe(Stream.runCollect)
-  yield* Console.log(orders)
+  yield* Console.log(orders.map((record) => [record.seqNum, record.value]))
 }).pipe(Effect.provide(S2Client.layerConfig))
 
 NodeRuntime.runMain(program)

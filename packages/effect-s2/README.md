@@ -205,12 +205,18 @@ const program = Effect.gen(function*() {
   yield* S2Client.createStream("orders")
   yield* publish("orders", Order, Order.make({ id: "o-1", total: 42 }))
 
-  return yield* readDecoded("orders", Order, {
+  const records = yield* readDecoded("orders", Order, {
     start: { from: { seqNum: 0 } },
     stop: { limits: { count: 1 } },
   }).pipe(Stream.runCollect)
+
+  return records.map((record) => [record.seqNum, record.value])
 })
 ```
+
+`readDecoded` keeps S2 record metadata (`seqNum`, `timestamp`, `headers`, and
+raw `body`) and adds the schema-decoded `value`, so ordered consumers can replay
+from S2's authoritative sequence numbers without inventing another cursor.
 
 `conditionalAppend` combines schema encoding with `matchSeqNum`:
 

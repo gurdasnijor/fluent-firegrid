@@ -9,7 +9,7 @@ export {
   type S2OperationOptions,
   type S2Producer,
 } from "./S2Client.ts"
-export { conditionalAppend, publish, readDecoded } from "./Channel.ts"
+export { conditionalAppend, publish, readDecoded, type DecodedRecord } from "./Channel.ts"
 export {
   S2Conflict,
   S2Error,
