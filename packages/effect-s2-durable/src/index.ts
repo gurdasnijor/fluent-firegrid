@@ -1,6 +1,6 @@
 export { DurableExecutionError } from "./errors.ts"
 export { handler } from "./handler.ts"
-export { handlerRequest, run } from "./primitives.ts"
+export { handlerRequest, run, sleep } from "./primitives.ts"
 export { DurableExecutionRuntime } from "./Runtime.ts"
 export type { DurableExecutionRuntimeApi } from "./Runtime.ts"
 export {

@@ -69,7 +69,11 @@ program.pipe(
 
 ## Status
 
-Slice 1 (built + tested against `s2 lite`): `handler`, `handlerRequest`, `run`
-(memoization / retry / typed-failure facts), `submit` / `attach` / `poll`, and the
-completion ordering. Next slices: `sleep` (durable timers), `signal` / `awakeable` /
-`deferred`, `state`, and roster-driven boot recovery.
+Built + tested against `s2 lite`:
+- Slice 1 — `handler`, `handlerRequest`, `run` (memoization / retry / typed-failure
+  facts), `submit` / `attach` / `poll`, completion ordering.
+- Slice 2 — `sleep` (durable timer: a `clockWakeups` row, `pending`→`fired`; replay
+  short-circuits a fired wakeup and recomputes the remaining delay of a pending one).
+
+Next slices: `signal` / `awakeable` / `deferred`, `state`, and roster-driven boot
+recovery (which re-arms pending wakeups into the engine scope).

@@ -1,4 +1,4 @@
-import { Effect, type Schema } from "effect"
+import { type Duration, Effect, type Schema } from "effect"
 import type { DurableExecutionError } from "./errors.ts"
 import { DurableExecutionRuntime } from "./Runtime.ts"
 import type { Run } from "./types.ts"
@@ -20,3 +20,10 @@ export const handlerRequest = <A, I>(
   schema: Schema.Codec<A, I, never, never>,
 ): Effect.Effect<A, DurableExecutionError, DurableExecutionRuntime> =>
   Effect.flatMap(DurableExecutionRuntime, (rt) => rt.handlerRequest(schema))
+
+/** A durable timer: suspend the step until `duration` has elapsed (replay-safe). */
+export const sleep = (
+  name: string,
+  duration: Duration.Duration,
+): Effect.Effect<void, DurableExecutionError, DurableExecutionRuntime> =>
+  Effect.flatMap(DurableExecutionRuntime, (rt) => rt.sleepStep(name, duration))

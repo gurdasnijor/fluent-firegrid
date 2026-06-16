@@ -1,6 +1,6 @@
 import { expect, layer } from "@effect/vitest"
-import { Duration, Effect, Layer, Option, Schema } from "effect"
-import { DurableExecutionError, DurableExecutionRuntime, handler, handlerRequest, run } from "../src/index.ts"
+import { Clock, Duration, Effect, Layer, Option, Schema } from "effect"
+import { DurableExecutionRuntime, handler, handlerRequest, run, sleep } from "../src/index.ts"
 import { S2LiteLive } from "./s2lite.ts"
 
 // One long-lived engine for the whole suite, over a real s2 lite server.
@@ -78,6 +78,24 @@ layer(TestLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
         yield* rt.submit(boom, "boom-1", { name: "z" })
         const exit = yield* Effect.exit(rt.attach(boom, "boom-1"))
         expect(exit._tag).toBe("Failure")
+      }))
+
+    it.effect("sleep durably delays the handler before completing", () =>
+      Effect.gen(function*() {
+        const napper = handler("napper", { input: GreetInput, output: Schema.Number })(
+          Effect.gen(function*() {
+            yield* handlerRequest(GreetInput)
+            yield* sleep("nap", Duration.millis(120))
+            return yield* run("after-nap", Effect.succeed(7), { output: Schema.Number })
+          }),
+        )
+        const rt = yield* DurableExecutionRuntime
+        const start = yield* Clock.currentTimeMillis
+        yield* rt.submit(napper, "nap-1", { name: "rip" })
+        const out = yield* rt.attach(napper, "nap-1")
+        const elapsed = (yield* Clock.currentTimeMillis) - start
+        expect(out).toBe(7)
+        expect(elapsed).toBeGreaterThanOrEqual(110)
       }))
   },
 )

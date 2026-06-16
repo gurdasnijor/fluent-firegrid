@@ -98,6 +98,8 @@ export interface DurableExecutionRuntimeApi {
   readonly handlerRequest: <A, I>(
     schema: Schema.Codec<A, I, never, never>,
   ) => Effect.Effect<A, DurableExecutionError>
+  /** The durable timer (delegated to by the `sleep` free primitive). */
+  readonly sleepStep: (name: string, duration: Duration.Duration) => Effect.Effect<void, DurableExecutionError>
 }
 
 export class DurableExecutionRuntime
@@ -186,6 +188,37 @@ const makeRuntime: Effect.Effect<DurableExecutionRuntimeApi, never, S2Client | S
         )
       }
       return yield* decode(schema, activeOpt.value.inputEncoded)
+    })
+
+  // ── durable timer (`sleep`) ────────────────────────────────────────────────
+  // A `clockWakeups` row is the durable fact: `pending` = SleepScheduled,
+  // `fired` = SleepFired. In this single-process slice the handler fiber sleeps
+  // inline; on replay a `fired` row short-circuits and a `pending` row recomputes
+  // the remaining delay from its stored deadline. (Re-arming a pending wakeup into
+  // `engineScope` for a suspended/restarted execution is the slice-4 recovery job.)
+  const sleepStep = (name: string, duration: Duration.Duration): Effect.Effect<void, DurableExecutionError> =>
+    Effect.gen(function*() {
+      const activeOpt = yield* ActiveInvocation
+      if (Option.isNone(activeOpt)) {
+        return yield* Effect.die(
+          new DurableExecutionError({
+            operation: "sleep",
+            message: `sleep(${JSON.stringify(name)}) called outside an active handler`,
+            cause: undefined,
+          }),
+        )
+      }
+      const db = activeOpt.value.db
+      const existing = yield* db.clockWakeups.get(name).pipe(Effect.mapError(toError("sleep")))
+      if (Option.isSome(existing) && existing.value.status === "fired") return // already elapsed
+      const now = yield* Clock.currentTimeMillis
+      const deadlineMs = Option.isSome(existing) ? existing.value.deadlineMs : now + Duration.toMillis(duration)
+      if (Option.isNone(existing)) {
+        yield* db.clockWakeups.insert({ name, deadlineMs, status: "pending" }).pipe(Effect.mapError(toError("sleep")))
+      }
+      const remaining = Math.max(0, deadlineMs - now)
+      if (remaining > 0) yield* Effect.sleep(Duration.millis(remaining))
+      yield* db.clockWakeups.upsert({ name, deadlineMs, status: "fired" }).pipe(Effect.mapError(toError("sleep")))
     })
 
   // ── completion (SDD §B6): the result must outlive the dropped stream ─────────
@@ -323,6 +356,6 @@ const makeRuntime: Effect.Effect<DurableExecutionRuntimeApi, never, S2Client | S
       ),
     )
 
-  const api: DurableExecutionRuntimeApi = { submit, attach, poll, runStep, handlerRequest }
+  const api: DurableExecutionRuntimeApi = { submit, attach, poll, runStep, handlerRequest, sleepStep }
   return api
 })
