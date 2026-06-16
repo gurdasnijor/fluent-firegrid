@@ -15,42 +15,27 @@
         "test/**/*.ts"
       ]
     },
-    "packages/conformance": {
+    "packages/effect-s2": {
       "entry": [
-        "bin/**/*.mjs"
+        "test/**/*.test.ts",
+        "examples/**/*.ts"
       ],
       "project": [
         "src/**/*.ts",
-        "bin/**/*.mjs"
+        "test/**/*.ts",
+        "examples/**/*.ts"
+      ]
+    },
+    "packages/effect-s2-stream-db": {
+      "entry": [
+        "test/**/*.test.ts",
+        "test/usage.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "test/**/*.ts"
       ]
     }
-  },
-  "ignoreIssues": {
-    "packages/conformance/src/client/benchmark-scenarios.ts": [
-      "exports",
-      "types"
-    ],
-    "packages/conformance/src/client/benchmark-runner.ts": [
-      "types"
-    ],
-    "packages/conformance/src/client/test-cases.ts": [
-      "exports",
-      "types"
-    ],
-    "packages/conformance/src/server/consumer-dsl.ts": [
-      "exports",
-      "types"
-    ],
-    "packages/conformance/src/server/consumer-tests.ts": [
-      "types"
-    ],
-    "packages/conformance/src/server/pull-wake-dsl.ts": [
-      "exports",
-      "types"
-    ],
-    "packages/conformance/src/server/pull-wake-tests.ts": [
-      "types"
-    ]
   },
   "ignoreWorkspaces": [
     "packages/firelab"

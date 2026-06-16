@@ -480,6 +480,13 @@ const liveOptions = (options: {
 }) => ({
   accessToken: options.accessToken,
   basinName: options.basinName,
+  ...optionalLiveOptions(options),
+})
+
+const optionalLiveOptions = (options: {
+  readonly retry?: S2RetryConfig
+  readonly forceTransport?: "fetch" | "s2s"
+}) => ({
   ...(options.retry === undefined ? {} : { retry: options.retry }),
   ...(options.forceTransport === undefined ? {} : { forceTransport: options.forceTransport }),
 })
@@ -661,42 +668,52 @@ const makeLiveApi = (input: {
     options: ReadOptions,
     operationOptions?: S2OperationOptions,
   ): Stream.Stream<S2Record, S2ClientError> =>
+    readStream(
+      name,
+      "S2.read",
+      Effect.tryPromise({
+        try: () => selectedStreamHandle(name, operationOptions).readSession(options, operationOptions?.request),
+        catch: fromUnknown("readSession"),
+      }),
+      toS2Record,
+    )
+
+  const readStream = <Record, A>(
+    name: string,
+    spanName: string,
+    acquireSession: Effect.Effect<AsyncIterable<Record> & { cancel: () => Promise<void> }, S2ClientError>,
+    mapRecord: (record: Record) => A,
+  ): Stream.Stream<A, S2ClientError> =>
     Stream.unwrap(
       Effect.gen(function*() {
-        const handle = selectedStreamHandle(name, operationOptions)
         const session = yield* Effect.acquireRelease(
-          Effect.tryPromise({
-            try: () => handle.readSession(options, operationOptions?.request),
-            catch: fromUnknown("readSession"),
-          }),
+          acquireSession,
           (readSession) => Effect.promise(() => readSession.cancel()),
         )
         return Stream.fromAsyncIterable(session, fromUnknown("read")).pipe(
-          Stream.map(toS2Record),
+          Stream.map(mapRecord),
         )
       }),
-    ).pipe(Stream.withSpan("S2.read", { attributes: { stream: name } }))
+    ).pipe(Stream.withSpan(spanName, { attributes: { stream: name } }))
 
   const readBytes = (
     name: string,
     options: ReadOptions,
     operationOptions?: S2OperationOptions,
   ): Stream.Stream<S2RecordBytes, S2ClientError> =>
-    Stream.unwrap(
-      Effect.gen(function*() {
-        const handle = selectedStreamHandle(name, operationOptions)
-        const session = yield* Effect.acquireRelease(
-          Effect.tryPromise({
-            try: () => handle.readSession(options, { ...operationOptions?.request, as: "bytes" }),
-            catch: fromUnknown("readSession"),
-          }),
-          (readSession) => Effect.promise(() => readSession.cancel()),
-        )
-        return Stream.fromAsyncIterable(session, fromUnknown("read")).pipe(
-          Stream.map(toS2RecordBytes),
-        )
+    readStream(
+      name,
+      "S2.readBytes",
+      Effect.tryPromise({
+        try: () =>
+          selectedStreamHandle(name, operationOptions).readSession(
+            options,
+            { ...operationOptions?.request, as: "bytes" },
+          ),
+        catch: fromUnknown("readSession"),
       }),
-    ).pipe(Stream.withSpan("S2.readBytes", { attributes: { stream: name } }))
+      toS2RecordBytes,
+    )
 
   const appendSession = Effect.fn("S2.appendSession")(function*(
     name: string,
@@ -819,10 +836,7 @@ export function layer(options: {
         liveOptions({
           accessToken,
           basinName,
-          ...(options.retry === undefined ? {} : { retry: options.retry }),
-          ...(options.forceTransport === undefined
-            ? {}
-            : { forceTransport: options.forceTransport }),
+          ...optionalLiveOptions(options),
         }),
       )
     }),

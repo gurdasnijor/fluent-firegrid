@@ -1,4 +1,4 @@
-import type { BytesAppendRecord, ReadRecord, SdkAppendRecord, StringAppendRecord } from "./sdk.ts"
+import type { ReadRecord } from "./sdk.ts"
 
 export interface S2Record {
   readonly seqNum: number
@@ -27,13 +27,3 @@ export const toS2RecordBytes = (record: ReadRecord<"bytes">): S2RecordBytes => (
   headers: record.headers,
   body: record.body,
 })
-
-export const isStringAppendRecord = (
-  record: SdkAppendRecord,
-): record is StringAppendRecord =>
-  typeof record.body === "string"
-
-export const isBytesAppendRecord = (
-  record: SdkAppendRecord,
-): record is BytesAppendRecord =>
-  record.body instanceof Uint8Array

@@ -1,4 +1,4 @@
-import { NodeRuntime } from "@effect/platform-node"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
 import { Console, Effect, Stream } from "effect"
 import { AppendRecord, S2Client } from "../src/index.ts"
 

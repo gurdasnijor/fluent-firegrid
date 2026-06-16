@@ -14,35 +14,6 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "baseUrl": ".",
-    "paths": {
-      "@durable-streams/conformance-tests": [
-        "packages/conformance/src/index.ts"
-      ],
-      "@durable-streams/conformance-tests/server": [
-        "packages/conformance/src/server/index.ts"
-      ],
-      "@durable-streams/conformance-tests/client": [
-        "packages/conformance/src/client/index.ts"
-      ],
-      "@durable-streams/conformance-tests/protocol": [
-        "packages/conformance/src/client/protocol.ts"
-      ],
-      "@durable-streams/conformance-tests/*": [
-        "packages/conformance/src/*"
-      ],
-      "durable-streams-protocol": [
-        "packages/durable-streams-protocol/src/index.ts"
-      ],
-      "durable-streams-protocol/*": [
-        "packages/durable-streams-protocol/src/*"
-      ],
-      "effect-durable-client": [
-        "packages/effect-durable-client/src/index.ts"
-      ],
-      "effect-durable-client/*": [
-        "packages/effect-durable-client/src/*"
-      ]
-    },
     "noEmit": true,
     "noErrorTruncation": true,
     "noImplicitReturns": true,
