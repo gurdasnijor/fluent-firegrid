@@ -79,7 +79,9 @@ execution** (one S2 stream per execution); see
 
 ## Status
 
-In progress. Landed: the State-Protocol codec (`ChangeMessage`), the fold
+Built and tested. Landed: the State-Protocol codec (`ChangeMessage`), the fold
 (`MaterializedState`), the `Table`/`StreamDb` definition surface, and the live runtime
-(`open` / table facades / `transact` / `compact` / `drop`) over `effect-s2`. Next:
-acceptance tests against a real `s2 lite` server.
+(`open` / table facades / `transact` / `compact` / `drop`) over `effect-s2` — with
+acceptance tests against a real `s2 lite` server (snapshot+trim replay, transaction
+atomicity, read-after-ack visibility). Next consumer: the durable-execution engine in
+[`docs/s2-stream-db-sdd.md`](../../docs/s2-stream-db-sdd.md) Part B.
