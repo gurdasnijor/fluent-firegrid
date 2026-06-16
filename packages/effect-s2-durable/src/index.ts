@@ -15,13 +15,14 @@ export {
 } from "./primitives.ts"
 export { DurableExecutionRuntime } from "./Runtime.ts"
 export type { DurableExecutionRuntimeApi } from "./Runtime.ts"
-export { client, sendClient, service, serviceLayer } from "./service.ts"
+export { client, object, sendClient, service, serviceLayer } from "./service.ts"
 export type {
   HandlerInput,
   HandlerOutput,
   Handlers,
   HandlerSchemas,
   InvokeOptions,
+  ObjectDefinition,
   SendClient,
   ServiceClient,
   ServiceConfig,
@@ -32,6 +33,8 @@ export {
   DeferredRow,
   ExecutionId,
   ExecutionRow,
+  ObjectInboxRow,
+  ObjectStateDb,
   RosterDb,
   RosterRow,
   StateReadRow,

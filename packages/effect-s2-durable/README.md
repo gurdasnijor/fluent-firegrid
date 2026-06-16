@@ -123,6 +123,60 @@ its type forbids `DurableExecutionRuntime` in `R`, so `run(state(Cart).set(…))
 is a *compile* error at the `run` call — the Effect analog of Restate's ctx-less
 run closure. Perform durable work in the handler body, not inside a `run` action.
 
+## Virtual objects (keyed, stateful)
+
+`object({ name, handlers })` defines a **keyed virtual object** — a stateful entity.
+Authoring is identical to `service` (generator methods, input as the argument); the
+differences are durable and per **key**:
+
+- **Persistent per-key state.** Each `(name, key)` has its own `state(Table)` store on
+  a stream (`obj/<name:key>`) that is **not** dropped when a method finishes, so state
+  survives across calls (a service's state lives in its per-call stream and is dropped).
+- **Exclusive methods (crash-safe).** A key's methods run **single-writer** via
+  *admission control*, not a lock over racing bodies: each call is appended to a durable
+  **FIFO inbox** (in the key's own stream) and a serial drainer runs them one at a time,
+  head to completion. So **at most one invocation per key is ever in flight** — and after
+  a crash, recovery drains that ordered queue rather than re-racing several incomplete
+  executions. That's what makes a read-modify-write across concurrent calls lose-update-free
+  *including across a restart* (a parked exclusive method holds the key until it resolves,
+  exactly like Restate).
+
+```ts
+import { client, object, state } from "effect-s2-durable"
+
+class CounterState extends Table<CounterState>("counterState")({
+  id: Schema.String.pipe(primaryKey),
+  value: Schema.Number,
+}) {}
+
+const counter = object({
+  name: "counter",
+  handlers: {
+    *add(amount: number) {
+      const st = state(CounterState)
+      const cur = Option.match(yield* st.get("v"), { onNone: () => 0, onSome: (r) => r.value })
+      yield* st.set({ id: "v", value: cur + amount })
+      return cur + amount
+    },
+    *value() { // a no-arg method is called as `.value()`
+      const st = state(CounterState)
+      return Option.match(yield* st.get("v"), { onNone: () => 0, onSome: (r) => r.value })
+    },
+  },
+})
+
+// the call surface carries the key: `client(object, key)` / `sendClient(object, key)`
+yield* client(counter, "user-1").add(5)   // → 5
+yield* client(counter, "user-1").value()  // → 5  (state persisted across calls)
+yield* client(counter, "user-2").value()  // → 0  (a different key is isolated)
+```
+
+The *ordering* is durable (the inbox is on the key's stream), so it survives a restart;
+what's in-process is the drainer fiber, which recovery restarts per key. One engine owns a
+key at a time — the same single-writer scope as the per-execution model; cross-process key
+leasing is out of scope. Register objects with `serviceLayer(counter)` so recovery can
+re-drive their inboxes by handler name.
+
 ## Park-and-resume primitives
 
 `signal` / `awakeable` / `deferred` are one mechanism: a durable `deferreds` row is
