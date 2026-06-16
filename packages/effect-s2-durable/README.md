@@ -11,41 +11,35 @@ map, the completion ordering, and (in later slices) timers + recovery.
 
 ## Authoring surface
 
-`handler(...)` is the only definition primitive. A durable program is an ordinary
-`Effect` that uses the **free primitives** (`run`, `handlerRequest`, …) — there is no
-`ctx` object; the primitives read an internal active-invocation slot and delegate to
-the ambient `DurableExecutionRuntime`.
+The ergonomic surface is **restate-sdk-gen-shaped**: group handlers in a `service`,
+write each as `(input) => Effect` (the input is the argument — no `handlerRequest`
+boilerplate), and call through a typed `client` that hides the execution id and the
+submit/attach dance. Handler bodies are ordinary `Effect.gen` using the **free
+primitives** (`run`/`sleep`/`state`/`signal`/`awakeable`/`deferred`) — no `ctx` object;
+they read an internal active-invocation slot and delegate to `DurableExecutionRuntime`.
 
 ```ts
-import { Duration, Effect, Schema } from "effect"
-import { handler, handlerRequest, run } from "effect-s2-durable"
-
-const Request = Schema.Struct({ name: Schema.String })
-const Result = Schema.Struct({ greeting: Schema.String })
-
-export const greet = handler("greet", { input: Request, output: Result })(
-  Effect.gen(function*() {
-    const req = yield* handlerRequest(Request)
-    const greeting = yield* run("compose", composeGreeting(req.name), {
-      output: Schema.String,
-      retry: { maxAttempts: 3, initialInterval: Duration.millis(100) },
-    })
-    return { greeting }
-  }),
-)
-```
-
-Run it over a real S2 backend:
-
-```ts
-import { Effect, Layer } from "effect"
+import { Duration, Effect, Layer, Schema } from "effect"
 import { S2Client } from "effect-s2"
-import { DurableExecutionRuntime } from "effect-s2-durable"
+import { client, DurableExecutionRuntime, run, service } from "effect-s2-durable"
+
+const greeter = service({
+  name: "greeter",
+  handlers: {
+    greet: (req: { name: string }) =>
+      Effect.gen(function*() {
+        const greeting = yield* run("compose", composeGreeting(req.name), {
+          output: Schema.String,
+          retry: { maxAttempts: 3, initialInterval: Duration.millis(100) },
+        })
+        return { greeting }
+      }),
+  },
+})
 
 const program = Effect.gen(function*() {
-  const rt = yield* DurableExecutionRuntime
-  yield* rt.submit(greet, "greet-1", { name: "ada" })
-  return yield* rt.attach(greet, "greet-1") // → { greeting: "..." }
+  // submit + attach + execution-id are hidden; returns the typed result
+  return yield* client(greeter).greet({ name: "ada" }) // → { greeting: "..." }
 })
 
 program.pipe(
@@ -53,6 +47,18 @@ program.pipe(
   Effect.scoped,
 )
 ```
+
+`sendClient(greeter).greet(input)` is the fire-and-forget form (returns the execution
+id). Pass `{ idempotencyKey }` to pin the id (idempotent invocation). Optional
+per-handler `schemas: { greet: { input, output } }` set the durable encode/decode
+boundary (default: opaque JSON).
+
+### Low-level primitives
+
+`service`/`client` are a thin layer over the engine primitives, which are also public:
+`handler(name, { input, output })(program)` (the definition primitive; `program` uses
+`handlerRequest(Schema)` to read the input) and `DurableExecutionRuntime.submit` /
+`attach` / `poll`. Reach for these only when you need to manage execution ids yourself.
 
 ## Semantics
 

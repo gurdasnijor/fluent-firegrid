@@ -3,6 +3,7 @@ import { Clock, Duration, Effect, Layer, Option, Schema } from "effect"
 import { primaryKey, Table } from "effect-s2-stream-db"
 import {
   awakeable,
+  client,
   deferred,
   DurableExecutionRuntime,
   handler,
@@ -10,6 +11,8 @@ import {
   resolveAwakeable,
   resolveSignal,
   run,
+  sendClient,
+  service,
   signal,
   sleep,
   state,
@@ -180,6 +183,26 @@ layer(TestLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
         // fire immediately — before the handler reaches the await
         yield* resolveSignal("sig-early", "approval", Approval, { approved: true })
         expect(yield* rt.attach(approve, "sig-early")).toBe(true)
+      }))
+
+    it.effect("service + client invokes by method — no submit/attach/exec-id", () =>
+      Effect.gen(function*() {
+        const sideEffects = { count: 0 }
+        const greeter = service({
+          name: "greeter",
+          handlers: {
+            greet: (req: { name: string }) =>
+              Effect.gen(function*() {
+                const n = yield* run("bump", Effect.sync(() => ++sideEffects.count), { output: Schema.Number })
+                return { greeting: `hi ${req.name}`, count: n }
+              }),
+          },
+        })
+        const out = yield* client(greeter).greet({ name: "ada" })
+        expect(out).toStrictEqual({ greeting: "hi ada", count: 1 })
+        // sendClient returns the execution id without waiting for the result
+        const id = yield* sendClient(greeter).greet({ name: "bob" })
+        expect(typeof id).toBe("string")
       }))
 
     it.effect("awakeable resolves by its replay-stable id", () =>

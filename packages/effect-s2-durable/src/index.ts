@@ -3,6 +3,18 @@ export { handler } from "./handler.ts"
 export { awakeable, deferred, handlerRequest, resolveAwakeable, resolveSignal, run, signal, sleep, state } from "./primitives.ts"
 export { DurableExecutionRuntime } from "./Runtime.ts"
 export type { DurableExecutionRuntimeApi } from "./Runtime.ts"
+export { client, sendClient, service } from "./service.ts"
+export type {
+  HandlerInput,
+  HandlerOutput,
+  Handlers,
+  HandlerSchemas,
+  InvokeOptions,
+  SendClient,
+  ServiceClient,
+  ServiceConfig,
+  ServiceDefinition,
+} from "./service.ts"
 export {
   ClockWakeupRow,
   DeferredRow,
