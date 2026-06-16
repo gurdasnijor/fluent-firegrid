@@ -190,6 +190,47 @@ layer(TestLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
         expect(captured.id).toBe(`${id}/awk/0`)
       }))
 
+    it.effect("re-invoking a completed id is idempotent (no re-run)", () =>
+      Effect.gen(function*() {
+        const calls = { count: 0 }
+        const svc = service({
+          name: "dedup",
+          handlers: {
+            *go(_req: { x: string }) {
+              return yield* run(Effect.sync(() => ++calls.count), { output: Schema.Number })
+            },
+          },
+        })
+        const c = client(svc)
+        const first = yield* c.go({ x: "q" }, { idempotencyKey: "dup-1" })
+        const second = yield* c.go({ x: "q" }, { idempotencyKey: "dup-1" }) // after `first` completed
+        expect(first).toBe(1)
+        expect(second).toBe(1) // served from the roster, not a re-run
+        expect(calls.count).toBe(1)
+      }))
+
+    it.effect("attach decodes via its schema on the live (owned) path too", () =>
+      Effect.gen(function*() {
+        // returns a number, but parks first so attach takes the live (running) path
+        const svc = service({
+          name: "live-decode",
+          handlers: {
+            *go(_req: { x: string }) {
+              yield* signal("go", Schema.Boolean)
+              return 7
+            },
+          },
+        })
+        const id = yield* sendClient(svc).go({ x: "q" })
+        // decoding a number as a string must fail — proving the live path honors the
+        // schema rather than returning the raw in-memory value (7).
+        const [exit] = yield* Effect.all([
+          Effect.exit(attach(id, Schema.String)),
+          resolveSignal(id, "go", Schema.Boolean, true),
+        ], { concurrency: 2 })
+        expect(exit._tag).toBe("Failure")
+      }))
+
     // ── the low-level primitive: handler + DurableExecutionRuntime.submit ────
     // service/client are sugar over this; power users can drive it directly.
 

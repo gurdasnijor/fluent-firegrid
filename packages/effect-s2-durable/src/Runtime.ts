@@ -445,7 +445,12 @@ const makeRuntime: Effect.Effect<DurableExecutionRuntimeApi, DurableExecutionErr
     ): Effect.Effect<void, DurableExecutionError, R> =>
       Effect.gen(function*() {
         const live = yield* Ref.get(running)
-        if (HashMap.has(live, executionId)) return // already owned — idempotent
+        if (HashMap.has(live, executionId)) return // already owned here — idempotent
+
+        // already finished? a terminal roster row means a re-submit must NOT re-run
+        // (the execution's stream is gone; the result lives on in the roster).
+        const prior = yield* roster.get(executionId).pipe(Effect.mapError(toError("submit")))
+        if (Option.isSome(prior) && (prior.value.status === "completed" || prior.value.status === "failed")) return
 
         const db = yield* openWf(executionId).pipe(Effect.mapError(toError("submit")))
         const inputEncoded = yield* encode(handler.input as Schema.Codec<unknown, unknown, never, never>, input)
@@ -497,19 +502,22 @@ const makeRuntime: Effect.Effect<DurableExecutionRuntimeApi, DurableExecutionErr
       schema: Schema.Codec<A, I, never, never>,
     ): Effect.Effect<A, DurableExecutionError> =>
       Effect.gen(function*() {
+        // if we own it, wait for it to settle — `complete` has written the roster
+        // result by the time the waiter resolves, so both paths decode via `schema`.
         const live = yield* Ref.get(running)
         const entry = HashMap.get(live, executionId)
         if (Option.isSome(entry)) {
-          // the running waiter holds the handler's *decoded* return value
           const exit = yield* Deferred.await(entry.value.deferred)
-          if (Exit.isSuccess(exit)) return exit.value as A
-          return yield* Effect.fail(
-            new DurableExecutionError({
-              operation: "attach",
-              message: `execution failed: ${Cause.pretty(exit.cause)}`,
-              cause: exit.cause,
-            }),
-          )
+          if (Exit.isFailure(exit)) {
+            return yield* Effect.fail(
+              new DurableExecutionError({
+                operation: "attach",
+                message: `execution failed: ${Cause.pretty(exit.cause)}`,
+                cause: exit.cause,
+              }),
+            )
+          }
+          // success: fall through to read + decode the durable roster result
         }
         const row = yield* roster.get(executionId).pipe(Effect.mapError(toError("attach")))
         if (Option.isNone(row)) return yield* fail("attach", `unknown execution: ${executionId}`)
