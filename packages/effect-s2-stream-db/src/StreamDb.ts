@@ -57,7 +57,7 @@ export type RowOf<T extends AnyTable> = T["Row"]
  * db's stream. The primary key is the `primaryKey`-annotated field.
  */
 export const Table =
-  <Self = never>(name: string) =>
+  <_Self = never>(name: string) =>
   <const Fields extends Schema.Struct.Fields>(fields: Fields): TableClass<Fields> => {
     const schema = Schema.Struct(fields)
     const pkField = findPrimaryKey(schema)
@@ -66,6 +66,7 @@ export const Table =
       static readonly schema = schema
       static readonly pkField = pkField
     }
+    // eslint-disable-next-line local/no-launder-cast -- class-factory: the static shape (typed `tableName`/`schema`/`pkField` + phantom `Row`) can't be expressed structurally on a class declaration
     return TableImpl as unknown as TableClass<Fields>
   }
 
@@ -128,7 +129,7 @@ export type StreamDbInstance<T extends Tables> =
 // ── StreamDb — `class X extends StreamDb<X>("base")({ tables }) {}` ───────────
 
 /** A key schema: decodes the db's instance key and encodes it to a path segment. */
-export type KeySchema = Schema.Codec<any, string>
+export type KeySchema = Schema.Codec<unknown, string>
 
 /** The static shape of a StreamDb class. */
 export interface StreamDbClass<T extends Tables, Key extends KeySchema> {
@@ -153,14 +154,14 @@ export interface StreamDbClass<T extends Tables, Key extends KeySchema> {
  * `key` defaults to `Schema.String`, so `open("exec-1")` works unrefined.
  */
 export const StreamDb =
-  <Self = never>(basePath: string) =>
+  <_Self = never>(basePath: string) =>
   <const T extends Tables, Key extends KeySchema = typeof Schema.String>(
     tables: T,
     key?: Key,
   ): StreamDbClass<T, Key> => {
     const keySchema = (key ?? Schema.String) as Schema.Codec<unknown, string>
     const encodeKey = (value: unknown) =>
-      Schema.encodeUnknownEffect(keySchema)(value) as Effect.Effect<string, Schema.SchemaError>
+      Schema.encodeUnknownEffect(keySchema)(value)
     class StreamDbImpl {
       static readonly basePath = basePath
       static readonly key = keySchema
@@ -171,6 +172,7 @@ export const StreamDb =
           Effect.flatMap((segment) => openStream(`${basePath}/${segment}`, tables)),
         )
     }
+    // eslint-disable-next-line local/no-launder-cast -- class-factory: the static shape (typed `open`/`tables`/`key` + `new()`) can't be expressed structurally on a class declaration
     return StreamDbImpl as unknown as StreamDbClass<T, Key>
   }
 
@@ -267,7 +269,7 @@ const openStream = <T extends Tables>(
                 ? preloadFrom(last.seqNum + 1)
                 : Ref.set(tailRef, tailSeq)
             }),
-          )
+          ),
         ),
       )
 
@@ -331,13 +333,18 @@ const openStream = <T extends Tables>(
             return { _tag: "Inserted" } satisfies InsertOrGetResult<unknown>
           }),
         ).pipe(Effect.mapError(toError("insertOrGet"))),
+      // `Effect.suspend` so the read observes `MaterializedState` when the Effect
+      // RUNS, not when `get`/`query` is called — otherwise a reused read Effect
+      // would freeze the value captured at construction time.
       get: (key) =>
-        Option.match(state.get(meta.type, key), {
-          onNone: () => Effect.succeedNone,
-          onSome: (encoded) => decodeRow(meta, encoded).pipe(Effect.map(Option.some)),
-        }).pipe(Effect.mapError(toError("get"))),
+        Effect.suspend(() =>
+          Option.match(state.get(meta.type, key), {
+            onNone: () => Effect.succeedNone,
+            onSome: (encoded) => decodeRow(meta, encoded).pipe(Effect.map(Option.some)),
+          }),
+        ).pipe(Effect.mapError(toError("get"))),
       query: (build) =>
-        Effect.forEach(state.values(meta.type), (encoded) => decodeRow(meta, encoded)).pipe(
+        Effect.suspend(() => Effect.forEach(state.values(meta.type), (encoded) => decodeRow(meta, encoded))).pipe(
           Effect.map(build),
           Effect.mapError(toError("query")),
         ),
@@ -404,5 +411,6 @@ const openStream = <T extends Tables>(
 
     const drop = client.deleteStream({ stream }).pipe(Effect.mapError(toError("drop")))
 
+    // eslint-disable-next-line local/no-launder-cast -- the dynamic `facades` record (typed per-table at the type level) can't be proven to match the mapped `StreamDbInstance<T>` shape structurally
     return { ...facades, table, transact, compact, drop } as unknown as StreamDbInstance<T>
   })

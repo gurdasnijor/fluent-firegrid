@@ -20,8 +20,8 @@ import type { Handler } from "./types.ts"
 export const handler = <Name extends string, I, O>(
   name: Name,
   schemas: {
-    readonly input: Schema.Codec<I, any, never, never>
-    readonly output: Schema.Codec<O, any, never, never>
+    readonly input: Schema.Codec<I, unknown, never, never>
+    readonly output: Schema.Codec<O, unknown, never, never>
   },
 ) =>
 <E = never, R = never>(program: Effect.Effect<O, E, R | DurableExecutionRuntime>): Handler<I, O, E, R> => ({
@@ -29,5 +29,4 @@ export const handler = <Name extends string, I, O>(
   input: schemas.input,
   output: schemas.output,
   program,
-  Input: undefined as unknown as I,
 })

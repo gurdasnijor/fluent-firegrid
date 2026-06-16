@@ -1,7 +1,19 @@
 import { expect, layer } from "@effect/vitest"
 import { Clock, Duration, Effect, Layer, Option, Schema } from "effect"
 import { primaryKey, Table } from "effect-s2-stream-db"
-import { DurableExecutionRuntime, handler, handlerRequest, run, sleep, state } from "../src/index.ts"
+import {
+  awakeable,
+  deferred,
+  DurableExecutionRuntime,
+  handler,
+  handlerRequest,
+  resolveAwakeable,
+  resolveSignal,
+  run,
+  signal,
+  sleep,
+  state,
+} from "../src/index.ts"
 import { S2LiteLive } from "./s2lite.ts"
 
 // One long-lived engine for the whole suite, over a real s2 lite server.
@@ -16,6 +28,8 @@ class Cart extends Table<Cart>("cart")({
   cartId: Schema.String.pipe(primaryKey),
   items: Schema.Array(Schema.String),
 }) {}
+
+const Approval = Schema.Struct({ approved: Schema.Boolean })
 
 layer(TestLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
   "effect-s2-durable engine over s2 lite",
@@ -114,12 +128,77 @@ layer(TestLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
           }),
         )
         const rt = yield* DurableExecutionRuntime
-        const start = yield* Clock.currentTimeMillis
+        const napStart = yield* Clock.currentTimeMillis
         yield* rt.submit(napper, "nap-1", { name: "rip" })
         const out = yield* rt.attach(napper, "nap-1")
-        const elapsed = (yield* Clock.currentTimeMillis) - start
+        const elapsed = (yield* Clock.currentTimeMillis) - napStart
         expect(out).toBe(7)
         expect(elapsed).toBeGreaterThanOrEqual(110)
+      }))
+
+    it.effect("deferred resolves and reads back within a handler", () =>
+      Effect.gen(function*() {
+        const wf = handler("deferred-wf", { input: GreetInput, output: Schema.Boolean })(
+          Effect.gen(function*() {
+            yield* handlerRequest(GreetInput)
+            const done = deferred("done", Approval)
+            yield* done.resolve({ approved: true })
+            return (yield* done.get()).approved
+          }),
+        )
+        const rt = yield* DurableExecutionRuntime
+        yield* rt.submit(wf, "def-1", { name: "q" })
+        expect(yield* rt.attach(wf, "def-1")).toBe(true)
+      }))
+
+    it.effect("signal parks the handler until an external resolution", () =>
+      Effect.gen(function*() {
+        const approve = handler("approve", { input: GreetInput, output: Schema.Boolean })(
+          Effect.gen(function*() {
+            yield* handlerRequest(GreetInput)
+            return (yield* signal("approval", Approval)).approved
+          }),
+        )
+        const rt = yield* DurableExecutionRuntime
+        yield* rt.submit(approve, "sig-1", { name: "q" })
+        yield* resolveSignal("sig-1", "approval", Approval, { approved: true })
+        expect(yield* rt.attach(approve, "sig-1")).toBe(true)
+      }))
+
+    it.effect("resolve-before-await is picked up from the row (no lost wake)", () =>
+      Effect.gen(function*() {
+        const approve = handler("approve-early", { input: GreetInput, output: Schema.Boolean })(
+          Effect.gen(function*() {
+            yield* handlerRequest(GreetInput)
+            // a run precedes the await; the resolution fires during it
+            yield* run("warmup", Effect.succeed(1), { output: Schema.Number })
+            return (yield* signal("approval", Approval)).approved
+          }),
+        )
+        const rt = yield* DurableExecutionRuntime
+        yield* rt.submit(approve, "sig-early", { name: "q" })
+        // fire immediately — before the handler reaches the await
+        yield* resolveSignal("sig-early", "approval", Approval, { approved: true })
+        expect(yield* rt.attach(approve, "sig-early")).toBe(true)
+      }))
+
+    it.effect("awakeable resolves by its replay-stable id", () =>
+      Effect.gen(function*() {
+        const captured = { id: "" }
+        const wf = handler("awk-wf", { input: GreetInput, output: Schema.Boolean })(
+          Effect.gen(function*() {
+            yield* handlerRequest(GreetInput)
+            const awk = yield* awakeable(Approval)
+            captured.id = awk.id // side-channel for the test (normally sent via a run)
+            return (yield* awk.promise).approved
+          }),
+        )
+        const rt = yield* DurableExecutionRuntime
+        yield* rt.submit(wf, "awk-1", { name: "q" })
+        // the id is a deterministic function of executionId + ordinal
+        yield* resolveAwakeable("awk-1", "awk-1/awk/0", Approval, { approved: true })
+        expect(yield* rt.attach(wf, "awk-1")).toBe(true)
+        expect(captured.id).toBe("awk-1/awk/0")
       }))
   },
 )

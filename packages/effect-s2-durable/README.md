@@ -99,15 +99,36 @@ its type forbids `DurableExecutionRuntime` in `R`, so `run("x", state(Cart).set(
 is a *compile* error at the `run` call — the Effect analog of Restate's ctx-less
 run closure. Perform durable work in the handler body, not inside a `run` action.
 
+## Park-and-resume primitives
+
+`signal` / `awakeable` / `deferred` are one mechanism: a durable `deferreds` row is
+the resolution (the truth), a transient in-process `Deferred` is the wake (best-effort,
+rebuilt from rows on recovery). Resolve writes the row, **awaits its ack, then pokes**
+(ack-before-poke); park checks the row first (so a resolve-before-await is never lost).
+
+```ts
+const approval = yield* signal("approval", Approval)        // receiver parks
+yield* resolveSignal(executionId, "approval", Approval, v)  // ingress door resolves
+
+const done = deferred("done", Result)                       // handler-resolved promise
+yield* done.resolve(r); const r2 = yield* done.get()
+
+const awk = yield* awakeable(Approval)                      // { id, promise }
+// awk.id is replay-stable (executionId + ordinal); hand it to an ingress client
+```
+
 ## Status
 
-Built + tested against `s2 lite`:
-- Slice 1 — `handler`, `handlerRequest`, `run` (memoization / retry / typed-failure
-  facts), `submit` / `attach` / `poll`, completion ordering.
-- Slice 2 — `sleep` (durable timer: a `clockWakeups` row, `pending`→`fired`; replay
-  short-circuits a fired wakeup and recomputes the remaining delay of a pending one).
-- Slice 3 (part) — `state(Table)` user-defined durable records (`get`/`set`/`delete`)
-  over `db.table`, with a type-level guard against durable ops inside a `run` action.
+Built + tested against `s2 lite` (the full Restate-SDK authoring surface):
+- `handler` / `handlerRequest`; `run` (memoize / retry / typed-failure facts);
+  `submit` / `attach` / `poll`; completion ordering.
+- `sleep` (durable timer row, `pending`→`fired`).
+- `state(Table)` — user durable records; `get` is **journaled** (a `${execId}/read/N`
+  record replays its original value, so read-modify-write is replay-sound); a type-level
+  guard forbids durable ops inside a `run` action.
+- `signal` / `awakeable` / `deferred` — park-and-resume over durable `deferreds` rows.
 
-Next: `signal` / `awakeable` / `deferred`, then roster-driven boot recovery (which
-re-arms pending wakeups into the engine scope).
+**Not yet (recovery slice):** `sleep`/signal waits don't survive a process restart —
+the durable rows + `suspended`/`suspendKind` roster markers are written, but no boot
+sweep re-opens suspended executions and replays them yet. `resultAcked` is written but
+not yet consumed (no post-completion reclaim). `attach` across a restart fails.

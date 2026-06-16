@@ -36,10 +36,21 @@ export class StepRow extends Table<StepRow>("steps")({
   error: Schema.optional(Schema.Unknown),
 }) {}
 
-/** A durable deferred / signal — `exit` present once resolved (later slices). */
+/** A durable deferred / signal — `value` present once resolved (slice 3). */
 export class DeferredRow extends Table<DeferredRow>("deferreds")({
   name: Schema.String.pipe(primaryKey),
   value: Schema.optional(Schema.Unknown),
+}) {}
+
+/**
+ * A journaled `state.get` result, keyed `${execId}/read/${ordinal}` (Option A). A
+ * recorded read replays its *original* value, so a read-modify-write across
+ * suspend/resume recomputes against the value seen on first execution, not the
+ * already-mutated durable value. `value` holds the encoded `row | null`.
+ */
+export class StateReadRow extends Table<StateReadRow>("stateReads")({
+  readKey: Schema.String.pipe(primaryKey),
+  value: Schema.Unknown,
 }) {}
 
 /** A durable timer (`sleep`): a `clockWakeups` row + an in-process arm (slice 2). */
@@ -53,6 +64,7 @@ export class ClockWakeupRow extends Table<ClockWakeupRow>("clockWakeups")({
 export class WorkflowDb extends StreamDb<WorkflowDb>("wf")({
   executions: ExecutionRow,
   steps: StepRow,
+  stateReads: StateReadRow,
   deferreds: DeferredRow,
   clockWakeups: ClockWakeupRow,
 }, ExecutionId) {}

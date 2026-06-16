@@ -1,6 +1,6 @@
 export { DurableExecutionError } from "./errors.ts"
 export { handler } from "./handler.ts"
-export { handlerRequest, run, sleep, state } from "./primitives.ts"
+export { awakeable, deferred, handlerRequest, resolveAwakeable, resolveSignal, run, signal, sleep, state } from "./primitives.ts"
 export { DurableExecutionRuntime } from "./Runtime.ts"
 export type { DurableExecutionRuntimeApi } from "./Runtime.ts"
 export {
@@ -10,7 +10,18 @@ export {
   ExecutionRow,
   RosterDb,
   RosterRow,
+  StateReadRow,
   StepRow,
   WorkflowDb,
 } from "./schema.ts"
-export type { AnyHandler, Handler, RetryPolicy, Run, RunOptions, StateBinding } from "./types.ts"
+export type {
+  AwakeableHandle,
+  DeferredHandle,
+  Handler,
+  IngressResolve,
+  RetryPolicy,
+  Run,
+  RunActionViolation,
+  RunOptions,
+  StateBinding,
+} from "./types.ts"

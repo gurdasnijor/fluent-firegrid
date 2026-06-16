@@ -6,8 +6,9 @@ import type { DurableExecutionRuntime } from "./Runtime.ts"
 export interface RetryPolicy {
   readonly maxAttempts: number
   readonly initialInterval?: Duration.Duration
-  readonly maxInterval?: Duration.Duration
   readonly intervalFactor?: number
+  // NOTE: `maxInterval` (delay cap) is intentionally omitted until honored — see
+  // `scheduleOf`. Re-add when the schedule actually caps the backoff.
 }
 
 /**
@@ -18,7 +19,10 @@ export interface RunOptions<A, E = never, EncodedA = unknown, EncodedE = unknown
   readonly output?: Schema.Codec<A, EncodedA, never, never>
   readonly error?: Schema.Codec<E, EncodedE, never, never>
   readonly retry?: RetryPolicy
-  readonly idempotencyKey?: string
+  // NOTE: `idempotencyKey` (external-effect dedup) is intentionally omitted until
+  // the engine surfaces it to the action — the engine can't enforce dedup on an
+  // opaque action, so an inert field would mislead. Re-add with a RunAction that
+  // receives it.
 }
 
 declare const RunActionViolationId: unique symbol
@@ -65,22 +69,57 @@ export interface Handler<I, O, E = never, R = never> {
   /** Decodes/encodes the result. */
   readonly output: Schema.Top
   readonly program: Effect.Effect<O, E, R | DurableExecutionRuntime>
-  /** Phantom carrier for the decoded input type `I`. */
-  readonly Input: I
+  /** Phantom carrier for the decoded input type `I` (never set at runtime). */
+  readonly Input?: I
 }
 
-/** Any handler definition (existential over its type parameters). */
-export type AnyHandler = Handler<any, any, any, any>
+/**
+ * A named, invocation-scoped durable promise. `resolve` writes it (handler-side);
+ * `get` reads it, parking the handler until it's resolved (replay returns the
+ * recorded value). Both are Effects requiring the durable runtime.
+ */
+export interface DeferredHandle<A> {
+  readonly resolve: (value: A) => Effect.Effect<void, DurableExecutionError, DurableExecutionRuntime>
+  readonly get: () => Effect.Effect<A, DurableExecutionError, DurableExecutionRuntime>
+}
+
+/**
+ * An externally-completed durable handle. `id` is a replay-stable opaque token to
+ * hand to an ingress client (derived from the execution id + an ordinal, so it's
+ * the same on every replay); `promise` parks the handler until the id is resolved.
+ */
+export interface AwakeableHandle<A> {
+  readonly id: string
+  readonly promise: Effect.Effect<A, DurableExecutionError, DurableExecutionRuntime>
+}
+
+/**
+ * An ingress door that resolves a named durable promise (`signal`/`awakeable`) on
+ * another execution by key. Shared signature for the `resolveSignal` /
+ * `resolveAwakeable` free functions.
+ */
+export interface IngressResolve {
+  <A, I>(executionId: string, name: string, schema: Schema.Codec<A, I, never, never>, value: A): Effect.Effect<void, DurableExecutionError, DurableExecutionRuntime>
+}
 
 /**
  * A handle to one user-defined durable state collection, scoped to the active
  * execution's stream. `state(Table)` returns this synchronously (it's pure — it
  * just names a table); the *operations* are the Effects. v1 surface is
  * `get`/`set`/`delete` (Restate's minimal key→record shape — `set` is upsert with
- * the primary key carried as a row field). Writes commit on their own ack (a crash
- * can't desync them from the journal because they're ordered after the writes
- * before them). State mutations inside a `run` action are rejected — perform them
- * in the handler body.
+ * the primary key carried as a row field).
+ *
+ * Durability model: each op is its own single-row atomic commit (apply-on-ack).
+ * There is no step-transaction — this engine is replay-from-top (every activation
+ * re-runs the handler; `run` short-circuits from its terminal fact, but plain body
+ * ops, including `state.set`, *re-execute*). So a torn write self-heals: the next
+ * replay re-runs the set and re-commits it. This holds only for **deterministic**
+ * writes (value derived from the input + memoized `run` results). A read-modify-
+ * write against the *same* key (`set(get(k) + 1)`) is NOT replay-safe yet — replay
+ * reads the already-mutated durable value and double-applies; that's the open
+ * state-replay-determinism question for the recovery slice (journaled reads vs a
+ * determinism constraint). State mutations inside a `run` action are rejected at
+ * the type level — perform them in the handler body.
  */
 export interface StateBinding<Row> {
   readonly get: (key: string) => Effect.Effect<Option.Option<Row>, DurableExecutionError, DurableExecutionRuntime>
