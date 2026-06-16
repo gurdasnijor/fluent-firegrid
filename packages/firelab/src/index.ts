@@ -4,6 +4,7 @@ import { Console, Effect } from "effect"
 import { gapsReport, seamsCoverage } from "./runner/coverage-cli.ts"
 import { listValidations, selectedValidation } from "./runner/list.ts"
 import { showPerf } from "./runner/perf.ts"
+import { proofsCommand } from "./runner/proofs.ts"
 import { runValidation } from "./runner/runtime.ts"
 import { listRuns, showRun } from "./runner/show.ts"
 
@@ -13,11 +14,15 @@ firelab <command>
 Commands:
   list
   run <validation-id> [--timeout-ms N] [--console]
+  run-all [--timeout-ms N] [--console]
   runs
   show [run-id]
   perf <run-id>
   gaps [run-id]
   seams <validation-id> [run-id]
+  proofs check [feature|validation-id] [--all] [--all-features] [--allow-missing]
+  proofs init <feature> [--dry-run] [--force]
+  proofs scaffold <feature|validation-id> [--all]
 `.trim()
 
 const readOption = (
@@ -77,6 +82,36 @@ const command = (argv: ReadonlyArray<string>) =>
         }
         return
       }
+      case "run-all": {
+        const timeoutMs = Number(readOption(rest, "--timeout-ms") ?? "300000")
+        const validations = yield* listValidations
+        if (validations.length === 0) {
+          yield* Console.error("firelab: no validations found")
+          yield* Effect.sync(() => {
+            process.exitCode = 1
+          })
+          return
+        }
+        let failed = false
+        yield* Effect.forEach(validations, (validation) =>
+          Effect.gen(function*() {
+            yield* Console.log(`\n== ${validation.id} ==`)
+            const report = yield* runValidation(validation, {
+              timeoutMs,
+              console: hasFlag(rest, "--console"),
+              watch: false,
+            })
+            if (report !== undefined && report.gatingFailing > 0) {
+              failed = true
+            }
+          }), { discard: true })
+        if (failed) {
+          yield* Effect.sync(() => {
+            process.exitCode = 1
+          })
+        }
+        return
+      }
       case "runs":
         return yield* listRuns
       case "show":
@@ -98,6 +133,8 @@ const command = (argv: ReadonlyArray<string>) =>
         if (validationId === undefined) return yield* Console.error(usage)
         return yield* seamsCoverage(validationId, rest[1])
       }
+      case "proofs":
+        return yield* proofsCommand(rest)
       default:
         return yield* Console.log(usage)
     }

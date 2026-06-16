@@ -1,9 +1,14 @@
 import { S2Client, type AppendOptions } from "./S2Client.ts"
 import { AppendInput, AppendRecord, type AppendAck, type ReadOptions } from "./internal/sdk.ts"
+import type { S2Record } from "./internal/record.ts"
 import type { S2ClientError } from "./S2Error.ts"
 import { Effect, Schema, Stream } from "effect"
 
 const JsonValue = Schema.UnknownFromJsonString
+
+export interface DecodedRecord<A> extends S2Record {
+  readonly value: A
+}
 
 const encodedRecord = <A, I, RD, RE>(
   schema: Schema.Codec<A, I, RD, RE>,
@@ -34,7 +39,7 @@ export const readDecoded = <A, I, RD, RE>(
   schema: Schema.Codec<A, I, RD, RE>,
   options: ReadOptions,
 ): Stream.Stream<
-  A,
+  DecodedRecord<A>,
   Schema.SchemaError | S2ClientError,
   S2Client | RD
 > =>
@@ -42,6 +47,7 @@ export const readDecoded = <A, I, RD, RE>(
     Stream.mapEffect((record) =>
       Schema.decodeEffect(JsonValue)(record.body).pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(schema)),
+        Effect.map((value) => ({ ...record, value })),
       ),
     ),
   )

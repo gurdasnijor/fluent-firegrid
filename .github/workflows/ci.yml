@@ -28,7 +28,7 @@ env:
 #   lint               — eslint + dead-code (knip) + dup (jscpd) + dep boundaries
 #   typecheck          — turbo run typecheck
 #   effect-diagnostics — effect-language-service diagnostics
-#   tests              — turbo run test
+#   tests              — turbo run test + Firelab executable validations
 
 jobs:
   lint:
@@ -153,3 +153,6 @@ jobs:
 
       - name: Test
         run: pnpm run test
+
+      - name: Run Firelab validations
+        run: pnpm --filter firelab validate:all --timeout-ms 120000

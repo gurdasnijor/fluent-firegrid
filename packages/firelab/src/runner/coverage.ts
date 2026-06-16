@@ -264,7 +264,7 @@ interface ObservedSpan {
 interface TraceGaps {
   /** every distinct span name the run emitted, classified + counted. */
   readonly observed: ReadonlyArray<ObservedSpan>
-  /** Known evidence spans this run did NOT exercise (per-run blind spots). */
+  /** Evidence named by this coverage spec but not observed in this run. */
   readonly evidenceUnfired: ReadonlyArray<string>
   /** Observed spans neither evidence nor driver-edge — new instrumentation to classify. */
   readonly unknown: ReadonlyArray<string>
@@ -289,6 +289,20 @@ const classify = (name: string, sides: ReadonlyMap<string, ReadonlySet<string>>)
   const seen = sides.get(name) ?? new Set<string>()
   return seen.has("driver") && seen.size === 1 ? "edge" : "unknown"
 }
+
+const evidenceFired = (
+  counts: ReadonlyMap<string, number>,
+  ref: string,
+): boolean =>
+  [...counts.entries()].some(([name, count]) => count > 0 && name.startsWith(ref))
+
+const referencedEvidence = (
+  claims: ReadonlyArray<ClaimDef>,
+): ReadonlyArray<string> =>
+  [...new Set(
+    claims.flatMap((claim) =>
+      referencedSpanNames(claim.claim).filter(isEvidenceSpan)),
+  )].sort()
 
 const judge = (
   spans: ReadonlyArray<SpanRecord>,
@@ -365,9 +379,13 @@ export const analyzeCoverage = (
   const observed = [...counts.entries()]
     .map(([name, count]): ObservedSpan => ({ name, count, cls: classify(name, sides) }))
     .sort((a, b) => b.count - a.count)
+  const expectedEvidence = referencedEvidence([
+    ...spec.gates,
+    ...(spec.corroborations ?? []),
+  ])
   const gaps: TraceGaps = {
     observed,
-    evidenceUnfired: [...EVIDENCE_SPAN_NAMES].filter((n) => !counts.has(n)).sort(),
+    evidenceUnfired: expectedEvidence.filter((ref) => !evidenceFired(counts, ref)),
     unknown: observed.filter((o) => o.cls === "unknown").map((o) => o.name),
     vacuousGates: gates.filter((g) => g.vacuous).map((g) => g.id),
   }
