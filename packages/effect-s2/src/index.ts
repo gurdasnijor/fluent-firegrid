@@ -9,6 +9,17 @@ export {
   type S2OperationOptions,
   type S2Producer,
 } from "./S2Client.ts"
+export {
+  apply as applySpec,
+  type BasinSpec,
+  type Change,
+  changeMarker,
+  plan as planSpec,
+  type ResourcePlan,
+  type S2Plan,
+  type S2Spec,
+  type StreamSpec,
+} from "./S2Spec.ts"
 export { conditionalAppend, publish, readDecoded } from "./Channel.ts"
 export {
   S2Conflict,

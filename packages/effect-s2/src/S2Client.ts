@@ -533,17 +533,32 @@ const makeLiveApi = (input: {
   const createBasin = (args: CreateBasinInput, options?: S2RequestOptions) =>
     trySdk("createBasin", () => client.basins.create(args, options))
 
-  const getBasinConfig = (args: GetBasinConfigInput, options?: S2RequestOptions) =>
-    trySdk("getBasinConfig", () => client.basins.getConfig(args, options))
+  const getBasinConfig = Effect.fn("S2.getBasinConfig")(function*(
+    args: GetBasinConfigInput,
+    options?: S2RequestOptions,
+  ) {
+    yield* Effect.annotateCurrentSpan({ basin: args.basin })
+    return yield* trySdk("getBasinConfig", () => client.basins.getConfig(args, options))
+  })
 
   const deleteBasin = (args: DeleteBasinInput, options?: S2RequestOptions) =>
     trySdk("deleteBasin", () => client.basins.delete(args, options))
 
-  const ensureBasin = (args: EnsureBasinInput, options?: S2RequestOptions) =>
-    trySdk("ensureBasin", () => client.basins.ensure(args, options))
+  const ensureBasin = Effect.fn("S2.ensureBasin")(function*(
+    args: EnsureBasinInput,
+    options?: S2RequestOptions,
+  ) {
+    yield* Effect.annotateCurrentSpan({ basin: args.basin })
+    return yield* trySdk("ensureBasin", () => client.basins.ensure(args, options))
+  })
 
-  const reconfigureBasin = (args: ReconfigureBasinInput, options?: S2RequestOptions) =>
-    trySdk("reconfigureBasin", () => client.basins.reconfigure(args, options))
+  const reconfigureBasin = Effect.fn("S2.reconfigureBasin")(function*(
+    args: ReconfigureBasinInput,
+    options?: S2RequestOptions,
+  ) {
+    yield* Effect.annotateCurrentSpan({ basin: args.basin })
+    return yield* trySdk("reconfigureBasin", () => client.basins.reconfigure(args, options))
+  })
 
   const listAccessTokens = (args?: ListAccessTokensInput, options?: S2RequestOptions) =>
     trySdk("listAccessTokens", () => client.accessTokens.list(args, options))
@@ -605,10 +620,15 @@ const makeLiveApi = (input: {
     )
   })
 
-  const getStreamConfig = (args: GetStreamConfigInput, options?: S2OperationOptions) =>
-    trySdk("getStreamConfig", () =>
+  const getStreamConfig = Effect.fn("S2.getStreamConfig")(function*(
+    args: GetStreamConfigInput,
+    options?: S2OperationOptions,
+  ) {
+    yield* Effect.annotateCurrentSpan({ stream: args.stream })
+    return yield* trySdk("getStreamConfig", () =>
       basinHandle(options?.basinName).streams.getConfig(args, options?.request),
     )
+  })
 
   const deleteStream = Effect.fn("S2.deleteStream")(function*(
     args: DeleteStreamInput,
@@ -630,10 +650,15 @@ const makeLiveApi = (input: {
     )
   })
 
-  const reconfigureStream = (args: ReconfigureStreamInput, options?: S2OperationOptions) =>
-    trySdk("reconfigureStream", () =>
+  const reconfigureStream = Effect.fn("S2.reconfigureStream")(function*(
+    args: ReconfigureStreamInput,
+    options?: S2OperationOptions,
+  ) {
+    yield* Effect.annotateCurrentSpan({ stream: args.stream })
+    return yield* trySdk("reconfigureStream", () =>
       basinHandle(options?.basinName).streams.reconfigure(args, options?.request),
     )
+  })
 
   const checkTail = Effect.fn("S2.checkTail")(function*(
     name: string,
