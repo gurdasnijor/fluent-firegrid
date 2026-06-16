@@ -1,45 +1,44 @@
-import { FileSystem, Path } from "@effect/platform"
+import { FileSystem, Path } from "effect"
 import { Data, Effect, Option } from "effect"
-import type { FirelabSimulation } from "../types.ts"
+import type { FirelabValidation } from "../types.ts"
 
-// Simulations live exactly one level deep: `simulations/<id>/index.ts`, where the
+// Validations live exactly one level deep: `validations/<id>/index.ts`, where the
 // folder name IS the `id` (enforced by scripts/firelab-layout-check.mjs).
 // No recursion, no per-folder denylist: discovery lists folder names only (never
-// imports), and loading a sim is isolated per-id, so one sim's bad import can no
+// imports), and loading a validation is isolated per-id, so one broken validation can no
 // longer sink the whole runner.
-const simulationsDirUrl = new URL("../simulations/", import.meta.url)
+const validationsDirUrl = new URL("../validations/", import.meta.url)
 const moduleUrlFor = (id: string): string =>
-  new URL(`${id}/index.ts`, simulationsDirUrl).href
+  new URL(`${id}/index.ts`, validationsDirUrl).href
 
-class SimulationFolderInvalid extends Data.TaggedClass("SimulationFolderInvalid")<{
+class ValidationFolderInvalid extends Data.TaggedClass("ValidationFolderInvalid")<{
   readonly id: string
   readonly reason: string
 }> {}
 
-class UnknownSimulation extends Data.TaggedClass("UnknownSimulation")<{
+class UnknownValidation extends Data.TaggedClass("UnknownValidation")<{
   readonly id: string
   readonly available: ReadonlyArray<string>
 }> {}
 
-const isSimulation = (
+const isValidation = (
   value: unknown,
-): value is FirelabSimulation<unknown> => {
+): value is FirelabValidation<unknown> => {
   if (typeof value !== "object" || value === null) return false
   const candidate = value as Record<string, unknown>
   return typeof candidate["id"] === "string" &&
     typeof candidate["description"] === "string" &&
-    (typeof candidate["host"] === "function" || candidate["launchHost"] === false) &&
-    candidate["driver"] !== undefined
+    typeof candidate["component"] === "function"
 }
 
-// The available simulation ids: immediate subdirectories of `simulations/` that
+// The available validation ids: immediate subdirectories of `validations/` that
 // contain an `index.ts`. Pure directory listing — imports nothing, so it cannot
-// be broken by any single sim's import error. `_`/`.`-prefixed folders are
+// be broken by any single validation's import error. `_`/`.`-prefixed folders are
 // skipped by convention (scaffolding / hidden).
-const simulationIds = Effect.gen(function*() {
+const validationIds = Effect.gen(function*() {
   const fs = yield* FileSystem.FileSystem
   const path = yield* Path.Path
-  const dir = yield* path.fromFileUrl(simulationsDirUrl)
+  const dir = yield* path.fromFileUrl(validationsDirUrl)
   const names = yield* fs.readDirectory(dir)
   const candidates = names
     .filter(name => !name.startsWith("_") && !name.startsWith("."))
@@ -48,31 +47,30 @@ const simulationIds = Effect.gen(function*() {
     fs.exists(path.join(dir, name, "index.ts")))
 })
 
-// Import + validate a single sim by id. `Effect.tryPromise` (not `Effect.promise`)
-// so a failing module import surfaces as a typed, catchable `SimulationFolderInvalid`
-// rather than an uncatchable defect — that is what lets `listSimulations` skip a
-// broken sim and `selectedSimulation` import only the one requested.
-const loadSimulationById = (
+// Import + validate a single validation by id. `Effect.tryPromise` (not
+// `Effect.promise`) so a failing module import surfaces as a typed, catchable
+// `ValidationFolderInvalid` rather than an uncatchable defect.
+const loadValidationById = (
   id: string,
-): Effect.Effect<FirelabSimulation<unknown>, SimulationFolderInvalid> =>
+): Effect.Effect<FirelabValidation<unknown>, ValidationFolderInvalid> =>
   Effect.gen(function*() {
     const module = yield* Effect.tryPromise({
       try: () =>
         import(moduleUrlFor(id)) as Promise<{ readonly default?: unknown }>,
       catch: cause =>
-        new SimulationFolderInvalid({
+        new ValidationFolderInvalid({
           id,
           reason: `import failed: ${cause instanceof Error ? cause.message : String(cause)}`,
         }),
     })
-    if (!isSimulation(module.default)) {
-      return yield* Effect.fail(new SimulationFolderInvalid({
+    if (!isValidation(module.default)) {
+      return yield* Effect.fail(new ValidationFolderInvalid({
         id,
-        reason: "missing default export of simulation shape",
+        reason: "missing default export of validation shape",
       }))
     }
     if (module.default.id !== id) {
-      return yield* Effect.fail(new SimulationFolderInvalid({
+      return yield* Effect.fail(new ValidationFolderInvalid({
         id,
         reason: `id "${module.default.id}" does not match folder "${id}"`,
       }))
@@ -80,19 +78,19 @@ const loadSimulationById = (
     return module.default
   })
 
-// `simulate list`: load every discovered sim, but isolate failures — a sim whose
-// import or shape is broken is skipped with a warning, not fatal to the listing.
-export const listSimulations = Effect.gen(function*() {
-  const ids = yield* simulationIds
+// `list`: load every discovered validation, but isolate failures — a validation
+// whose import or shape is broken is skipped with a warning, not fatal.
+export const listValidations = Effect.gen(function*() {
+  const ids = yield* validationIds
   const loaded = yield* Effect.forEach(
     ids,
     id =>
-      loadSimulationById(id).pipe(
+      loadValidationById(id).pipe(
         Effect.map(Option.some),
-        Effect.catchAll(error =>
+        Effect.catch((error: ValidationFolderInvalid) =>
           Effect.logWarning(
-            `firelab: skipping simulation "${id}" — ${error.reason}`,
-          ).pipe(Effect.as(Option.none<FirelabSimulation<unknown>>())),
+            `firelab: skipping validation "${id}" — ${error.reason}`,
+          ).pipe(Effect.as(Option.none<FirelabValidation<unknown>>())),
         ),
       ),
     { concurrency: "unbounded" },
@@ -100,20 +98,18 @@ export const listSimulations = Effect.gen(function*() {
   return loaded.filter(Option.isSome).map(some => some.value)
 })
 
-// Resolve a simulation by id. Imports ONLY the requested sim — running one sim
-// never loads (and so never trips over) any other. On miss, fail with the
-// available ids (a pure folder listing) so the CLI lists them. There is no
-// "default simulation": running without an explicit id must error rather than
-// silently picking the alphabetically-first folder.
-export const selectedSimulation = (
-  simulationId: string,
+// Resolve a validation by id. Imports ONLY the requested validation — one
+// validation never loads, and so never trips over, any other. On miss, fail with
+// available ids. There is no default validation.
+export const selectedValidation = (
+  validationId: string,
 ) =>
   Effect.gen(function*() {
-    const ids = yield* simulationIds
-    if (!ids.includes(simulationId)) {
+    const ids = yield* validationIds
+    if (!ids.includes(validationId)) {
       return yield* Effect.fail(
-        new UnknownSimulation({ id: simulationId, available: ids }),
+        new UnknownValidation({ id: validationId, available: ids }),
       )
     }
-    return yield* loadSimulationById(simulationId)
+    return yield* loadValidationById(validationId)
   })

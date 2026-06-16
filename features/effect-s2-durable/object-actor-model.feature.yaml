@@ -1,0 +1,123 @@
+feature:
+  name: object-actor-model
+  product: effect-s2-durable
+  description: >-
+    Virtual objects as per-key actor streams: one authoritative durable log per
+    object key holding state, the exclusive-call accept-log, per-call journals,
+    ingress rows, and results. Exclusive handlers are single-writer per key;
+    shared handlers run concurrently read-only. Design: docs/sdds/object-actor-model-sdd.md.
+
+components:
+  LAYERING:
+    name: Actor abstraction layer
+    requirements:
+      1: The actor abstraction is internal to effect-s2-durable; it is not a replacement for the public service/object/client/sendClient/attach/poll API.
+      2: An actor instance is one schema-addressed durable object stream plus a deterministic runtime interpreter over that stream.
+      3: "effect-s2-durable owns admission, callId routing, ordered replay, per-key draining, shared-handler snapshots, signal ingress, completion, recovery, and result status."
+      4: "effect-s2-stream-db owns storage mechanics: StreamDb key schemas, Table schemas, primary keys, latest-value materialization, transactions, and compaction."
+      5: S2 owns durable append order through seq_num plus stream reads, durability, and trim.
+      6: Engine bookkeeping (accepts/journals/signals/timers/completions/checkpoints) is one ordered ActorEvent log read by S2 seq_num; the latest-value table fold is the projection lens for user state and materialized views, not the source of engine-event order. This supersedes modelling engine concerns as several independent latest-value tables in one stream.
+
+  HANDLERS:
+    name: Exclusive vs shared handler behaviour
+    requirements:
+      1: Object handlers are exclusive by default; an exclusive handler may read and write the object's user state.
+      2: At most one exclusive handler runs at a time per object key (single-writer).
+      3: Shared handlers are declared explicitly (e.g. object.shared) and run concurrently with the exclusive handler and with one another.
+      4: A shared handler must not mutate user state; this is enforced at the type level, analogously to the guard that forbids durable primitives inside a run action.
+      5: 'For a shared handler, "read-only" means no user-state writes — it MAY append system ingress rows (signal/promise resolutions) to the object stream.'
+
+  ADMISSION:
+    name: Durable accept-log (mailbox) for exclusive calls
+    requirements:
+      1: An exclusive call is admitted by appending an accept-log entry to the object stream; admission is durable and decoupled from execution.
+      1-1: An accept-log entry is `{ callId, method, input }`; admission order is the S2 seq_num assigned to the append.
+      2: The accept-log is append-only — entries are never mutated; there is no status field.
+      3: S2 seq_num establishes a durable total order over a key's exclusive calls; the engine does not invent a second app-level sequence field.
+      4: Admission is idempotent by callId — re-admitting an in-flight callId returns the existing entry (insertOrGet), never a duplicate.
+      5: Shared calls are never admitted to the accept-log.
+      6: Admission is producer-only — any producer admits a call by appending the Accepted event to the owner stream without hosting the per-key drainer; the owning drainer picks it up. (The dispatch-side twin of residency-independent ingress; load-bearing for multi-process.)
+
+  EXECUTION:
+    name: Serial drainer
+    requirements:
+      1: A single per-key drainer runs the pending exclusive call with the lowest S2 seq_num to completion (through parks) before starting the next.
+      2: A call's active invocation points its durable primitives (run/sleep/signal/state) at the object stream, journaled keyed by callId (`${callId}/run/N`, …); the primitive layer is reused unchanged.
+      3: A shared handler runs immediately as an ephemeral execution over a snapshot of the object's materialized state; it never enters the accept-log and is never blocked by, nor blocks, the drainer.
+
+  COMPLETION:
+    name: Done is derived, not stored
+    requirements:
+      1: A call settles by appending a single Completed event carrying an `Exit` (encoding success | failure | interrupt | defect) to the object stream — not a mutable status row.
+      2: A call is done iff its Completed event exists; pending = an accept-log entry with no Completed event.
+      3: There is no dequeue step and no status mutation — "advance" is re-deriving pending, so a completed call cannot be re-run after a crash (window-2 is structurally impossible, not patched).
+      4: attach(callId) reads the result (awaiting while pending); a duplicate completed callId is served from it and never re-run.
+      5: The result/status view normalizes to Pending | Success | Failure | Interrupted | Defect | Expired; Expired comes from the idempotency horizon (CHECKPOINTING.5) and is never re-run.
+
+  INGRESS:
+    name: External resolution is an append
+    requirements:
+      1: resolveSignal(callId, name, value) appends a deferreds row to the owner stream and succeeds whether or not the target call is currently resident or running.
+      2: An in-process waiter is poked best-effort; the durable row is the source of truth (row-is-truth, poke-is-best-effort).
+
+  ROUTING:
+    name: callId self-routes to its owner stream
+    requirements:
+      1: A callId carries a schema-decodable owner identity; object calls route by opening the owner StreamDb through its key schema, while service calls resolve to their execution stream.
+      2: attach / poll / resolveSignal derive the owner stream from the callId alone, with no roster, side index, or delimiter-parsed stream string.
+      3: The callId encoding is a reversible Effect Schema codec (decode∘encode and encode∘decode round-trip); owner recovery is a pure decode, and the owner becomes an S2 path segment only through StreamDb.open(owner)'s key codec.
+
+  RECOVERY:
+    name: Recover by draining pending work per key
+    requirements:
+      1: Boot enumerates object streams by prefix (StreamDb.list) and starts a drainer only for keys whose accept-log has a pending head.
+      2: Stream existence is not liveness — an object stream persists as state with an empty accept-log; the pending head is the work signal.
+      3: Recovery never re-races invocations; the ordered accept-log plus derived-pending replays deterministically.
+
+  PLANNING:
+    name: Deterministic planning, snapshots, and scoped work
+    requirements:
+      1: The object drainer plans the next action from the actor-stream projection before running external effects; recovery can re-plan from durable events without consulting in-memory state.
+      2: Runtime state is exposed as an actor snapshot/projection at an S2 cursor; attach and poll are views over that projection.
+      3: Durable engine rows include path-aware identity (e.g. calls/<callId>/run/<name>, state/<table>/<key>, signals/<callId>/<name>) so rows sharing one object stream cannot collide by tag alone.
+      4: Schema decode failures identify the failed boundary (accepted-input, journal, signal, timer, state, result, or checkpoint) and include path/callId when known.
+      5: Timers, signal waits, child workflows, and spawned/background work have a durable owner scope so checkpoint, trim, recovery, and rerun can determine whether the work is live.
+      6: Completion-derived continuations are idempotent and can be re-planned from durable facts without double-applying.
+      7: Runtime ordering, parking, resume, completion, and checkpoint-eligibility live in a PURE transition `(snapshot, event) -> (snapshot, action[])`; an interpreter executes the emitted actions only after durable facts exist. The transition decides validity; the interpreter never does.
+      8: Because the transition is pure, the bulk of runtime behaviour is testable as `snapshot + event -> snapshot + actions` without S2, timers, fibers, or real handlers.
+
+  WORKFLOW:
+    name: Workflow as an object specialization
+    requirements:
+      1: A workflow run handler is an exclusive handler admitted at most once per key; a second run admission is rejected ("already started"), not dedup-returned.
+      2: Workflow signal/query handlers are ordinary shared handlers (concurrent, read-only, ingress via append).
+      3: Promises a run body awaits use the existing park-and-resume primitives, resolved by shared handlers.
+
+  CHECKPOINTING:
+    name: Checkpointing, compaction, and idempotency horizon
+    requirements:
+      1: Object streams are not garbage-collected by age retention alone — they hold permanent user state; replay is bounded by explicit checkpoints plus S2 trim, never by passive age/size retention on the object stream.
+      2: The per-key drainer owns checkpointing and performs it only at safe boundaries (between exclusive calls, or at a cursor that preserves the active call) — emitted as a planned Checkpoint action, written as a Checkpointed event.
+      3: A checkpoint covers user state, pending accepts, active per-call journals, unresolved signals/timers, retained completed-call results/idempotency metadata, and a completed/expired watermark.
+      4: Records before a checkpoint cursor may be S2-trimmed only when their semantic state is represented by the checkpoint.
+      5: Result/idempotency retention is explicit (a horizon) — within the horizon a duplicate callId returns the existing/pending result; after expiry, attach or a duplicate callId resolves as Expired and is never re-run.
+      6: A checkpoint that exceeds a single S2 batch (effect-s2-stream-db MAX_BATCH_RECORDS) requires framed/chunked snapshots; single-batch compaction is a documented v1 limit on per-object live footprint.
+      7: Checkpoint fidelity — replaying the log forward from a Checkpointed event's cursor reconstructs a snapshot equal to the one the checkpoint recorded; the Checkpointed event is durable before any trim below its cursor.
+
+constraints:
+  SYSTEM_OF_RECORD:
+    requirements:
+      1: The schema-derived object stream is the single durable system of record for a key — state, accept-log, per-call journals, ingress rows, and results all live in it.
+      2: In-memory state (running fibers, waiters, the drainer) is cache derived from the stream; it is never required for durability or ingress.
+      3: No object call uses a separate per-call execution stream or a shared roster row.
+
+  LIFECYCLE:
+    requirements:
+      1: GC of completed calls is the checkpoint+trim path (CHECKPOINTING) — a call's accept entry, journal, and result are reclaimed together below the checkpoint cursor, so a trimmed result can never make a call appear pending again.
+      2: Object state persists until explicitly cleared; an object lifecycle (clearAll/destroy) is a named follow-up.
+      3: Stateless services keep the ephemeral one-stream-per-call model (dropped on completion); the asymmetry is deliberate and matches the semantics.
+
+  DEPENDENCIES:
+    requirements:
+      1: This engine consumes the storage primitives storage-primitives.ENUMERATE (recovery scan), storage-primitives.EXISTENCE (probes), storage-primitives.ORDERED_READ (the ActorEvent log per LAYERING.6), and storage-primitives.CHECKPOINT (CHECKPOINTING), behind the DurableStore port — policy (basin, retention, namespace) is injected, not hardcoded.
+      2: Runtime/control-plane basins are provisioned via resource-spec.SPEC_RECONCILE with createStreamOnAppend false, which is what makes ENUMERATE-based recovery trustworthy.

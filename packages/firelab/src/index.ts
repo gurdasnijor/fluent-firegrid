@@ -1,162 +1,109 @@
-import { Args, Command, Options } from "@effect/cli"
-import { NodeContext, NodeRuntime } from "@effect/platform-node"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { Console, Effect } from "effect"
-import {
-  listSimulations,
-  selectedSimulation,
-} from "./runner/list.ts"
 import { gapsReport, seamsCoverage } from "./runner/coverage-cli.ts"
-import { runSimulation } from "./runner/runtime.ts"
+import { listValidations, selectedValidation } from "./runner/list.ts"
 import { showPerf } from "./runner/perf.ts"
+import { runValidation } from "./runner/runtime.ts"
 import { listRuns, showRun } from "./runner/show.ts"
 
-// Required argument — no default-sim fallback. Implicit alphabetical-first
-// selection silently picks the wrong simulation the moment someone adds an
-// earlier folder; the CLI should make you name what you ran.
-const simulationIdArg = Args.text({ name: "simulation-id" })
-const timeoutOption = Options.integer("timeout-ms").pipe(
-  Options.withDescription("Abort a simulation run after this many milliseconds"),
-  Options.withDefault(300_000),
-)
-const consoleOption = Options.boolean("console").pipe(
-  Options.withDescription(
-    "Emit spans to stdout via the OTel ConsoleSpanExporter "
-      + "(default: write JSONL to .simulate/runs/<runId>/trace.jsonl)",
-  ),
-  Options.withDefault(false),
-)
-const watchOption = Options.boolean("watch").pipe(
-  Options.withDescription(
-    "In addition to the periodic stderr heartbeat, emit a compact one-line "
-      + "summary per completed span (interactive debugging). Only meaningful "
-      + "when destination is the JSONL file; ignored under --console / OTLP.",
-  ),
-  Options.withDefault(false),
-)
-const runIdArg = Args.text({ name: "run-id" }).pipe(Args.optional)
-const requiredRunIdArg = Args.text({ name: "run-id" })
-const topOption = Options.integer("top").pipe(
-  Options.withDescription("Number of top self-time spans to print"),
-  Options.withDefault(15),
-)
-const idleThresholdOption = Options.integer("idle-threshold-ms").pipe(
-  Options.withDescription("Minimum no-span gap duration to report"),
-  Options.withDefault(5_000),
-)
-const findingDraftOption = Options.boolean("finding-draft").pipe(
-  Options.withDescription("Emit idle-gap finding-source draft material to stderr"),
-  Options.withDefault(false),
-)
-const findingThresholdOption = Options.integer("finding-threshold-ms").pipe(
-  Options.withDescription("Minimum idle gap duration for finding-source drafts"),
-  Options.withDefault(30_000),
-)
+const usage = `
+firelab <command>
 
-const listCommand = Command.make("list", {}, () =>
-  Effect.flatMap(listSimulations, simulations =>
-    Console.log(
-      simulations
-        .map(simulation => `${simulation.id}\t${simulation.description}`)
-        .join("\n"),
-    )))
+Commands:
+  list
+  run <validation-id> [--timeout-ms N] [--console]
+  runs
+  show [run-id]
+  perf <run-id>
+  gaps [run-id]
+  seams <validation-id> [run-id]
+`.trim()
 
-const runCommand = Command.make(
-  "run",
-  {
-    simulationId: simulationIdArg,
-    timeoutMs: timeoutOption,
-    consoleExporter: consoleOption,
-    watch: watchOption,
-  },
-  ({ simulationId, timeoutMs, consoleExporter, watch }) =>
-    Effect.flatMap(
-      selectedSimulation(simulationId),
-      simulation =>
-        Effect.flatMap(
-          runSimulation(simulation, {
-            timeoutMs,
-            console: consoleExporter,
-            watch,
-          }),
-          report =>
-            // Gate the exit code on the computed verdict, then force-exit. By
-            // here the sim is logically done (verdict printed, trace + latest
-            // pointer flushed, scope closed). The host made dozens of
-            // durable-streams HTTP calls through Node's global fetch (undici),
-            // which leaves keep-alive sockets + their timers pooled; Node would
-            // otherwise keep the event loop alive ~30s until they idle-time-out.
-            // A CLI should exit when its work is done, so exit explicitly.
-            Effect.sync(() => {
-              process.exit(report !== undefined && report.gatingFailing > 0 ? 1 : 0)
-            }),
-        ),
-    ),
-)
+const readOption = (
+  args: ReadonlyArray<string>,
+  name: string,
+): string | undefined => {
+  const index = args.indexOf(name)
+  return index >= 0 ? args[index + 1] : undefined
+}
 
-const showCommand = Command.make(
-  "show",
-  { runId: runIdArg },
-  ({ runId }) =>
-    showRun(runId._tag === "Some" ? runId.value : undefined),
-)
+const hasFlag = (args: ReadonlyArray<string>, name: string): boolean =>
+  args.includes(name)
 
-// `runs` lists past executions; `list` lists the simulation catalog. Kept
-// as distinct verbs (not `list runs`) so the two questions — "what can I
-// run?" vs "what have I run?" — each have one obvious command.
-const runsCommand = Command.make("runs", {}, () => listRuns)
+const withoutOptions = (args: ReadonlyArray<string>): ReadonlyArray<string> => {
+  const out: Array<string> = []
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]
+    if (arg === undefined) continue
+    if (arg === "--console") continue
+    if (arg === "--timeout-ms") {
+      i += 1
+      continue
+    }
+    out.push(arg)
+  }
+  return out
+}
 
-const perfCommand = Command.make(
-  "perf",
-  {
-    runId: requiredRunIdArg,
-    top: topOption,
-    idleThresholdMs: idleThresholdOption,
-    findingDraft: findingDraftOption,
-    findingThresholdMs: findingThresholdOption,
-  },
-  ({ runId, top, idleThresholdMs, findingDraft, findingThresholdMs }) =>
-    showPerf(runId, {
-      top,
-      idleThresholdMs,
-      findingDraft,
-      findingThresholdMs,
-    }),
-)
+const command = (argv: ReadonlyArray<string>) =>
+  Effect.gen(function*() {
+    const [cmd = "help", ...rest] = argv
+    switch (cmd) {
+      case "list": {
+        const validations = yield* listValidations
+        yield* Console.log(
+          validations
+            .map(validation => `${validation.id}\t${validation.description}`)
+            .join("\n"),
+        )
+        return
+      }
+      case "run": {
+        const positional = withoutOptions(rest)
+        const validationId = positional[0]
+        if (validationId === undefined) return yield* Console.error(usage)
+        const timeoutMs = Number(readOption(rest, "--timeout-ms") ?? "300000")
+        const validation = yield* selectedValidation(validationId)
+        const report = yield* runValidation(validation, {
+          timeoutMs,
+          console: hasFlag(rest, "--console"),
+          watch: false,
+        })
+        if (report !== undefined && report.gatingFailing > 0) {
+          yield* Effect.sync(() => {
+            process.exitCode = 1
+          })
+        }
+        return
+      }
+      case "runs":
+        return yield* listRuns
+      case "show":
+        return yield* showRun(rest[0])
+      case "perf": {
+        const runId = rest[0]
+        if (runId === undefined) return yield* Console.error(usage)
+        return yield* showPerf(runId, {
+          top: 15,
+          idleThresholdMs: 5_000,
+          findingDraft: false,
+          findingThresholdMs: 30_000,
+        })
+      }
+      case "gaps":
+        return yield* gapsReport(rest[0])
+      case "seams": {
+        const validationId = rest[0]
+        if (validationId === undefined) return yield* Console.error(usage)
+        return yield* seamsCoverage(validationId, rest[1])
+      }
+      default:
+        return yield* Console.log(usage)
+    }
+  })
 
-// `seams <id> [run-id]` re-judges a past run with the simulation's coverage
-// spec (the live oracle, applied offline). `gaps [run-id]` prints the
-// instrumentation map for a past run.
-const seamsCommand = Command.make(
-  "seams",
-  { simulationId: simulationIdArg, runId: runIdArg },
-  ({ simulationId, runId }) =>
-    seamsCoverage(simulationId, runId._tag === "Some" ? runId.value : undefined),
-)
-
-const gapsCommand = Command.make(
-  "gaps",
-  { runId: runIdArg },
-  ({ runId }) => gapsReport(runId._tag === "Some" ? runId.value : undefined),
-)
-
-const command = Command.make("simulate").pipe(
-  Command.withSubcommands([
-    gapsCommand,
-    listCommand,
-    perfCommand,
-    runCommand,
-    seamsCommand,
-    showCommand,
-    runsCommand,
-  ]),
-)
-
-const cli = Command.run(command, {
-  name: "Tiny Firegrid simulations",
-  version: "0.0.0",
-})
-
-cli(process.argv).pipe(
-  Effect.provide(NodeContext.layer),
-  NodeRuntime.runMain,
+command(process.argv.slice(2)).pipe(
+  Effect.provide(NodeServices.layer),
+  NodeRuntime.runMain({ disableErrorReporting: false }),
 )

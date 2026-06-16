@@ -292,13 +292,17 @@ const openStream = <T extends Tables>(
         if (messages.length === 0) {
           return
         }
+        yield* Effect.annotateCurrentSpan({
+          stream,
+          messageCount: messages.length,
+        })
         const bodies = yield* Effect.forEach(messages, ChangeMessage.encode)
         const records = bodies.map((body) => AppendRecord.string({ body }))
         const matchSeqNum = yield* Ref.get(tailRef)
         const ack = yield* client.append(stream, AppendInput.create(records, { matchSeqNum }))
         yield* Ref.set(tailRef, ack.tail.seqNum)
         messages.forEach((message) => state.apply(message))
-      })
+      }).pipe(Effect.withSpan("effect-s2-stream-db.commit"))
 
     const makeFacade = (meta: TableMeta): TableFacade<unknown> => ({
       insert: (row) =>
@@ -306,7 +310,12 @@ const openStream = <T extends Tables>(
           encodeRow(meta, row).pipe(
             Effect.flatMap(({ encoded, key, type }) => commitLocked([change("insert", type, key, encoded)])),
           ),
-        ).pipe(Effect.mapError(toError("insert"))),
+        ).pipe(
+          Effect.withSpan("effect-s2-stream-db.table.insert", {
+            attributes: { stream, table: meta.type },
+          }),
+          Effect.mapError(toError("insert")),
+        ),
       upsert: (row) =>
         lock.withPermits(1)(
           encodeRow(meta, row).pipe(
@@ -315,9 +324,17 @@ const openStream = <T extends Tables>(
               return commitLocked([change(op, type, key, encoded)])
             }),
           ),
-        ).pipe(Effect.mapError(toError("upsert"))),
+        ).pipe(
+          Effect.withSpan("effect-s2-stream-db.table.upsert", {
+            attributes: { stream, table: meta.type },
+          }),
+          Effect.mapError(toError("upsert")),
+        ),
       delete: (key) =>
         lock.withPermits(1)(commitLocked([change("delete", meta.type, key)])).pipe(
+          Effect.withSpan("effect-s2-stream-db.table.delete", {
+            attributes: { stream, table: meta.type },
+          }),
           Effect.mapError(toError("delete")),
         ),
       insertOrGet: (row) =>
@@ -332,7 +349,12 @@ const openStream = <T extends Tables>(
             yield* commitLocked([change("insert", type, key, encoded)])
             return { _tag: "Inserted" } satisfies InsertOrGetResult<unknown>
           }),
-        ).pipe(Effect.mapError(toError("insertOrGet"))),
+        ).pipe(
+          Effect.withSpan("effect-s2-stream-db.table.insertOrGet", {
+            attributes: { stream, table: meta.type },
+          }),
+          Effect.mapError(toError("insertOrGet")),
+        ),
       // `Effect.suspend` so the read observes `MaterializedState` when the Effect
       // RUNS, not when `get`/`query` is called — otherwise a reused read Effect
       // would freeze the value captured at construction time.
@@ -342,9 +364,17 @@ const openStream = <T extends Tables>(
             onNone: () => Effect.succeedNone,
             onSome: (encoded) => decodeRow(meta, encoded).pipe(Effect.map(Option.some)),
           }),
-        ).pipe(Effect.mapError(toError("get"))),
+        ).pipe(
+          Effect.withSpan("effect-s2-stream-db.table.get", {
+            attributes: { stream, table: meta.type },
+          }),
+          Effect.mapError(toError("get")),
+        ),
       query: (build) =>
         Effect.suspend(() => Effect.forEach(state.values(meta.type), (encoded) => decodeRow(meta, encoded))).pipe(
+          Effect.withSpan("effect-s2-stream-db.table.query", {
+            attributes: { stream, table: meta.type },
+          }),
           Effect.map(build),
           Effect.mapError(toError("query")),
         ),
@@ -378,12 +408,20 @@ const openStream = <T extends Tables>(
                 Effect.as(result),
               )
         }),
-      ).pipe(Effect.mapError(toError("transact")))
+      ).pipe(
+        Effect.withSpan("effect-s2-stream-db.transact", { attributes: { stream } }),
+        Effect.mapError(toError("transact")),
+      )
 
     const compact = lock.withPermits(1)(
       Effect.gen(function*() {
         const cursor = yield* Ref.get(tailRef)
         const entries = state.entries()
+        yield* Effect.annotateCurrentSpan({
+          stream,
+          cursor,
+          liveEntries: entries.length,
+        })
         if (entries.length + 3 > MAX_BATCH_RECORDS) {
           return yield* Effect.fail(
             new S2StreamDbError({
@@ -407,10 +445,13 @@ const openStream = <T extends Tables>(
         const ack = yield* client.append(stream, AppendInput.create(records, { matchSeqNum: cursor }))
         yield* Ref.set(tailRef, ack.tail.seqNum)
       }).pipe(Effect.mapError(toError("compact"))),
-    )
+    ).pipe(Effect.withSpan("effect-s2-stream-db.compact", { attributes: { stream } }))
 
-    const drop = client.deleteStream({ stream }).pipe(Effect.mapError(toError("drop")))
+    const drop = client.deleteStream({ stream }).pipe(
+      Effect.withSpan("effect-s2-stream-db.drop", { attributes: { stream } }),
+      Effect.mapError(toError("drop")),
+    )
 
     // eslint-disable-next-line local/no-launder-cast -- the dynamic `facades` record (typed per-table at the type level) can't be proven to match the mapped `StreamDbInstance<T>` shape structurally
     return { ...facades, table, transact, compact, drop } as unknown as StreamDbInstance<T>
-  })
+  }).pipe(Effect.withSpan("effect-s2-stream-db.open", { attributes: { stream } }))

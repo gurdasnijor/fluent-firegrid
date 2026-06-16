@@ -1,0 +1,49 @@
+feature:
+  name: storage-primitives
+  product: effect-s2-stream-db
+  description: >-
+    Stream-db storage primitives consumed by durable engines and any other client:
+    per-stream config on open, instance enumeration, non-creating existence probes,
+    ordered (seq_num) log reads, and caller-driven checkpoint+trim. Design:
+    docs/sdds/s2-resource-provisioning-sdd.md §2.
+
+components:
+  STREAM_CONFIG:
+    name: Per-stream config on open
+    requirements:
+      1: StreamDb.open accepts an optional StreamConfig (retentionPolicy / deleteOnEmpty / storageClass) applied to the create-if-absent.
+      2: Omitting config preserves current behaviour (create-if-absent, inherit basin defaults) — fully backward compatible.
+      3: Age/size retention is for ephemeral streams only; a stream that mixes permanent state with transient records must not be GC'd by age retention (it uses CHECKPOINT instead).
+
+  ENUMERATE:
+    name: Enumerate instances by prefix
+    requirements:
+      1: StreamDb.list returns the instance keys that currently exist as streams under basePath (listStreams by basePath prefix, strip basePath, decode the key) — discovery, not name construction.
+      2: A keyPrefix filter is offered only for structured keys; an opaque-key db (e.g. UUID) offers no sub-prefix.
+      3: 'Existence equals liveness only for streams dropped on completion; for persistent streams, existence means the instance exists, and a separate work check is required. includeDeleted defaults false.'
+
+  EXISTENCE:
+    name: Non-creating existence and read
+    requirements:
+      1: exists(key) reports whether a stream exists without creating it (checkTail).
+      2: openExisting(key) returns None for a missing stream and never creates it (unlike open, which creates-if-absent).
+
+  ORDERED_READ:
+    name: Ordered (seq_num) log read
+    requirements:
+      1: readLog(key) yields records in ascending S2 seq_num order; readLog(key, {from}) resumes from a cursor.
+      2: seq_num is the authoritative order — ordered-read does not invent a separate sequence field.
+      3: The latest-value materialized fold remains available for state; ordered-read is the complementary lens for event-log consumers.
+
+  CHECKPOINT:
+    name: Caller-driven checkpoint + trim
+    requirements:
+      1: checkpoint(key) appends a snapshot of the live set at a cursor, then trims records before that cursor (surfacing today's internal compact as a first-class operation).
+      2: trim(key, cursor) issues an explicit trim of records before cursor.
+      3: A snapshot must be durable before any trim that depends on it.
+      4: A checkpoint snapshot must fit one S2 batch (MAX_BATCH_RECORDS); larger snapshots require framed/chunked snapshots (a follow-up).
+
+constraints:
+  COMPAT:
+    requirements:
+      1: All additions are backward compatible — existing open/get/query/transact/compact/drop behaviour is unchanged when the new options/primitives are not used.

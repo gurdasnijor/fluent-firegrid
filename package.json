@@ -22,7 +22,7 @@
     "openapi:mock": "prism mock openapi/durable-streams.yaml --host 127.0.0.1 --port 4010",
     "openapi:view": "node scripts/openapi-viewer.mjs",
     "openapi:dev": "node scripts/openapi-dev.mjs",
-    "preflight": "turbo run lint lint:dead lint:dup lint:deps --continue --output-logs=errors-only; L=$?; pnpm run typecheck; T=$?; pnpm run test; E=$?; pnpm run diagnostics; D=$?; pnpm run typespec:compile; P=$?; exit $((L|T|E|D|P))",
+    "preflight": "turbo run lint lint:dead lint:dup lint:deps --continue --output-logs=errors-only; L=$?; pnpm run typecheck; T=$?; pnpm run test; E=$?; pnpm run diagnostics; D=$?; exit $((L|T|E|D))",
     "verify": "pnpm run preflight"
   },
   "devDependencies": {

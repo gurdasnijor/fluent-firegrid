@@ -1,16 +1,16 @@
-import { FileSystem, Path } from "@effect/platform"
-import { Array as Arr, Data, Effect, Option } from "effect"
+import { FileSystem, Path } from "effect"
+import { Data, Effect, Option } from "effect"
 
 // Package-relative `.simulate/` root, resolved off this module's URL (via the
 // Path service inside an Effect) so it stays correct regardless of cwd — the
 // runner may be invoked from anywhere in the monorepo via `pnpm --filter`.
-const simulateRootUrl = new URL("../../.simulate/", import.meta.url)
+const artifactRootUrl = new URL("../../.simulate/", import.meta.url)
 
 // The `.simulate/` paths, resolved through the Path service. Returned together
 // so a caller takes one yield and the Path service is requested once.
-const simulatePaths = Effect.gen(function*() {
+const artifactPaths = Effect.gen(function*() {
   const path = yield* Path.Path
-  const root = yield* path.fromFileUrl(simulateRootUrl)
+  const root = yield* path.fromFileUrl(artifactRootUrl)
   return {
     runsRoot: path.join(root, "runs"),
     latestPath: path.join(root, "latest.json"),
@@ -19,7 +19,7 @@ const simulatePaths = Effect.gen(function*() {
 
 // `runsRoot` as an Effect (the runs directory). Exposed for consumers that list
 // runs; replaces the former eagerly-resolved module-level string constant.
-export const runsRoot = Effect.map(simulatePaths, paths => paths.runsRoot)
+export const runsRoot = Effect.map(artifactPaths, paths => paths.runsRoot)
 
 class NoRunsFound extends Data.TaggedClass("NoRunsFound")<{
   readonly runsRoot: string
@@ -35,10 +35,9 @@ class TraceFileMissing extends Data.TaggedClass("TraceFileMissing")<{
 }> {}
 
 export interface SpanRecord {
-  // tf-9ia9: the observability file exporter can emit phase:start records for
-  // in-flight spans (opt-in via FIREGRID_OTEL_FILE_PHASES=start-end). Trace
-  // readers here consume completed spans only, so start records are filtered
-  // out in readTraceSpans. Absent on legacy/end-only traces.
+  // The observability file exporter emits phase:start records for in-flight
+  // spans. Trace readers here consume completed spans only, so start records
+  // are filtered out in readTraceSpans.
   readonly phase?: "start" | "end"
   readonly name: string
   readonly traceId: string
@@ -96,7 +95,7 @@ export const resolveRunDir = (runId: string | undefined) =>
   Effect.gen(function*() {
     const fs = yield* FileSystem.FileSystem
     const path = yield* Path.Path
-    const { runsRoot, latestPath } = yield* simulatePaths
+    const { runsRoot, latestPath } = yield* artifactPaths
 
     // Explicit run id: resolve it directly, error if absent.
     if (runId !== undefined) {
@@ -142,12 +141,14 @@ export const readTraceSpans = (runDir: string) =>
       return yield* Effect.fail(new TraceFileMissing({ runDir }))
     }
     const text = yield* fs.readFileString(tracePath)
-    return Arr.filterMap(text.split("\n"), line =>
-      line.length === 0
-        ? Option.none()
-        : Option.some(JSON.parse(line) as SpanRecord))
+    const spans: Array<SpanRecord> = []
+    for (const line of text.split("\n")) {
+      if (line.length === 0) continue
+      const span = JSON.parse(line) as SpanRecord
       // tf-9ia9: drop in-flight span-START records; readers here report on
       // completed spans (durations, self-time). End-only/legacy traces have no
       // `phase` field and are kept.
-      .filter(span => span.phase !== "start")
+      if (span.phase !== "start") spans.push(span)
+    }
+    return spans
   })

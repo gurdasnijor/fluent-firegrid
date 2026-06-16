@@ -1,4 +1,4 @@
-import { Path } from "@effect/platform"
+import { Path } from "effect"
 import { Console, Effect } from "effect"
 import {
   compareNs,
@@ -283,10 +283,10 @@ const renderReport = (report: PerfReport): string => {
 const renderFindingDraft = (report: PerfReport, thresholdMs: number): string => {
   const gaps = report.findingGaps
   if (gaps.length === 0) {
-    return `simulate:perf finding draft: no idle gaps exceeded ${thresholdMs}ms for ${report.runId}`
+    return `firelab perf finding draft: no idle gaps exceeded ${thresholdMs}ms for ${report.runId}`
   }
   return [
-    "## Finding Source: simulate:perf idle gap regression",
+    "## Finding Source: firelab perf idle gap regression",
     "",
     `Run: ${report.runId}`,
     `Trace: ${report.tracePath}`,

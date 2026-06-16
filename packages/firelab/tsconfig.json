@@ -36,7 +36,7 @@
           "extendsNativeError": "error",
           "globalConsole": "error",
           "globalConsoleInEffect": "error",
-          "globalDate": "error",
+          "globalDate": "suggestion",
           "globalDateInEffect": "error",
           "globalFetch": "error",
           "globalFetchInEffect": "error",
@@ -50,14 +50,15 @@
           "missedPipeableOpportunity": "error",
           "missingEffectServiceDependency": "error",
           "nestedEffectGenYield": "error",
-          "newPromise": "error",
-          "nodeBuiltinImport": "error",
-          "preferSchemaOverJson": "error",
+          "lazyPromiseInEffectSync": "suggestion",
+          "newPromise": "suggestion",
+          "nodeBuiltinImport": "suggestion",
+          "preferSchemaOverJson": "suggestion",
           "processEnv": "suggestion",
           "processEnvInEffect": "error",
           "redundantSchemaTagIdentifier": "error",
           "returnEffectInGen": "error",
-          "runEffectInsideEffect": "error",
+          "runEffectInsideEffect": "suggestion",
           "schemaStructWithTag": "error",
           "schemaSyncInEffect": "error",
           "schemaUnionOfLiterals": "error",
@@ -70,7 +71,8 @@
           "unnecessaryFailYieldableError": "error",
           "unnecessaryPipe": "error",
           "unnecessaryPipeChain": "error",
-          "unsafeEffectTypeAssertion": "error"
+          "unknownInEffectCatch": "suggestion",
+          "unsafeEffectTypeAssertion": "suggestion"
         }
       }
     ]

@@ -8,6 +8,7 @@ import {
   type AppendAck,
   type ReadOptions,
   type S2RetryConfig,
+  type S2EndpointsInit,
   type SdkAppendInput,
   type SdkAppendRecord,
   type BatchTransformOptions,
@@ -475,6 +476,7 @@ const appendSessionOptions = (config: AppendSessionConfig): AppendSessionOptions
 const liveOptions = (options: {
   readonly accessToken: Redacted.Redacted<string>
   readonly basinName: string
+  readonly endpoints?: S2EndpointsInit
   readonly retry?: S2RetryConfig
   readonly forceTransport?: "fetch" | "s2s"
 }) => ({
@@ -484,9 +486,11 @@ const liveOptions = (options: {
 })
 
 const optionalLiveOptions = (options: {
+  readonly endpoints?: S2EndpointsInit
   readonly retry?: S2RetryConfig
   readonly forceTransport?: "fetch" | "s2s"
 }) => ({
+  ...(options.endpoints === undefined ? {} : { endpoints: options.endpoints }),
   ...(options.retry === undefined ? {} : { retry: options.retry }),
   ...(options.forceTransport === undefined ? {} : { forceTransport: options.forceTransport }),
 })
@@ -494,6 +498,7 @@ const optionalLiveOptions = (options: {
 const makeLiveApi = (input: {
   readonly accessToken: Redacted.Redacted<string>
   readonly basinName: string
+  readonly endpoints?: S2EndpointsInit
   readonly retry?: S2RetryConfig
   readonly forceTransport?: "fetch" | "s2s"
 }): S2ClientApi => {
@@ -505,6 +510,7 @@ const makeLiveApi = (input: {
   const client = new S2({
     ...environment,
     accessToken: Redacted.value(input.accessToken),
+    ...(input.endpoints === undefined ? {} : { endpoints: input.endpoints }),
     retry,
   })
   const basinHandle = (name?: string) => client.basin(name ?? input.basinName)
@@ -513,6 +519,7 @@ const makeLiveApi = (input: {
       name,
       streamHandleOptions(input.forceTransport, options?.stream),
     )
+  type StreamReadRequestOptions = Parameters<ReturnType<typeof selectedStreamHandle>["read"]>[1]
 
   const listBasins = (args?: ListBasinsInput, options?: S2RequestOptions) =>
     trySdk("listBasins", () => client.basins.list(args, options))
@@ -592,6 +599,7 @@ const makeLiveApi = (input: {
     args: CreateStreamInput,
     options?: S2OperationOptions,
   ) {
+    yield* Effect.annotateCurrentSpan({ stream: args.stream })
     return yield* trySdk("createStream", () =>
       basinHandle(options?.basinName).streams.create(args, options?.request),
     )
@@ -602,15 +610,25 @@ const makeLiveApi = (input: {
       basinHandle(options?.basinName).streams.getConfig(args, options?.request),
     )
 
-  const deleteStream = (args: DeleteStreamInput, options?: S2OperationOptions) =>
-    trySdk("deleteStream", () =>
+  const deleteStream = Effect.fn("S2.deleteStream")(function*(
+    args: DeleteStreamInput,
+    options?: S2OperationOptions,
+  ) {
+    yield* Effect.annotateCurrentSpan({ stream: args.stream })
+    return yield* trySdk("deleteStream", () =>
       basinHandle(options?.basinName).streams.delete(args, options?.request),
     )
+  })
 
-  const ensureStream = (args: EnsureStreamInput, options?: S2OperationOptions) =>
-    trySdk("ensureStream", () =>
+  const ensureStream = Effect.fn("S2.ensureStream")(function*(
+    args: EnsureStreamInput,
+    options?: S2OperationOptions,
+  ) {
+    yield* Effect.annotateCurrentSpan({ stream: args.stream })
+    return yield* trySdk("ensureStream", () =>
       basinHandle(options?.basinName).streams.ensure(args, options?.request),
     )
+  })
 
   const reconfigureStream = (args: ReconfigureStreamInput, options?: S2OperationOptions) =>
     trySdk("reconfigureStream", () =>
@@ -621,6 +639,7 @@ const makeLiveApi = (input: {
     name: string,
     options?: S2OperationOptions,
   ) {
+    yield* Effect.annotateCurrentSpan({ stream: name })
     return yield* trySdk("checkTail", () =>
       selectedStreamHandle(name, options).checkTail(options?.request),
     )
@@ -642,26 +661,38 @@ const makeLiveApi = (input: {
     return ack
   })
 
-  const readBatch = (
+  const readBatchFrom = <Encoding extends "string" | "bytes">(
+    operation: string,
     name: string,
-    options: ReadOptions = {},
-    operationOptions?: S2OperationOptions,
-  ) =>
-    trySdk("readBatch", () =>
-      selectedStreamHandle(name, operationOptions).read(options, operationOptions?.request),
-    )
+    options: ReadOptions,
+    operationOptions: S2OperationOptions | undefined,
+    request: StreamReadRequestOptions,
+  ): Effect.Effect<ReadBatch<Encoding>, S2ClientError> =>
+    Effect.gen(function*() {
+      yield* Effect.annotateCurrentSpan({ stream: name })
+      return yield* trySdk(operation, () =>
+        selectedStreamHandle(name, operationOptions).read(options, request),
+      ) as Effect.Effect<ReadBatch<Encoding>, S2ClientError>
+    })
 
-  const readBatchBytes = (
+  const readBatch = Effect.fn("S2.readBatch")(function*(
     name: string,
     options: ReadOptions = {},
     operationOptions?: S2OperationOptions,
-  ) =>
-    trySdk("readBatchBytes", () =>
-      selectedStreamHandle(name, operationOptions).read(options, {
-        ...operationOptions?.request,
-        as: "bytes",
-      }),
-    )
+  ) {
+    return yield* readBatchFrom("readBatch", name, options, operationOptions, operationOptions?.request)
+  })
+
+  const readBatchBytes = Effect.fn("S2.readBatchBytes")(function*(
+    name: string,
+    options: ReadOptions = {},
+    operationOptions?: S2OperationOptions,
+  ) {
+    return yield* readBatchFrom("readBatchBytes", name, options, operationOptions, {
+      ...operationOptions?.request,
+      as: "bytes",
+    })
+  })
 
   const read = (
     name: string,
@@ -824,6 +855,7 @@ const makeLiveApi = (input: {
 export function layer(options: {
   readonly accessToken: Config.Config<Redacted.Redacted<string>> | Redacted.Redacted<string>
   readonly basinName: Config.Config<string> | string
+  readonly endpoints?: S2EndpointsInit
   readonly retry?: S2RetryConfig
   readonly forceTransport?: "fetch" | "s2s"
 }): Layer.Layer<S2Client, Config.ConfigError> {

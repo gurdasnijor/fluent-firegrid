@@ -1,4 +1,4 @@
-import { FileSystem, Path } from "@effect/platform"
+import { FileSystem, Path } from "effect"
 import { Console, Effect } from "effect"
 import {
   compareNs,
@@ -19,7 +19,7 @@ import {
 const durationMs = (s: SpanRecord): number =>
   nsToMs(durationNs(s))
 
-// Span names embedded with IDs (the high-cardinality ones host-sdk emits
+// Span names embedded with IDs (high-cardinality runtime spans can emit these
 // today) are collapsed at the head so the tree stays readable. The id
 // fragments survive in attributes; the viewer's job is to show
 // *structure*, not every detail.
@@ -45,7 +45,7 @@ const formatLine = (s: SpanRecord, depth: number): string => {
 const buildTree = (spans: ReadonlyArray<SpanRecord>): string => {
   // Mid-run / interrupted-run robustness: OTel exports a span only on
   // `end`, so a sim in flight will have thousands of completed
-  // descendants whose parents (`firegrid.simulation.run`,
+  // descendants whose parents (`firegrid.validation.run`,
   // `firegrid.side.*`, workflow scopes) haven't ended yet and aren't on
   // disk. Treat any span whose `parentSpanId` is not present in this
   // file as a *visual* root so the tree still builds — otherwise the
@@ -120,7 +120,7 @@ export const showRun = (runId: string | undefined) =>
 
 // A "run" is a folder that contains `trace.jsonl`. Legacy folders left by
 // the pre-#426 runner (run.json + trace.md + duckdb/) are filtered out
-// silently — they're on disk for archival inspection but `simulate show`
+// silently — they're on disk for archival inspection but `show`
 // can't read them. Filtering here keeps the listing honest.
 export const listRuns = Effect.gen(function*() {
   const fs = yield* FileSystem.FileSystem
@@ -132,7 +132,7 @@ export const listRuns = Effect.gen(function*() {
   // A "run" is a folder containing `trace.jsonl`. Legacy folders left by the
   // pre-#426 runner (run.json + trace.md + duckdb/) lack one and are filtered
   // out silently — they remain on disk for archival inspection, but
-  // `simulate show` can't read them, so listing them would be dishonest.
+  // `show` can't read them, so listing them would be dishonest.
   const dirs = yield* Effect.filter([...names].sort(), name =>
     hasTraceJsonl(path.join(runsDir, name)))
   if (dirs.length === 0) {
