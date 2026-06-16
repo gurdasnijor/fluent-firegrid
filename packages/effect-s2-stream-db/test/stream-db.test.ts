@@ -13,6 +13,12 @@ class Note extends Table<Note>("notes")({
   text: Schema.String,
 }) {}
 
+// Declared on no StreamDb class — exercised purely through `db.table(...)`.
+class Tag extends Table<Tag>("tags")({
+  name: Schema.String.pipe(primaryKey),
+  color: Schema.String,
+}) {}
+
 class TestDb extends StreamDb<TestDb>("testdb")({ items: Item, notes: Note }) {}
 
 layer(S2LiteLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
@@ -63,8 +69,8 @@ layer(S2LiteLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
       Effect.gen(function*() {
         const db = yield* TestDb.open("transact")
         yield* db.transact((tx) => {
-          tx.insert("items", { id: "a", value: 1 })
-          tx.insert("notes", { key: "n", text: "hi" })
+          tx.insert(Item, { id: "a", value: 1 })
+          tx.insert(Note, { key: "n", text: "hi" })
         })
         expect(Option.getOrNull(yield* db.items.get("a"))).toStrictEqual({ id: "a", value: 1 })
         expect(Option.getOrNull(yield* db.notes.get("n"))).toStrictEqual({ key: "n", text: "hi" })
@@ -78,6 +84,27 @@ layer(S2LiteLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
         // a fresh db over the same stream re-folds from the durable log
         const b = yield* TestDb.open("reopen")
         expect(Option.getOrNull(yield* b.items.get("a"))).toStrictEqual({ id: "a", value: 7 })
+      }))
+
+    it.effect("db.table addresses an undeclared table, durably", () =>
+      Effect.gen(function*() {
+        const a = yield* TestDb.open("dyn-table")
+        yield* a.table(Tag).insert({ name: "urgent", color: "red" })
+        expect(Option.getOrNull(yield* a.table(Tag).get("urgent"))).toStrictEqual({ name: "urgent", color: "red" })
+        // a fresh open re-folds the stream — the dynamic table's rows survive
+        const b = yield* TestDb.open("dyn-table")
+        expect(Option.getOrNull(yield* b.table(Tag).get("urgent"))).toStrictEqual({ name: "urgent", color: "red" })
+      }))
+
+    it.effect("transact mixes a declared and an undeclared table atomically", () =>
+      Effect.gen(function*() {
+        const db = yield* TestDb.open("dyn-transact")
+        yield* db.transact((tx) => {
+          tx.insert(Item, { id: "a", value: 1 })
+          tx.upsert(Tag, { name: "t", color: "blue" })
+        })
+        expect(Option.getOrNull(yield* db.items.get("a"))).toStrictEqual({ id: "a", value: 1 })
+        expect(Option.getOrNull(yield* db.table(Tag).get("t"))).toStrictEqual({ name: "t", color: "blue" })
       }))
 
     it.effect("compact preserves state (snapshot + trim, then reopen)", () =>

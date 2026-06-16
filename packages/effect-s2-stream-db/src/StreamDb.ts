@@ -71,7 +71,7 @@ export const Table =
 
 // ── facade types ─────────────────────────────────────────────────────────────
 
-export interface CollectionFacade<Row, Key extends string = string> {
+export interface TableFacade<Row, Key extends string = string> {
   /** Append an insert. (No first-writer check — see `insertOrGet`.) */
   readonly insert: (row: Row) => Effect.Effect<void, S2StreamDbError>
   /**
@@ -96,19 +96,29 @@ export type InsertOrGetResult<Row> =
 /** A record of named tables. */
 export type Tables = Record<string, AnyTable>
 
-/** Buffers writes across tables to commit them as one atomic batch. */
-export interface Transaction<T extends Tables> {
-  readonly insert: <K extends keyof T & string>(table: K, row: RowOf<T[K]>) => void
-  readonly upsert: <K extends keyof T & string>(table: K, row: RowOf<T[K]>) => void
-  readonly delete: <K extends keyof T & string>(table: K, key: string) => void
+/**
+ * Buffers writes to commit them as one atomic batch. Table-keyed: each write
+ * names its `Table` class (self-describing — carries its `type` and primary key),
+ * so any table — declared on the db or accessed via `db.table(...)` — can join.
+ */
+export interface Transaction {
+  readonly insert: <T extends AnyTable>(table: T, row: RowOf<T>) => void
+  readonly upsert: <T extends AnyTable>(table: T, row: RowOf<T>) => void
+  readonly delete: <T extends AnyTable>(table: T, key: string) => void
 }
 
-/** The opened db: its tables (by name) plus db-wide operations. */
+/** The opened db: its declared tables (by name) plus db-wide operations. */
 export type StreamDbInstance<T extends Tables> =
-  & { readonly [K in keyof T & string]: CollectionFacade<RowOf<T[K]>> }
+  & { readonly [K in keyof T & string]: TableFacade<RowOf<T[K]>> }
   & {
+    /**
+     * The typed facade for any `Table` over this db's stream — the runtime
+     * parallel to the declared `db.<name>` accessors. Pure: the facade is derived
+     * from the self-describing `Table` class; nothing is registered or mutated.
+     */
+    readonly table: <Tbl extends AnyTable>(table: Tbl) => TableFacade<RowOf<Tbl>>
     /** Commit writes across tables atomically (one S2 batch). */
-    readonly transact: <A>(body: (tx: Transaction<T>) => A) => Effect.Effect<A, S2StreamDbError>
+    readonly transact: <A>(body: (tx: Transaction) => A) => Effect.Effect<A, S2StreamDbError>
     /** In-stream snapshot + trim; preload cost becomes bounded by live-key count. */
     readonly compact: Effect.Effect<void, S2StreamDbError>
     /** Drop the stream entirely. */
@@ -195,14 +205,21 @@ const control = (signal: "snapshot-start" | "snapshot-end", offset: number): Cha
 const MAX_BATCH_RECORDS = 1000
 
 type Intent =
-  | { readonly _tag: "write"; readonly table: string; readonly row: unknown }
-  | { readonly _tag: "delete"; readonly table: string; readonly key: string }
+  | { readonly _tag: "write"; readonly meta: TableMeta; readonly row: unknown }
+  | { readonly _tag: "delete"; readonly meta: TableMeta; readonly key: string }
 
 interface TableMeta {
   readonly type: string
   readonly schema: Schema.Struct<Schema.Struct.Fields>
   readonly pkField: string
 }
+
+/** A `Table` class is self-describing — derive its metadata directly, no registry. */
+const metaOf = (table: AnyTable): TableMeta => ({
+  type: table.tableName,
+  schema: table.schema,
+  pkField: table.pkField,
+})
 
 const openStream = <T extends Tables>(
   stream: string,
@@ -214,41 +231,22 @@ const openStream = <T extends Tables>(
     const tailRef = yield* Ref.make(0)
     const lock = yield* Semaphore.make(1)
 
-    // record key → table metadata (the `type` is the table's `tableName`).
-    const meta = new Map<string, TableMeta>(
-      Object.entries(tables).map(([key, table]): readonly [string, TableMeta] => [
-        key,
-        { type: table.tableName, schema: table.schema, pkField: table.pkField },
-      ]),
-    )
-    const metaFor = (table: string): Effect.Effect<TableMeta, S2StreamDbError> => {
-      const m = meta.get(table)
-      return m === undefined
-        ? Effect.fail(toError("table")(new Error(`unknown table: ${table}`)))
-        : Effect.succeed(m)
-    }
-
     // Concrete schemas carry no encode/decode services; pin the generic to `never`.
     const encodeSchema = (schema: TableMeta["schema"], row: unknown) =>
       Schema.encodeUnknownEffect(schema)(row) as Effect.Effect<unknown, Schema.SchemaError>
     const decodeSchema = (schema: TableMeta["schema"], encoded: unknown) =>
       Schema.decodeUnknownEffect(schema)(encoded) as Effect.Effect<unknown, Schema.SchemaError>
 
-    const encodeRow = (table: string, row: unknown) =>
-      metaFor(table).pipe(
-        Effect.flatMap((m) =>
-          encodeSchema(m.schema, row).pipe(
-            Effect.map((encoded) => ({
-              type: m.type,
-              key: String((encoded as Record<string, unknown>)[m.pkField]),
-              encoded,
-            })),
-          )
-        ),
+    const encodeRow = (meta: TableMeta, row: unknown) =>
+      encodeSchema(meta.schema, row).pipe(
+        Effect.map((encoded) => ({
+          type: meta.type,
+          key: String((encoded as Record<string, unknown>)[meta.pkField]),
+          encoded,
+        })),
       )
 
-    const decodeRow = (table: string, encoded: unknown) =>
-      metaFor(table).pipe(Effect.flatMap((m) => decodeSchema(m.schema, encoded)))
+    const decodeRow = (meta: TableMeta, encoded: unknown) => decodeSchema(meta.schema, encoded)
 
     // preload: paginate from head, fold data records, skip command records.
     const foldRecord = (
@@ -300,16 +298,16 @@ const openStream = <T extends Tables>(
         messages.forEach((message) => state.apply(message))
       })
 
-    const makeFacade = (table: string): CollectionFacade<unknown> => ({
+    const makeFacade = (meta: TableMeta): TableFacade<unknown> => ({
       insert: (row) =>
         lock.withPermits(1)(
-          encodeRow(table, row).pipe(
+          encodeRow(meta, row).pipe(
             Effect.flatMap(({ encoded, key, type }) => commitLocked([change("insert", type, key, encoded)])),
           ),
         ).pipe(Effect.mapError(toError("insert"))),
       upsert: (row) =>
         lock.withPermits(1)(
-          encodeRow(table, row).pipe(
+          encodeRow(meta, row).pipe(
             Effect.flatMap(({ encoded, key, type }) => {
               const op = Option.isSome(state.get(type, key)) ? "update" : "insert"
               return commitLocked([change(op, type, key, encoded)])
@@ -317,16 +315,16 @@ const openStream = <T extends Tables>(
           ),
         ).pipe(Effect.mapError(toError("upsert"))),
       delete: (key) =>
-        lock.withPermits(1)(
-          metaFor(table).pipe(Effect.flatMap((m) => commitLocked([change("delete", m.type, key)]))),
-        ).pipe(Effect.mapError(toError("delete"))),
+        lock.withPermits(1)(commitLocked([change("delete", meta.type, key)])).pipe(
+          Effect.mapError(toError("delete")),
+        ),
       insertOrGet: (row) =>
         lock.withPermits(1)(
           Effect.gen(function*() {
-            const { encoded, key, type } = yield* encodeRow(table, row)
+            const { encoded, key, type } = yield* encodeRow(meta, row)
             const existing = state.get(type, key)
             if (Option.isSome(existing)) {
-              const decoded = yield* decodeRow(table, existing.value)
+              const decoded = yield* decodeRow(meta, existing.value)
               return { _tag: "Found", row: decoded } satisfies InsertOrGetResult<unknown>
             }
             yield* commitLocked([change("insert", type, key, encoded)])
@@ -334,39 +332,36 @@ const openStream = <T extends Tables>(
           }),
         ).pipe(Effect.mapError(toError("insertOrGet"))),
       get: (key) =>
-        metaFor(table).pipe(
-          Effect.flatMap((m) =>
-            Option.match(state.get(m.type, key), {
-              onNone: () => Effect.succeedNone,
-              onSome: (encoded) => decodeRow(table, encoded).pipe(Effect.map(Option.some)),
-            })
-          ),
-          Effect.mapError(toError("get")),
-        ),
+        Option.match(state.get(meta.type, key), {
+          onNone: () => Effect.succeedNone,
+          onSome: (encoded) => decodeRow(meta, encoded).pipe(Effect.map(Option.some)),
+        }).pipe(Effect.mapError(toError("get"))),
       query: (build) =>
-        metaFor(table).pipe(
-          Effect.flatMap((m) => Effect.forEach(state.values(m.type), (encoded) => decodeRow(table, encoded))),
+        Effect.forEach(state.values(meta.type), (encoded) => decodeRow(meta, encoded)).pipe(
           Effect.map(build),
           Effect.mapError(toError("query")),
         ),
     })
 
-    const facades = Object.fromEntries(Object.keys(tables).map((name) => [name, makeFacade(name)] as const))
+    const facades = Object.fromEntries(
+      Object.entries(tables).map(([name, table]) => [name, makeFacade(metaOf(table))] as const),
+    )
+    const table = (tbl: AnyTable): TableFacade<unknown> => makeFacade(metaOf(tbl))
 
-    const transact = (body: (tx: Transaction<T>) => unknown) =>
+    const transact = (body: (tx: Transaction) => unknown) =>
       lock.withPermits(1)(
         Effect.suspend(() => {
           const intents: Array<Intent> = []
-          const tx = {
-            insert: (t: string, row: unknown) => intents.push({ _tag: "write", table: t, row }),
-            upsert: (t: string, row: unknown) => intents.push({ _tag: "write", table: t, row }),
-            delete: (t: string, key: string) => intents.push({ _tag: "delete", table: t, key }),
+          const tx: Transaction = {
+            insert: (t, row) => intents.push({ _tag: "write", meta: metaOf(t), row }),
+            upsert: (t, row) => intents.push({ _tag: "write", meta: metaOf(t), row }),
+            delete: (t, key) => intents.push({ _tag: "delete", meta: metaOf(t), key }),
           }
-          const result = body(tx as Transaction<T>)
+          const result = body(tx)
           return Effect.forEach(intents, (intent) =>
             intent._tag === "delete"
-              ? metaFor(intent.table).pipe(Effect.map((m) => change("delete", m.type, intent.key)))
-              : encodeRow(intent.table, intent.row).pipe(
+              ? Effect.succeed(change("delete", intent.meta.type, intent.key))
+              : encodeRow(intent.meta, intent.row).pipe(
                 Effect.map(({ encoded, key, type }) => {
                   const op = Option.isSome(state.get(type, key)) ? "update" : "insert"
                   return change(op, type, key, encoded)
@@ -409,5 +404,5 @@ const openStream = <T extends Tables>(
 
     const drop = client.deleteStream({ stream }).pipe(Effect.mapError(toError("drop")))
 
-    return { ...facades, transact, compact, drop } as unknown as StreamDbInstance<T>
+    return { ...facades, table, transact, compact, drop } as unknown as StreamDbInstance<T>
   })

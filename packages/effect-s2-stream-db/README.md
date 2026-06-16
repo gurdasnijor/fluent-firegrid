@@ -50,11 +50,16 @@ const program = Effect.gen(function*() {
   yield* db.activities.insert({ activityKey: "charge", result: { ok: true } })
   const charge = yield* db.activities.get("charge")
 
-  // a transaction commits across tables atomically (one S2 batch)
+  // a transaction commits across tables atomically (one S2 batch). Table-keyed:
+  // each write names its self-describing `Table` class.
   yield* db.transact((tx) => {
-    tx.upsert("activities", { activityKey: "fulfill", result: null })
-    tx.insert("clockWakeups", { clockKey: "cooloff", deadlineMs: 1000 })
+    tx.upsert(Activity, { activityKey: "fulfill", result: null })
+    tx.insert(ClockWakeup, { clockKey: "cooloff", deadlineMs: 1000 })
   })
+
+  // `db.table(T)` is the runtime parallel to `db.<name>` — a typed facade for any
+  // `Table` over this stream, declared on the db or not (pure; nothing registered).
+  yield* db.table(ClockWakeup).get("cooloff")
 })
 ```
 
