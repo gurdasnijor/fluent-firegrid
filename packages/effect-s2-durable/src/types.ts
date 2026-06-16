@@ -16,6 +16,13 @@ export interface RetryPolicy {
  * (`Schema<A, I, never>`) — durable encode/decode cannot require live services.
  */
 export interface RunOptions<A, E = never, EncodedA = unknown, EncodedE = unknown> {
+  /**
+   * Optional stable name for this step's durable identity. Omit it and the step is
+   * keyed by its **position** among the handler's `run` calls (like restate) — fine
+   * for code that doesn't change shape mid-flight. Provide a name when you want an
+   * identity stable across reordering (or a meaningful journal label).
+   */
+  readonly name?: string
   readonly output?: Schema.Codec<A, EncodedA, never, never>
   readonly error?: Schema.Codec<E, EncodedE, never, never>
   readonly retry?: RetryPolicy
@@ -36,22 +43,30 @@ export interface RunActionViolation<M extends string> {
   readonly [RunActionViolationId]: M
 }
 
+type RunResult<A, E, R> = [DurableExecutionRuntime] extends [R]
+  ? RunActionViolation<"a run action cannot use durable primitives (run/sleep/state/signal); use them in the handler body">
+  : Effect.Effect<A, E | DurableExecutionError, R | DurableExecutionRuntime>
+
 /**
- * The `run` free primitive (a durable, replay-aware side-effect boundary). A run
- * action may use the caller's own services, but **not** the durable runtime: if
- * the action requires `DurableExecutionRuntime` (i.e. it calls `run`/`sleep`/
- * `state`/`signal`), `run` resolves to a `RunActionViolation` instead of an
- * `Effect`, so the misuse is a type error here rather than a runtime fault. This
- * is the Effect analog of Restate's ctx-less `run` closure.
+ * The `run` free primitive (a durable, replay-aware side-effect boundary):
+ * `run(action, { name? })` or the compatibility form `run(name, action, options)`.
+ * The action runs once; on replay the recorded value is returned without
+ * re-running it. The action may use the caller's own services, but **not** the
+ * durable runtime: if it requires `DurableExecutionRuntime` (i.e. it calls
+ * `run`/`sleep`/`state`/`signal`), `run` resolves to a `RunActionViolation`
+ * instead of an `Effect`, so the misuse is a type error here rather than a
+ * runtime fault — the Effect analog of restate's ctx-less `run`.
  */
 export interface Run {
   <A, E, R, EncodedA = unknown, EncodedE = unknown>(
-    key: string,
+    name: string,
     action: Effect.Effect<A, E, R>,
     options?: RunOptions<A, E, EncodedA, EncodedE>,
-  ): [DurableExecutionRuntime] extends [R]
-    ? RunActionViolation<"a run action cannot use durable primitives (run/sleep/state/signal); use them in the handler body">
-    : Effect.Effect<A, E | DurableExecutionError, R | DurableExecutionRuntime>
+  ): RunResult<A, E, R>
+  <A, E, R, EncodedA = unknown, EncodedE = unknown>(
+    action: Effect.Effect<A, E, R>,
+    options?: RunOptions<A, E, EncodedA, EncodedE>,
+  ): RunResult<A, E, R>
 }
 
 /**

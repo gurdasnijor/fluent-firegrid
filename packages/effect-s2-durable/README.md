@@ -28,7 +28,8 @@ const greeter = service({
   name: "greeter",
   handlers: {
     *greet(req: { name: string }) {
-      const greeting = yield* run("compose", composeGreeting(req.name), {
+      // run(action, options?) — name optional (defaults to journal position)
+      const greeting = yield* run(composeGreeting(req.name), {
         output: Schema.String,
         retry: { maxAttempts: 3, initialInterval: Duration.millis(100) },
       })
@@ -101,7 +102,7 @@ export const checkout = handler("checkout", { input: Request, output: Result })(
 ```
 
 A `run` action **cannot** use durable primitives (`run`/`sleep`/`state`/`signal`):
-its type forbids `DurableExecutionRuntime` in `R`, so `run("x", state(Cart).set(…))`
+its type forbids `DurableExecutionRuntime` in `R`, so `run(state(Cart).set(…))`
 is a *compile* error at the `run` call — the Effect analog of Restate's ctx-less
 run closure. Perform durable work in the handler body, not inside a `run` action.
 

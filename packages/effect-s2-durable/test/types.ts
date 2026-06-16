@@ -19,7 +19,7 @@ class Note extends Table<Note>("note")({
 export const legal = handler("legal", { input: Input, output: Schema.Number })(
   Effect.gen(function*() {
     yield* handlerRequest(Input)
-    return yield* run("ok", Effect.succeed(1), { output: Schema.Number })
+    return yield* run(Effect.succeed(1), { output: Schema.Number })
   }),
 )
 

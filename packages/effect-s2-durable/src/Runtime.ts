@@ -30,6 +30,8 @@ interface Invocation {
   readonly handlerName: string
   readonly db: WfDb
   readonly inputEncoded: unknown
+  /** Monotonic per-activation counter for positionally-keyed `run` steps. */
+  readonly runSeq: Ref.Ref<number>
   /** Monotonic per-activation counter for journaled `state.get` reads (Option A). */
   readonly readSeq: Ref.Ref<number>
   /** Monotonic per-activation counter for replay-stable `awakeable` ids. */
@@ -103,7 +105,6 @@ export interface DurableExecutionRuntimeApi {
   ) => Effect.Effect<Option.Option<O>, DurableExecutionError>
   /** The durable `run` step (delegated to by the `run` free primitive). */
   readonly runStep: <A, E, R, EncodedA, EncodedE>(
-    key: string,
     action: Effect.Effect<A, E, R>,
     options?: RunOptions<A, E, EncodedA, EncodedE>,
   ) => Effect.Effect<A, E | DurableExecutionError, R>
@@ -172,13 +173,14 @@ const makeRuntime: Effect.Effect<DurableExecutionRuntimeApi, DurableExecutionErr
 
     // ── durable step (`run`) ──────────────────────────────────────────────────
     const runStep = <A, E, R, EncodedA, EncodedE>(
-      key: string,
       action: Effect.Effect<A, E, R>,
       options?: RunOptions<A, E, EncodedA, EncodedE>,
     ): Effect.Effect<A, E | DurableExecutionError, R> =>
       withActive("run").pipe(Effect.flatMap((active) =>
         Effect.gen(function*() {
-          const stepKey = `${active.executionId}/${key}`
+          // identity = the optional name, else this step's position in the journal
+          const ordinal = yield* Ref.getAndUpdate(active.runSeq, (n) => n + 1)
+          const stepKey = `${active.executionId}/${options?.name ?? `run/${ordinal}`}`
           const existing = yield* active.db.steps.get(stepKey).pipe(Effect.mapError(toError("run")))
           if (Option.isSome(existing)) {
             const row = existing.value
@@ -461,9 +463,18 @@ const makeRuntime: Effect.Effect<DurableExecutionRuntimeApi, DurableExecutionErr
         )
 
         const deferred = yield* Deferred.make<Exit.Exit<unknown, unknown>, DurableExecutionError>()
+        const runSeq = yield* Ref.make(0)
         const readSeq = yield* Ref.make(0)
         const awakeSeq = yield* Ref.make(0)
-        const invocation: Invocation = { executionId, handlerName: handler.name, db, inputEncoded, readSeq, awakeSeq }
+        const invocation: Invocation = {
+          executionId,
+          handlerName: handler.name,
+          db,
+          inputEncoded,
+          runSeq,
+          readSeq,
+          awakeSeq,
+        }
         const body: Effect.Effect<boolean, never, R> = handler.program.pipe(
           Effect.provideService(ActiveInvocation, Option.some(invocation)),
           Effect.provideService(DurableExecutionRuntime, api),

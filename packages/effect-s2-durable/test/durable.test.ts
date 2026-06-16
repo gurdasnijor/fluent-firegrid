@@ -43,7 +43,7 @@ layer(TestLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
         const greet = handler("greet", { input: GreetInput, output: GreetOutput })(
           Effect.gen(function*() {
             const req = yield* handlerRequest(GreetInput)
-            const n = yield* run("bump", Effect.sync(() => ++sideEffects.count), { output: Schema.Number })
+            const n = yield* run(Effect.sync(() => ++sideEffects.count), { output: Schema.Number })
             return { greeting: `hi ${req.name}`, count: n }
           }),
         )
@@ -60,7 +60,7 @@ layer(TestLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
         const once = handler("once", { input: GreetInput, output: Schema.Number })(
           Effect.gen(function*() {
             yield* handlerRequest(GreetInput)
-            return yield* run("bump", Effect.sync(() => ++sideEffects.count), { output: Schema.Number })
+            return yield* run(Effect.sync(() => ++sideEffects.count), { output: Schema.Number })
           }),
         )
         const rt = yield* DurableExecutionRuntime
@@ -76,7 +76,7 @@ layer(TestLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
         const wf = handler("polled", { input: GreetInput, output: Schema.Number })(
           Effect.gen(function*() {
             yield* handlerRequest(GreetInput)
-            return yield* run("answer", Effect.succeed(42), { output: Schema.Number })
+            return yield* run(Effect.succeed(42), { output: Schema.Number })
           }),
         )
         const rt = yield* DurableExecutionRuntime
@@ -91,7 +91,7 @@ layer(TestLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
         const boom = handler("boom", { input: GreetInput, output: Schema.Number })(
           Effect.gen(function*() {
             yield* handlerRequest(GreetInput)
-            return yield* run("explode", Effect.fail(new BoomError({ why: "nope" })), {
+            return yield* run(Effect.fail(new BoomError({ why: "nope" })), {
               output: Schema.Number,
               error: BoomError,
             })
@@ -127,7 +127,7 @@ layer(TestLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
           Effect.gen(function*() {
             yield* handlerRequest(GreetInput)
             yield* sleep("nap", Duration.millis(120))
-            return yield* run("after-nap", Effect.succeed(7), { output: Schema.Number })
+            return yield* run(Effect.succeed(7), { name: "after-nap", output: Schema.Number })
           }),
         )
         const rt = yield* DurableExecutionRuntime
@@ -174,7 +174,7 @@ layer(TestLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
           Effect.gen(function*() {
             yield* handlerRequest(GreetInput)
             // a run precedes the await; the resolution fires during it
-            yield* run("warmup", Effect.succeed(1), { output: Schema.Number })
+            yield* run(Effect.succeed(1), { output: Schema.Number })
             return (yield* signal("approval", Approval)).approved
           }),
         )
@@ -192,7 +192,7 @@ layer(TestLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
           name: "greeter",
           handlers: {
             *greet(req: { name: string }) {
-              const n = yield* run("bump", Effect.sync(() => ++sideEffects.count), { output: Schema.Number })
+              const n = yield* run(Effect.sync(() => ++sideEffects.count), { output: Schema.Number })
               return { greeting: `hi ${req.name}`, count: n }
             },
           },

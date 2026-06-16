@@ -2,7 +2,7 @@ import { type Duration, Effect, type Schema } from "effect"
 import type { AnyTable, RowOf } from "effect-s2-stream-db"
 import type { DurableExecutionError } from "./errors.ts"
 import { DurableExecutionRuntime } from "./Runtime.ts"
-import type { AwakeableHandle, DeferredHandle, IngressResolve, Run, StateBinding } from "./types.ts"
+import type { AwakeableHandle, DeferredHandle, IngressResolve, Run, RunOptions, StateBinding } from "./types.ts"
 
 /**
  * The free primitives — module-level functions that read the active-invocation
@@ -12,14 +12,26 @@ import type { AwakeableHandle, DeferredHandle, IngressResolve, Run, StateBinding
  */
 
 /**
- * A durable, replay-aware side-effect boundary (memoized by `key`). The action may
- * use the caller's own services but not the durable runtime (enforced by `Run`'s
- * type — see `RunActionViolation`). The cast bridges the impl to that conditional
- * public signature, which the runtime impl can't express directly.
+ * A durable, replay-aware side-effect boundary. The action may use the caller's
+ * own services but not the durable runtime (enforced by `Run`'s type — see
+ * `RunActionViolation`). The cast bridges the impl to that conditional public
+ * signature, which the runtime impl can't express directly.
  */
+type RunImplOptions = RunOptions<unknown, unknown, unknown, unknown>
+
 // eslint-disable-next-line local/no-launder-cast -- public Run carries a conditional violation brand the impl can't produce; runtime always returns the Effect branch
-export const run: Run = ((key: string, action: Effect.Effect<unknown, unknown, never>, options?: never) =>
-  Effect.flatMap(DurableExecutionRuntime, (rt) => rt.runStep(key, action, options))) as unknown as Run
+export const run: Run = ((
+  actionOrName: Effect.Effect<unknown, unknown, never> | string,
+  actionOrOptions?: Effect.Effect<unknown, unknown, never> | RunImplOptions,
+  options?: RunImplOptions,
+) =>
+  Effect.flatMap(DurableExecutionRuntime, (rt) => {
+    if (typeof actionOrName === "string") {
+      const namedOptions: RunImplOptions = { ...options, name: actionOrName }
+      return rt.runStep(actionOrOptions as Effect.Effect<unknown, unknown, never>, namedOptions)
+    }
+    return rt.runStep(actionOrName, actionOrOptions as RunImplOptions | undefined)
+  })) as unknown as Run
 
 /** The decoded handler request (the active invocation's input). */
 export const handlerRequest = <A, I>(
