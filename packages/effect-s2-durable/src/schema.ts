@@ -21,6 +21,8 @@ export class ExecutionRow extends Table<ExecutionRow>("executions")({
   input: Schema.Unknown,
   status: Schema.Literals(["running", "suspended", "completed", "failed"]),
   suspended: Schema.Boolean,
+  /** A virtual object's `"name:key"`, if this is an object-method execution. */
+  objectKey: Schema.optional(Schema.String),
 }) {}
 
 /**
@@ -68,6 +70,17 @@ export class WorkflowDb extends StreamDb<WorkflowDb>("wf")({
   deferreds: DeferredRow,
   clockWakeups: ClockWakeupRow,
 }, ExecutionId) {}
+
+// ── virtual-object state (persistent per-key store, stream `obj/<name:key>`) ──
+
+/**
+ * The durable state of a virtual `object`, scoped to one `(objectName, key)` pair
+ * and **never dropped** (it outlives any single method execution — that is what
+ * makes the object stateful). It declares no tables: a method's `state(Table)`
+ * binding reaches its rows through the generic `db.table(...)` accessor, exactly as
+ * a service does over its own execution stream. The instance key is `"name:key"`.
+ */
+export class ObjectStateDb extends StreamDb<ObjectStateDb>("obj")({}) {}
 
 // ── roster (shared cross-execution index, stream `roster/<key>`) ──────────────
 

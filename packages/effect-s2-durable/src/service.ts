@@ -90,6 +90,30 @@ export const service = <const Name extends string, H extends Handlers>(
   compiled: compileHandlers(config.name, config.handlers, config.schemas as Record<string, HandlerSchemas> | undefined),
 })
 
+/** A keyed virtual-object definition — durable state + exclusive methods, per key. */
+export interface ObjectDefinition<Name extends string, H extends Handlers> {
+  readonly name: Name
+  readonly kind: "object"
+  readonly handlers: H
+  readonly compiled: Record<string, Compiled>
+}
+
+/**
+ * Define a durable **virtual object** — a keyed, stateful entity. Each `(name, key)`
+ * has its own persistent `state(Table)` store that survives across calls, and a
+ * key's methods run **exclusively** (single-writer, serialized). Authoring is
+ * identical to `service` (generator methods, input as the argument); the difference
+ * is the call surface: `client(obj, key).method(input)`.
+ */
+export const object = <const Name extends string, H extends Handlers>(
+  config: ServiceConfig<Name, H>,
+): ObjectDefinition<Name, H> => ({
+  name: config.name,
+  kind: "object",
+  handlers: config.handlers,
+  compiled: compileHandlers(config.name, config.handlers, config.schemas as Record<string, HandlerSchemas> | undefined),
+})
+
 // ── clients ──────────────────────────────────────────────────────────────
 
 export interface InvokeOptions {
@@ -97,19 +121,22 @@ export interface InvokeOptions {
   readonly idempotencyKey?: string
 }
 
+// a `void`-input method (e.g. `*get()`) takes no input argument; everything else
+// takes its declared input. `options` is always optional and trailing.
+type InvokeArgs<I> = [I] extends [void] ? [input?: undefined, options?: InvokeOptions]
+  : [input: I, options?: InvokeOptions]
+
 /** Call surface: `client(def).method(input)` submits + attaches, returning the result. */
 export type ServiceClient<H extends Handlers> = {
   readonly [K in keyof H]: (
-    input: HandlerInput<H[K]>,
-    options?: InvokeOptions,
+    ...args: InvokeArgs<HandlerInput<H[K]>>
   ) => Effect.Effect<HandlerOutput<H[K]>, DurableExecutionError, DurableExecutionRuntime>
 }
 
 /** Fire-and-forget surface: `sendClient(def).method(input)` submits, returning the execution id. */
 export type SendClient<H extends Handlers> = {
   readonly [K in keyof H]: (
-    input: HandlerInput<H[K]>,
-    options?: InvokeOptions,
+    ...args: InvokeArgs<HandlerInput<H[K]>>
   ) => Effect.Effect<string, DurableExecutionError, DurableExecutionRuntime>
 }
 
@@ -121,42 +148,69 @@ const beginInvoke = (
   compiled: Compiled,
   input: unknown,
   options: InvokeOptions | undefined,
+  objectKey: string | undefined,
 ): Effect.Effect<{ readonly id: string; readonly rt: DurableExecutionRuntimeApi }, DurableExecutionError, DurableExecutionRuntime> =>
   Effect.gen(function*() {
     const id = yield* idFor(options)
     const rt = yield* DurableExecutionRuntime
-    yield* rt.submit(compiled.handler, id, input)
+    yield* rt.submit(compiled.handler, id, input, objectKey)
     return { id, rt }
   })
 
 /** Build a per-method proxy over a definition; `finish` decides what each call returns. */
-const makeProxy = <Name extends string, H extends Handlers, T>(
-  def: ServiceDefinition<Name, H>,
+const makeProxy = <T>(
+  def: { readonly compiled: Record<string, Compiled> },
   finish: (
     compiled: Compiled,
     ctx: { readonly id: string; readonly rt: DurableExecutionRuntimeApi },
   ) => Effect.Effect<T, DurableExecutionError, DurableExecutionRuntime>,
+  objectKey: string | undefined,
 ): Record<string, (input: unknown, options?: InvokeOptions) => Effect.Effect<T, DurableExecutionError, DurableExecutionRuntime>> =>
   Object.fromEntries(
     Object.entries(def.compiled).map(([method, compiled]) =>
       [
         method,
         (input: unknown, options?: InvokeOptions) =>
-          beginInvoke(compiled, input, options).pipe(Effect.flatMap((ctx) => finish(compiled, ctx))),
+          beginInvoke(compiled, input, options, objectKey).pipe(Effect.flatMap((ctx) => finish(compiled, ctx))),
       ] as const,
     ),
   )
 
-/** A typed call client: `client(def).method(input)` submits + attaches, returning the result. */
-export const client = <Name extends string, H extends Handlers>(def: ServiceDefinition<Name, H>): ServiceClient<H> =>
-  // eslint-disable-next-line local/no-launder-cast -- dynamic proxy; each Effect<unknown> is the typed Effect<HandlerOutput> recovered structurally by ServiceClient<H>
-  makeProxy(def, (compiled, { id, rt }) =>
-    rt.attach(id, compiled.handler.output as Schema.Codec<unknown, unknown, never, never>)) as unknown as ServiceClient<H>
+/** The composite per-key state/lock scope `"name:key"`, or `undefined` for a service. */
+const scopeKey = (
+  def: { readonly name: string },
+  key: string | undefined,
+): string | undefined => key === undefined ? undefined : `${def.name}:${key}`
 
-/** A typed fire-and-forget client: `sendClient(def).method(input)` submits, returning the execution id. */
-export const sendClient = <Name extends string, H extends Handlers>(def: ServiceDefinition<Name, H>): SendClient<H> =>
+/**
+ * A typed call client: `client(service).method(input)` for a stateless service, or
+ * `client(object, key).method(input)` for a keyed virtual object. Submits + attaches,
+ * returning the decoded result.
+ */
+export function client<Name extends string, H extends Handlers>(def: ServiceDefinition<Name, H>): ServiceClient<H>
+export function client<Name extends string, H extends Handlers>(def: ObjectDefinition<Name, H>, key: string): ServiceClient<H>
+export function client<Name extends string, H extends Handlers>(
+  def: ServiceDefinition<Name, H> | ObjectDefinition<Name, H>,
+  key?: string,
+): ServiceClient<H> {
+  // eslint-disable-next-line local/no-launder-cast -- dynamic proxy; each Effect<unknown> is the typed Effect<HandlerOutput> recovered structurally by ServiceClient<H>
+  return makeProxy(def, (compiled, { id, rt }) =>
+    rt.attach(id, compiled.handler.output as Schema.Codec<unknown, unknown, never, never>), scopeKey(def, key)) as unknown as ServiceClient<H>
+}
+
+/**
+ * A typed fire-and-forget client: `sendClient(service).method(input)` /
+ * `sendClient(object, key).method(input)`. Submits, returning the execution id.
+ */
+export function sendClient<Name extends string, H extends Handlers>(def: ServiceDefinition<Name, H>): SendClient<H>
+export function sendClient<Name extends string, H extends Handlers>(def: ObjectDefinition<Name, H>, key: string): SendClient<H>
+export function sendClient<Name extends string, H extends Handlers>(
+  def: ServiceDefinition<Name, H> | ObjectDefinition<Name, H>,
+  key?: string,
+): SendClient<H> {
   // eslint-disable-next-line local/no-launder-cast -- dynamic proxy (see client)
-  makeProxy(def, (_compiled, { id }) => Effect.succeed(id)) as unknown as SendClient<H>
+  return makeProxy(def, (_compiled, { id }) => Effect.succeed(id), scopeKey(def, key)) as unknown as SendClient<H>
+}
 
 /**
  * The engine layer **seeded with these services' handlers** so boot recovery can
@@ -165,7 +219,7 @@ export const sendClient = <Name extends string, H extends Handlers>(def: Service
  * execution can outlive the process (it parks on `sleep`/`signal`/`awakeable`).
  */
 export const serviceLayer = (
-  ...defs: ReadonlyArray<ServiceDefinition<string, Handlers>>
+  ...defs: ReadonlyArray<ServiceDefinition<string, Handlers> | ObjectDefinition<string, Handlers>>
 ): Layer.Layer<DurableExecutionRuntime, DurableExecutionError, S2Client> =>
   DurableExecutionRuntime.layer(
     defs.flatMap((def): ReadonlyArray<RegisteredHandler> => Object.values(def.compiled).map((c) => c.handler)),

@@ -9,6 +9,7 @@ import {
   DurableExecutionRuntime,
   handler,
   handlerRequest,
+  object,
   poll,
   resolveAwakeable,
   resolveSignal,
@@ -34,6 +35,29 @@ class Cart extends Table<Cart>("cart")({
   cartId: Schema.String.pipe(primaryKey),
   items: Schema.Array(Schema.String),
 }) {}
+
+class CounterState extends Table<CounterState>("counterState")({
+  id: Schema.String.pipe(primaryKey),
+  value: Schema.Number,
+}) {}
+
+// a keyed virtual object: durable per-key state + exclusive (serialized) methods.
+const counter = object({
+  name: "counter",
+  handlers: {
+    *add(amount: number) {
+      const st = state(CounterState)
+      const cur = Option.match(yield* st.get("v"), { onNone: () => 0, onSome: (r) => r.value })
+      const next = cur + amount
+      yield* st.set({ id: "v", value: next })
+      return next
+    },
+    *value() {
+      const st = state(CounterState)
+      return Option.match(yield* st.get("v"), { onNone: () => 0, onSome: (r) => r.value })
+    },
+  },
+})
 
 layer(TestLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
   "effect-s2-durable engine over s2 lite",
@@ -251,6 +275,31 @@ layer(TestLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
         expect(a).toBe(10)
         expect(b).toBe(10) // served from the first execution — NOT a re-run of n=2
         expect(seen).toStrictEqual([1]) // the action ran exactly once, for n=1
+      }))
+
+    // ── keyed virtual objects: per-key durable state + exclusive methods ──────
+
+    it.effect("object: keyed state persists across calls and is isolated per key", () =>
+      Effect.gen(function*() {
+        expect(yield* client(counter, "c1").add(5)).toBe(5)
+        expect(yield* client(counter, "c1").add(3)).toBe(8) // a fresh call sees the prior write
+        expect(yield* client(counter, "c1").value()).toBe(8) // no-arg method, fresh client
+        expect(yield* client(counter, "c2").value()).toBe(0) // a different key is isolated
+      }))
+
+    it.effect("object: same-key methods run exclusively (serialized read-modify-write)", () =>
+      Effect.gen(function*() {
+        const c = client(counter, "race")
+        // 12 concurrent increments; exclusive access makes the RMW lost-update-free.
+        yield* Effect.all(Array.from({ length: 12 }, () => c.add(1)), { concurrency: "unbounded" })
+        expect(yield* client(counter, "race").value()).toBe(12)
+      }))
+
+    it.effect("object: fire-and-forget via sendClient + attach by id", () =>
+      Effect.gen(function*() {
+        const id = yield* sendClient(counter, "sc").add(4)
+        expect(yield* attach(id, Schema.Number)).toBe(4)
+        expect(yield* client(counter, "sc").value()).toBe(4)
       }))
 
     // ── the low-level primitive: handler + DurableExecutionRuntime.submit ────

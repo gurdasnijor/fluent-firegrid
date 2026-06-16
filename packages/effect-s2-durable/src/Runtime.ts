@@ -14,21 +14,38 @@ import {
   Schedule,
   Schema,
   type Scope,
+  Semaphore,
 } from "effect"
 import { S2Client } from "effect-s2"
-import type { AnyTable, RowOf } from "effect-s2-stream-db"
+import type { AnyTable, RowOf, TableFacade } from "effect-s2-stream-db"
 import { DurableExecutionError } from "./errors.ts"
-import { ExecutionId, RosterDb, WorkflowDb } from "./schema.ts"
+import { ExecutionId, ObjectStateDb, RosterDb, WorkflowDb } from "./schema.ts"
 import type { Handler, RetryPolicy, RunOptions } from "./types.ts"
 
 /** The opened per-execution db (success type of `WorkflowDb.open`). */
 type WfDb = Effect.Success<ReturnType<typeof WorkflowDb.open>>
+
+/**
+ * The durable record store a `state(Table)` binding writes to: the active
+ * execution's own stream for a service, or the persistent per-key `ObjectStateDb`
+ * for a virtual-object method. Only the generic `table(...)` accessor is needed;
+ * both stream-db instances satisfy it structurally.
+ */
+type StateStore = { readonly table: <Tbl extends AnyTable>(table: Tbl) => TableFacade<RowOf<Tbl>> }
+
+/** The shared per-(object,key) coordination: its single state store + exclusive lock. */
+interface ObjectScope {
+  readonly lock: Semaphore.Semaphore
+  readonly state: StateStore
+}
 
 /** The active invocation a free primitive (`run`/`sleep`/`state`/…) operates on. */
 interface Invocation {
   readonly executionId: string
   readonly handlerName: string
   readonly db: WfDb
+  /** Where `state(Table)` rows live: the execution stream (service) or per-key store (object). */
+  readonly stateDb: StateStore
   readonly inputEncoded: unknown
   /** Monotonic per-activation counter for positionally-keyed `run` steps. */
   readonly runSeq: Ref.Ref<number>
@@ -87,11 +104,16 @@ const resolvedValue = (row: Option.Option<{ readonly value?: unknown }>): Option
 
 /** The public engine surface (host ops) plus the primitive ops the free functions delegate to. */
 export interface DurableExecutionRuntimeApi {
-  /** Genesis + fork: persist the execution + roster rows, then run the handler. */
+  /**
+   * Genesis + fork: persist the execution + roster rows, then run the handler.
+   * `objectKey` (a virtual object's `"name:key"`) routes `state(Table)` to the
+   * persistent per-key store and serializes same-key methods (exclusive access).
+   */
   readonly submit: <I, O, E, R>(
     handler: Handler<I, O, E, R>,
     executionId: string,
     input: I,
+    objectKey?: string,
   ) => Effect.Effect<void, DurableExecutionError, R>
   /** Block until the execution finishes; decode its output via `schema` (or fail). */
   readonly attach: <A, I>(
@@ -176,6 +198,30 @@ const makeRuntime = (
 
     const openWf = (executionId: string) => provideClient(WorkflowDb.open(ExecutionId.make(executionId)))
     const waiterKey = (executionId: string, name: string) => `${executionId}/${name}`
+
+    // Per-(object,key) scope: ONE shared `ObjectStateDb` instance + one exclusive
+    // lock. The instance must be shared (not re-opened per method) so all methods
+    // observe the same materialized state and a single CAS tail — exactly as the
+    // roster is one instance. The lock makes a key's methods single-writer (held
+    // across awaits/parks, like a Restate exclusive handler). In-process only.
+    const objectScopes = yield* Ref.make(HashMap.empty<string, ObjectScope>())
+    const objectScopesMutex = yield* Semaphore.make(1)
+    const objectScopeFor = (objectKey: string): Effect.Effect<ObjectScope, DurableExecutionError> =>
+      objectScopesMutex.withPermits(1)(
+        Ref.get(objectScopes).pipe(Effect.flatMap((m) =>
+          Option.match(HashMap.get(m, objectKey), {
+            onSome: (scope) => Effect.succeed(scope),
+            onNone: () =>
+              Effect.all([
+                Semaphore.make(1),
+                provideClient(ObjectStateDb.open(objectKey)).pipe(Effect.mapError(toError("open-object-state"))),
+              ]).pipe(
+                Effect.map(([lock, state]): ObjectScope => ({ lock, state })),
+                Effect.tap((scope) => Ref.update(objectScopes, HashMap.set(objectKey, scope))),
+              ),
+          }),
+        )),
+      )
 
     const withActive = (operation: string): Effect.Effect<Invocation, DurableExecutionError> =>
       Effect.flatMap(ActiveInvocation, (opt) =>
@@ -276,7 +322,9 @@ const makeRuntime = (
           if (Option.isSome(recorded)) {
             return Option.fromNullishOr(yield* decodeRead(recorded.value.value))
           }
-          const current = yield* active.db.table(table).get(key).pipe(Effect.mapError(toError("state.get")))
+          // the durable value lives in the state store (per-key for an object); only
+          // the read *journal* lives in the per-execution stream.
+          const current = yield* active.stateDb.table(table).get(key).pipe(Effect.mapError(toError("state.get")))
           const encoded = yield* encodeRead(Option.getOrNull(current))
           yield* active.db.stateReads.insert({ readKey, value: encoded }).pipe(Effect.mapError(toError("state.get")))
           return current
@@ -285,13 +333,13 @@ const makeRuntime = (
 
     const stateSet = <Tbl extends AnyTable>(table: Tbl, row: RowOf<Tbl>): Effect.Effect<void, DurableExecutionError> =>
       withActive("state.set").pipe(
-        Effect.flatMap((active) => active.db.table(table).upsert(row)),
+        Effect.flatMap((active) => active.stateDb.table(table).upsert(row)),
         Effect.mapError(toError("state.set")),
       )
 
     const stateDelete = <Tbl extends AnyTable>(table: Tbl, key: string): Effect.Effect<void, DurableExecutionError> =>
       withActive("state.delete").pipe(
-        Effect.flatMap((active) => active.db.table(table).delete(key)),
+        Effect.flatMap((active) => active.stateDb.table(table).delete(key)),
         Effect.mapError(toError("state.delete")),
       )
 
@@ -455,8 +503,13 @@ const makeRuntime = (
       executionId: string,
       db: WfDb,
       inputEncoded: unknown,
-    ): Effect.Effect<void, never, R> =>
+      objectKey: string | undefined,
+    ): Effect.Effect<void, DurableExecutionError, R> =>
       Effect.gen(function*() {
+        // an object method's state lives in (and serializes on) the shared per-key
+        // scope; a plain service keeps its state in its own execution stream.
+        const scope = objectKey === undefined ? undefined : yield* objectScopeFor(objectKey)
+        const stateDb: StateStore = scope === undefined ? db : scope.state
         const deferred = yield* Deferred.make<Exit.Exit<unknown, unknown>, DurableExecutionError>()
         const runSeq = yield* Ref.make(0)
         const readSeq = yield* Ref.make(0)
@@ -465,12 +518,13 @@ const makeRuntime = (
           executionId,
           handlerName: handler.name,
           db,
+          stateDb,
           inputEncoded,
           runSeq,
           readSeq,
           awakeSeq,
         }
-        const body: Effect.Effect<boolean, never, R> = handler.program.pipe(
+        const run = handler.program.pipe(
           Effect.provideService(ActiveInvocation, Option.some(invocation)),
           Effect.provideService(DurableExecutionRuntime, api),
           Effect.exit,
@@ -482,6 +536,9 @@ const makeRuntime = (
             }),
           ),
         )
+        // exclusive access: hold the per-key permit for the whole method (including
+        // parks), so same-key methods run single-writer and observe each other's writes.
+        const body: Effect.Effect<boolean, never, R> = scope === undefined ? run : scope.lock.withPermits(1)(run)
         const fiber = yield* Effect.forkIn(body, engineScope)
         const entry: RunningEntry = { fiber, deferred, invocation }
         yield* Ref.update(running, HashMap.set(executionId, entry))
@@ -491,6 +548,7 @@ const makeRuntime = (
       handler: Handler<I, O, E, R>,
       executionId: string,
       input: I,
+      objectKey?: string,
     ): Effect.Effect<void, DurableExecutionError, R> =>
       Effect.gen(function*() {
         const live = yield* Ref.get(running)
@@ -511,11 +569,12 @@ const makeRuntime = (
           input: inputEncoded,
           status: "running",
           suspended: false,
+          objectKey,
         }).pipe(Effect.mapError(toError("submit")))
         yield* roster.upsert({ executionId, handlerName: handler.name, status: "running", updatedMs: now }).pipe(
           Effect.mapError(toError("submit")),
         )
-        yield* runExecution(handler, executionId, db, inputEncoded)
+        yield* runExecution(handler, executionId, db, inputEncoded, objectKey)
       })
 
     // ── boot recovery (SDD §B5): re-drive running/suspended executions ─────────
@@ -531,7 +590,8 @@ const makeRuntime = (
             const db = yield* openWf(executionId)
             const row = yield* db.executions.get(executionId)
             const inputEncoded = Option.match(row, { onNone: () => undefined, onSome: (r) => r.input })
-            yield* runExecution(handler, executionId, db, inputEncoded)
+            const objectKey = Option.flatMap(row, (r) => Option.fromNullishOr(r.objectKey)).pipe(Option.getOrUndefined)
+            yield* runExecution(handler, executionId, db, inputEncoded, objectKey)
           }).pipe(Effect.ignore), // one execution's recovery must not abort boot
       })
 
