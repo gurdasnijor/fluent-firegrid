@@ -1,0 +1,80 @@
+import { Schema } from "effect"
+import { primaryKey, StreamDb, Table } from "effect-s2-stream-db"
+
+/**
+ * The per-execution and roster schemas — ordinary `effect-s2-stream-db`
+ * definitions. The engine adds no persistence machinery: the State-Protocol fold
+ * over these tables *is* the operation log (a `steps` row = a terminal step fact;
+ * its absence = the step may run). See `docs/sdds/effect-durable-execution-sdd.md`.
+ */
+
+/** One db (one S2 stream) per execution, keyed by its id. */
+export const ExecutionId = Schema.String.pipe(Schema.brand("ExecutionId"))
+export type ExecutionId = typeof ExecutionId.Type
+
+// ── per-execution tables (WorkflowDb, stream `wf/<execId>`) ───────────────────
+
+/** The execution's own state row (one per db). `input` is the encoded request. */
+export class ExecutionRow extends Table<ExecutionRow>("executions")({
+  executionId: Schema.String.pipe(primaryKey),
+  handlerName: Schema.String,
+  input: Schema.Unknown,
+  status: Schema.Literals(["running", "suspended", "completed", "failed"]),
+  suspended: Schema.Boolean,
+}) {}
+
+/**
+ * A terminal step outcome (the durable `run` fact, keyed `${execId}/${key}`).
+ * `success` distinguishes a recorded value from a recorded typed failure;
+ * `value`/`error` hold the *encoded* outcome. No row = no terminal fact yet, so
+ * the action is eligible to run (a crash before this row is written re-runs it).
+ */
+export class StepRow extends Table<StepRow>("steps")({
+  stepKey: Schema.String.pipe(primaryKey),
+  success: Schema.Boolean,
+  value: Schema.optional(Schema.Unknown),
+  error: Schema.optional(Schema.Unknown),
+}) {}
+
+/** A durable deferred / signal — `exit` present once resolved (later slices). */
+export class DeferredRow extends Table<DeferredRow>("deferreds")({
+  name: Schema.String.pipe(primaryKey),
+  value: Schema.optional(Schema.Unknown),
+}) {}
+
+/** A durable timer (`sleep`): a `clockWakeups` row + an in-process arm (slice 2). */
+export class ClockWakeupRow extends Table<ClockWakeupRow>("clockWakeups")({
+  name: Schema.String.pipe(primaryKey),
+  deadlineMs: Schema.Number,
+  status: Schema.Literals(["pending", "fired"]),
+}) {}
+
+/** One S2 stream (`wf/<execId>`) per execution, aggregating its tables. */
+export class WorkflowDb extends StreamDb<WorkflowDb>("wf")({
+  executions: ExecutionRow,
+  steps: StepRow,
+  deferreds: DeferredRow,
+  clockWakeups: ClockWakeupRow,
+}, ExecutionId) {}
+
+// ── roster (shared cross-execution index, stream `roster/<key>`) ──────────────
+
+/**
+ * The roster index. Its State-Protocol `type` is `"roster"` — distinct from the
+ * per-execution `executions` table — on its own shared stream. It is the
+ * cold-start enumeration source and the home of a completed execution's result
+ * after its stream is dropped.
+ */
+export class RosterRow extends Table<RosterRow>("roster")({
+  executionId: Schema.String.pipe(primaryKey),
+  handlerName: Schema.String,
+  status: Schema.Literals(["running", "suspended", "completed", "failed"]),
+  suspendKind: Schema.optional(Schema.Literals(["deferred-wait", "pending-clock"])),
+  result: Schema.optional(Schema.Unknown),
+  error: Schema.optional(Schema.String),
+  resultAcked: Schema.optional(Schema.Boolean),
+  updatedMs: Schema.Number,
+}) {}
+
+/** The shared roster db. Opened once, under a single key (default `"global"`). */
+export class RosterDb extends StreamDb<RosterDb>("roster")({ roster: RosterRow }) {}

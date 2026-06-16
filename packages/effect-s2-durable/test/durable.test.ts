@@ -1,0 +1,83 @@
+import { expect, layer } from "@effect/vitest"
+import { Duration, Effect, Layer, Option, Schema } from "effect"
+import { DurableExecutionError, DurableExecutionRuntime, handler, handlerRequest, run } from "../src/index.ts"
+import { S2LiteLive } from "./s2lite.ts"
+
+// One long-lived engine for the whole suite, over a real s2 lite server.
+const TestLive = DurableExecutionRuntime.layer.pipe(Layer.provide(S2LiteLive))
+
+const GreetInput = Schema.Struct({ name: Schema.String })
+const GreetOutput = Schema.Struct({ greeting: Schema.String, count: Schema.Number })
+
+class BoomError extends Schema.TaggedErrorClass<BoomError>()("BoomError", { why: Schema.String }) {}
+
+layer(TestLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
+  "effect-s2-durable engine over s2 lite",
+  (it) => {
+    it.effect("submit + attach round-trips the decoded output", () =>
+      Effect.gen(function*() {
+        const sideEffects = { count: 0 }
+        const greet = handler("greet", { input: GreetInput, output: GreetOutput })(
+          Effect.gen(function*() {
+            const req = yield* handlerRequest(GreetInput)
+            const n = yield* run("bump", Effect.sync(() => ++sideEffects.count), { output: Schema.Number })
+            return { greeting: `hi ${req.name}`, count: n }
+          }),
+        )
+        const rt = yield* DurableExecutionRuntime
+        yield* rt.submit(greet, "greet-1", { name: "ada" })
+        const out = yield* rt.attach(greet, "greet-1")
+        expect(out).toStrictEqual({ greeting: "hi ada", count: 1 })
+        expect(sideEffects.count).toBe(1)
+      }))
+
+    it.effect("submit is idempotent for a live execution", () =>
+      Effect.gen(function*() {
+        const sideEffects = { count: 0 }
+        const once = handler("once", { input: GreetInput, output: Schema.Number })(
+          Effect.gen(function*() {
+            yield* handlerRequest(GreetInput)
+            return yield* run("bump", Effect.sync(() => ++sideEffects.count), { output: Schema.Number })
+          }),
+        )
+        const rt = yield* DurableExecutionRuntime
+        yield* rt.submit(once, "once-1", { name: "x" })
+        yield* rt.submit(once, "once-1", { name: "x" }) // second submit is a no-op
+        const out = yield* rt.attach(once, "once-1")
+        expect(out).toBe(1)
+        expect(sideEffects.count).toBe(1)
+      }))
+
+    it.effect("poll serves the completed result from the roster", () =>
+      Effect.gen(function*() {
+        const wf = handler("polled", { input: GreetInput, output: Schema.Number })(
+          Effect.gen(function*() {
+            yield* handlerRequest(GreetInput)
+            return yield* run("answer", Effect.succeed(42), { output: Schema.Number })
+          }),
+        )
+        const rt = yield* DurableExecutionRuntime
+        yield* rt.submit(wf, "poll-1", { name: "y" })
+        yield* rt.attach(wf, "poll-1") // ensure completion
+        const polled = yield* rt.poll(wf, "poll-1")
+        expect(Option.getOrNull(polled)).toBe(42)
+      }))
+
+    it.effect("a typed run failure propagates and attach fails", () =>
+      Effect.gen(function*() {
+        const boom = handler("boom", { input: GreetInput, output: Schema.Number })(
+          Effect.gen(function*() {
+            yield* handlerRequest(GreetInput)
+            return yield* run("explode", Effect.fail(new BoomError({ why: "nope" })), {
+              output: Schema.Number,
+              error: BoomError,
+            })
+          }),
+        )
+        const rt = yield* DurableExecutionRuntime
+        yield* rt.submit(boom, "boom-1", { name: "z" })
+        const exit = yield* Effect.exit(rt.attach(boom, "boom-1"))
+        expect(exit._tag).toBe("Failure")
+      }))
+  },
+)
