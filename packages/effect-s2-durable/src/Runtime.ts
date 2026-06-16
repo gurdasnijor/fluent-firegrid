@@ -569,6 +569,15 @@ const makeRuntime = (
 
     const drainOne = (objectKey: string, scope: ObjectScope, head: InboxRow): Effect.Effect<void> =>
       Effect.gen(function*() {
+        // a head whose roster row is already terminal must NOT re-run: a crash between
+        // its completion (roster written, stream dropped) and its inbox dequeue leaves
+        // a stale row; re-running it would double-apply the method against live state.
+        // Dequeue-only — the same terminal guard `submit` uses, on the drain path.
+        const prior = yield* roster.get(head.executionId)
+        if (Option.isSome(prior) && (prior.value.status === "completed" || prior.value.status === "failed")) {
+          yield* scope.state.inbox.delete(head.executionId)
+          return
+        }
         const handler = registry.get(head.handlerName)
         if (handler === undefined) {
           // an unregistered handler can't be run — fail it terminally so the queue moves

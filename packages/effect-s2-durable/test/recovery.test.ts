@@ -6,6 +6,7 @@ import {
   awakeable,
   client,
   object,
+  ObjectStateDb,
   resolveAwakeable,
   resolveSignal,
   sendClient,
@@ -33,6 +34,24 @@ const ledger = object({
       const cur = Option.match(yield* bal.get("b"), { onNone: () => 0, onSome: (r) => r.value })
       yield* bal.set({ id: "b", value: cur + amount })
       yield* signal("posted", Schema.Boolean) // park until released, keeping it incomplete
+      return cur + amount
+    },
+    *total() {
+      const bal = state(Balance)
+      return Option.match(yield* bal.get("b"), { onNone: () => 0, onSome: (r) => r.value })
+    },
+  },
+})
+
+// a non-parking variant so a re-run would *complete* (double-apply → a wrong value)
+// rather than hang — used to exercise the post-completion-crash dedup deterministically.
+const accrual = object({
+  name: "accrual",
+  handlers: {
+    *add(amount: number) {
+      const bal = state(Balance)
+      const cur = Option.match(yield* bal.get("b"), { onNone: () => 0, onSome: (r) => r.value })
+      yield* bal.set({ id: "b", value: cur + amount })
       return cur + amount
     },
     *total() {
@@ -135,5 +154,33 @@ layer(S2LiteLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
         expect(result.rb).toBe(8) // B observed A's write — order preserved
         expect(result.total).toBe(8) // 0 + 5 + 3, nothing lost
       }))
+
+    it.effect("object: a completed-but-not-dequeued head is not re-run after a crash (no double-apply)", () =>
+      Effect.gen(function*() {
+        const engine = serviceLayer(accrual)
+
+        // process 1: one add runs fully to completion (balance = 5, inbox drained).
+        const idA = yield* Effect.gen(function*() {
+          const id = yield* sendClient(accrual, "dd").add(5)
+          yield* attach(id, Schema.Number) // wait for completion
+          return id
+        }).pipe(Effect.provide(engine), Effect.scoped)
+
+        // simulate a crash in the gap between `complete` (roster terminal + stream
+        // dropped) and the inbox dequeue: the durable inbox row for the *already
+        // completed* A survives. (Re-planting it is the only deterministic way to hit
+        // this window — a real crash there is timing-dependent.) Re-open per attempt so
+        // a fresh CAS tail is read; retry converges once process 1's drainer is gone.
+        yield* ObjectStateDb.open("accrual:dd").pipe(
+          Effect.flatMap((db) => db.inbox.insert({ executionId: idA, seq: 1, handlerName: "accrual/add", input: 5 })),
+          Effect.retry({ schedule: Schedule.spaced(Duration.millis(25)), times: 40 }),
+        )
+
+        // process 2: a fresh op triggers a drain. The stale head must be dequeued, not
+        // re-run — else its read-modify-write double-applies (balance → 10).
+        const total = yield* client(accrual, "dd").total().pipe(Effect.provide(engine), Effect.scoped)
+
+        expect(total).toBe(5)
+      }).pipe(Effect.provide(S2LiteLive)))
   },
 )
