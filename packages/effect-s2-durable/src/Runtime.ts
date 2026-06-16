@@ -142,19 +142,29 @@ export class DurableExecutionRuntime
   extends Context.Service<DurableExecutionRuntime, DurableExecutionRuntimeApi>()("DurableExecutionRuntime")
 {
   /** The S2-backed runtime layer. Requires an `S2Client`; owns its fiber scope. */
-  static get layer(): Layer.Layer<DurableExecutionRuntime, DurableExecutionError, S2Client> {
-    return Layer.effect(DurableExecutionRuntime)(makeRuntime)
+  static layer(
+    handlers: ReadonlyArray<RegisteredHandler> = [],
+  ): Layer.Layer<DurableExecutionRuntime, DurableExecutionError, S2Client> {
+    return Layer.effect(DurableExecutionRuntime)(makeRuntime(handlers))
   }
 }
 
-const makeRuntime: Effect.Effect<DurableExecutionRuntimeApi, DurableExecutionError, S2Client | Scope.Scope> = Effect
-  .gen(function*() {
+/** A handler the engine can recover by name (program + output schema; no unmet R/E). */
+export type RegisteredHandler = Handler<unknown, unknown, never, never>
+
+const makeRuntime = (
+  handlers: ReadonlyArray<RegisteredHandler>,
+): Effect.Effect<DurableExecutionRuntimeApi, DurableExecutionError, S2Client | Scope.Scope> =>
+  Effect.gen(function*() {
     const client = yield* S2Client
     // The layer's scope IS the engine's long-lived scope; handler/timer fibers fork
     // into it (SDD §B4) — never into a transient step scope.
     const engineScope = yield* Effect.scope
     const provideClient = <A, Err>(effect: Effect.Effect<A, Err, S2Client>): Effect.Effect<A, Err> =>
       Effect.provideService(effect, S2Client, client)
+
+    // handlerName → handler, the cold-start lookup for boot recovery.
+    const registry = new Map<string, RegisteredHandler>(handlers.map((h) => [h.name, h]))
 
     // Roster-open failure propagates as the layer's error (a documented start
     // boundary) rather than collapsing to a defect.
@@ -438,35 +448,15 @@ const makeRuntime: Effect.Effect<DurableExecutionRuntimeApi, DurableExecutionErr
         yield* Ref.update(running, HashMap.remove(executionId))
       }).pipe(Effect.mapError(toError("complete")))
 
-    const submit = <I, O, E, R>(
-      handler: Handler<I, O, E, R>,
+    // fork a handler body into the engine scope and register it as the live owner.
+    // Shared by `submit` (fresh genesis) and `recoverExecution` (re-run on boot).
+    const runExecution = <E, R>(
+      handler: Handler<unknown, unknown, E, R>,
       executionId: string,
-      input: I,
-    ): Effect.Effect<void, DurableExecutionError, R> =>
+      db: WfDb,
+      inputEncoded: unknown,
+    ): Effect.Effect<void, never, R> =>
       Effect.gen(function*() {
-        const live = yield* Ref.get(running)
-        if (HashMap.has(live, executionId)) return // already owned here — idempotent
-
-        // already finished? a terminal roster row means a re-submit must NOT re-run
-        // (the execution's stream is gone; the result lives on in the roster).
-        const prior = yield* roster.get(executionId).pipe(Effect.mapError(toError("submit")))
-        if (Option.isSome(prior) && (prior.value.status === "completed" || prior.value.status === "failed")) return
-
-        const db = yield* openWf(executionId).pipe(Effect.mapError(toError("submit")))
-        const inputEncoded = yield* encode(handler.input as Schema.Codec<unknown, unknown, never, never>, input)
-        const now = yield* Clock.currentTimeMillis
-
-        yield* db.executions.insertOrGet({
-          executionId,
-          handlerName: handler.name,
-          input: inputEncoded,
-          status: "running",
-          suspended: false,
-        }).pipe(Effect.mapError(toError("submit")))
-        yield* roster.upsert({ executionId, handlerName: handler.name, status: "running", updatedMs: now }).pipe(
-          Effect.mapError(toError("submit")),
-        )
-
         const deferred = yield* Deferred.make<Exit.Exit<unknown, unknown>, DurableExecutionError>()
         const runSeq = yield* Ref.make(0)
         const readSeq = yield* Ref.make(0)
@@ -496,6 +486,63 @@ const makeRuntime: Effect.Effect<DurableExecutionRuntimeApi, DurableExecutionErr
         const entry: RunningEntry = { fiber, deferred, invocation }
         yield* Ref.update(running, HashMap.set(executionId, entry))
       })
+
+    const submit = <I, O, E, R>(
+      handler: Handler<I, O, E, R>,
+      executionId: string,
+      input: I,
+    ): Effect.Effect<void, DurableExecutionError, R> =>
+      Effect.gen(function*() {
+        const live = yield* Ref.get(running)
+        if (HashMap.has(live, executionId)) return // already owned here — idempotent
+
+        // already finished? a terminal roster row means a re-submit must NOT re-run
+        // (the execution's stream is gone; the result lives on in the roster).
+        const prior = yield* roster.get(executionId).pipe(Effect.mapError(toError("submit")))
+        if (Option.isSome(prior) && (prior.value.status === "completed" || prior.value.status === "failed")) return
+
+        const db = yield* openWf(executionId).pipe(Effect.mapError(toError("submit")))
+        const inputEncoded = yield* encode(handler.input as Schema.Codec<unknown, unknown, never, never>, input)
+        const now = yield* Clock.currentTimeMillis
+
+        yield* db.executions.insertOrGet({
+          executionId,
+          handlerName: handler.name,
+          input: inputEncoded,
+          status: "running",
+          suspended: false,
+        }).pipe(Effect.mapError(toError("submit")))
+        yield* roster.upsert({ executionId, handlerName: handler.name, status: "running", updatedMs: now }).pipe(
+          Effect.mapError(toError("submit")),
+        )
+        yield* runExecution(handler, executionId, db, inputEncoded)
+      })
+
+    // ── boot recovery (SDD §B5): re-drive running/suspended executions ─────────
+    // Re-run the handler from the top: `run` short-circuits from its `steps` fact,
+    // journaled `state.get` replays, `sleep` recomputes its remaining delay, and a
+    // signal/awaitable reads its resolved `deferreds` row or re-parks. The handler
+    // is looked up by name in the registry; an unknown name is skipped.
+    const recoverExecution = (executionId: string, handlerName: string): Effect.Effect<void> =>
+      Option.match(Option.fromNullishOr(registry.get(handlerName)), {
+        onNone: () => Effect.void,
+        onSome: (handler) =>
+          Effect.gen(function*() {
+            const db = yield* openWf(executionId)
+            const row = yield* db.executions.get(executionId)
+            const inputEncoded = Option.match(row, { onNone: () => undefined, onSome: (r) => r.input })
+            yield* runExecution(handler, executionId, db, inputEncoded)
+          }).pipe(Effect.ignore), // one execution's recovery must not abort boot
+      })
+
+    const bootRecover = roster
+      .query((rows) => rows.filter((r) => r.status === "running" || r.status === "suspended"))
+      .pipe(
+        Effect.flatMap((rows) =>
+          Effect.forEach(rows, (r) => recoverExecution(r.executionId, r.handlerName), { discard: true }),
+        ),
+        Effect.ignore, // recovery is best-effort; never fail engine startup on it
+      )
 
     const attach = <A, I>(
       executionId: string,
@@ -556,5 +603,11 @@ const makeRuntime: Effect.Effect<DurableExecutionRuntimeApi, DurableExecutionErr
       resolveExternal,
       nextAwakeableId,
     }
+
+    // re-drive any running/suspended executions left by a prior process before
+    // serving requests, so a recovered execution is resident (in `running`) and
+    // can be `attach`ed / resolved exactly like a freshly-submitted one.
+    yield* bootRecover
+
     return api
   })

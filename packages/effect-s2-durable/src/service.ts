@@ -1,10 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- handler input/output are existential at the definition boundary; `any` is required for inference across the handler record (mirrors restate-sdk-gen's define/free). Concrete types are recovered on the client surface via HandlerInput/HandlerOutput. */
-import { Effect, Schema } from "effect"
+import { Effect, type Layer, Schema } from "effect"
+import type { S2Client } from "effect-s2"
 import type { DurableExecutionError } from "./errors.ts"
 import { handler } from "./handler.ts"
 import { handlerRequest } from "./primitives.ts"
 import { DurableExecutionRuntime } from "./Runtime.ts"
-import type { DurableExecutionRuntimeApi } from "./Runtime.ts"
+import type { DurableExecutionRuntimeApi, RegisteredHandler } from "./Runtime.ts"
 import type { Handler } from "./types.ts"
 
 /**
@@ -156,3 +157,16 @@ export const client = <Name extends string, H extends Handlers>(def: ServiceDefi
 export const sendClient = <Name extends string, H extends Handlers>(def: ServiceDefinition<Name, H>): SendClient<H> =>
   // eslint-disable-next-line local/no-launder-cast -- dynamic proxy (see client)
   makeProxy(def, (_compiled, { id }) => Effect.succeed(id)) as unknown as SendClient<H>
+
+/**
+ * The engine layer **seeded with these services' handlers** so boot recovery can
+ * re-drive their running/suspended executions by name after a process restart.
+ * Use this instead of the bare `DurableExecutionRuntime.layer()` whenever an
+ * execution can outlive the process (it parks on `sleep`/`signal`/`awakeable`).
+ */
+export const serviceLayer = (
+  ...defs: ReadonlyArray<ServiceDefinition<string, Handlers>>
+): Layer.Layer<DurableExecutionRuntime, DurableExecutionError, S2Client> =>
+  DurableExecutionRuntime.layer(
+    defs.flatMap((def): ReadonlyArray<RegisteredHandler> => Object.values(def.compiled).map((c) => c.handler)),
+  )

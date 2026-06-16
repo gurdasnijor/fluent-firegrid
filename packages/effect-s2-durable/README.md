@@ -22,7 +22,7 @@ active-invocation slot and delegate to `DurableExecutionRuntime` — no `ctx` ob
 ```ts
 import { Duration, Effect, Layer, Schema } from "effect"
 import { S2Client } from "effect-s2"
-import { client, DurableExecutionRuntime, run, service } from "effect-s2-durable"
+import { client, run, service, serviceLayer } from "effect-s2-durable"
 
 const greeter = service({
   name: "greeter",
@@ -45,7 +45,9 @@ const program = Effect.gen(function*() {
 })
 
 program.pipe(
-  Effect.provide(DurableExecutionRuntime.layer.pipe(Layer.provide(S2Client.layerConfig))),
+  // `serviceLayer(greeter)` seeds the recovery registry; `DurableExecutionRuntime.layer()`
+  // is the bare engine (no recovery) when you don't need cross-restart durability.
+  Effect.provide(serviceLayer(greeter).pipe(Layer.provide(S2Client.layerConfig))),
   Effect.scoped,
 )
 ```
@@ -71,6 +73,15 @@ only when you want to manage execution ids yourself.
   it returns the recorded value (or replays a recorded typed failure) and never re-runs.
   No row → the action runs (retry is pre-terminal); a crash before the row is written
   re-runs it (at-least-once).
+- **Positional step keys require deterministic control flow.** An unnamed `run`
+  is keyed by its journal position, so on replay (recovery, or a retry-after-failure)
+  the handler **must issue the same sequence of `run`s** — control flow may branch only
+  on the input and on already-journaled results, never on wall-clock/random/un-journaled
+  reads. If a handler can branch non-deterministically, **name the steps** (`run("reserve",
+  …)`) so a key tracks identity, not position. (Pinning an id with `idempotencyKey` does
+  **not** weaken this: a second call to a pinned id is *deduplicated* — it returns the
+  first execution's result and never re-runs — so two divergent calls can't alias one
+  stream's positional keys.)
 - **Effect Schema is the only serialization boundary.** `output`/`error` are discharged
   schemas (`Schema<A, I, never>`); storage holds encoded values.
 - **Completion** writes the result to the roster, awaits its ack, drops the execution
@@ -130,6 +141,14 @@ const awk = yield* awakeable(Approval)                      // { id, promise }
 // awk.id is replay-stable (executionId + ordinal); hand it to an ingress client
 ```
 
+Ingress resolution (`resolveSignal`/`resolveAwakeable`) targets an execution **resident
+in the engine** (the in-process `running` map). A parked execution is resident for its
+whole life, and **boot recovery re-makes a suspended execution resident** — so the
+canonical awakeable flow (hand the id to an external system, resolve after the process
+has cycled) works across a restart: the recovered execution re-parks and the resolution
+lands on the row. The id is replay-stable precisely so the external caller can still
+name it after the restart.
+
 ## Status
 
 Built + tested against `s2 lite` (the full Restate-SDK authoring surface):
@@ -140,8 +159,19 @@ Built + tested against `s2 lite` (the full Restate-SDK authoring surface):
   record replays its original value, so read-modify-write is replay-sound); a type-level
   guard forbids durable ops inside a `run` action.
 - `signal` / `awakeable` / `deferred` — park-and-resume over durable `deferreds` rows.
+- **Boot recovery** — on layer build the engine sweeps the roster for `running`/
+  `suspended` executions and re-drives each (looked up by `handlerName` in the registry
+  seeded via `serviceLayer(...services)`): it re-opens the `WorkflowDb`, reads the genesis
+  `input`, and re-runs the handler from the top. Replay-from-top is what makes this work —
+  `run` short-circuits from its `steps` fact, journaled `state.get` replays, `sleep`
+  recomputes its remaining delay, and a `signal`/`awakeable` reads its resolved row or
+  re-parks. A recovered execution is resident again, so `attach` / ingress resolution work
+  across a restart (see `test/recovery.test.ts`). An execution whose `handlerName` isn't in
+  the registry is skipped (so a partial registry never crashes boot).
 
-**Not yet (recovery slice):** `sleep`/signal waits don't survive a process restart —
-the durable rows + `suspended`/`suspendKind` roster markers are written, but no boot
-sweep re-opens suspended executions and replays them yet. `resultAcked` is written but
-not yet consumed (no post-completion reclaim). `attach` across a restart fails.
+Use **`serviceLayer(...services)`** (not the bare `DurableExecutionRuntime.layer()`)
+whenever an execution can outlive the process, so its handlers are registered for recovery.
+
+**Not yet:** `resultAcked` is written but not yet consumed (no post-completion reclaim
+sweep). Durable timers (`sleep`) recover their *remaining* delay on boot, but there is no
+separate timer-wheel fiber re-armed from `clockWakeups` independent of the handler re-run.

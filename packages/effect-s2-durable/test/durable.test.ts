@@ -22,7 +22,7 @@ import {
 import { S2LiteLive } from "./s2lite.ts"
 
 // One long-lived engine for the whole suite, over a real s2 lite server.
-const TestLive = DurableExecutionRuntime.layer.pipe(Layer.provide(S2LiteLive))
+const TestLive = DurableExecutionRuntime.layer().pipe(Layer.provide(S2LiteLive))
 
 const GreetInput = Schema.Struct({ name: Schema.String })
 const GreetOutput = Schema.Struct({ greeting: Schema.String, count: Schema.Number })
@@ -229,6 +229,28 @@ layer(TestLive, { excludeTestServices: true, timeout: Duration.seconds(40) })(
           resolveSignal(id, "go", Schema.Boolean, true),
         ], { concurrency: 2 })
         expect(exit._tag).toBe("Failure")
+      }))
+
+    it.effect("a pinned id with a divergent input does not alias steps (dedup wins)", () =>
+      Effect.gen(function*() {
+        const seen: Array<number> = []
+        const svc = service({
+          name: "pinned",
+          handlers: {
+            // the step value is derived from the input; a re-run under a different
+            // input would write a semantically different `run/0` fact to the SAME
+            // stream — dedup prevents the re-run, so positional keys can't alias.
+            *go(req: { n: number }) {
+              return yield* run(Effect.sync(() => (seen.push(req.n), req.n * 10)), { output: Schema.Number })
+            },
+          },
+        })
+        const c = client(svc)
+        const a = yield* c.go({ n: 1 }, { idempotencyKey: "pin-1" })
+        const b = yield* c.go({ n: 2 }, { idempotencyKey: "pin-1" }) // different input, same id
+        expect(a).toBe(10)
+        expect(b).toBe(10) // served from the first execution — NOT a re-run of n=2
+        expect(seen).toStrictEqual([1]) // the action ran exactly once, for n=1
       }))
 
     // ── the low-level primitive: handler + DurableExecutionRuntime.submit ────

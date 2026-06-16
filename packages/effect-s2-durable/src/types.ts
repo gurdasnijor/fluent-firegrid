@@ -21,6 +21,12 @@ export interface RunOptions<A, E = never, EncodedA = unknown, EncodedE = unknown
    * keyed by its **position** among the handler's `run` calls (like restate) — fine
    * for code that doesn't change shape mid-flight. Provide a name when you want an
    * identity stable across reordering (or a meaningful journal label).
+   *
+   * Positional keys assume **deterministic control flow**: every activation (recovery
+   * replay, retry-after-failure) must issue the same sequence of `run`s, so a handler
+   * may branch only on its input and on already-journaled results — never on
+   * wall-clock/random/un-journaled reads. If control flow can diverge, **name the
+   * step** so its key tracks identity rather than position.
    */
   readonly name?: string
   readonly output?: Schema.Codec<A, EncodedA, never, never>
