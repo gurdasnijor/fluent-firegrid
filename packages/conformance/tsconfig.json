@@ -1,9 +1,0 @@
-{
-  "extends": "../../tsconfig.json",
-  "compilerOptions": {
-    "exactOptionalPropertyTypes": false,
-    "outDir": "./dist"
-  },
-  "include": ["src/**/*", "*.ts"],
-  "exclude": ["node_modules", "dist"]
-}
