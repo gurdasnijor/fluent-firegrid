@@ -10,6 +10,7 @@ import {
   pathSegment,
   replay,
   signalValue,
+  unPathSegment,
 } from "../src/actor/core.ts"
 
 // Pure (no S2) invariants for the object call-id routing + projection. S2-backed
@@ -48,6 +49,12 @@ describe("owner path segments are collision-safe", () => {
     expect(`${pathSegment("a/b")}/${pathSegment("c")}`).not.toBe(`${pathSegment("a")}/${pathSegment("b/c")}`)
     // and the `%` escape itself stays injective
     expect(pathSegment("a%2Fb")).not.toBe(pathSegment("a/b"))
+  })
+
+  it("unPathSegment round-trips pathSegment for keys containing / and %", () => {
+    for (const raw of ["", "plain", "a/b", "a%b", "a%2Fb", "%2F%25", "a/b/c%d", "100%/x"]) {
+      expect(unPathSegment(pathSegment(raw))).toBe(raw)
+    }
   })
 })
 

@@ -134,6 +134,9 @@ export const decodeObjectCallId = (id: string): Effect.Effect<ObjectCallIdParts,
  */
 export const pathSegment = (raw: string): string => raw.replaceAll("%", "%25").replaceAll("/", "%2F")
 
+/** Reverse `pathSegment` — recover the raw key from an enumerated path segment. */
+export const unPathSegment = (segment: string): string => segment.replaceAll("%2F", "/").replaceAll("%25", "%")
+
 // ── projection (pure fold of the log) ────────────────────────────────────────
 
 /** The latest-value view folded from the log. Not durable — always re-derivable. */

@@ -1,5 +1,6 @@
 import { Context, Deferred, Effect, Layer, Option, Ref, Schema, Semaphore } from "effect"
 import { S2Client, S2Conflict } from "effect-s2"
+import { StreamDb } from "effect-s2-stream-db"
 import { DurableExecutionError, durableError as toError } from "../errors.ts"
 import {
   type ActorExit,
@@ -14,6 +15,7 @@ import {
   signalValue,
   stateValue,
   transition,
+  unPathSegment,
 } from "./core.ts"
 import { type ActorLog, openLog } from "./log.ts"
 
@@ -108,6 +110,12 @@ export interface InvocationStoreApi {
     name: string,
     value: unknown,
   ) => Effect.Effect<void, DurableExecutionError, S2Client>
+  /**
+   * Enumerate the existing owner keys for an object NAME (boot recovery) — reuses
+   * `StreamDb.list` for name enumeration only (never a content fold), decoding each
+   * path segment back to the raw key (`RECOVERY.1`).
+   */
+  readonly ownerKeys: (object: string) => Effect.Effect<ReadonlyArray<string>, DurableExecutionError, S2Client>
 }
 
 const MAX_CAS_RETRIES = 32
@@ -420,7 +428,19 @@ const make = (): Effect.Effect<InvocationStoreApi> =>
         yield* signalPort.poke(callId, name)
       }).pipe(Effect.withSpan("effect-s2-durable.resolveSignal", { attributes: { callId, name } }))
 
-    return { admit, status, drain, resolveSignal }
+    const ownerKeys = (object: string): Effect.Effect<ReadonlyArray<string>, DurableExecutionError, S2Client> =>
+      Effect.gen(function*() {
+        // a keys-only StreamDb over the object's base path: list() is NAME enumeration
+        // (listAllStreams + key-codec decode), NOT a content fold of the owner streams.
+        const keysDb = StreamDb(`obj/${pathSegment(object)}`)({}, Schema.String)
+        const segments = yield* keysDb.list()
+        return segments.map(unPathSegment)
+      }).pipe(
+        Effect.mapError(toError("object.ownerKeys")),
+        Effect.withSpan("effect-s2-durable.object.ownerKeys", { attributes: { object } }),
+      )
+
+    return { admit, status, drain, resolveSignal, ownerKeys }
   })
 
 export class InvocationStore extends Context.Service<InvocationStore, InvocationStoreApi>()(

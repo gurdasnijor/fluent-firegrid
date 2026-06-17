@@ -36,8 +36,8 @@ type StateStore = { readonly table: <Tbl extends AnyTable>(table: Tbl) => TableF
 /**
  * The active invocation a free primitive (`run`/`sleep`/`state`/…) operates on.
  * A `service` invocation runs against its per-execution `WorkflowDb`; an `object`
- * invocation runs against its owner `ActorEvent` log via the journaled state
- * backend (`state`/`run`/`signal`/`deferred`/`awakeable`; `sleep` not yet wired).
+ * invocation runs against its owner `ActorEvent` log via the journaled backend
+ * (`state`/`run`/`sleep`/`signal`/`deferred`/`awakeable` — all wired).
  */
 interface ServiceInvocation {
   readonly kind: "service"
@@ -201,21 +201,36 @@ export interface DurableExecutionRuntimeApi {
 export class DurableExecutionRuntime
   extends Context.Service<DurableExecutionRuntime, DurableExecutionRuntimeApi>()("DurableExecutionRuntime")
 {
-  /** The S2-backed runtime layer. Requires an `S2Client`; owns its fiber scope. */
+  /**
+   * The S2-backed runtime layer. Requires an `S2Client`; owns its fiber scope.
+   * `handlers` seed service boot recovery; `objectSeeds` (keyed `${object}/${method}`)
+   * seed object boot recovery so a fresh engine can re-drive pending object heads.
+   */
   static layer(
     handlers: ReadonlyArray<RegisteredHandler> = [],
+    objectSeeds: ReadonlyArray<ObjectHandlerSeed> = [],
   ): Layer.Layer<DurableExecutionRuntime, DurableExecutionError, S2Client> {
     // The object-backed InvocationStore is an internal dependency of the one
     // runtime boundary — provided here, never exported.
-    return Layer.effect(DurableExecutionRuntime)(makeRuntime(handlers)).pipe(Layer.provide(InvocationStore.layer))
+    return Layer.effect(DurableExecutionRuntime)(makeRuntime(handlers, objectSeeds)).pipe(
+      Layer.provide(InvocationStore.layer),
+    )
   }
 }
 
 /** A handler the engine can recover by name (program + output schema; no unmet R/E). */
 export type RegisteredHandler = Handler<unknown, unknown, never, never>
 
+/** A registered object method, seeding object boot recovery. */
+export interface ObjectHandlerSeed {
+  readonly object: string
+  readonly method: string
+  readonly handler: RegisteredHandler
+}
+
 const makeRuntime = (
   handlers: ReadonlyArray<RegisteredHandler>,
+  objectSeeds: ReadonlyArray<ObjectHandlerSeed>,
 ): Effect.Effect<DurableExecutionRuntimeApi, DurableExecutionError, S2Client | Scope.Scope | InvocationStore> =>
   Effect.gen(function*() {
     const client = yield* S2Client
@@ -244,8 +259,12 @@ const makeRuntime = (
     // exported as a sibling runtime (consolidation SDD).
     const store = yield* InvocationStore
     // Object handlers keyed `${object}/${method}`, so the drainer can run a key's
-    // pending head by name. Self-registered on submit (recovery seeding is Slice B).
-    const objectHandlers = new Map<string, RegisteredHandler>()
+    // pending head by name. Seeded at boot (for recovery) and self-registered on submit.
+    const objectHandlers = new Map<string, RegisteredHandler>(
+      objectSeeds.map((s) => [`${s.object}/${s.method}`, s.handler] as const),
+    )
+    // the distinct object names to enumerate for boot recovery.
+    const objectNames = [...new Set(objectSeeds.map((s) => s.object))]
 
     const withActive = (operation: string): Effect.Effect<Invocation, DurableExecutionError> =>
       Effect.flatMap(ActiveInvocation, (opt) =>
@@ -767,12 +786,8 @@ const makeRuntime = (
           ),
       })
 
-    // OBJECT RECOVERY GAP (consolidation SDD "temporary recovery gap"): object
-    // boot-recovery is intentionally NOT wired here yet. The old per-key inbox drainer
-    // was deleted with the rest of the legacy object path; the S2 owner-stream recovery
-    // (enumerate keys + restart the pending head) is a later Object API Completion Batch
-    // item. Only stateless services are re-driven at boot; objects no longer write the
-    // roster, so this query returns service rows only.
+    // Service boot recovery: re-drive each running/suspended SERVICE execution.
+    // (Objects no longer write the roster, so this query returns service rows only.)
     const bootRecover = roster
       .query((rows) =>
         rows.filter((r) => (r.status === "running" || r.status === "suspended") && r.objectKey === undefined),
@@ -784,6 +799,27 @@ const makeRuntime = (
         Effect.withSpan("effect-s2-durable.boot-recover"),
         Effect.ignore, // recovery is best-effort; never fail engine startup on it
       )
+
+    // OBJECT boot recovery: for each registered object, enumerate its owner keys and
+    // restart a drainer per key. The drainer re-runs the durable head — `run`/`state`/
+    // `sleep` facts replay (never re-executed), a parked signal re-parks (RECOVERY.3/4);
+    // a key with no pending head drains to a no-op (existence is not liveness,
+    // RECOVERY.2). Drains fork into the engine scope so boot does not block on parks.
+    const objectBootRecover = Effect.forEach(
+      objectNames,
+      (object) =>
+        provideClient(store.ownerKeys(object)).pipe(
+          Effect.flatMap((keys) =>
+            Effect.forEach(
+              keys,
+              (key) => Effect.forkIn(provideClient(store.drain(object, key, makeRunHead(object))), engineScope),
+              { discard: true },
+            ),
+          ),
+          Effect.ignore, // one object's recovery must not abort boot
+        ),
+      { discard: true },
+    ).pipe(Effect.withSpan("effect-s2-durable.object.boot-recover"), Effect.ignore)
 
     // An id that decodes as an object call id routes to the owner projection.
     const decodeParts = (id: string): Effect.Effect<Option.Option<ObjectCallIdParts>, DurableExecutionError> =>
@@ -893,8 +929,10 @@ const makeRuntime = (
 
     // re-drive any running/suspended executions left by a prior process before
     // serving requests, so a recovered execution is resident (in `running`) and
-    // can be `attach`ed / resolved exactly like a freshly-submitted one.
+    // can be `attach`ed / resolved exactly like a freshly-submitted one. Objects are
+    // re-driven from their owner streams (enumerate keys + restart pending heads).
     yield* bootRecover
+    yield* objectBootRecover
 
     return api
   })
