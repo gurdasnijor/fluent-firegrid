@@ -6,7 +6,7 @@ import { type DurableExecutionError, durableError } from "./errors.ts"
 import { handler } from "./handler.ts"
 import { handlerRequest } from "./primitives.ts"
 import { DurableExecutionRuntime } from "./Runtime.ts"
-import type { DurableExecutionRuntimeApi, RegisteredHandler } from "./Runtime.ts"
+import type { DurableExecutionRuntimeApi, ObjectHandlerSeed, RegisteredHandler } from "./Runtime.ts"
 import type { Handler } from "./types.ts"
 
 /**
@@ -252,14 +252,21 @@ export function sendClient<Name extends string, H extends Handlers>(
 }
 
 /**
- * The engine layer **seeded with these services' handlers** so boot recovery can
- * re-drive their running/suspended executions by name after a process restart.
- * Use this instead of the bare `DurableExecutionRuntime.layer()` whenever an
- * execution can outlive the process (it parks on `sleep`/`signal`/`awakeable`).
+ * The engine layer **seeded with these definitions' handlers** so boot recovery can
+ * re-drive their running/suspended work after a process restart. Use this instead of
+ * the bare `DurableExecutionRuntime.layer()` whenever work can outlive the process
+ * (it parks on `sleep`/`signal`/`awakeable`, or is a pending object call). Service
+ * handlers seed the by-name registry; object methods seed object owner-stream recovery.
  */
 export const serviceLayer = (
   ...defs: ReadonlyArray<ServiceDefinition<string, Handlers> | ObjectDefinition<string, Handlers>>
-): Layer.Layer<DurableExecutionRuntime, DurableExecutionError, S2Client> =>
-  DurableExecutionRuntime.layer(
-    defs.flatMap((def): ReadonlyArray<RegisteredHandler> => Object.values(def.compiled).map((c) => c.handler)),
+): Layer.Layer<DurableExecutionRuntime, DurableExecutionError, S2Client> => {
+  const services = defs.filter((def): def is ServiceDefinition<string, Handlers> => def.kind === "service")
+  const objects = defs.filter((def): def is ObjectDefinition<string, Handlers> => def.kind === "object")
+  return DurableExecutionRuntime.layer(
+    services.flatMap((def): ReadonlyArray<RegisteredHandler> => Object.values(def.compiled).map((c) => c.handler)),
+    objects.flatMap((def): ReadonlyArray<ObjectHandlerSeed> =>
+      Object.entries(def.compiled).map(([method, c]) => ({ object: def.name, method, handler: c.handler })),
+    ),
   )
+}
