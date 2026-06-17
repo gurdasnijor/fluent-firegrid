@@ -39,9 +39,17 @@ const StateChanged = Schema.TaggedStruct("StateChanged", {
   value: Schema.optional(Schema.Unknown),
 })
 
-/** A journaled fact (a `state.get` read), replayed verbatim so RMW is crash-stable. */
+/**
+ * A journaled per-call fact, replayed verbatim. `kind` namespaces the durable
+ * primitive that wrote it (`read` for a `state.get`, `run` for a `run` step; future
+ * `sleep`/`signal`), so a `run` step named like a read journal (`run("read/0", …)`)
+ * cannot collide with a state-read fact — identity is `(callId, kind, step)`, not a
+ * single shared string. (Services avoided this with separate `steps`/`stateReads`
+ * tables; the owner log folds both, so the kind must be part of the key.)
+ */
 const Journaled = Schema.TaggedStruct("Journaled", {
   callId: Schema.String,
+  kind: Schema.String,
   step: Schema.String,
   value: Schema.Unknown,
 })
@@ -179,9 +187,12 @@ export const transition = (snapshot: ActorSnapshot, entry: LogEntry): ActorSnaps
           : deleteNested(snapshot.state, event.table, event.key),
       }
     case "Journaled":
-      return { ...snapshot, journal: setNested(snapshot.journal, event.callId, event.step, event.value) }
+      return { ...snapshot, journal: setNested(snapshot.journal, event.callId, journalKey(event.kind, event.step), event.value) }
   }
 }
+
+/** Collision-free inner journal key for a `(kind, step)` pair (injective via JSON tuple). */
+const journalKey = (kind: string, step: string): string => JSON.stringify([kind, step])
 
 /** Fold an entire log to its projection. */
 export const replay = (entries: ReadonlyArray<LogEntry>): ActorSnapshot => entries.reduce(transition, empty)
@@ -195,10 +206,18 @@ export const stateValue = (snapshot: ActorSnapshot, table: string, key: string):
     Option.flatMap((sub) => (sub.has(key) ? Option.some(sub.get(key)) : Option.none())),
   )
 
-/** A journaled step value for `callId`, if recorded. */
-export const journalValue = (snapshot: ActorSnapshot, callId: string, step: string): Option.Option<unknown> =>
+/** A journaled `(kind, step)` value for `callId`, if recorded. */
+export const journalValue = (
+  snapshot: ActorSnapshot,
+  callId: string,
+  kind: string,
+  step: string,
+): Option.Option<unknown> =>
   Option.fromNullishOr(snapshot.journal.get(callId)).pipe(
-    Option.flatMap((sub) => (sub.has(step) ? Option.some(sub.get(step)) : Option.none())),
+    Option.flatMap((sub) => {
+      const key = journalKey(kind, step)
+      return sub.has(key) ? Option.some(sub.get(key)) : Option.none()
+    }),
   )
 
 /**

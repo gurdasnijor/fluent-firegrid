@@ -4,6 +4,7 @@ import {
   callStatus,
   decodeObjectCallId,
   encodeObjectCallId,
+  journalValue,
   type LogEntry,
   OBJECT_ID_PREFIX,
   pathSegment,
@@ -46,6 +47,30 @@ describe("owner path segments are collision-safe", () => {
     expect(`${pathSegment("a/b")}/${pathSegment("c")}`).not.toBe(`${pathSegment("a")}/${pathSegment("b/c")}`)
     // and the `%` escape itself stays injective
     expect(pathSegment("a%2Fb")).not.toBe(pathSegment("a/b"))
+  })
+})
+
+describe("journal identity is kind-aware (run vs read cannot collide)", () => {
+  // a state.get read journal at step "0", and a run step deliberately NAMED "read/0":
+  // under a {callId, step}-only key these would collide and be misinterpreted.
+  const readFact: LogEntry = {
+    seqNum: 1,
+    event: { _tag: "Journaled", callId: "c1", kind: "read", step: "0", value: { present: false, value: null } },
+  }
+  const runFact: LogEntry = {
+    seqNum: 2,
+    event: { _tag: "Journaled", callId: "c1", kind: "run", step: "read/0", value: { success: true, value: 99 } },
+  }
+  const snap = replay([readFact, runFact])
+
+  it("each kind+step resolves to its own fact", () => {
+    expect(journalValue(snap, "c1", "read", "0")).toEqual(Option.some({ present: false, value: null }))
+    expect(journalValue(snap, "c1", "run", "read/0")).toEqual(Option.some({ success: true, value: 99 }))
+  })
+
+  it("a cross-kind lookup misses (no collision)", () => {
+    expect(Option.isNone(journalValue(snap, "c1", "run", "0"))).toBe(true)
+    expect(Option.isNone(journalValue(snap, "c1", "read", "read/0"))).toBe(true)
   })
 })
 

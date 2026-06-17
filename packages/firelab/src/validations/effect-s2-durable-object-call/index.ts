@@ -1,5 +1,5 @@
 import { Effect, Layer, Option, Schema } from "effect"
-import { attach, client, object, sendClient, serviceLayer, state } from "effect-s2-durable"
+import { attach, client, object, run, sendClient, serviceLayer, state } from "effect-s2-durable"
 import { primaryKey, Table } from "effect-s2-stream-db"
 import { assertEquals } from "../../assertions.ts"
 import { S2LiteLive } from "../../s2lite.ts"
@@ -30,8 +30,23 @@ const counter = object({
       const st = state(Counter)
       return Option.match(yield* st.get("v"), { onNone: () => 0, onSome: (r) => r.value })
     },
+    // two run steps with the SAME name: the first executes the effect and records a
+    // `Journaled` run fact; the second REPLAYS that fact (no re-execution). The
+    // `state.get` writes a read-journal fact alongside (a distinct kind, so it cannot
+    // collide with the run fact). `runExecutions` counts real executions.
+    *tally(amount: number) {
+      const a = yield* run(Effect.sync(() => (runExecutions.count++, amount * 2)), { name: "double", output: Schema.Number })
+      const b = yield* run(Effect.sync(() => (runExecutions.count++, amount * 2)), { name: "double", output: Schema.Number })
+      const st = state(Counter)
+      const cur = Option.match(yield* st.get("v"), { onNone: () => 0, onSome: (r) => r.value })
+      yield* st.set({ id: "v", value: cur + a + b })
+      return a + b
+    },
   },
 })
+
+// real executions of the `tally` run action (a duplicate/replayed call must NOT bump it).
+const runExecutions = { count: 0 }
 
 export default defineValidation({
   id: "effect-s2-durable-object-call",
@@ -95,6 +110,23 @@ export default defineValidation({
           assertEquals(yield* c.add(5, { idempotencyKey: "pinned" }), 5)
           assertEquals(yield* c.add(5, { idempotencyKey: "pinned" }), 5) // same callId → served, not re-run
           assertEquals(yield* c.value(), 5) // not 10
+        }),
+    },
+    {
+      id: "EXECUTION.2",
+      description:
+        "an object method's durable `run` step records a terminal fact on the owner stream (Journaled); "
+        + "a second same-named run within the SAME execution replays that recorded fact instead of "
+        + "re-executing the effect (typed output mirrors service run; not admission dedup)",
+      evidence:
+        'spans.exists(s, named(s, "effect-s2-durable.object.drain")) && spans.exists(s, named(s, "effect-s2-durable.log.append")) && spans.exists(s, named(s, "effect-s2-durable.object.admit"))',
+      claim: ({ key }) =>
+        Effect.gen(function*() {
+          const before = runExecutions.count
+          // a = run("double") executes (3*2=6); b = run("double") REPLAYS a's fact (no re-exec) → 6.
+          assertEquals(yield* client(counter, key).tally(3), 12) // a + b = 6 + 6
+          assertEquals(runExecutions.count - before, 1) // the run effect ran exactly once; b replayed the fact
+          assertEquals(yield* client(counter, key).value(), 12) // cur(0) + a + b
         }),
     },
     {

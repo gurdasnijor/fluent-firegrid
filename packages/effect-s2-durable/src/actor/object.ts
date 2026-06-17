@@ -33,11 +33,19 @@ type AdmitResult =
   | { readonly _tag: "AlreadyPending" }
   | { readonly _tag: "AlreadyCompleted" }
 
-/** The durable `state(Table)` surface a running object method writes through. */
+/** The durable surfaces a running object method writes through (state + run journal). */
 export interface ObjectStateBackend {
   readonly get: (table: string, key: string) => Effect.Effect<Option.Option<unknown>, DurableExecutionError, S2Client>
   readonly set: (table: string, key: string, value: unknown) => Effect.Effect<void, DurableExecutionError, S2Client>
   readonly delete: (table: string, key: string) => Effect.Effect<void, DurableExecutionError, S2Client>
+  /**
+   * The per-call journal (`run` terminal facts, keyed by step name). A recorded
+   * step replays its outcome verbatim and is never re-run.
+   */
+  readonly journal: {
+    readonly get: (step: string) => Effect.Effect<Option.Option<unknown>, DurableExecutionError, S2Client>
+    readonly put: (step: string, value: unknown) => Effect.Effect<void, DurableExecutionError, S2Client>
+  }
 }
 
 /** Run one accepted call to an `ActorExit` (handler exit captured, never thrown). */
@@ -113,23 +121,33 @@ const makeBackend = (
   return {
     get: (table, key) =>
       Effect.gen(function*() {
-        const ordinal = yield* Ref.getAndUpdate(readCounter, (n) => n + 1)
-        const step = `read/${ordinal}`
+        const step = String(yield* Ref.getAndUpdate(readCounter, (n) => n + 1))
         const snapshot = yield* Ref.get(snapshotRef)
-        const recorded = journalValue(snapshot, callId, step)
+        const recorded = journalValue(snapshot, callId, "read", step)
         if (Option.isSome(recorded)) {
           const record = recorded.value as { readonly present: boolean; readonly value: unknown }
           return record.present ? Option.some(record.value) : Option.none<unknown>()
         }
         const live = stateValue(snapshot, table, key)
         const record = { present: Option.isSome(live), value: Option.getOrNull(live) }
-        const event = { _tag: "Journaled" as const, callId, step, value: record }
+        const event = { _tag: "Journaled" as const, callId, kind: "read", step, value: record }
         const seqNum = yield* log.append(event)
         yield* Ref.update(snapshotRef, (s) => transition(s, { seqNum, event }))
         return live
       }),
     set: (table, key, value) => write("set", table, key, value),
     delete: (table, key) => write("delete", table, key, undefined),
+    // the `run`-step journal — a distinct kind, so a run step named like a state-read
+    // journal can never collide with one.
+    journal: {
+      get: (step) => Ref.get(snapshotRef).pipe(Effect.map((snapshot) => journalValue(snapshot, callId, "run", step))),
+      put: (step, value) =>
+        Effect.gen(function*() {
+          const event = { _tag: "Journaled" as const, callId, kind: "run", step, value }
+          const seqNum = yield* log.append(event)
+          yield* Ref.update(snapshotRef, (snapshot) => transition(snapshot, { seqNum, event }))
+        }),
+    },
   }
 }
 
