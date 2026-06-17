@@ -5,7 +5,7 @@ Normative contracts:
 [`features/effect-s2-stream-db/storage-primitives.feature.yaml`](../../features/effect-s2-stream-db/storage-primitives.feature.yaml)
 Deferred exploration:
 [`docs/deferred-features/effect-s2/resource-spec.feature.yaml`](../deferred-features/effect-s2/resource-spec.feature.yaml)
-Primary consumer: [`object-actor-model-sdd.md`](./object-actor-model-sdd.md) (the `effect-s2-durable` engine)
+Primary consumer: [`effect-s2-durable-consolidation-sdd.md`](./effect-s2-durable-consolidation-sdd.md) (the `effect-s2-durable` engine)
 Top-level runtime SDD: [`effect-durable-execution-sdd.md`](./effect-durable-execution-sdd.md)
 
 This is the **storage/resource layer** beneath the durable engine. It exists on its own because

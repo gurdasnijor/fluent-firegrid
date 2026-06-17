@@ -4,15 +4,15 @@ An Effect-native durable execution runtime over S2.
 
 The canonical design lives in
 [`docs/sdds/effect-durable-execution-sdd.md`](../../docs/sdds/effect-durable-execution-sdd.md).
-The virtual-object actor rewrite is specified in
-[`docs/sdds/object-actor-model-sdd.md`](../../docs/sdds/object-actor-model-sdd.md) and
+The S2 owner-stream object rewrite is specified in
+[`docs/sdds/effect-s2-durable-consolidation-sdd.md`](../../docs/sdds/effect-s2-durable-consolidation-sdd.md) and
 [`features/effect-s2-durable/object-actor-model.feature.yaml`](../../features/effect-s2-durable/object-actor-model.feature.yaml).
 
 Implementation is currently transitional:
 
 - `service(...)` uses the existing ephemeral one-stream-per-call runtime.
 - `object(...)` is being moved from the legacy two-stream/roster path to the per-key
-  `ActorEvent` log model.
+  S2 owner-stream model.
 - `workflow(...)` is planned as an object specialization, not a third runtime.
 
 ## Authoring surface

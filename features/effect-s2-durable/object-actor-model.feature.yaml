@@ -5,7 +5,8 @@ feature:
     Virtual objects as per-key actor streams: one authoritative durable log per
     object key holding state, the exclusive-call accept-log, per-call journals,
     ingress rows, and results. Exclusive handlers are single-writer per key;
-    shared handlers run concurrently read-only. Design: docs/sdds/object-actor-model-sdd.md.
+    shared handlers run concurrently read-only. Design:
+    docs/sdds/effect-s2-durable-consolidation-sdd.md.
 
 components:
   LAYERING:

@@ -228,10 +228,10 @@ Use `proofs init` when a feature has no validation module yet:
 
 ```bash
 # Print the file that would be generated.
-pnpm --filter firelab validate:proofs init effect-s2-durable/object-actor-model --dry-run
+pnpm --filter firelab validate:proofs init effect-s2-stream-db/storage-primitives --dry-run
 
-# Create packages/firelab/src/validations/effect-s2-durable-object-actor-model/index.ts.
-pnpm --filter firelab validate:proofs init effect-s2-durable/object-actor-model
+# Create packages/firelab/src/validations/effect-s2-stream-db-storage-primitives/index.ts.
+pnpm --filter firelab validate:proofs init effect-s2-stream-db/storage-primitives
 ```
 
 `proofs init` parses the feature YAML, infers the validation id from
