@@ -3,7 +3,15 @@ import type { S2Client } from "effect-s2"
 import { type DurableExecutionError } from "../errors.ts"
 import type { ActorExit } from "./events.ts"
 import type { ActorLog } from "./log.ts"
-import { type ActorSnapshot, isDone, journalValue, replay, stateValue, transition } from "./snapshot.ts"
+import {
+  type ActorSnapshot,
+  isDone,
+  journalValue,
+  replay,
+  stateValue,
+  toCheckpointSnapshot,
+  transition,
+} from "./snapshot.ts"
 
 /**
  * The serial per-key drainer (`EXECUTION.1`). It folds the log to a snapshot,
@@ -184,3 +192,25 @@ export const drain = (
     yield* lock.withPermits(1)(step())
   }).pipe(Effect.withSpan("effect-s2-durable.drain", { attributes: { stream: log.streamName } }))
 }
+
+/**
+ * Write a durable checkpoint at the current (drained) boundary: append a
+ * `Checkpointed` event carrying the folded snapshot, THEN trim records before it
+ * (`CHECKPOINTING.2/4`). Durable-before-trim — the snapshot is durable before
+ * anything it represents is removed (`CHECKPOINTING.7`). On reopen, the
+ * `Checkpointed` event reseeds the projection, so replay reconstructs an equal
+ * snapshot even before the async S2 trim physically purges the older records.
+ */
+export const checkpoint = (log: ActorLog): Effect.Effect<void, DurableExecutionError, S2Client> =>
+  Effect.gen(function*() {
+    const snapshot = replay(yield* log.read())
+    if (snapshot.cursor < 0) {
+      return // nothing durable yet
+    }
+    const checkpointSeq = yield* log.append({
+      _tag: "Checkpointed",
+      cursor: snapshot.cursor,
+      snapshot: toCheckpointSnapshot(snapshot),
+    })
+    yield* log.trim(checkpointSeq) // trim everything before the durable Checkpointed event
+  }).pipe(Effect.withSpan("effect-s2-durable.checkpoint", { attributes: { stream: log.streamName } }))

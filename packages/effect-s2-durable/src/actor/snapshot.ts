@@ -1,5 +1,5 @@
 import { Effect, Option } from "effect"
-import type { ActorExit, LogEntry } from "./events.ts"
+import type { ActorExit, CheckpointSnapshot, LogEntry } from "./events.ts"
 
 /**
  * The actor projection and its **pure transition** (`PLANNING.7/8`).
@@ -147,11 +147,48 @@ export const transition = (
       return [{ ...snapshot, cursor, journal }, []]
     }
     case "Checkpointed":
-      // checkpoint markers only advance the cursor in the pure core; resume-from-
-      // cursor is a later slice.
-      return [{ ...snapshot, cursor }, []]
+      // Resume: a Checkpointed event RESEEDS the projection from its recorded
+      // snapshot (CHECKPOINTING.7 fidelity). Folding [Checkpointed, …later] from
+      // empty reconstructs the same projection as folding the full (pre-trim) log,
+      // so boot can start from the latest checkpoint after records below it are trimmed.
+      return [{ ...fromCheckpointSnapshot(event.snapshot), cursor }, []]
   }
 }
+
+// ── checkpoint snapshot ↔ projection (CHECKPOINTING) ─────────────────────────────
+
+const flattenNested = (nested: ReadonlyMap<string, ReadonlyMap<string, unknown>>) =>
+  Array.from(nested).flatMap(([outer, inner]) => Array.from(inner, ([key, value]) => ({ outer, key, value })))
+
+const rebuildNested = (
+  entries: ReadonlyArray<{ readonly outer: string; readonly key: string; readonly value: unknown }>,
+): ReadonlyMap<string, ReadonlyMap<string, unknown>> => {
+  const result = new Map<string, ReadonlyMap<string, unknown>>()
+  entries.forEach(({ outer, key, value }) => result.set(outer, new Map(result.get(outer)).set(key, value)))
+  return result
+}
+
+/** Flatten a projection to its durable, JSON-serializable `Checkpointed` payload. */
+export const toCheckpointSnapshot = (snapshot: ActorSnapshot): CheckpointSnapshot => ({
+  cursor: snapshot.cursor,
+  pending: [...snapshot.pending],
+  active: Option.getOrNull(snapshot.active),
+  results: Array.from(snapshot.results, ([callId, exit]) => ({ callId, exit })),
+  signals: flattenNested(snapshot.signals).map(({ outer, key, value }) => ({ callId: outer, name: key, value })),
+  state: flattenNested(snapshot.state).map(({ outer, key, value }) => ({ table: outer, key, value })),
+  journal: flattenNested(snapshot.journal).map(({ outer, key, value }) => ({ callId: outer, step: key, value })),
+})
+
+/** Rebuild a projection from a `Checkpointed` payload (the inverse of `toCheckpointSnapshot`). */
+export const fromCheckpointSnapshot = (dto: CheckpointSnapshot): ActorSnapshot => ({
+  cursor: dto.cursor,
+  pending: dto.pending,
+  active: Option.fromNullishOr(dto.active),
+  results: new Map(dto.results.map(({ callId, exit }) => [callId, exit])),
+  signals: rebuildNested(dto.signals.map(({ callId, name, value }) => ({ outer: callId, key: name, value }))),
+  state: rebuildNested(dto.state.map(({ table, key, value }) => ({ outer: table, key, value }))),
+  journal: rebuildNested(dto.journal.map(({ callId, step, value }) => ({ outer: callId, key: step, value }))),
+})
 
 /**
  * Fold a log into a snapshot, **discarding actions** — the only thing recovery

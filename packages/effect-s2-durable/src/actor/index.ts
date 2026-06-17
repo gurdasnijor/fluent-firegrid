@@ -38,5 +38,14 @@ export {
 } from "./snapshot.ts"
 export { type ActorLog, logForOwner, openLog } from "./log.ts"
 export { admit, type AdmitResult } from "./admission.ts"
-export { drain, DrainerLocks, type DrainerLocksApi, type Handler, type HandlerContext, type Handlers } from "./drainer.ts"
+export {
+  checkpoint,
+  drain,
+  DrainerLocks,
+  type DrainerLocksApi,
+  type Handler,
+  type HandlerContext,
+  type Handlers,
+} from "./drainer.ts"
+export { fromCheckpointSnapshot, toCheckpointSnapshot } from "./snapshot.ts"
 export { attach as attachLog, resolveSignal } from "./ingress.ts"

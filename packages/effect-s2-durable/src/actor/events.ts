@@ -29,8 +29,10 @@ export type ActorExit = typeof ActorExit.Type
 
 /**
  * The `Checkpointed` event's payload: a flattened, JSON-serializable snapshot
- * (Maps become entry arrays). The pure transition only reads `cursor`; resuming
- * a projection from a checkpoint is a later slice (`CHECKPOINTING`).
+ * (Maps become entry arrays). A `Checkpointed` event reseeds the projection on
+ * replay (`CHECKPOINTING.7`), so it must cover everything the snapshot holds —
+ * including per-call journals and results (idempotency metadata) — before records
+ * below the checkpoint cursor are trimmed (`CHECKPOINTING.3`).
  */
 export const CheckpointSnapshot = Schema.Struct({
   cursor: Schema.Number,
@@ -40,6 +42,9 @@ export const CheckpointSnapshot = Schema.Struct({
   // the live set — composite identities are kept as distinct fields (never delimiter-joined).
   signals: Schema.Array(Schema.Struct({ callId: Schema.String, name: Schema.String, value: Schema.Unknown })),
   state: Schema.Array(Schema.Struct({ table: Schema.String, key: Schema.String, value: Schema.Unknown })),
+  // per-call journal (read/run memoization) — retained so a recovered call replays
+  // its original journaled values, not against post-checkpoint state (EXECUTION.2).
+  journal: Schema.Array(Schema.Struct({ callId: Schema.String, step: Schema.String, value: Schema.Unknown })),
 })
 export type CheckpointSnapshot = typeof CheckpointSnapshot.Type
 
