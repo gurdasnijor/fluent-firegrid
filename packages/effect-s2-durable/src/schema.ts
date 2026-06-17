@@ -2,10 +2,11 @@ import { Schema } from "effect"
 import { primaryKey, StreamDb, Table } from "effect-s2-stream-db"
 
 /**
- * The per-execution and roster schemas — ordinary `effect-s2-stream-db`
- * definitions. The engine adds no persistence machinery: the State-Protocol fold
- * over these tables *is* the operation log (a `steps` row = a terminal step fact;
- * its absence = the step may run). See `docs/sdds/effect-durable-execution-sdd.md`.
+ * The current service-runtime per-execution and roster schemas — ordinary
+ * `effect-s2-stream-db` definitions. The canonical runtime direction is tracked in
+ * `docs/sdds/effect-durable-execution-sdd.md`; object calls are being moved away from
+ * these two-stream/roster schemas toward the per-key ActorEvent log described in
+ * `docs/sdds/object-actor-model-sdd.md`.
  */
 
 /** One db (one S2 stream) per execution, keyed by its id. */

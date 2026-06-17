@@ -1,7 +1,7 @@
 {
   "name": "effect-s2-durable",
   "version": "0.0.0",
-  "description": "A thin durable-execution engine over effect-s2-stream-db — one S2StreamDb per execution plus a shared roster.",
+  "description": "An Effect-native durable execution runtime over S2.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",

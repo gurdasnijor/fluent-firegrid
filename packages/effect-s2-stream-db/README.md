@@ -76,9 +76,13 @@ const program = Effect.gen(function*() {
 - **Single-writer** per stream: one owner per db. Positional CAS never contends, so
   no per-write fencing.
 
-One db per stream. For the durable-execution engine that means **one db per
-execution** (one S2 stream per execution); see
-[`docs/s2-stream-db-sdd.md`](../../docs/s2-stream-db-sdd.md).
+One db per stream. For durable execution, stream-db remains the latest-value
+`ChangeMessage` projection layer for service streams and reusable storage
+mechanics. The object actor runtime uses schema-derived stream identity from this
+layer, but reads object streams as ordered `ActorEvent` logs; see
+[`docs/sdds/s2-resource-provisioning-sdd.md`](../../docs/sdds/s2-resource-provisioning-sdd.md)
+and
+[`docs/sdds/effect-durable-execution-sdd.md`](../../docs/sdds/effect-durable-execution-sdd.md).
 
 [Durable Streams State Protocol]: ../../docs/reference/durable-streams/packages/state/STATE-PROTOCOL.md
 
@@ -86,7 +90,7 @@ execution** (one S2 stream per execution); see
 
 Built and tested. Landed: the State-Protocol codec (`ChangeMessage`), the fold
 (`MaterializedState`), the `Table`/`StreamDb` definition surface, and the live runtime
-(`open` / table facades / `transact` / `compact` / `drop`) over `effect-s2` — with
-acceptance tests against a real `s2 lite` server (snapshot+trim replay, transaction
-atomicity, read-after-ack visibility). Next consumer: the durable-execution engine in
-[`docs/s2-stream-db-sdd.md`](../../docs/s2-stream-db-sdd.md) Part B.
+(`open` / `list` / `openExisting` / table facades / `transact` / `checkpoint` /
+`compact` / `trim` / `drop`) over `effect-s2` — with acceptance tests and Firelab
+validations against a real `s2 lite` server (snapshot+trim replay, transaction
+atomicity, read-after-ack visibility, enumeration, existence, and config).

@@ -3,8 +3,8 @@
 Status: **proposal** (contract for sign-off; no implementation yet) · Scope: `effect-s2-durable`
 Date: 2026-06-16
 Normative contract: [`features/effect-s2-durable/object-actor-model.feature.yaml`](../../features/effect-s2-durable/object-actor-model.feature.yaml)
+Top-level runtime SDD: [`effect-durable-execution-sdd.md`](./effect-durable-execution-sdd.md)
 Related: [`s2-resource-provisioning-sdd.md`](./s2-resource-provisioning-sdd.md)
-Related design input: [`effect-encore-informed-actor-proposal.md`](./effect-encore-informed-actor-proposal.md)
 
 This doc is the **narrative** (why + shape). The testable invariants live in the feature
 file; sections below reference them as `object-actor-model.<GROUP>.<n>`.

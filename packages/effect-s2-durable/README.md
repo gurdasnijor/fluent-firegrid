@@ -1,13 +1,19 @@
 # effect-s2-durable
 
-A thin **durable-execution engine over [`effect-s2-stream-db`](../effect-s2-stream-db)** —
-the S2 substrate's implementation of the authoring surface specified in
-[`docs/sdds/effect-durable-execution-sdd.md`](../../docs/sdds/effect-durable-execution-sdd.md)
-(the S2 analog of the durable-streams-backed `effect-durable-execution`).
+An Effect-native durable execution runtime over S2.
 
-State lives in `effect-s2-stream-db`: one `WorkflowDb` (one S2 stream) per execution,
-plus one shared roster db. The engine adds only coordination — an in-process running
-map, the completion ordering, and (in later slices) timers + recovery.
+The canonical design lives in
+[`docs/sdds/effect-durable-execution-sdd.md`](../../docs/sdds/effect-durable-execution-sdd.md).
+The virtual-object actor rewrite is specified in
+[`docs/sdds/object-actor-model-sdd.md`](../../docs/sdds/object-actor-model-sdd.md) and
+[`features/effect-s2-durable/object-actor-model.feature.yaml`](../../features/effect-s2-durable/object-actor-model.feature.yaml).
+
+Implementation is currently transitional:
+
+- `service(...)` uses the existing ephemeral one-stream-per-call runtime.
+- `object(...)` is being moved from the legacy two-stream/roster path to the per-key
+  `ActorEvent` log model.
+- `workflow(...)` is planned as an object specialization, not a third runtime.
 
 ## Authoring surface
 
@@ -125,21 +131,14 @@ run closure. Perform durable work in the handler body, not inside a `run` action
 
 ## Virtual objects (keyed, stateful)
 
-`object({ name, handlers })` defines a **keyed virtual object** — a stateful entity.
-Authoring is identical to `service` (generator methods, input as the argument); the
-differences are durable and per **key**:
+`object({ name, handlers })` defines a keyed virtual object: a stateful entity whose public
+authoring shape matches `service`, but whose durable boundary is an object key.
 
-- **Persistent per-key state.** Each `(name, key)` has its own `state(Table)` store on
-  a stream (`obj/<name:key>`) that is **not** dropped when a method finishes, so state
-  survives across calls (a service's state lives in its per-call stream and is dropped).
-- **Exclusive methods (crash-safe).** A key's methods run **single-writer** via
-  *admission control*, not a lock over racing bodies: each call is appended to a durable
-  **FIFO inbox** (in the key's own stream) and a serial drainer runs them one at a time,
-  head to completion. So **at most one invocation per key is ever in flight** — and after
-  a crash, recovery drains that ordered queue rather than re-racing several incomplete
-  executions. That's what makes a read-modify-write across concurrent calls lose-update-free
-  *including across a restart* (a parked exclusive method holds the key until it resolves,
-  exactly like Restate).
+The target model is one schema-addressed S2 stream per object key, read and written as an ordered
+`ActorEvent` log. Exclusive calls append `Accepted` events and a serial drainer runs them by S2
+`seq_num`; completion is derived from a `Completed` event; signals append ingress events and do not
+depend on the call being resident in memory. Persistent user state is a projection of `StateChanged`
+events. See the actor SDD for the exact invariants.
 
 ```ts
 import { client, object, state } from "effect-s2-durable"
@@ -171,11 +170,9 @@ yield* client(counter, "user-1").value()  // → 5  (state persisted across call
 yield* client(counter, "user-2").value()  // → 0  (a different key is isolated)
 ```
 
-The *ordering* is durable (the inbox is on the key's stream), so it survives a restart;
-what's in-process is the drainer fiber, which recovery restarts per key. One engine owns a
-key at a time — the same single-writer scope as the per-execution model; cross-process key
-leasing is out of scope. Register objects with `serviceLayer(counter)` so recovery can
-re-drive their inboxes by handler name.
+The ordering is durable because it comes from the key's actor stream. The in-process drainer fiber
+is cache and can be recreated by folding the stream. Cross-process key leasing is deferred; the
+current actor build targets the single-process owner first.
 
 ## Park-and-resume primitives
 
@@ -195,17 +192,13 @@ const awk = yield* awakeable(Approval)                      // { id, promise }
 // awk.id is replay-stable (executionId + ordinal); hand it to an ingress client
 ```
 
-Ingress resolution (`resolveSignal`/`resolveAwakeable`) targets an execution **resident
-in the engine** (the in-process `running` map). A parked execution is resident for its
-whole life, and **boot recovery re-makes a suspended execution resident** — so the
-canonical awakeable flow (hand the id to an external system, resolve after the process
-has cycled) works across a restart: the recovered execution re-parks and the resolution
-lands on the row. The id is replay-stable precisely so the external caller can still
-name it after the restart.
+For the actor runtime, ingress targets the durable owner stream derived from the call id and is
+therefore residency-independent. The existing service runtime still uses the resident execution
+map for some park-and-resume paths until those semantics are moved through the actor/drainer model.
 
 ## Status
 
-Built + tested against `s2 lite` (the full Restate-SDK authoring surface):
+Built + tested against `s2 lite` for the existing service/runtime surface:
 - `handler` / `handlerRequest`; `run` (memoize / retry / typed-failure facts);
   `submit` / `attach` / `poll`; completion ordering.
 - `sleep` (durable timer row, `pending`→`fired`).
@@ -213,7 +206,7 @@ Built + tested against `s2 lite` (the full Restate-SDK authoring surface):
   record replays its original value, so read-modify-write is replay-sound); a type-level
   guard forbids durable ops inside a `run` action.
 - `signal` / `awakeable` / `deferred` — park-and-resume over durable `deferreds` rows.
-- **Boot recovery** — on layer build the engine sweeps the roster for `running`/
+- **Boot recovery** — on layer build the current service runtime sweeps the roster for `running`/
   `suspended` executions and re-drives each (looked up by `handlerName` in the registry
   seeded via `serviceLayer(...services)`): it re-opens the `WorkflowDb`, reads the genesis
   `input`, and re-runs the handler from the top. Replay-from-top is what makes this work —
@@ -225,6 +218,8 @@ Built + tested against `s2 lite` (the full Restate-SDK authoring surface):
 
 Use **`serviceLayer(...services)`** (not the bare `DurableExecutionRuntime.layer()`)
 whenever an execution can outlive the process, so its handlers are registered for recovery.
+
+The object actor runtime is tracked by the top-level SDD and feature spec linked above.
 
 **Not yet:** `resultAcked` is written but not yet consumed (no post-completion reclaim
 sweep). Durable timers (`sleep`) recover their *remaining* delay on boot, but there is no
