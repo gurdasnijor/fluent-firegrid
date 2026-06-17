@@ -1,4 +1,4 @@
-import { Effect, Option, Schema } from "effect"
+import { Effect, Layer, Option, Schema } from "effect"
 import { Actor } from "effect-s2-durable"
 import { assertEquals, assertTrue } from "../../assertions.ts"
 import { S2LiteLive } from "../../s2lite.ts"
@@ -40,7 +40,7 @@ export default defineValidation({
     product: "effect-s2-durable",
     name: "object-actor-model",
   },
-  backend: S2LiteLive,
+  backend: Layer.merge(S2LiteLive, Actor.DrainerLocks.layer),
   component: ({ key }) =>
     Effect.gen(function*() {
       // the stream path is derived by encoding the owner through its key codec (ROUTING.3).
@@ -129,12 +129,27 @@ export default defineValidation({
         }),
     },
     {
+      id: "EXECUTION.1",
+      description: "a single drainer runs per key — concurrent drains do not double-run the head",
+      evidence:
+        'spans.exists(s, named(s, "effect-s2-durable.drain")) && spans.exists(s, named(s, "effect-s2-durable.runCall"))',
+      claim: ({ log }) =>
+        Effect.gen(function*() {
+          yield* Actor.admit(log, "c1", "add", 5)
+          // two concurrent drainers; the per-key lock serializes them so the head runs once.
+          yield* Effect.all([Actor.drain(log, handlers), Actor.drain(log, handlers)], { concurrency: 2 })
+          const completes = (yield* log.read()).filter((e) => e.event._tag === "Completed" && e.event.callId === "c1")
+          assertEquals(completes.length, 1) // exactly one Completed — the head ran once
+        }),
+    },
+    {
       id: "EXECUTION.2",
-      description: "a handler's state writes are journaled as StateChanged events on the owner stream",
+      description: "a handler's state reads/writes are journaled — read-modify-write is replay-stable (no double-apply)",
       evidence:
         'spans.exists(s, named(s, "effect-s2-durable.runCall")) && spans.exists(s, named(s, "effect-s2-durable.log.append")) && spans.exists(s, named(s, "S2.append"))',
       claim: ({ log }) =>
         Effect.gen(function*() {
+          // state writes are StateChanged events.
           yield* Actor.admit(log, "c1", "add", 7)
           yield* Actor.drain(log, handlers)
           const entries = yield* log.read()
@@ -143,6 +158,16 @@ export default defineValidation({
             "state write is a StateChanged event",
           )
           assertEquals(Option.getOrNull(Actor.stateValue(Actor.replay(entries), "balance", "acct")), 7)
+
+          // crash-mid-call: a fresh call wrote its journaled read + StateChanged but no
+          // Completed. Recovery re-runs it; the journaled read replays its ORIGINAL value,
+          // so the read-modify-write is NOT double-applied (balance stays 12, not 17).
+          yield* log.append({ _tag: "Accepted", callId: "c2", method: "add", input: 5 })
+          yield* log.append({ _tag: "Journaled", callId: "c2", step: "read/0", value: { present: true, value: 7 } })
+          yield* log.append({ _tag: "StateChanged", op: "set", table: "balance", key: "acct", value: 12 })
+          yield* Actor.drain(log, handlers) // recover c2
+          assertEquals(Option.getOrNull(Actor.stateValue(Actor.replay(yield* log.read()), "balance", "acct")), 12)
+          assertEquals((yield* Actor.attachLog(log, "c2"))._tag, "Success")
         }),
     },
     {

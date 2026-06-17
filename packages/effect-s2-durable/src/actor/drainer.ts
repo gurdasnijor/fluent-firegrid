@@ -1,9 +1,9 @@
-import { Cause, Effect, Exit, Option, Ref } from "effect"
+import { Cause, Context, Effect, Exit, Layer, Option, Ref, Semaphore } from "effect"
 import type { S2Client } from "effect-s2"
 import { type DurableExecutionError } from "../errors.ts"
 import type { ActorExit } from "./events.ts"
 import type { ActorLog } from "./log.ts"
-import { type ActorSnapshot, isDone, replay, stateValue, transition } from "./snapshot.ts"
+import { type ActorSnapshot, isDone, journalValue, replay, stateValue, transition } from "./snapshot.ts"
 
 /**
  * The serial per-key drainer (`EXECUTION.1`). It folds the log to a snapshot,
@@ -48,11 +48,16 @@ const toActorExit = (exit: Exit.Exit<unknown, unknown>): ActorExit => {
     : { _tag: "Defect", defect: Cause.pretty(cause) }
 }
 
-// A handler's state context: reads from the live in-memory snapshot; writes append
-// StateChanged events AND advance the snapshot so a handler sees its own writes.
+// A handler's state context. Reads are JOURNALED: the first read records its value
+// as a Journaled event; a re-execution after a crash replays that ORIGINAL value
+// (so a read-modify-write recomputes against the value first seen, not the
+// already-mutated state — no double-apply, EXECUTION.2). Writes append StateChanged
+// and advance the in-memory snapshot so a handler sees its own writes.
 const makeContext = (
   log: ActorLog,
   snapshotRef: Ref.Ref<ActorSnapshot>,
+  callId: string,
+  readCounter: Ref.Ref<number>,
 ): HandlerContext => {
   const applyStateChange = (
     op: "set" | "delete",
@@ -66,9 +71,28 @@ const makeContext = (
       yield* Ref.update(snapshotRef, (snapshot) => transition(snapshot, { seqNum, event })[0])
     })
 
+  const get = (table: string, key: string): Effect.Effect<Option.Option<unknown>, DurableExecutionError, S2Client> =>
+    Effect.gen(function*() {
+      const ordinal = yield* Ref.getAndUpdate(readCounter, (n) => n + 1)
+      const step = `read/${ordinal}` // calls/<callId>/read/<n> (PLANNING.3 path-aware)
+      const snapshot = yield* Ref.get(snapshotRef)
+      const recorded = journalValue(snapshot, callId, step)
+      if (Option.isSome(recorded)) {
+        const record = recorded.value as { readonly present: boolean; readonly value: unknown }
+        return record.present ? Option.some(record.value) : Option.none<unknown>()
+      }
+      // first execution: read live, journal it so the value is replay-stable.
+      const live = stateValue(snapshot, table, key)
+      const record = { present: Option.isSome(live), value: Option.getOrNull(live) }
+      const event = { _tag: "Journaled" as const, callId, step, value: record }
+      const seqNum = yield* log.append(event)
+      yield* Ref.update(snapshotRef, (s) => transition(s, { seqNum, event })[0])
+      return live
+    })
+
   return {
     state: {
-      get: (table, key) => Ref.get(snapshotRef).pipe(Effect.map((snapshot) => stateValue(snapshot, table, key))),
+      get,
       set: (table, key, value) => applyStateChange("set", table, key, value),
       delete: (table, key) => applyStateChange("delete", table, key, undefined),
     },
@@ -90,12 +114,55 @@ const runCall = (
       return
     }
     const snapshotRef = yield* Ref.make(snapshot)
-    const exit = yield* handler(input, makeContext(log, snapshotRef)).pipe(Effect.exit)
+    const readCounter = yield* Ref.make(0)
+    const exit = yield* handler(input, makeContext(log, snapshotRef, callId, readCounter)).pipe(Effect.exit)
     yield* log.append({ _tag: "Completed", callId, exit: toActorExit(exit) })
   }).pipe(Effect.withSpan("effect-s2-durable.runCall", { attributes: { callId, method } }))
 
-/** Drain the per-key queue to quiescence: run each pending head to completion in order. */
-export const drain = (log: ActorLog, handlers: Handlers): Effect.Effect<void, DurableExecutionError, S2Client> => {
+/**
+ * In-process single-drainer-per-key guard (`EXECUTION.1`): a registry of per-key
+ * locks so two concurrent `drain` calls for the same key cannot both run the head.
+ * (Cross-process fencing is a later lease/fence slice.) A creation mutex serializes
+ * the lazy registry insert so it is race-free. Provided as a service/layer rather
+ * than module-global state so the registry has a proper lifetime.
+ */
+export interface DrainerLocksApi {
+  readonly lockFor: (key: string) => Effect.Effect<Semaphore.Semaphore>
+}
+
+export class DrainerLocks extends Context.Service<DrainerLocks, DrainerLocksApi>()(
+  "effect-s2-durable/DrainerLocks",
+) {
+  static readonly layer = Layer.effect(
+    DrainerLocks,
+    Effect.gen(function*() {
+      const registry = yield* Ref.make(new Map<string, Semaphore.Semaphore>())
+      const creation = yield* Semaphore.make(1)
+      const lockFor = (key: string): Effect.Effect<Semaphore.Semaphore> =>
+        creation.withPermits(1)(
+          Effect.gen(function*() {
+            const existing = (yield* Ref.get(registry)).get(key)
+            if (existing !== undefined) {
+              return existing
+            }
+            const created = yield* Semaphore.make(1)
+            yield* Ref.update(registry, (map) => new Map(map).set(key, created))
+            return created
+          }),
+        )
+      return { lockFor }
+    }),
+  )
+}
+
+/**
+ * Drain the per-key queue to quiescence: run each pending head to completion in
+ * order, under the per-key drainer lock so at most one drainer runs per key.
+ */
+export const drain = (
+  log: ActorLog,
+  handlers: Handlers,
+): Effect.Effect<void, DurableExecutionError, S2Client | DrainerLocks> => {
   const step = (): Effect.Effect<void, DurableExecutionError, S2Client> =>
     Effect.gen(function*() {
       const entries = yield* log.read()
@@ -112,5 +179,8 @@ export const drain = (log: ActorLog, handlers: Handlers): Effect.Effect<void, Du
       yield* step() // re-derive pending and advance to the next head
     })
 
-  return step().pipe(Effect.withSpan("effect-s2-durable.drain", { attributes: { stream: log.streamName } }))
+  return Effect.gen(function*() {
+    const lock = yield* (yield* DrainerLocks).lockFor(log.streamName)
+    yield* lock.withPermits(1)(step())
+  }).pipe(Effect.withSpan("effect-s2-durable.drain", { attributes: { stream: log.streamName } }))
 }

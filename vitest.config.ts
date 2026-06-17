@@ -46,9 +46,11 @@ export default defineConfig({
           name: "effect-s2-durable",
           include: ["packages/effect-s2-durable/test/**/*.test.ts"],
           exclude: ["**/node_modules/**"],
-          // The s2-lite restart/recovery tests are timing-sensitive under parallel
-          // test files (two s2-lite processes contending); a couple of retries
-          // stabilizes the known flake without masking logic (it passes serially).
+          // The s2-lite restart/recovery tests are timing-sensitive when two
+          // s2-lite processes contend, so run this project's test files serially
+          // (plus a retry as belt-and-suspenders). Not a logic issue — it passes
+          // serially / under --runInBand.
+          fileParallelism: false,
           retry: 2,
         },
         resolve: {
