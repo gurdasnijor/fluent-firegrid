@@ -207,7 +207,7 @@ but users should not see partial semantics depending on which authoring surface 
 | State | `state(Table)` supports get/set/delete with replay-safe reads and object-persistent writes. |
 | Objects | One exclusive writer per key; shared handlers are concurrent and read-only over user state. |
 | Workflows | Run-once `run`, shared signal/query handlers, and durable primitive scope under the workflow id. |
-| Recovery | Boot enumeration, replay, recovered-head restart, checkpoint resume, and no re-running completed calls. |
+| Recovery | Owner-key registry discovery, replay, recovered-head restart, checkpoint resume, and no re-running completed calls. |
 | Checkpoint / trim | Bounded replay, idempotency horizon, Expired result view, and trim only after durable checkpoint. |
 | Error / interruption | Success, typed failure, defect, interrupt, timeout/cancel policy, and retry policy are explicit durable outcomes. |
 | Observability | Firelab proofs require behavioral assertions plus spans emitted by production code paths. |
@@ -327,10 +327,10 @@ Required behavior:
 - `signal`, `deferred`, and `awakeable` record durable pending/resolved facts in the owner stream;
   in-memory waiters are best-effort acceleration only.
 - `attach`/`poll` are owner-projection views for object calls and roster views for service calls.
-- Recovery enumerates owner streams, folds from the latest available cursor, restarts the recovered
-  pending head, and never re-runs a completed call.
 - First admission for a cold key records the owner key in an append-only registry before the
   acknowledged `Accepted`; orphan registry entries with empty streams are safe and compactable.
+- Recovery folds the owner registry, opens each discovered owner stream from the latest available
+  cursor, restarts the recovered pending head, and never re-runs a completed call.
 - A handler observes its own state writes through a local overlay, while caller-visible results and
   other handlers observe only acked owner-stream facts.
 - The store may batch same-turn facts, but the public operation is not considered durable until S2

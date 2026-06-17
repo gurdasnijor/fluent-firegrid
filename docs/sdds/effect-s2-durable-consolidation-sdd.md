@@ -87,6 +87,9 @@ The object design should lean on these S2 properties instead of recreating them:
 - **Conditional appends are coordination.** `match_seq_num` provides optimistic first-writer-wins
   admission/completion where needed. Fencing tokens provide cooperative write exclusion for
   ownership/checkpoint protocols.
+- **Leases are log-backed, not TTL-backed.** Multi-worker ownership requires a lease-renewal fact in
+  the owner log plus a cooperative S2 fence token. A worker that cannot renew before lease expiry
+  must self-demote; a would-be owner campaigns only after it has observed the prior lease expire.
 - **Command records are stream-control facts.** S2 command records currently support `fence` and
   `trim`. They consume sequence numbers and appear in reads, but they are interpreted by S2 and
   must be filtered or handled separately from typed `ActorEvent`s.
@@ -128,8 +131,10 @@ For service calls, those questions may continue to be answered by today's `Workf
 implementation.
 
 For object calls, those questions are answered by the resident owner projection, which is folded
-from the owner stream. Writes append records to S2 and become visible only after the append ack and
-subsequent projection application.
+from the owner stream. Writes append records to S2 and become visible to other calls only after the
+append ack and subsequent projection application. The running handler may observe its own writes
+through a local overlay immediately after the write is planned; completion and external visibility
+still wait for the append ack.
 
 ```txt
 handler code
@@ -157,11 +162,17 @@ Accepted        call admitted, ordered by S2 seq_num
 Journaled       durable primitive facts, including replay-stable reads
 StateChanged    persistent object state mutation
 SignalResolved  durable ingress/wakeup fact
+LeaseRenewed    owner-loop lease renewal for multi-worker safety
 Completed       result/done fact
 Checkpointed    bounded replay and idempotency horizon
 ```
 
 These are the durable facts folded into the actor projection.
+
+Every ActorEvent carries a producer schema/runtime version. A reader that encounters a newer
+unsupported version must stop folding and alarm rather than reinterpret the record. Rolling deploys
+must preserve recovery by checkpointing at the oldest compatible running version until all readers
+understand the newer event vocabulary.
 
 ### S2 command records
 
@@ -201,6 +212,7 @@ lastAppliedSeqNum
 ActorProjection
 local waiter registry
 optional fencing/lease metadata
+local write overlay for the running handler
 ```
 
 The loop:
@@ -217,6 +229,10 @@ use check-tail when a caller needs a caught-up strong view
 
 Bounded `readDecoded(...).runCollect` remains acceptable for tests, recovery scans, and first
 bootstrapping. It should not be the long-term hot-path model for a resident owner.
+
+Once a resident owner holds a valid lease/fence and has applied its own acknowledged writes, it can
+serve owner-local strong reads from its projection without a `check-tail` round-trip. Non-owner reads
+and reads after uncertain ownership still need a freshness boundary.
 
 ## StreamDb Boundary
 
@@ -295,6 +311,10 @@ writeState(...)                                -> append StateChanged
 deleteState(...)                               -> append StateChanged delete
 complete(...)                                  -> append Completed
 ```
+
+The write path may coalesce same-turn durable facts into one S2 append batch to amortize append
+latency. The batch still preserves record order, and none of its facts are externally durable until
+S2 acknowledges the append range.
 
 ## Durable Waits
 
@@ -388,32 +408,61 @@ Important constraints:
 Fencing is the native direction for future cross-process ownership/checkpoint coordination:
 
 ```txt
-append fence command record with owner/checkpoint token
-perform protected checkpoint/trim appends with that fencing token
-clear fence when done
+campaign from a caught-up projection after prior lease expiry
+append fence command record with owner token
+append LeaseRenewed ActorEvents before lease expiry
+perform protected owner/checkpoint writes with that fencing token
+self-demote if renewal or token-protected append fails
+clear fence when intentionally releasing ownership
 ```
 
 Fencing is cooperative. Appends that do not specify a fencing token are still allowed by S2, so any
 fenced protocol must ensure all protected writers use the expected token. Until that discipline is
-implemented and proven, cross-process ownership remains deferred.
+implemented and proven, multi-worker object execution must not be advertised.
 
-## Recovery Gate
-
-Recovery depends on enumerating object streams:
+Checkpoints must be verifiable:
 
 ```txt
-StreamDb.list() / stream namespace enumeration
-  -> schema-decode existing object keys
+Checkpointed {
+  coveredSeqNum
+  projectionFingerprint
+  snapshot
+}
+```
+
+Firelab should be able to fold from a fresh read and reproduce the checkpoint fingerprint before any
+trim below `coveredSeqNum` is considered valid. Checkpoint scheduling should be freshness-based
+(tail distance, write throughput, state size), not a vague background cleanup. Off-box snapshotting
+is not part of the default design; consider it only when object state is large enough that inline
+serialization would stall the single owner loop.
+
+## Recovery Registry
+
+Recovery should not depend on a racy "new stream appears in listStreams quickly enough" property.
+Use an append-only owner registry stream per basin/namespace as the authoritative set of known
+object keys:
+
+```txt
+owner-key registry stream
+  -> append owner key before the first Accepted for that key
+  -> fold registry to discover owner keys
   -> fold each owner stream from checkpoint cursor
   -> start only keys with a pending head
 ```
 
-Before relying on this in the object cutover, prove the empirical S2 property:
+This is not the deleted roster. The registry is a monotonic set of owner keys, not a mutable per-call
+status/result index. Crash windows are safe:
 
-> A just-created owner stream is visible to the enumeration path soon enough for crash recovery.
+```txt
+crash before registry append              -> nothing was promised
+crash after registry, before Accepted     -> orphan key, empty/no-pending owner stream, compactable
+crash after Accepted ack                  -> key is discoverable and call is recoverable
+```
 
-This is the `listStreams` / `StreamDb.list()` visibility gate. It must stay explicit because a
-silent enumeration miss strands durable work.
+The caller is acknowledged only after the owner-stream `Accepted` append lands. A duplicate producer
+then dedups through the owner projection. `StreamDb.list()` can remain a supporting/debugging
+affordance, but it should not be the sole correctness source for boot recovery once object recovery
+is production-critical.
 
 ## External Lessons
 
@@ -430,8 +479,10 @@ S2 examples point to the same model:
 - append acknowledgements define durable commit points;
 - command records provide stream-level control;
 - checkpoints bound replay and trims discard covered history;
-- fences/leases coordinate checkpoint or writer ownership, but only if all protected writers
-  participate.
+- leases plus fences coordinate checkpoint or writer ownership, but only if all protected writers
+  participate;
+- versioned records protect rolling deploys from silent mis-folds;
+- batching same-turn writes is the main lever for reducing the per-primitive append tax.
 
 ## Vertical Slice Rule
 
@@ -562,7 +613,8 @@ Before merging any object actor PR, answer:
 6. Does the object backend use S2 owner-stream ordering and append acknowledgements?
 7. Are command records filtered/handled separately from ActorEvents?
 8. Does any fenced protocol ensure all protected writers use the token?
-9. Has the recovery enumeration gate been proven or explicitly deferred?
+9. Does recovery use the append-only owner registry, or is any temporary stream-list fallback
+   explicitly scoped and non-production?
 10. Does Firelab avoid direct `Actor.*` product-path calls?
 
 If the PR adds a layer without deleting an old object path, reject it.
