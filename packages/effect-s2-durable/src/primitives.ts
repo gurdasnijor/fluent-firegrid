@@ -1,7 +1,7 @@
 import { type Duration, Effect, type Option, type Schema } from "effect"
 import type { AnyTable, RowOf } from "effect-s2-stream-db"
 import type { DurableExecutionError } from "./errors.ts"
-import { DurableExecutionRuntime } from "./Runtime.ts"
+import { type CallTarget, DurableExecutionRuntime } from "./Runtime.ts"
 import type { AwakeableHandle, DeferredHandle, IngressResolve, Run, RunOptions, StateBinding } from "./types.ts"
 
 /**
@@ -110,3 +110,26 @@ export const poll = <A, I>(
   schema: Schema.Codec<A, I, never, never>,
 ): Effect.Effect<Option.Option<A>, DurableExecutionError, DurableExecutionRuntime> =>
   Effect.flatMap(DurableExecutionRuntime, (rt) => rt.poll(executionId, schema))
+
+/**
+ * Durable **call** to another object from inside a handler: issues a child object
+ * call (`{ object, key, method }`) and awaits its result, decoded via `schema`. The
+ * child id is replay-stable (derived from the caller + an ordinal), so a replay
+ * re-reads the result instead of re-issuing the call (`restate`'s `ctx.objectClient(...).m()`).
+ */
+export const call = <A, I>(
+  target: CallTarget,
+  input: unknown,
+  schema: Schema.Codec<A, I, never, never>,
+): Effect.Effect<A, DurableExecutionError, DurableExecutionRuntime> =>
+  Effect.flatMap(DurableExecutionRuntime, (rt) => rt.callStep(target, input, schema))
+
+/**
+ * Durable one-way **send** to another object from inside a handler: issues the child
+ * call without awaiting it, returning its id (`restate`'s `ctx.objectClient(...).m().send()`).
+ */
+export const send = (
+  target: CallTarget,
+  input: unknown,
+): Effect.Effect<string, DurableExecutionError, DurableExecutionRuntime> =>
+  Effect.flatMap(DurableExecutionRuntime, (rt) => rt.sendStep(target, input))

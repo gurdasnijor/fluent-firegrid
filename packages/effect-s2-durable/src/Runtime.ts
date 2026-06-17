@@ -17,7 +17,7 @@ import {
 } from "effect"
 import { S2Client } from "effect-s2"
 import type { AnyTable, RowOf, TableFacade } from "effect-s2-stream-db"
-import { type ActorExit, decodeObjectCallId, type ObjectCallIdParts } from "./actor/core.ts"
+import { type ActorExit, decodeObjectCallId, encodeObjectCallId, type ObjectCallIdParts } from "./actor/core.ts"
 import { InvocationStore, type ObjectStateBackend, type RunHead } from "./actor/object.ts"
 import { DurableExecutionError, durableError } from "./errors.ts"
 import { ExecutionId, RosterDb, WorkflowDb } from "./schema.ts"
@@ -52,6 +52,8 @@ interface ServiceInvocation {
   readonly readSeq: Ref.Ref<number>
   /** Monotonic per-activation counter for replay-stable `awakeable` ids. */
   readonly awakeSeq: Ref.Ref<number>
+  /** Monotonic per-activation counter for replay-stable child `call`/`send` ids. */
+  readonly callSeq: Ref.Ref<number>
 }
 
 interface ObjectInvocation {
@@ -65,6 +67,15 @@ interface ObjectInvocation {
   readonly runSeq: Ref.Ref<number>
   /** Monotonic per-activation counter for replay-stable `awakeable` ids. */
   readonly awakeSeq: Ref.Ref<number>
+  /** Monotonic per-activation counter for replay-stable child `call`/`send` ids. */
+  readonly callSeq: Ref.Ref<number>
+}
+
+/** The address of a durable object call target (`call`/`send` between executions). */
+export interface CallTarget {
+  readonly object: string
+  readonly key: string
+  readonly method: string
 }
 
 type Invocation = ServiceInvocation | ObjectInvocation
@@ -196,6 +207,14 @@ export interface DurableExecutionRuntimeApi {
   readonly resolveExternal: <A, I>(executionId: string, name: string, schema: Schema.Codec<A, I, never, never>, value: A) => Effect.Effect<void, DurableExecutionError>
   /** A fresh replay-stable awakeable id for the active execution. */
   readonly nextAwakeableId: Effect.Effect<string, DurableExecutionError>
+  /** Durable `call` (delegated to by the `call` free primitive): issue a child object call and await its result. */
+  readonly callStep: <A, I>(
+    target: CallTarget,
+    input: unknown,
+    schema: Schema.Codec<A, I, never, never>,
+  ) => Effect.Effect<A, DurableExecutionError>
+  /** Durable one-way `send` (delegated to by the `send` free primitive): issue a child object call, returning its id. */
+  readonly sendStep: (target: CallTarget, input: unknown) => Effect.Effect<string, DurableExecutionError>
 }
 
 export class DurableExecutionRuntime
@@ -582,6 +601,43 @@ const makeRuntime = (
       ),
     )
 
+    // ── durable inter-execution calls (`call` / `send`) ───────────────────────
+    // A handler issues a child OBJECT call whose id is DETERMINISTIC — derived from
+    // the caller id + a per-activation ordinal — so a replay recomputes the same id,
+    // admission dedups, and the call is issued exactly once (the result is re-read,
+    // never re-issued). No new event: it reuses admission (idempotent) + attach.
+    const issueCall = (active: Invocation, target: CallTarget, input: unknown): Effect.Effect<string, DurableExecutionError> =>
+      Effect.gen(function*() {
+        const ordinal = yield* Ref.getAndUpdate(active.callSeq, (n) => n + 1)
+        const parentId = active.kind === "object" ? active.callId : active.executionId
+        const parts: ObjectCallIdParts = {
+          object: target.object,
+          key: target.key,
+          method: target.method,
+          nonce: `${parentId}/call/${ordinal}`,
+        }
+        const callId = yield* encodeObjectCallId(parts).pipe(Effect.mapError(toError("call")))
+        yield* provideClient(store.admit(callId, parts, input)) // idempotent by callId
+        // drive the target's drainer so the call runs (residency-independent dispatch).
+        yield* Effect.forkIn(
+          provideClient(store.drain(target.object, target.key, makeRunHead(target.object))),
+          engineScope,
+        )
+        return callId
+      })
+
+    const callStep = <A, I>(
+      target: CallTarget,
+      input: unknown,
+      schema: Schema.Codec<A, I, never, never>,
+    ): Effect.Effect<A, DurableExecutionError> =>
+      withActive("call").pipe(Effect.flatMap((active) =>
+        issueCall(active, target, input).pipe(Effect.flatMap((callId) => attach(callId, schema))),
+      ))
+
+    const sendStep = (target: CallTarget, input: unknown): Effect.Effect<string, DurableExecutionError> =>
+      withActive("send").pipe(Effect.flatMap((active) => issueCall(active, target, input)))
+
     // ── completion (SDD §B6): the result must outlive the dropped stream ───────
     const complete = (
       handler: { readonly name: string; readonly output: Schema.Top },
@@ -641,6 +697,7 @@ const makeRuntime = (
         const runSeq = yield* Ref.make(0)
         const readSeq = yield* Ref.make(0)
         const awakeSeq = yield* Ref.make(0)
+        const callSeq = yield* Ref.make(0)
         const invocation: ServiceInvocation = {
           kind: "service",
           executionId,
@@ -651,6 +708,7 @@ const makeRuntime = (
           runSeq,
           readSeq,
           awakeSeq,
+          callSeq,
         }
         const body: Effect.Effect<boolean, never, R> = handler.program.pipe(
           Effect.provideService(ActiveInvocation, Option.some(invocation)),
@@ -699,7 +757,17 @@ const makeRuntime = (
       Effect.gen(function*() {
         const runSeq = yield* Ref.make(0)
         const awakeSeq = yield* Ref.make(0)
-        const invocation: ObjectInvocation = { kind: "object", callId, method, inputEncoded, state, runSeq, awakeSeq }
+        const callSeq = yield* Ref.make(0)
+        const invocation: ObjectInvocation = {
+          kind: "object",
+          callId,
+          method,
+          inputEncoded,
+          state,
+          runSeq,
+          awakeSeq,
+          callSeq,
+        }
         const exit = yield* handler.program.pipe(
           Effect.provideService(ActiveInvocation, Option.some(invocation)),
           Effect.provideService(DurableExecutionRuntime, api),
@@ -925,6 +993,8 @@ const makeRuntime = (
       resolveLocal,
       resolveExternal,
       nextAwakeableId,
+      callStep,
+      sendStep,
     }
 
     // re-drive any running/suspended executions left by a prior process before
