@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, Schema } from "effect"
+import { Clock, Duration, Effect, Layer, Option, Schema } from "effect"
 import {
   attach,
   awakeable,
@@ -11,6 +11,7 @@ import {
   sendClient,
   serviceLayer,
   signal,
+  sleep,
   state,
 } from "effect-s2-durable"
 import { primaryKey, Table } from "effect-s2-stream-db"
@@ -61,6 +62,11 @@ const counter = object({
       const done = deferred("done", Schema.Boolean)
       yield* done.resolve(true)
       return (yield* done.get()) ? "resolved" : "no"
+    },
+    // a durable timer: records a pending deadline then a fired fact on the owner stream.
+    *nap() {
+      yield* sleep("nap", Duration.millis(80))
+      return "napped"
     },
     // two run steps with the SAME name: the first executes the effect and records a
     // `Journaled` run fact; the second REPLAYS that fact (no re-execution). The
@@ -147,18 +153,22 @@ export default defineValidation({
     {
       id: "EXECUTION.2",
       description:
-        "an object method's durable `run` step records a terminal fact on the owner stream (Journaled); "
-        + "a second same-named run within the SAME execution replays that recorded fact instead of "
-        + "re-executing the effect (typed output mirrors service run; not admission dedup)",
+        "object durable primitives point at the owner stream: a `run` step records a terminal Journaled "
+        + "fact (a second same-named run replays it instead of re-executing); a `sleep` records a timer "
+        + "fact and delays completion. Typed output mirrors service run; not admission dedup",
       evidence:
         'spans.exists(s, named(s, "effect-s2-durable.object.drain")) && spans.exists(s, named(s, "effect-s2-durable.log.append")) && spans.exists(s, named(s, "effect-s2-durable.object.admit"))',
-      claim: ({ key }) =>
+      claim: ({ key, keyFor }) =>
         Effect.gen(function*() {
+          // run: a = run("double") executes (3*2=6); b = run("double") REPLAYS a's fact (no re-exec) → 6.
           const before = runExecutions.count
-          // a = run("double") executes (3*2=6); b = run("double") REPLAYS a's fact (no re-exec) → 6.
           assertEquals(yield* client(counter, key).tally(3), 12) // a + b = 6 + 6
           assertEquals(runExecutions.count - before, 1) // the run effect ran exactly once; b replayed the fact
           assertEquals(yield* client(counter, key).value(), 12) // cur(0) + a + b
+          // sleep: a durable timer fact delays completion by the requested duration.
+          const start = yield* Clock.currentTimeMillis
+          assertEquals(yield* client(counter, keyFor("nap")).nap(), "napped")
+          assertEquals((yield* Clock.currentTimeMillis) - start >= 60, true)
         }),
     },
     {
