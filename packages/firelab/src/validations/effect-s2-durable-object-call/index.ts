@@ -5,6 +5,8 @@ import {
   client,
   deferred,
   object,
+  objectClient,
+  objectSendClient,
   resolveAwakeable,
   resolveSignal,
   run,
@@ -51,6 +53,16 @@ const counter = object({
       holdMarkers.add(token)
       yield* signal("release", Schema.Boolean) // park, holding the exclusive lock
       return token
+    },
+    // same as add, but declared with a TRANSFORM input codec (NumberFromString:
+    // decoded number ≠ encoded string) — proves a CHILD call encodes input through
+    // the target's input codec, not raw.
+    *addStr(amount: number) {
+      const st = state(Counter)
+      const cur = Option.match(yield* st.get("v"), { onNone: () => 0, onSome: (r) => r.value })
+      const next = cur + amount
+      yield* st.set({ id: "v", value: next })
+      return next
     },
     // parks on a durable signal; the value is supplied by a residency-independent
     // resolveSignal(callId, ...) appended to the owner stream.
@@ -105,6 +117,9 @@ const counter = object({
   sharedSchemas: {
     echoNum: { input: Schema.NumberFromString, output: Schema.Number },
   },
+  schemas: {
+    addStr: { input: Schema.NumberFromString, output: Schema.Number },
+  },
 })
 
 // real executions of the `tally` run action (a duplicate/replayed call must NOT bump it).
@@ -117,6 +132,28 @@ const waitForHold = (token: string): Effect.Effect<void> =>
       ? Effect.void
       : Effect.sleep(Duration.millis(10)).pipe(Effect.flatMap(() => waitForHold(token)))
   )
+
+// A second object that durably CALLs / SENDs to the counter from inside its handlers
+// (restate's proxy pattern) — producer-only admission to another owner stream.
+const caller = object({
+  name: "firelab-object-caller",
+  handlers: {
+    // durable call: forward to counter("acct").add and await the new total (typed,
+    // identity derived from the counter DEFINITION — no raw strings).
+    *bump(amount: number) {
+      return yield* objectClient(counter, "acct").add(amount)
+    },
+    // durable one-way send: fire-and-forget; returns the child call id.
+    *bumpAsync(amount: number) {
+      return yield* objectSendClient(counter, "acct").add(amount)
+    },
+    // a child call whose target input is a transform codec (NumberFromString) — proves
+    // the child input is encoded through the target codec, not stored raw.
+    *bumpStr(amount: number) {
+      return yield* objectClient(counter, "acct-str").addStr(amount)
+    },
+  },
+})
 
 export default defineValidation({
   id: "effect-s2-durable-object-call",
@@ -131,7 +168,7 @@ export default defineValidation({
     name: "object-actor-model",
   },
   // the one runtime boundary, seeded with the object's handlers, over s2 lite.
-  backend: serviceLayer(counter).pipe(Layer.provide(S2LiteLive)),
+  backend: serviceLayer(counter, caller).pipe(Layer.provide(S2LiteLive)),
   component: ({ key, keyFor }) => Effect.succeed({ key, keyFor }),
   requirements: [
     {
@@ -156,6 +193,28 @@ export default defineValidation({
           assertEquals(yield* client(counter, key).add(5), 5)
           assertEquals(yield* client(counter, key).add(3), 8) // a fresh call sees the prior write
           assertEquals(yield* client(counter, key).value(), 8) // folded from the same owner stream
+        }),
+    },
+    {
+      id: "ADMISSION.6",
+      description:
+        "producer-only admission: a handler issues durable child object calls (call/send) to ANOTHER "
+        + "owner stream — `call` admits + awaits the result, `send` is one-way (returns the child id); "
+        + "the target's drainer runs them (the dispatch twin of residency-independent ingress)",
+      evidence:
+        'spans.exists(s, named(s, "effect-s2-durable.object.admit")) && spans.exists(s, named(s, "effect-s2-durable.object.drain")) && spans.exists(s, named(s, "effect-s2-durable.callId.encode"))',
+      claim: ({ key, keyFor }) =>
+        Effect.gen(function*() {
+          // call: caller.bump forwards to counter("acct").add and returns the new total.
+          assertEquals(yield* client(caller, key).bump(5), 5)
+          assertEquals(yield* client(caller, keyFor("b")).bump(3), 8) // counter("acct") accumulated across calls
+          // send: one-way; the child runs and its result is attachable by the returned id.
+          const childId = yield* client(caller, keyFor("c")).bumpAsync(4)
+          assertEquals(yield* attach(childId, Schema.Number), 12) // 8 + 4
+          assertEquals(yield* client(counter, "acct").value(), 12) // the target reflects all calls
+          // a child call to a TRANSFORM-input target (NumberFromString) round-trips —
+          // the child input is encoded through the target codec, not stored raw.
+          assertEquals(yield* client(caller, keyFor("str")).bumpStr(9), 9)
         }),
     },
     {
