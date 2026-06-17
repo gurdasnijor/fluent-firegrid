@@ -59,8 +59,10 @@ interface ObjectInvocation {
   readonly callId: string
   readonly method: string
   readonly inputEncoded: unknown
-  /** The journaled per-owner durable `state` surface. */
+  /** The journaled per-owner durable `state` + run-journal surface. */
   readonly state: ObjectStateBackend
+  /** Monotonic per-activation counter for positionally-keyed `run` steps. */
+  readonly runSeq: Ref.Ref<number>
 }
 
 type Invocation = ServiceInvocation | ObjectInvocation
@@ -82,6 +84,13 @@ interface RunningEntry {
   readonly deferred: Deferred.Deferred<Exit.Exit<unknown, unknown>, DurableExecutionError>
   // Only service executions register here; object calls settle on their owner log.
   readonly invocation: ServiceInvocation
+}
+
+/** A `run` step's terminal outcome (the durable fact replayed instead of re-running). */
+interface StepRecord {
+  readonly success: boolean
+  readonly value?: unknown
+  readonly error?: unknown
 }
 
 const toError = durableError
@@ -240,17 +249,43 @@ const makeRuntime = (
         Option.isNone(opt) ? fail(operation, `${operation} called outside an active handler`) : Effect.succeed(opt.value))
 
     // ── durable step (`run`) ──────────────────────────────────────────────────
+    // The run-journal stores a step's terminal outcome. For a service it is the
+    // per-execution `WorkflowDb.steps` table; for an object it is the owner stream's
+    // `Journaled` facts (callId + step are separate event fields — no composed key
+    // string). The replay logic over it is identical (see `runStep`).
+    const runJournalFor = (active: Invocation) =>
+      active.kind === "object"
+        ? {
+          get: (step: string): Effect.Effect<Option.Option<StepRecord>, DurableExecutionError> =>
+            provideClient(active.state.journal.get(step)).pipe(Effect.map((o) => o as Option.Option<StepRecord>)),
+          put: (step: string, record: StepRecord): Effect.Effect<void, DurableExecutionError> =>
+            provideClient(active.state.journal.put(step, record)),
+        }
+        : {
+          get: (step: string): Effect.Effect<Option.Option<StepRecord>, DurableExecutionError> =>
+            active.db.steps.get(`${active.executionId}/${step}`).pipe(
+              Effect.mapError(toError("run")),
+              Effect.map((o) => Option.map(o, (r): StepRecord => ({ success: r.success, value: r.value, error: r.error }))),
+            ),
+          put: (step: string, record: StepRecord): Effect.Effect<void, DurableExecutionError> =>
+            active.db.steps.insert({ stepKey: `${active.executionId}/${step}`, ...record }).pipe(
+              Effect.mapError(toError("run")),
+            ),
+        }
+
     const runStep = <A, E, R, EncodedA, EncodedE>(
       action: Effect.Effect<A, E, R>,
       options?: RunOptions<A, E, EncodedA, EncodedE>,
     ): Effect.Effect<A, E | DurableExecutionError, R> =>
       withActive("run").pipe(Effect.flatMap((active) =>
         Effect.gen(function*() {
-          if (active.kind === "object") return yield* objectUnsupported("run")
-          // identity = the optional name, else this step's position in the journal
+          // identity = the optional name, else this step's position in the journal.
+          // The run-journal is the per-execution `WorkflowDb.steps` for a service, or
+          // the owner stream's `Journaled` facts for an object — same replay logic.
           const ordinal = yield* Ref.getAndUpdate(active.runSeq, (n) => n + 1)
-          const stepKey = `${active.executionId}/${options?.name ?? `run/${ordinal}`}`
-          const existing = yield* active.db.steps.get(stepKey).pipe(Effect.mapError(toError("run")))
+          const stepName = options?.name ?? `run/${ordinal}`
+          const journal = runJournalFor(active)
+          const existing = yield* journal.get(stepName)
           if (Option.isSome(existing)) {
             const row = existing.value
             // terminal fact already recorded — replay it, never re-run
@@ -269,7 +304,7 @@ const makeRuntime = (
           const outcome = yield* Effect.exit(attempted)
           if (Exit.isSuccess(outcome)) {
             const value = options?.output ? yield* encode(options.output, outcome.value) : outcome.value
-            yield* active.db.steps.insert({ stepKey, success: true, value }).pipe(Effect.mapError(toError("run")))
+            yield* journal.put(stepName, { success: true, value })
             return outcome.value
           }
           // a typed failure (with an error schema) is a terminal StepFailed fact;
@@ -277,7 +312,7 @@ const makeRuntime = (
           const failure = Cause.findErrorOption(outcome.cause)
           if (options?.error && Option.isSome(failure)) {
             const error = yield* encode(options.error, failure.value)
-            yield* active.db.steps.insert({ stepKey, success: false, error }).pipe(Effect.mapError(toError("run")))
+            yield* journal.put(stepName, { success: false, error })
           }
           return yield* outcome
         }),
@@ -604,7 +639,8 @@ const makeRuntime = (
       state: ObjectStateBackend,
     ): Effect.Effect<ActorExit, DurableExecutionError, S2Client> =>
       Effect.gen(function*() {
-        const invocation: ObjectInvocation = { kind: "object", callId, method, inputEncoded, state }
+        const runSeq = yield* Ref.make(0)
+        const invocation: ObjectInvocation = { kind: "object", callId, method, inputEncoded, state, runSeq }
         const exit = yield* handler.program.pipe(
           Effect.provideService(ActiveInvocation, Option.some(invocation)),
           Effect.provideService(DurableExecutionRuntime, api),

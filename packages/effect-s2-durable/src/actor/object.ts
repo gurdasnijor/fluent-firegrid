@@ -33,11 +33,19 @@ type AdmitResult =
   | { readonly _tag: "AlreadyPending" }
   | { readonly _tag: "AlreadyCompleted" }
 
-/** The durable `state(Table)` surface a running object method writes through. */
+/** The durable surfaces a running object method writes through (state + run journal). */
 export interface ObjectStateBackend {
   readonly get: (table: string, key: string) => Effect.Effect<Option.Option<unknown>, DurableExecutionError, S2Client>
   readonly set: (table: string, key: string, value: unknown) => Effect.Effect<void, DurableExecutionError, S2Client>
   readonly delete: (table: string, key: string) => Effect.Effect<void, DurableExecutionError, S2Client>
+  /**
+   * The per-call journal (`run` terminal facts, keyed by step name). A recorded
+   * step replays its outcome verbatim and is never re-run.
+   */
+  readonly journal: {
+    readonly get: (step: string) => Effect.Effect<Option.Option<unknown>, DurableExecutionError, S2Client>
+    readonly put: (step: string, value: unknown) => Effect.Effect<void, DurableExecutionError, S2Client>
+  }
 }
 
 /** Run one accepted call to an `ActorExit` (handler exit captured, never thrown). */
@@ -130,6 +138,15 @@ const makeBackend = (
       }),
     set: (table, key, value) => write("set", table, key, value),
     delete: (table, key) => write("delete", table, key, undefined),
+    journal: {
+      get: (step) => Ref.get(snapshotRef).pipe(Effect.map((snapshot) => journalValue(snapshot, callId, step))),
+      put: (step, value) =>
+        Effect.gen(function*() {
+          const event = { _tag: "Journaled" as const, callId, step, value }
+          const seqNum = yield* log.append(event)
+          yield* Ref.update(snapshotRef, (snapshot) => transition(snapshot, { seqNum, event }))
+        }),
+    },
   }
 }
 

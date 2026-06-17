@@ -1,5 +1,5 @@
 import { Effect, Layer, Option, Schema } from "effect"
-import { attach, client, object, sendClient, serviceLayer, state } from "effect-s2-durable"
+import { attach, client, object, run, sendClient, serviceLayer, state } from "effect-s2-durable"
 import { primaryKey, Table } from "effect-s2-stream-db"
 import { assertEquals } from "../../assertions.ts"
 import { S2LiteLive } from "../../s2lite.ts"
@@ -30,8 +30,21 @@ const counter = object({
       const st = state(Counter)
       return Option.match(yield* st.get("v"), { onNone: () => 0, onSome: (r) => r.value })
     },
+    // a method that uses a durable `run` step (its terminal fact is journaled on the
+    // owner stream); `runExecutions` counts real executions to prove replay never re-runs.
+    *tally(amount: number) {
+      const st = state(Counter)
+      const cur = Option.match(yield* st.get("v"), { onNone: () => 0, onSome: (r) => r.value })
+      const stepped = yield* run(Effect.sync(() => (runExecutions.count++, amount * 2)), { output: Schema.Number })
+      const next = cur + stepped
+      yield* st.set({ id: "v", value: next })
+      return next
+    },
   },
 })
+
+// real executions of the `tally` run action (a duplicate/replayed call must NOT bump it).
+const runExecutions = { count: 0 }
 
 export default defineValidation({
   id: "effect-s2-durable-object-call",
@@ -95,6 +108,23 @@ export default defineValidation({
           assertEquals(yield* c.add(5, { idempotencyKey: "pinned" }), 5)
           assertEquals(yield* c.add(5, { idempotencyKey: "pinned" }), 5) // same callId → served, not re-run
           assertEquals(yield* c.value(), 5) // not 10
+        }),
+    },
+    {
+      id: "EXECUTION.2",
+      description:
+        "an object method's durable `run` step records a terminal fact on the owner stream (Journaled); "
+        + "named/positional keys + typed output mirror service run, and a duplicate call replays the "
+        + "fact instead of re-executing the effect",
+      evidence:
+        'spans.exists(s, named(s, "effect-s2-durable.object.drain")) && spans.exists(s, named(s, "effect-s2-durable.log.append")) && spans.exists(s, named(s, "effect-s2-durable.object.admit"))',
+      claim: ({ key }) =>
+        Effect.gen(function*() {
+          const before = runExecutions.count
+          assertEquals(yield* client(counter, key).tally(3, { idempotencyKey: "t1" }), 6) // 0 + run(3*2)
+          assertEquals(yield* client(counter, key).tally(3, { idempotencyKey: "t1" }), 6) // duplicate → served
+          assertEquals(yield* client(counter, key).value(), 6) // run applied exactly once
+          assertEquals(runExecutions.count - before, 1) // the run effect executed exactly once
         }),
     },
     {
