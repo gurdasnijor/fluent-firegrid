@@ -90,7 +90,7 @@ export default defineValidation({
     {
       id: "ENUMERATE.1",
       description: "list() returns the typed instance keys that currently exist as streams under basePath",
-      evidence: 'spans.exists(s, named(s, "effect-s2-stream-db.list")) && spans.exists(s, named(s, "S2.listStreams"))',
+      evidence: 'spans.exists(s, named(s, "effect-s2-stream-db.list")) && spans.exists(s, named(s, "S2.listAllStreams"))',
       claim: ({ key, keyFor, open, list }) =>
         Effect.gen(function*() {
           yield* open("e1")

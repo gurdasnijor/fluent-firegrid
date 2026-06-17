@@ -581,15 +581,10 @@ const makeLiveApi = (input: {
   const streamMetrics = (args: StreamMetricsInput, options?: S2RequestOptions) =>
     trySdk("streamMetrics", () => client.metrics.stream(args, options))
 
-  const listStreams = Effect.fn("S2.listStreams")(function*(
-    args?: ListStreamsInput,
-    options?: S2OperationOptions,
-  ) {
-    yield* Effect.annotateCurrentSpan({ prefix: args?.prefix ?? "" })
-    return yield* trySdk("listStreams", () =>
+  const listStreams = (args?: ListStreamsInput, options?: S2OperationOptions) =>
+    trySdk("listStreams", () =>
       basinHandle(options?.basinName).streams.list(args, options?.request),
     )
-  })
 
   const listAllStreams = (
     args?: ListAllStreamsInput,
@@ -598,7 +593,7 @@ const makeLiveApi = (input: {
     Stream.fromAsyncIterable(
       basinHandle(options?.basinName).streams.listAll(args, options?.request),
       fromUnknown("listAllStreams"),
-    )
+    ).pipe(Stream.withSpan("S2.listAllStreams", { attributes: { prefix: args?.prefix ?? "" } }))
 
   const createStream = Effect.fn("S2.createStream")(function*(
     args: CreateStreamInput,

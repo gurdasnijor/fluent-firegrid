@@ -1,13 +1,11 @@
-import { Effect, Option, Ref, Schema, SchemaAST, Semaphore } from "effect"
+import { Effect, Option, Ref, Schema, SchemaAST, Semaphore, Stream } from "effect"
 import {
   AppendInput,
   AppendRecord,
   S2Client,
-  type S2ClientError,
   S2Conflict,
   S2NotFound,
   type StreamConfig,
-  type StreamInfo,
 } from "effect-s2"
 import * as ChangeMessage from "./ChangeMessage.ts"
 import { MaterializedState } from "./MaterializedState.ts"
@@ -221,13 +219,13 @@ export const StreamDb =
             openStream(`${basePath}/${segment}`, tables, options?.config === undefined ? {} : { config: options.config })),
         )
       static readonly list = (): Effect.Effect<ReadonlyArray<Key["Type"]>, S2StreamDbError, S2Client> =>
-        listStreamInfos(prefix, undefined, []).pipe(
-          Effect.flatMap((infos) =>
-            Effect.forEach(
-              infos.filter((info) => info.deletedAt == null),
-              (info) => decodeKey(info.name.slice(prefix.length)),
-            ),
-          ),
+        // listAllStreams paginates the SDK's stream list for us (includeDeleted
+        // defaults false); we strip basePath and decode each suffix to a typed key.
+        S2Client.listAllStreams({ prefix }).pipe(
+          Stream.filter((info) => info.deletedAt == null),
+          Stream.mapEffect((info) => decodeKey(info.name.slice(prefix.length))),
+          Stream.runCollect,
+          Effect.map((keys) => Array.from(keys)),
           Effect.withSpan("effect-s2-stream-db.list", { attributes: { basePath } }),
           Effect.mapError(toError("list")),
         )
@@ -261,21 +259,6 @@ const toError = (operation: string) => (cause: unknown): S2StreamDbError =>
     cause,
   })
 
-/** Paginate `listStreams` by prefix into one array (discovery for `StreamDb.list`). */
-const listStreamInfos = (
-  prefix: string,
-  startAfter: string | undefined,
-  acc: ReadonlyArray<StreamInfo>,
-): Effect.Effect<ReadonlyArray<StreamInfo>, S2ClientError, S2Client> =>
-  S2Client.listStreams({ prefix, ...(startAfter === undefined ? {} : { startAfter }) }).pipe(
-    Effect.flatMap((response) => {
-      const records = [...acc, ...response.streams]
-      const last = response.streams.at(-1)
-      return response.hasMore && last !== undefined
-        ? listStreamInfos(prefix, last.name, records)
-        : Effect.succeed(records)
-    }),
-  )
 
 /** Command records (fence/trim) carry an empty-name header; data records do not. */
 const isCommandRecord = (headers: ReadonlyArray<readonly [string, string]>): boolean =>
