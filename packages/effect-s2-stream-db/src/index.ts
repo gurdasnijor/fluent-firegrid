@@ -6,6 +6,7 @@ export type {
   AnyTable,
   InsertOrGetResult,
   KeySchema,
+  OpenOptions,
   RowOf,
   StreamDbClass,
   StreamDbInstance,

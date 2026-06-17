@@ -58,7 +58,7 @@ pnpm --filter firelab validate:proofs check effect-s2-stream-db/storage-primitiv
 pnpm --filter firelab validate:proofs check effect-s2-stream-db/storage-primitives
 
 # Bootstrap a validation module from an existing feature spec
-pnpm --filter firelab validate:proofs init effect-s2/resource-spec
+pnpm --filter firelab validate:proofs init effect-s2-durable/object-actor-model
 
 # Generate requirement proof stubs for missing feature requirements
 pnpm --filter firelab validate:proofs scaffold effect-s2-stream-db/storage-primitives
@@ -154,7 +154,7 @@ Each entry in `requirements` maps to one feature requirement:
 
 ```ts
 {
-  id: "ORDERED_READ.3",
+  id: "PROJECTION.1",
   description: "latest-value materialized reads remain available for state",
   evidence: 'spans.exists(s, named(s, "effect-s2-stream-db.table.query"))',
   claim: ({ db }) =>
@@ -166,7 +166,7 @@ Each entry in `requirements` maps to one feature requirement:
 
 Firelab compiles this into a coverage gate with id
 `<feature.name>.<requirement.id>`, for example
-`storage-primitives.ORDERED_READ.3`.
+`storage-primitives.PROJECTION.1`.
 
 The `claim` is the executable behavior check. It passes when it returns `true`
 or completes without throwing. Use `packages/firelab/src/assertions.ts` helpers
@@ -228,10 +228,10 @@ Use `proofs init` when a feature has no validation module yet:
 
 ```bash
 # Print the file that would be generated.
-pnpm --filter firelab validate:proofs init effect-s2/resource-spec --dry-run
+pnpm --filter firelab validate:proofs init effect-s2-durable/object-actor-model --dry-run
 
-# Create packages/firelab/src/validations/effect-s2-resource-spec/index.ts.
-pnpm --filter firelab validate:proofs init effect-s2/resource-spec
+# Create packages/firelab/src/validations/effect-s2-durable-object-actor-model/index.ts.
+pnpm --filter firelab validate:proofs init effect-s2-durable/object-actor-model
 ```
 
 `proofs init` parses the feature YAML, infers the validation id from

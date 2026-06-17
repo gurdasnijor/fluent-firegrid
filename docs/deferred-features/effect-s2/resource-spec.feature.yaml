@@ -1,10 +1,13 @@
 feature:
   name: resource-spec
   product: effect-s2
+  status: deferred
   description: >-
-    An Effect-native declarative reconciler (S2Spec) for S2 basins and singleton
-    streams — the SDK analog of `s2 apply`, for bootstrap/runtime provisioning where
-    the CLI isn't available. Design: docs/sdds/s2-resource-provisioning-sdd.md §1.
+    Deferred exploration of an Effect-native declarative reconciler (S2Spec) for
+    S2 basins and singleton streams. Active storage/actor specs should use
+    existing effect-s2 control-plane operations or external S2 tooling until a
+    concrete reconciler caller exists. Design context:
+    docs/sdds/s2-resource-provisioning-sdd.md.
 
 components:
   SPEC_RECONCILE:

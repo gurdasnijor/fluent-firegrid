@@ -458,6 +458,57 @@ const trySdk = <A>(
     catch: fromUnknown(operation),
   })
 
+type TraceAttributeValue = string | number | boolean
+type TraceAttributes = Record<string, TraceAttributeValue>
+
+const encodeTraceArgs = (args: unknown): string | undefined => {
+  if (args === undefined) return undefined
+  try {
+    return JSON.stringify(args)
+  } catch {
+    return typeof args === "string"
+      ? args
+      : typeof args === "number" || typeof args === "boolean" || typeof args === "bigint"
+        ? args.toString()
+        : Object.prototype.toString.call(args)
+  }
+}
+
+const traceAttributes = (
+  args?: unknown,
+  extra?: TraceAttributes,
+): TraceAttributes => {
+  const attributes: TraceAttributes = { ...(extra ?? {}) }
+  const encodedArgs = encodeTraceArgs(args)
+  if (encodedArgs !== undefined) attributes.args = encodedArgs
+  return attributes
+}
+
+const withSdkSpan = <A, E, R>(
+  operation: string,
+  attributes: TraceAttributes,
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  effect.pipe(Effect.withSpan(`S2.${operation}`, { attributes }))
+
+const tracedSdk = <A>(
+  operation: string,
+  args: unknown,
+  promise: () => Promise<A>,
+  extra?: TraceAttributes,
+): Effect.Effect<A, S2ClientError> =>
+  withSdkSpan(operation, traceAttributes(args, extra), trySdk(operation, promise))
+
+const tracedSdkStream = <A>(
+  operation: string,
+  args: unknown,
+  iterable: AsyncIterable<A>,
+  extra?: TraceAttributes,
+): Stream.Stream<A, S2ClientError> =>
+  Stream.fromAsyncIterable(iterable, fromUnknown(operation)).pipe(
+    Stream.withSpan(`S2.${operation}`, { attributes: traceAttributes(args, extra) }),
+  )
+
 const batchTransformOptions = (config: ProducerConfig): BatchTransformOptions => ({
   ...(config.lingerDurationMillis === undefined
     ? {}
@@ -514,6 +565,7 @@ const makeLiveApi = (input: {
     retry,
   })
   const basinHandle = (name?: string) => client.basin(name ?? input.basinName)
+  const defaultBasinName = input.basinName
   const selectedStreamHandle = (name: string, options?: S2OperationOptions) =>
     basinHandle(options?.basinName).stream(
       name,
@@ -522,144 +574,146 @@ const makeLiveApi = (input: {
   type StreamReadRequestOptions = Parameters<ReturnType<typeof selectedStreamHandle>["read"]>[1]
 
   const listBasins = (args?: ListBasinsInput, options?: S2RequestOptions) =>
-    trySdk("listBasins", () => client.basins.list(args, options))
+    tracedSdk("listBasins", args, () => client.basins.list(args, options))
 
   const listAllBasins = (
     args?: ListAllBasinsInput,
     options?: S2RequestOptions,
   ): Stream.Stream<BasinInfo, S2ClientError> =>
-    Stream.fromAsyncIterable(client.basins.listAll(args, options), fromUnknown("listAllBasins"))
+    tracedSdkStream("listAllBasins", args, client.basins.listAll(args, options))
 
   const createBasin = (args: CreateBasinInput, options?: S2RequestOptions) =>
-    trySdk("createBasin", () => client.basins.create(args, options))
+    tracedSdk("createBasin", args, () => client.basins.create(args, options))
 
   const getBasinConfig = (args: GetBasinConfigInput, options?: S2RequestOptions) =>
-    trySdk("getBasinConfig", () => client.basins.getConfig(args, options))
+    tracedSdk("getBasinConfig", args, () => client.basins.getConfig(args, options))
 
   const deleteBasin = (args: DeleteBasinInput, options?: S2RequestOptions) =>
-    trySdk("deleteBasin", () => client.basins.delete(args, options))
+    tracedSdk("deleteBasin", args, () => client.basins.delete(args, options))
 
   const ensureBasin = (args: EnsureBasinInput, options?: S2RequestOptions) =>
-    trySdk("ensureBasin", () => client.basins.ensure(args, options))
+    tracedSdk("ensureBasin", args, () => client.basins.ensure(args, options))
 
   const reconfigureBasin = (args: ReconfigureBasinInput, options?: S2RequestOptions) =>
-    trySdk("reconfigureBasin", () => client.basins.reconfigure(args, options))
+    tracedSdk("reconfigureBasin", args, () => client.basins.reconfigure(args, options))
 
   const listAccessTokens = (args?: ListAccessTokensInput, options?: S2RequestOptions) =>
-    trySdk("listAccessTokens", () => client.accessTokens.list(args, options))
+    tracedSdk("listAccessTokens", args, () => client.accessTokens.list(args, options))
 
   const listAllAccessTokens = (
     args?: ListAllAccessTokensInput,
     options?: S2RequestOptions,
   ): Stream.Stream<AccessTokenInfo, S2ClientError> =>
-    Stream.fromAsyncIterable(
-      client.accessTokens.listAll(args, options),
-      fromUnknown("listAllAccessTokens"),
-    )
+    tracedSdkStream("listAllAccessTokens", args, client.accessTokens.listAll(args, options))
 
   const issueAccessToken = (args: IssueAccessTokenInput, options?: S2RequestOptions) =>
-    trySdk("issueAccessToken", () => client.accessTokens.issue(args, options))
+    tracedSdk("issueAccessToken", args, () => client.accessTokens.issue(args, options))
 
   const revokeAccessToken = (args: RevokeAccessTokenInput, options?: S2RequestOptions) =>
-    trySdk("revokeAccessToken", () => client.accessTokens.revoke(args, options))
+    tracedSdk("revokeAccessToken", args, () => client.accessTokens.revoke(args, options))
 
   const listLocations = (options?: S2RequestOptions) =>
-    trySdk("listLocations", () => client.locations.list(options))
+    tracedSdk("listLocations", undefined, () => client.locations.list(options))
 
   const getDefaultLocation = (options?: S2RequestOptions) =>
-    trySdk("getDefaultLocation", () => client.locations.getDefault(options))
+    tracedSdk("getDefaultLocation", undefined, () => client.locations.getDefault(options))
 
   const setDefaultLocation = (args: SetDefaultLocationInput, options?: S2RequestOptions) =>
-    trySdk("setDefaultLocation", () => client.locations.setDefault(args, options))
+    tracedSdk("setDefaultLocation", args, () => client.locations.setDefault(args, options))
 
   const accountMetrics = (args: AccountMetricsInput, options?: S2RequestOptions) =>
-    trySdk("accountMetrics", () => client.metrics.account(args, options))
+    tracedSdk("accountMetrics", args, () => client.metrics.account(args, options))
 
   const basinMetrics = (args: BasinMetricsInput, options?: S2RequestOptions) =>
-    trySdk("basinMetrics", () => client.metrics.basin(args, options))
+    tracedSdk("basinMetrics", args, () => client.metrics.basin(args, options))
 
   const streamMetrics = (args: StreamMetricsInput, options?: S2RequestOptions) =>
-    trySdk("streamMetrics", () => client.metrics.stream(args, options))
+    tracedSdk("streamMetrics", args, () => client.metrics.stream(args, options))
 
   const listStreams = (args?: ListStreamsInput, options?: S2OperationOptions) =>
-    trySdk("listStreams", () =>
+    tracedSdk("listStreams", args, () =>
       basinHandle(options?.basinName).streams.list(args, options?.request),
+      { basin: options?.basinName ?? defaultBasinName },
     )
 
   const listAllStreams = (
     args?: ListAllStreamsInput,
     options?: S2OperationOptions,
   ): Stream.Stream<StreamInfo, S2ClientError> =>
-    Stream.fromAsyncIterable(
+    tracedSdkStream(
+      "listAllStreams",
+      args,
       basinHandle(options?.basinName).streams.listAll(args, options?.request),
-      fromUnknown("listAllStreams"),
+      { basin: options?.basinName ?? defaultBasinName, prefix: args?.prefix ?? "" },
     )
 
-  const createStream = Effect.fn("S2.createStream")(function*(
+  const createStream = (
     args: CreateStreamInput,
     options?: S2OperationOptions,
-  ) {
-    yield* Effect.annotateCurrentSpan({ stream: args.stream })
-    return yield* trySdk("createStream", () =>
+  ) =>
+    tracedSdk("createStream", args, () =>
       basinHandle(options?.basinName).streams.create(args, options?.request),
+      { basin: options?.basinName ?? defaultBasinName, stream: args.stream },
     )
-  })
 
   const getStreamConfig = (args: GetStreamConfigInput, options?: S2OperationOptions) =>
-    trySdk("getStreamConfig", () =>
+    tracedSdk("getStreamConfig", args, () =>
       basinHandle(options?.basinName).streams.getConfig(args, options?.request),
+      { basin: options?.basinName ?? defaultBasinName, stream: args.stream },
     )
 
-  const deleteStream = Effect.fn("S2.deleteStream")(function*(
+  const deleteStream = (
     args: DeleteStreamInput,
     options?: S2OperationOptions,
-  ) {
-    yield* Effect.annotateCurrentSpan({ stream: args.stream })
-    return yield* trySdk("deleteStream", () =>
+  ) =>
+    tracedSdk("deleteStream", args, () =>
       basinHandle(options?.basinName).streams.delete(args, options?.request),
+      { basin: options?.basinName ?? defaultBasinName, stream: args.stream },
     )
-  })
 
-  const ensureStream = Effect.fn("S2.ensureStream")(function*(
+  const ensureStream = (
     args: EnsureStreamInput,
     options?: S2OperationOptions,
-  ) {
-    yield* Effect.annotateCurrentSpan({ stream: args.stream })
-    return yield* trySdk("ensureStream", () =>
+  ) =>
+    tracedSdk("ensureStream", args, () =>
       basinHandle(options?.basinName).streams.ensure(args, options?.request),
+      { basin: options?.basinName ?? defaultBasinName, stream: args.stream },
     )
-  })
 
   const reconfigureStream = (args: ReconfigureStreamInput, options?: S2OperationOptions) =>
-    trySdk("reconfigureStream", () =>
+    tracedSdk("reconfigureStream", args, () =>
       basinHandle(options?.basinName).streams.reconfigure(args, options?.request),
+      { basin: options?.basinName ?? defaultBasinName, stream: args.stream },
     )
 
-  const checkTail = Effect.fn("S2.checkTail")(function*(
+  const checkTail = (
     name: string,
     options?: S2OperationOptions,
-  ) {
-    yield* Effect.annotateCurrentSpan({ stream: name })
-    return yield* trySdk("checkTail", () =>
+  ) =>
+    tracedSdk("checkTail", { stream: name }, () =>
       selectedStreamHandle(name, options).checkTail(options?.request),
+      { basin: options?.basinName ?? defaultBasinName, stream: name },
     )
-  })
 
-  const append = Effect.fn("S2.append")(function*(
+  const append = (
     name: string,
     input: SdkAppendInput,
     operationOptions?: S2OperationOptions,
-  ) {
-    yield* Effect.annotateCurrentSpan({
-      stream: name,
-      matchSeqNum: input.matchSeqNum,
-    })
-    const ack = yield* trySdk("append", () =>
-      selectedStreamHandle(name, operationOptions).append(input, operationOptions?.request),
+  ) =>
+    withSdkSpan(
+      "append",
+      traceAttributes(
+        { stream: name, recordCount: input.records.length, matchSeqNum: input.matchSeqNum },
+        { basin: operationOptions?.basinName ?? defaultBasinName, stream: name },
+      ),
+      Effect.gen(function*() {
+        const ack = yield* trySdk("append", () =>
+          selectedStreamHandle(name, operationOptions).append(input, operationOptions?.request),
+        )
+        yield* Effect.annotateCurrentSpan({ seqNum: ack.start.seqNum })
+        return ack
+      }),
     )
-    yield* Effect.annotateCurrentSpan({ seqNum: ack.start.seqNum })
-    return ack
-  })
 
   const readBatchFrom = <Encoding extends "string" | "bytes">(
     operation: string,
@@ -668,31 +722,32 @@ const makeLiveApi = (input: {
     operationOptions: S2OperationOptions | undefined,
     request: StreamReadRequestOptions,
   ): Effect.Effect<ReadBatch<Encoding>, S2ClientError> =>
-    Effect.gen(function*() {
-      yield* Effect.annotateCurrentSpan({ stream: name })
-      return yield* trySdk(operation, () =>
+    withSdkSpan(
+      operation,
+      traceAttributes(options, {
+        basin: operationOptions?.basinName ?? defaultBasinName,
+        stream: name,
+      }),
+      trySdk(operation, () =>
         selectedStreamHandle(name, operationOptions).read(options, request),
-      ) as Effect.Effect<ReadBatch<Encoding>, S2ClientError>
-    })
+      ) as Effect.Effect<ReadBatch<Encoding>, S2ClientError>,
+    )
 
-  const readBatch = Effect.fn("S2.readBatch")(function*(
+  const readBatch = (
     name: string,
     options: ReadOptions = {},
     operationOptions?: S2OperationOptions,
-  ) {
-    return yield* readBatchFrom("readBatch", name, options, operationOptions, operationOptions?.request)
-  })
+  ) => readBatchFrom("readBatch", name, options, operationOptions, operationOptions?.request)
 
-  const readBatchBytes = Effect.fn("S2.readBatchBytes")(function*(
+  const readBatchBytes = (
     name: string,
     options: ReadOptions = {},
     operationOptions?: S2OperationOptions,
-  ) {
-    return yield* readBatchFrom("readBatchBytes", name, options, operationOptions, {
+  ) =>
+    readBatchFrom("readBatchBytes", name, options, operationOptions, {
       ...operationOptions?.request,
       as: "bytes",
     })
-  })
 
   const read = (
     name: string,
@@ -701,7 +756,9 @@ const makeLiveApi = (input: {
   ): Stream.Stream<S2Record, S2ClientError> =>
     readStream(
       name,
-      "S2.read",
+      "read",
+      options,
+      operationOptions,
       Effect.tryPromise({
         try: () => selectedStreamHandle(name, operationOptions).readSession(options, operationOptions?.request),
         catch: fromUnknown("readSession"),
@@ -711,7 +768,9 @@ const makeLiveApi = (input: {
 
   const readStream = <Record, A>(
     name: string,
-    spanName: string,
+    operation: string,
+    options: ReadOptions,
+    operationOptions: S2OperationOptions | undefined,
     acquireSession: Effect.Effect<AsyncIterable<Record> & { cancel: () => Promise<void> }, S2ClientError>,
     mapRecord: (record: Record) => A,
   ): Stream.Stream<A, S2ClientError> =>
@@ -725,7 +784,14 @@ const makeLiveApi = (input: {
           Stream.map(mapRecord),
         )
       }),
-    ).pipe(Stream.withSpan(spanName, { attributes: { stream: name } }))
+    ).pipe(
+      Stream.withSpan(`S2.${operation}`, {
+        attributes: traceAttributes(options, {
+          basin: operationOptions?.basinName ?? defaultBasinName,
+          stream: name,
+        }),
+      }),
+    )
 
   const readBytes = (
     name: string,
@@ -734,7 +800,9 @@ const makeLiveApi = (input: {
   ): Stream.Stream<S2RecordBytes, S2ClientError> =>
     readStream(
       name,
-      "S2.readBytes",
+      "readBytes",
+      options,
+      operationOptions,
       Effect.tryPromise({
         try: () =>
           selectedStreamHandle(name, operationOptions).readSession(
@@ -746,75 +814,76 @@ const makeLiveApi = (input: {
       toS2RecordBytes,
     )
 
-  const appendSession = Effect.fn("S2.appendSession")(function*(
+  const appendSession = (
     name: string,
     config: AppendSessionConfig = {},
     options?: S2OperationOptions,
-  ) {
-    const handle = selectedStreamHandle(name, options)
-    const sdkSession = yield* Effect.acquireRelease(
-      Effect.tryPromise({
-        try: () => handle.appendSession(appendSessionOptions(config), options?.request),
-        catch: fromUnknown("appendSession"),
+  ) =>
+    withSdkSpan(
+      "appendSession",
+      traceAttributes(config, { basin: options?.basinName ?? defaultBasinName, stream: name }),
+      Effect.gen(function*() {
+        const handle = selectedStreamHandle(name, options)
+        const sdkSession = yield* Effect.acquireRelease(
+          trySdk("appendSession", () => handle.appendSession(appendSessionOptions(config), options?.request)),
+          (session) => Effect.promise(() => session.close()),
+        )
+
+        const submit = (input: SdkAppendInput) =>
+          withSdkSpan(
+            "appendSession.submit",
+            traceAttributes(
+              { stream: name, recordCount: input.records.length, matchSeqNum: input.matchSeqNum },
+              { basin: options?.basinName ?? defaultBasinName, stream: name },
+            ),
+            Effect.gen(function*() {
+              const ticket = yield* trySdk("appendSession.submit", () => sdkSession.submit(input))
+              const ack = yield* trySdk("appendSession.ack", () => ticket.ack())
+              yield* Effect.annotateCurrentSpan({ seqNum: ack.start.seqNum })
+              return ack
+            }),
+          )
+
+        return { submit }
       }),
-      (session) => Effect.promise(() => session.close()),
     )
 
-    const submit = Effect.fn("S2.appendSession.submit")(function*(input: SdkAppendInput) {
-      yield* Effect.annotateCurrentSpan({
-        stream: name,
-        matchSeqNum: input.matchSeqNum,
-      })
-      const ticket = yield* Effect.tryPromise({
-        try: () => sdkSession.submit(input),
-        catch: fromUnknown("appendSession.submit"),
-      })
-      const ack = yield* Effect.tryPromise({
-        try: () => ticket.ack(),
-        catch: fromUnknown("appendSession.ack"),
-      })
-      yield* Effect.annotateCurrentSpan({ seqNum: ack.start.seqNum })
-      return ack
-    })
-
-    return { submit }
-  })
-
-  const producer = Effect.fn("S2.producer")(function*(
+  const producer = (
     name: string,
     config: ProducerConfig = {},
     options?: S2OperationOptions,
-  ) {
-    const handle = selectedStreamHandle(name, options)
-    const sdkProducer = yield* Effect.acquireRelease(
-      Effect.tryPromise({
-        try: async () =>
-          new Producer(
-            new BatchTransform(batchTransformOptions(config)),
-            await handle.appendSession(appendSessionOptions(config), options?.request),
-            name,
+  ) =>
+    withSdkSpan(
+      "producer",
+      traceAttributes(config, { basin: options?.basinName ?? defaultBasinName, stream: name }),
+      Effect.gen(function*() {
+        const handle = selectedStreamHandle(name, options)
+        const sdkProducer = yield* Effect.acquireRelease(
+          trySdk("producer", async () =>
+            new Producer(
+              new BatchTransform(batchTransformOptions(config)),
+              await handle.appendSession(appendSessionOptions(config), options?.request),
+              name,
+            ),
           ),
-        catch: fromUnknown("appendSession"),
+          (p) => Effect.promise(() => p.close()),
+        )
+
+        const submit = (record: SdkAppendRecord) =>
+          withSdkSpan(
+            "producer.submit",
+            traceAttributes(undefined, { basin: options?.basinName ?? defaultBasinName, stream: name }),
+            Effect.gen(function*() {
+              const ticket = yield* trySdk("producer.submit", () => sdkProducer.submit(record))
+              const ack = yield* trySdk("producer.ack", () => ticket.ack())
+              yield* Effect.annotateCurrentSpan({ seqNum: ack.seqNum() })
+              return ack.batchAppendAck()
+            }),
+          )
+
+        return { submit }
       }),
-      (p) => Effect.promise(() => p.close()),
     )
-
-    const submit = Effect.fn("S2.producer.submit")(function*(record: SdkAppendRecord) {
-      yield* Effect.annotateCurrentSpan({ stream: name })
-      const ticket = yield* Effect.tryPromise({
-        try: () => sdkProducer.submit(record),
-        catch: fromUnknown("producer.submit"),
-      })
-      const ack = yield* Effect.tryPromise({
-        try: () => ticket.ack(),
-        catch: fromUnknown("producer.ack"),
-      })
-      yield* Effect.annotateCurrentSpan({ seqNum: ack.seqNum() })
-      return ack.batchAppendAck()
-    })
-
-    return { submit }
-  })
 
   return {
     listBasins,
