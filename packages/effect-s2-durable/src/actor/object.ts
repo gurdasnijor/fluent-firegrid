@@ -40,12 +40,17 @@ export interface ObjectStateBackend {
   readonly set: (table: string, key: string, value: unknown) => Effect.Effect<void, DurableExecutionError, S2Client>
   readonly delete: (table: string, key: string) => Effect.Effect<void, DurableExecutionError, S2Client>
   /**
-   * The per-call journal (`run` terminal facts, keyed by step name). A recorded
-   * step replays its outcome verbatim and is never re-run.
+   * The per-call journal of durable-primitive facts, namespaced by `kind` (`run`
+   * terminal outcomes, `sleep` timer facts, …) and `step`. A recorded fact replays
+   * verbatim and is never re-run. `kind` keeps families from colliding.
    */
   readonly journal: {
-    readonly get: (step: string) => Effect.Effect<Option.Option<unknown>, DurableExecutionError, S2Client>
-    readonly put: (step: string, value: unknown) => Effect.Effect<void, DurableExecutionError, S2Client>
+    readonly get: (kind: string, step: string) => Effect.Effect<Option.Option<unknown>, DurableExecutionError, S2Client>
+    readonly put: (
+      kind: string,
+      step: string,
+      value: unknown,
+    ) => Effect.Effect<void, DurableExecutionError, S2Client>
   }
   /**
    * Durable named-promise ingress (signal / awakeable / deferred). `await` parks
@@ -167,13 +172,14 @@ const makeBackend = (
       }),
     set: (table, key, value) => write("set", table, key, value),
     delete: (table, key) => write("delete", table, key, undefined),
-    // the `run`-step journal — a distinct kind, so a run step named like a state-read
-    // journal can never collide with one.
+    // the durable-primitive journal, namespaced by `kind` (`run`, `sleep`, …) so a
+    // step named like a state-read journal can never collide with one.
     journal: {
-      get: (step) => Ref.get(snapshotRef).pipe(Effect.map((snapshot) => journalValue(snapshot, callId, "run", step))),
-      put: (step, value) =>
+      get: (kind, step) =>
+        Ref.get(snapshotRef).pipe(Effect.map((snapshot) => journalValue(snapshot, callId, kind, step))),
+      put: (kind, step, value) =>
         Effect.gen(function*() {
-          const event = { _tag: "Journaled" as const, callId, kind: "run", step, value }
+          const event = { _tag: "Journaled" as const, callId, kind, step, value }
           const seqNum = yield* log.append(event)
           yield* Ref.update(snapshotRef, (snapshot) => transition(snapshot, { seqNum, event }))
         }),

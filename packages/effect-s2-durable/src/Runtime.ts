@@ -95,6 +95,12 @@ interface StepRecord {
   readonly error?: unknown
 }
 
+/** A durable timer fact: a scheduled deadline that transitions `pending` → `fired`. */
+interface TimerRecord {
+  readonly deadlineMs: number
+  readonly status: "pending" | "fired"
+}
+
 const toError = durableError
 
 const fail = (operation: string, message: string): Effect.Effect<never, DurableExecutionError> =>
@@ -114,11 +120,6 @@ const encode = <A, I>(
 
 const scheduleOf = (policy: RetryPolicy): Schedule.Schedule<Duration.Duration> =>
   Schedule.exponential(policy.initialInterval ?? Duration.millis(100), policy.intervalFactor ?? 2)
-
-// An object handler that reaches for a not-yet-wired durable primitive (currently
-// only `sleep`) fails clearly rather than silently mis-routing.
-const objectUnsupported = (op: string): Effect.Effect<never, DurableExecutionError> =>
-  fail(op, `${op} is not yet supported on the object call path`)
 
 // Object `state(Table)` rows are encoded/decoded through the table schema at the
 // log boundary; the durable key is the table's primary-key field value.
@@ -259,9 +260,9 @@ const makeRuntime = (
       active.kind === "object"
         ? {
           get: (step: string): Effect.Effect<Option.Option<StepRecord>, DurableExecutionError> =>
-            provideClient(active.state.journal.get(step)).pipe(Effect.map((o) => o as Option.Option<StepRecord>)),
+            provideClient(active.state.journal.get("run", step)).pipe(Effect.map((o) => o as Option.Option<StepRecord>)),
           put: (step: string, record: StepRecord): Effect.Effect<void, DurableExecutionError> =>
-            provideClient(active.state.journal.put(step, record)),
+            provideClient(active.state.journal.put("run", step, record)),
         }
         : {
           get: (step: string): Effect.Effect<Option.Option<StepRecord>, DurableExecutionError> =>
@@ -328,21 +329,47 @@ const makeRuntime = (
     // elapsed). The handler fiber sleeps inline; on replay a `fired` row
     // short-circuits and a `pending` row recomputes the remaining delay. Re-arming a
     // pending wakeup across a restart is the slice-4 recovery job.
+    // The durable timer store: a service `clockWakeups` row, or an object `kind:"sleep"`
+    // journal fact on the owner stream. Same pending→fired replay logic (see `sleepStep`).
+    const sleepTimerFor = (active: Invocation) =>
+      active.kind === "object"
+        ? {
+          get: (name: string): Effect.Effect<Option.Option<TimerRecord>, DurableExecutionError> =>
+            provideClient(active.state.journal.get("sleep", name)).pipe(Effect.map((o) => o as Option.Option<TimerRecord>)),
+          put: (name: string, record: TimerRecord): Effect.Effect<void, DurableExecutionError> =>
+            provideClient(active.state.journal.put("sleep", name, record)),
+        }
+        : {
+          get: (name: string): Effect.Effect<Option.Option<TimerRecord>, DurableExecutionError> =>
+            active.db.clockWakeups.get(name).pipe(
+              Effect.mapError(toError("sleep")),
+              Effect.map((o) => Option.map(o, (r): TimerRecord => ({ deadlineMs: r.deadlineMs, status: r.status }))),
+            ),
+          put: (name: string, record: TimerRecord): Effect.Effect<void, DurableExecutionError> =>
+            (record.status === "pending"
+              ? active.db.clockWakeups.insert({ name, deadlineMs: record.deadlineMs, status: "pending" })
+              : active.db.clockWakeups.upsert({ name, deadlineMs: record.deadlineMs, status: "fired" }))
+              .pipe(Effect.mapError(toError("sleep"))),
+        }
+
     const sleepStep = (name: string, duration: Duration.Duration): Effect.Effect<void, DurableExecutionError> =>
       withActive("sleep").pipe(Effect.flatMap((active) =>
         Effect.gen(function*() {
-          if (active.kind === "object") return yield* objectUnsupported("sleep")
-          const db = active.db
-          const existing = yield* db.clockWakeups.get(name).pipe(Effect.mapError(toError("sleep")))
+          // a durable timer fact (`pending` deadline → `fired`). For a service it is a
+          // `clockWakeups` row; for an object it is a `kind:"sleep"` journal fact on the
+          // owner stream. On replay a `fired` fact short-circuits and a `pending` fact
+          // recomputes the remaining delay against the recorded deadline.
+          const timer = sleepTimerFor(active)
+          const existing = yield* timer.get(name)
           if (Option.isSome(existing) && existing.value.status === "fired") return
           const now = yield* Clock.currentTimeMillis
           const deadlineMs = Option.isSome(existing) ? existing.value.deadlineMs : now + Duration.toMillis(duration)
           if (Option.isNone(existing)) {
-            yield* db.clockWakeups.insert({ name, deadlineMs, status: "pending" }).pipe(Effect.mapError(toError("sleep")))
+            yield* timer.put(name, { deadlineMs, status: "pending" })
           }
           const remaining = Math.max(0, deadlineMs - now)
           if (remaining > 0) yield* Effect.sleep(Duration.millis(remaining))
-          yield* db.clockWakeups.upsert({ name, deadlineMs, status: "fired" }).pipe(Effect.mapError(toError("sleep")))
+          yield* timer.put(name, { deadlineMs, status: "fired" })
         }),
       ))
 
