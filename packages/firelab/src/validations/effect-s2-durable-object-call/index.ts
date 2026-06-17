@@ -1,5 +1,18 @@
 import { Effect, Layer, Option, Schema } from "effect"
-import { attach, client, object, resolveSignal, run, sendClient, serviceLayer, signal, state } from "effect-s2-durable"
+import {
+  attach,
+  awakeable,
+  client,
+  deferred,
+  object,
+  resolveAwakeable,
+  resolveSignal,
+  run,
+  sendClient,
+  serviceLayer,
+  signal,
+  state,
+} from "effect-s2-durable"
 import { primaryKey, Table } from "effect-s2-stream-db"
 import { assertEquals } from "../../assertions.ts"
 import { S2LiteLive } from "../../s2lite.ts"
@@ -36,6 +49,19 @@ const counter = object({
       const approved = yield* signal("approved", Schema.Boolean)
       return approved ? "approved" : "denied"
     },
+    // parks on an awakeable whose id is a deterministic `${callId}/awk/0`; an ingress
+    // caller resolves it residency-independently via resolveAwakeable.
+    *awaitAwakeable() {
+      const awk = yield* awakeable(Schema.Boolean)
+      return (yield* awk.promise) ? "awoke" : "no"
+    },
+    // a handler-local durable promise: resolve it, then read it back within the same
+    // execution (resolveLocal appends a SignalResolved; the durable row is the truth).
+    *deferLocal() {
+      const done = deferred("done", Schema.Boolean)
+      yield* done.resolve(true)
+      return (yield* done.get()) ? "resolved" : "no"
+    },
     // two run steps with the SAME name: the first executes the effect and records a
     // `Journaled` run fact; the second REPLAYS that fact (no re-execution). The
     // `state.get` writes a read-journal fact alongside (a distinct kind, so it cannot
@@ -68,7 +94,7 @@ export default defineValidation({
   },
   // the one runtime boundary, seeded with the object's handlers, over s2 lite.
   backend: serviceLayer(counter).pipe(Layer.provide(S2LiteLive)),
-  component: ({ key }) => Effect.succeed({ key }),
+  component: ({ key, keyFor }) => Effect.succeed({ key, keyFor }),
   requirements: [
     {
       id: "LAYERING.1",
@@ -174,16 +200,33 @@ export default defineValidation({
     {
       id: "INGRESS.1",
       description:
-        "object signal ingress is residency-independent: a parked object method resumes when "
-        + "resolveSignal(callId, name, value) appends a SignalResolved to the owner stream (routed by the "
-        + "call id), then attach returns the signal-derived result",
+        "object signal AND awakeable ingress are residency-independent: a parked object method resumes "
+        + "when resolveSignal/resolveAwakeable(callId, name, value) appends a SignalResolved to the owner "
+        + "stream (routed by the call id); the awakeable name is the deterministic `${callId}/awk/0`",
       evidence:
         'spans.exists(s, named(s, "effect-s2-durable.resolveSignal")) && spans.exists(s, named(s, "effect-s2-durable.object.drain")) && spans.exists(s, named(s, "effect-s2-durable.log.append"))',
+      claim: ({ key, keyFor }) =>
+        Effect.gen(function*() {
+          // signal: a parked method resumes from a residency-independent resolveSignal.
+          const sid = yield* sendClient(counter, key).awaitApproval()
+          yield* resolveSignal(sid, "approved", Schema.Boolean, true)
+          assertEquals(yield* attach(sid, Schema.String), "approved")
+          // awakeable: deterministic id `${callId}/awk/0`, resolved residency-independently.
+          const aid = yield* sendClient(counter, keyFor("awk")).awaitAwakeable()
+          yield* resolveAwakeable(aid, `${aid}/awk/0`, Schema.Boolean, true)
+          assertEquals(yield* attach(aid, Schema.String), "awoke")
+        }),
+    },
+    {
+      id: "INGRESS.2",
+      description:
+        "a handler-local durable promise (deferred) resolves and reads back from the durable owner-stream "
+        + "row within one execution — the row is the source of truth (resolveLocal appends a SignalResolved)",
+      evidence:
+        'spans.exists(s, named(s, "effect-s2-durable.object.drain")) && spans.exists(s, named(s, "effect-s2-durable.log.append")) && spans.exists(s, named(s, "effect-s2-durable.object.admit"))',
       claim: ({ key }) =>
         Effect.gen(function*() {
-          const id = yield* sendClient(counter, key).awaitApproval() // forks the drainer; handler parks on the signal
-          yield* resolveSignal(id, "approved", Schema.Boolean, true) // residency-independent append by call id
-          assertEquals(yield* attach(id, Schema.String), "approved")
+          assertEquals(yield* client(counter, key).deferLocal(), "resolved")
         }),
     },
     {
