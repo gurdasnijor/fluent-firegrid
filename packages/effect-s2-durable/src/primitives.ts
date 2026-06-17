@@ -110,3 +110,8 @@ export const poll = <A, I>(
   schema: Schema.Codec<A, I, never, never>,
 ): Effect.Effect<Option.Option<A>, DurableExecutionError, DurableExecutionRuntime> =>
   Effect.flatMap(DurableExecutionRuntime, (rt) => rt.poll(executionId, schema))
+
+// Durable inter-execution calls are exposed as the TYPED `objectClient(Def, key)` /
+// `objectSendClient(Def, key)` proxies in service.ts (identity derived from the object
+// definition, not raw strings). The low-level `callStep`/`sendStep` stay internal to
+// the runtime API.

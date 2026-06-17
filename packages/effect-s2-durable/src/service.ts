@@ -252,6 +252,57 @@ export function sendClient<Name extends string, H extends Handlers>(
 }
 
 /**
+ * The typed **in-handler** call surface to another object: `objectClient(Def, key).method(input)`.
+ * Issues a durable child object call and awaits its decoded result. Identity is derived
+ * from the object DEFINITION (name + method + output schema), never raw strings; the
+ * child id is replay-stable, so a parent replay re-reads the result instead of re-issuing.
+ */
+export const objectClient = <Name extends string, H extends Handlers>(
+  def: ObjectDefinition<Name, H>,
+  key: string,
+): ServiceClient<H> =>
+  // eslint-disable-next-line local/no-launder-cast -- dynamic proxy; each Effect<unknown> is the typed Effect<HandlerOutput> recovered structurally by ServiceClient<H>
+  Object.fromEntries(
+    Object.entries(def.compiled).map(([method, compiled]) =>
+      [
+        method,
+        (input: unknown) =>
+          Effect.flatMap(DurableExecutionRuntime, (rt) =>
+            rt.callStep(
+              { object: def.name, key, method },
+              input,
+              compiled.handler.input as Schema.Codec<unknown, unknown, never, never>,
+              compiled.handler.output as Schema.Codec<unknown, unknown, never, never>,
+            )),
+      ] as const,
+    ),
+  ) as unknown as ServiceClient<H>
+
+/**
+ * The typed **in-handler** one-way send surface: `objectSendClient(Def, key).method(input)`
+ * issues the child call without awaiting, returning its id (`restate`'s `.send()`).
+ */
+export const objectSendClient = <Name extends string, H extends Handlers>(
+  def: ObjectDefinition<Name, H>,
+  key: string,
+): SendClient<H> =>
+  // eslint-disable-next-line local/no-launder-cast -- dynamic proxy (see objectClient)
+  Object.fromEntries(
+    Object.entries(def.compiled).map(([method, compiled]) =>
+      [
+        method,
+        (input: unknown) =>
+          Effect.flatMap(DurableExecutionRuntime, (rt) =>
+            rt.sendStep(
+              { object: def.name, key, method },
+              input,
+              compiled.handler.input as Schema.Codec<unknown, unknown, never, never>,
+            )),
+      ] as const,
+    ),
+  ) as unknown as SendClient<H>
+
+/**
  * The engine layer **seeded with these definitions' handlers** so boot recovery can
  * re-drive their running/suspended work after a process restart. Use this instead of
  * the bare `DurableExecutionRuntime.layer()` whenever work can outlive the process
