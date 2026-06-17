@@ -121,28 +121,29 @@ const makeBackend = (
   return {
     get: (table, key) =>
       Effect.gen(function*() {
-        const ordinal = yield* Ref.getAndUpdate(readCounter, (n) => n + 1)
-        const step = `read/${ordinal}`
+        const step = String(yield* Ref.getAndUpdate(readCounter, (n) => n + 1))
         const snapshot = yield* Ref.get(snapshotRef)
-        const recorded = journalValue(snapshot, callId, step)
+        const recorded = journalValue(snapshot, callId, "read", step)
         if (Option.isSome(recorded)) {
           const record = recorded.value as { readonly present: boolean; readonly value: unknown }
           return record.present ? Option.some(record.value) : Option.none<unknown>()
         }
         const live = stateValue(snapshot, table, key)
         const record = { present: Option.isSome(live), value: Option.getOrNull(live) }
-        const event = { _tag: "Journaled" as const, callId, step, value: record }
+        const event = { _tag: "Journaled" as const, callId, kind: "read", step, value: record }
         const seqNum = yield* log.append(event)
         yield* Ref.update(snapshotRef, (s) => transition(s, { seqNum, event }))
         return live
       }),
     set: (table, key, value) => write("set", table, key, value),
     delete: (table, key) => write("delete", table, key, undefined),
+    // the `run`-step journal — a distinct kind, so a run step named like a state-read
+    // journal can never collide with one.
     journal: {
-      get: (step) => Ref.get(snapshotRef).pipe(Effect.map((snapshot) => journalValue(snapshot, callId, step))),
+      get: (step) => Ref.get(snapshotRef).pipe(Effect.map((snapshot) => journalValue(snapshot, callId, "run", step))),
       put: (step, value) =>
         Effect.gen(function*() {
-          const event = { _tag: "Journaled" as const, callId, step, value }
+          const event = { _tag: "Journaled" as const, callId, kind: "run", step, value }
           const seqNum = yield* log.append(event)
           yield* Ref.update(snapshotRef, (snapshot) => transition(snapshot, { seqNum, event }))
         }),

@@ -30,15 +30,17 @@ const counter = object({
       const st = state(Counter)
       return Option.match(yield* st.get("v"), { onNone: () => 0, onSome: (r) => r.value })
     },
-    // a method that uses a durable `run` step (its terminal fact is journaled on the
-    // owner stream); `runExecutions` counts real executions to prove replay never re-runs.
+    // two run steps with the SAME name: the first executes the effect and records a
+    // `Journaled` run fact; the second REPLAYS that fact (no re-execution). A separate
+    // positional run (`run/2`) and a `state.get` (a read journal) run alongside to show
+    // run vs read journals do not collide. `runExecutions` counts real executions.
     *tally(amount: number) {
+      const a = yield* run(Effect.sync(() => (runExecutions.count++, amount * 2)), { name: "double", output: Schema.Number })
+      const b = yield* run(Effect.sync(() => (runExecutions.count++, amount * 2)), { name: "double", output: Schema.Number })
       const st = state(Counter)
       const cur = Option.match(yield* st.get("v"), { onNone: () => 0, onSome: (r) => r.value })
-      const stepped = yield* run(Effect.sync(() => (runExecutions.count++, amount * 2)), { output: Schema.Number })
-      const next = cur + stepped
-      yield* st.set({ id: "v", value: next })
-      return next
+      yield* st.set({ id: "v", value: cur + a + b })
+      return a + b
     },
   },
 })
@@ -114,17 +116,17 @@ export default defineValidation({
       id: "EXECUTION.2",
       description:
         "an object method's durable `run` step records a terminal fact on the owner stream (Journaled); "
-        + "named/positional keys + typed output mirror service run, and a duplicate call replays the "
-        + "fact instead of re-executing the effect",
+        + "a second same-named run within the SAME execution replays that recorded fact instead of "
+        + "re-executing the effect (typed output mirrors service run; not admission dedup)",
       evidence:
         'spans.exists(s, named(s, "effect-s2-durable.object.drain")) && spans.exists(s, named(s, "effect-s2-durable.log.append")) && spans.exists(s, named(s, "effect-s2-durable.object.admit"))',
       claim: ({ key }) =>
         Effect.gen(function*() {
           const before = runExecutions.count
-          assertEquals(yield* client(counter, key).tally(3, { idempotencyKey: "t1" }), 6) // 0 + run(3*2)
-          assertEquals(yield* client(counter, key).tally(3, { idempotencyKey: "t1" }), 6) // duplicate → served
-          assertEquals(yield* client(counter, key).value(), 6) // run applied exactly once
-          assertEquals(runExecutions.count - before, 1) // the run effect executed exactly once
+          // a = run("double") executes (3*2=6); b = run("double") REPLAYS a's fact (no re-exec) → 6.
+          assertEquals(yield* client(counter, key).tally(3), 12) // a + b = 6 + 6
+          assertEquals(runExecutions.count - before, 1) // the run effect ran exactly once; b replayed the fact
+          assertEquals(yield* client(counter, key).value(), 12) // cur(0) + a + b
         }),
     },
     {
