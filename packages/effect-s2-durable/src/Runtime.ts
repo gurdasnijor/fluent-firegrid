@@ -639,9 +639,12 @@ const makeRuntime = (
       schema: Schema.Codec<A, I, never, never>,
     ): Effect.Effect<A, DurableExecutionError> =>
       Effect.gen(function*() {
+        // encode the input through the handler's input codec — the same boundary the
+        // normal submit path uses, so a transform codec (decoded ≠ encoded) round-trips.
+        const inputEncoded = yield* encode(handler.input as Schema.Codec<unknown, unknown, never, never>, input)
         // fold the owner stream once; the handler reads this snapshot, never the log.
         const snapshot = yield* provideClient(store.readSnapshot(object, key))
-        const invocation: SharedObjectInvocation = { kind: "shared", method: handler.name, inputEncoded: input, snapshot }
+        const invocation: SharedObjectInvocation = { kind: "shared", method: handler.name, inputEncoded, snapshot }
         const exit = yield* handler.program.pipe(
           Effect.provideService(ActiveInvocation, Option.some(invocation)),
           Effect.provideService(DurableExecutionRuntime, api),
