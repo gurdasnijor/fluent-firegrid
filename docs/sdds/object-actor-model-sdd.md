@@ -89,7 +89,7 @@ The log carries these **logical projection buckets** (views folded from the `Act
 | `accept-log` | `Accepted` events | admitted exclusive calls, append-only: `callId`, `method`, `input` — **no status**; admission order is S2 `seq_num` |
 | per-call journals | `Journaled` events | each call's run/state/signal/timer facts, keyed by `callId` (`${callId}/run/N`, …) |
 | `results` | `Completed` events | a settled call's `Exit` (success/failure/interrupt/defect) |
-| user state | `StateChanged` events | the object's persistent state, materialized via the reused stream-db latest-value fold (`LAYERING.4`) |
+| user state | `StateChanged` events | the object's persistent state, materialized by reusing the stream-db latest-value-per-key fold MECHANISM applied to `StateChanged` — not by feeding `ActorEvent`s into `ChangeMessage`/`MaterializedState` internals (`LAYERING.4`) |
 
 There is **no** separate `wf/<executionId>` stream for object methods and no roster row. A
 single **serial drainer** per key runs exclusive calls (`EXECUTION.1`).
@@ -309,12 +309,22 @@ interface LogEntry { readonly seqNum: number; readonly event: ActorEvent }
 interface ActorSnapshot {
   readonly cursor: number                                   // last applied seqNum
   readonly pending: ReadonlyArray<CallId>                   // accepted ∧ ¬completed, in seqNum order
-  readonly active: Option.Option<CallId>                    // the call currently being run
+  readonly active: Option.Option<CallId>                    // DURABLE head pointer = pending[0] — the call that
+                                                            // SHOULD be running. NOT "a fiber is resident": after a
+                                                            // cold replay `active` can be Some with no live fiber.
   readonly results: ReadonlyMap<CallId, Exit.Exit<unknown, unknown>>  // done = present here
-  readonly signals: ReadonlyMap<string, unknown>            // resolved rows, key `${callId}/${name}`
-  readonly state: MaterializedState                         // the user state(Table) fold
+  readonly signals: ReadonlyMap<string, unknown>            // resolved, key `${callId}/${name}`
+  readonly state: MaterializedState                         // user-state fold — the latest-value-per-key MECHANISM
+                                                            // REUSED over StateChanged events, NOT ActorEvents fed
+                                                            // through ChangeMessage internals (LAYERING.4)
 }
 ```
+
+**`active` is durable, not liveness.** `active` is just `pending[0]` — the head that *should* be
+running. Whether a fiber is actually *resident* is a separate in-memory fact the snapshot does not
+carry. This matters for recovery (Finding below): after a cold, fold-only replay, `active` may be
+`Some(head)` with **no** running fiber, so the start decision must key off "is the head's fiber
+resident?", never off `active === None`.
 
 **What the pure core asks the shell to do:**
 
@@ -377,7 +387,10 @@ const drain = (db: ActorDb) =>
   Effect.gen(function*() {
     const history = yield* ActorLog.read(db)              // readDecoded(db, ActorEvent), ordered by seqNum
     let snap = replay(history)                            // FOLD ONLY — no forkHandler during replay
-    yield* Effect.forEach(planHead(snap), interpret(db, snap), { discard: true })   // start the pending head once
+    // Start the DURABLE head (snap.active = pending[0]) if it isn't done — at cold boot no fiber is
+    // resident, so this restarts a call that was active-but-unfinished when we crashed. Keyed off the
+    // durable head + "is its fiber resident?", NOT off active === None (replay leaves active = Some).
+    yield* Effect.forEach(startHeadIfNotResident(snap), interpret(db, snap), { discard: true })
     yield* ActorLog.tail(db, { from: snap.cursor + 1 }).pipe(   // LIVE tail: new records execute actions
       Stream.runForEach((entry) => {
         const [next, actions] = transition(snap, entry)
@@ -387,7 +400,8 @@ const drain = (db: ActorDb) =>
     )
   })
 
-// planHead derives the at-most-one StartCall for the recovered pending head (idle key only).
+// startHeadIfNotResident emits the at-most-one StartCall for the durable head (snap.active) when it
+// is not done and no fiber is resident — at cold boot that always restarts the recovered head.
 // the interpreter — the ONLY place effects happen; it never decides validity
 const interpret = (db: ActorDb, snap: ActorSnapshot) => (a: ActorAction) => {
   switch (a._tag) {
@@ -525,13 +539,17 @@ first is what makes the leasing pass tractable.
 - Object lifecycle (`clearAll`/destroy); framed/chunked snapshots for large object state
   (`CHECKPOINTING.6` ↔ `storage-primitives.CHECKPOINT.4`).
 - Cross-process leasing/fencing (its own SDD; this model is the prerequisite).
+- A dedicated `StreamNamespace.list(basePath, keyCodec)` lower primitive, so recovery enumerates
+  actor keys without constructing a `StreamDb` class purely to call its name-based `list()`
+  (`DEPENDENCIES.1`, Finding 4).
 - **Storage primitives** (one layer down, behind the `DurableStore` port — policy injected, not
-  hardcoded): the engine consumes `storage-primitives` `ENUMERATE` (recovery), `EXISTENCE`
-  (non-creating open), and `CHECKPOINT` (GC), reads the ordered ActorEvent log via
-  `effect-s2.readDecoded` (typed decode preserving `seq_num`), and requires control-plane basin
-  provisioning with `createStreamOnAppend` disabled via existing `effect-s2` operations or external
-  S2 tooling. See
-  [`s2-resource-provisioning-sdd.md`](./s2-resource-provisioning-sdd.md).
+  hardcoded): the OBJECT engine consumes `storage-primitives` `ENUMERATE` (name-based recovery
+  scan) + the key codec, and reads/writes the object stream as an ordered ActorEvent log via
+  `effect-s2.readDecoded` + `S2Client.append` — it does NOT use `EXISTENCE`/`CHECKPOINT` on object
+  streams (existence is `checkTail`; checkpointing is a `Checkpointed` event + S2 trim).
+  Ephemeral *service* streams keep using `EXISTENCE`/`CHECKPOINT`. Control-plane basins are
+  provisioned with `createStreamOnAppend` disabled via existing `effect-s2` operations or external
+  S2 tooling. See [`s2-resource-provisioning-sdd.md`](./s2-resource-provisioning-sdd.md).
 - **Not borrowed** (per the Encore note): no `Actor.fromObject(...)` public API, no Effect Cluster
   `MessageStorage`/`deleteEnvelope` as the durable mailbox, no mutable completion-status row, no
   delimiter-parsed routing, and no XState/Stately runtime dependency.
