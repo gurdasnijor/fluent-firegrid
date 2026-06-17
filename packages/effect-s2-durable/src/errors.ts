@@ -12,3 +12,11 @@ export class DurableExecutionError extends Schema.TaggedErrorClass<DurableExecut
   message: Schema.String,
   cause: Schema.Defect(),
 }) {}
+
+/** Wrap an unknown cause in a `DurableExecutionError` tagged with the failing operation. */
+export const durableError = (operation: string) => (cause: unknown): DurableExecutionError =>
+  new DurableExecutionError({
+    operation,
+    message: cause instanceof Error ? cause.message : String(cause),
+    cause,
+  })
