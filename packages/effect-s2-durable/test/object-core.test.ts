@@ -12,6 +12,7 @@ import {
   signalValue,
   unPathSegment,
 } from "../src/actor/core.ts"
+import { workflow, workflowRunId } from "../src/service.ts"
 
 // Pure (no S2) invariants for the object call-id routing + projection. S2-backed
 // behaviour is proven in Firelab (effect-s2-durable-object-call); these guard the
@@ -114,5 +115,40 @@ describe("call status distinguishes Unknown from Pending", () => {
 
   it("a settled callId reports its Exit", () => {
     expect(callStatus(replay([accepted, completed]), "c1")).toEqual({ _tag: "Success", value: 42 })
+  })
+})
+
+// The workflow run-once mechanic hinges on `workflowRunId` being DETERMINISTIC: every
+// start of the same (workflow, id) must resolve to ONE owner call id so admission dedups
+// (at most one run). These pin that contract without S2 (the run-once + already-started
+// behaviour itself is proven over a real backend in effect-s2-durable-workflow).
+describe("workflow run-id is deterministic (run-once anchor)", () => {
+  const wf = workflow({ name: "wf-test", *run(n: number) { return n } })
+
+  it.effect("the same (workflow, id) always derives the SAME run call id", () =>
+    Effect.gen(function*() {
+      const a = yield* workflowRunId(wf, "order-1")
+      const b = yield* workflowRunId(wf, "order-1")
+      expect(a).toBe(b)
+    }))
+
+  it.effect("distinct ids derive distinct run call ids", () =>
+    Effect.gen(function*() {
+      const a = yield* workflowRunId(wf, "order-1")
+      const b = yield* workflowRunId(wf, "order-2")
+      expect(a).not.toBe(b)
+    }))
+
+  it.effect("the run call id decodes to the workflow's owner key + reserved `run` method", () =>
+    Effect.gen(function*() {
+      const id = yield* workflowRunId(wf, "order-1")
+      expect(yield* decodeObjectCallId(id)).toEqual({ object: "wf-test", key: "order-1", method: "run", nonce: "order-1" })
+    }))
+
+  it("rejects a shared handler named `run` (reserved for the entrypoint)", () => {
+    // the `as any` deliberately bypasses the type-level guard to prove the runtime guard fires.
+    expect(() =>
+      workflow({ name: "wf-clash", *run(n: number) { return n }, handlers: { *run() { return 0 } } as any }),
+    ).toThrow(/reserved for the run-once entrypoint/)
   })
 })

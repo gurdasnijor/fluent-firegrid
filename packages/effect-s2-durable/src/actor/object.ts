@@ -31,7 +31,7 @@ import { type ActorLog, openLog } from "./log.ts"
  */
 
 /** The outcome of admitting a call (idempotent on a re-admit of the same id). */
-type AdmitResult =
+export type AdmitResult =
   | { readonly _tag: "Admitted" }
   | { readonly _tag: "AlreadyPending" }
   | { readonly _tag: "AlreadyCompleted" }

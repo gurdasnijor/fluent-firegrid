@@ -6,7 +6,7 @@ import { type DurableExecutionError, durableError } from "./errors.ts"
 import { handler } from "./handler.ts"
 import { handlerRequest } from "./primitives.ts"
 import { DurableExecutionRuntime } from "./Runtime.ts"
-import type { DurableExecutionRuntimeApi, ObjectHandlerSeed, RegisteredHandler } from "./Runtime.ts"
+import type { DurableExecutionRuntimeApi, ObjectHandlerSeed, RegisteredHandler, WorkflowStartStatus } from "./Runtime.ts"
 import type { Handler } from "./types.ts"
 
 /**
@@ -122,6 +122,78 @@ export const object = <const Name extends string, H extends Handlers, S extends 
     config.sharedSchemas as Record<string, HandlerSchemas> | undefined,
   ),
 })
+
+/**
+ * A durable **workflow** definition — an object specialization (not a third runtime).
+ * Its `run` is a single exclusive handler admitted **at most once** per workflow id;
+ * optional `handlers` are shared, read-only **query** handlers over the run's owner
+ * projection. Waits/timers/durable steps/state all reuse the same object primitives,
+ * scoped to the workflow id. The reserved method name for the entrypoint is `run`.
+ */
+export interface WorkflowDefinition<Name extends string, R extends HandlerFn, S extends Handlers> {
+  readonly name: Name
+  readonly kind: "workflow"
+  readonly run: R
+  readonly shared: S
+  /** The single exclusive entrypoint, keyed by the reserved method name `run`. */
+  readonly compiled: Record<string, Compiled>
+  /** The compiled `run` entrypoint (the sole member of `compiled`), typed for direct use. */
+  readonly compiledRun: Compiled
+  readonly compiledShared: Record<string, Compiled>
+}
+
+/** The reserved method name of a workflow's exclusive entrypoint. */
+const WORKFLOW_RUN = "run"
+
+export interface WorkflowConfig<Name extends string, R extends HandlerFn, S extends Handlers> {
+  readonly name: Name
+  /** The exclusive, run-once entrypoint. */
+  readonly run: R
+  /**
+   * Optional shared, read-only query handlers over the workflow's owner projection.
+   * The method name `run` is RESERVED for the entrypoint — a shared `run` is typed out
+   * (and rejected at definition time) so `sharedClient(wf, id).run` can never be ambiguous.
+   */
+  readonly handlers?: S & { readonly run?: never }
+  /** Durable I/O schema for the `run` entrypoint (default: opaque JSON). */
+  readonly runSchema?: HandlerSchemas<HandlerInput<R>, HandlerOutput<R>>
+  /** Durable I/O schemas for the shared query handlers. */
+  readonly sharedSchemas?: SchemasFor<S>
+}
+
+/**
+ * Define a durable **workflow** — `run` executes once per workflow id (a second start
+ * returns `"alreadyStarted"`, never a second run), while `handlers` are shared queries.
+ * Drive it with `workflowSubmit` / `workflowAttach` (+ `resolveSignal` for ingress
+ * signals on `workflowRunId(def, id)`); read it with `sharedClient(def, id)`.
+ */
+export const workflow = <const Name extends string, R extends HandlerFn, S extends Handlers = Record<never, never>>(
+  config: WorkflowConfig<Name, R, S>,
+): WorkflowDefinition<Name, R, S> => {
+  // `run` is the reserved exclusive entrypoint — a shared handler of the same name would
+  // shadow it on `sharedClient(wf, id).run`. Typed out above; guard at runtime too.
+  if (config.handlers !== undefined && Object.prototype.hasOwnProperty.call(config.handlers, WORKFLOW_RUN)) {
+    throw new Error(`workflow ${JSON.stringify(config.name)}: a shared handler may not be named ${JSON.stringify(WORKFLOW_RUN)} (reserved for the run-once entrypoint)`)
+  }
+  const compiledRun = compileHandlers(
+    config.name,
+    { [WORKFLOW_RUN]: config.run },
+    config.runSchema === undefined ? undefined : { [WORKFLOW_RUN]: config.runSchema },
+  )
+  return {
+    name: config.name,
+    kind: "workflow",
+    run: config.run,
+    shared: (config.handlers ?? {}) as S,
+    compiled: compiledRun,
+    compiledRun: compiledRun[WORKFLOW_RUN] as Compiled,
+    compiledShared: compileHandlers(
+      config.name,
+      config.handlers ?? {},
+      config.sharedSchemas as Record<string, HandlerSchemas> | undefined,
+    ),
+  }
+}
 
 // ── clients ──────────────────────────────────────────────────────────────
 
@@ -318,17 +390,26 @@ export const objectSendClient = <Name extends string, H extends Handlers>(
   ) as unknown as SendClient<H>
 
 /**
- * A typed **shared** (read-only) call surface for a virtual object:
- * `sharedClient(obj, key).method(input)`. Each call runs ephemerally over a folded
- * snapshot — no admission, no exclusive lock — so reads never block (nor are blocked
- * by) the drainer. Shared handlers cannot write state or use durable primitives.
+ * A typed **shared** (read-only) call surface for a virtual object or workflow:
+ * `sharedClient(obj, key).method(input)` / `sharedClient(wf, id).query(input)`. Each
+ * call runs ephemerally over a folded snapshot — no admission, no exclusive lock — so
+ * reads never block (nor are blocked by) the drainer. Shared handlers cannot write
+ * state or use durable primitives.
  */
-export const sharedClient = <Name extends string, H extends Handlers, S extends Handlers>(
+export function sharedClient<Name extends string, H extends Handlers, S extends Handlers>(
   def: ObjectDefinition<Name, H, S>,
   key: string,
-): SharedClient<S> =>
-  // eslint-disable-next-line local/no-launder-cast -- dynamic proxy; each Effect<unknown> is the typed Effect<HandlerOutput> recovered structurally by SharedClient<S>
-  Object.fromEntries(
+): SharedClient<S>
+export function sharedClient<Name extends string, R extends HandlerFn, S extends Handlers>(
+  def: WorkflowDefinition<Name, R, S>,
+  id: string,
+): SharedClient<S>
+export function sharedClient(
+  def: { readonly name: string; readonly compiledShared: Record<string, Compiled> },
+  key: string,
+): Record<string, unknown> {
+   
+  return Object.fromEntries(
     Object.entries(def.compiledShared).map(([method, compiled]) =>
       [
         method,
@@ -343,23 +424,81 @@ export const sharedClient = <Name extends string, H extends Handlers, S extends 
             )),
       ] as const,
     ),
-  ) as unknown as SharedClient<S>
+  )
+}
+
+// ── workflow lifecycle ─────────────────────────────────────────────────────
+
+/**
+ * The DETERMINISTIC owner call id of a workflow's `run` for a given workflow id — the
+ * anchor for run-once admission, `workflowAttach`, and ingress `resolveSignal`. Keyed by
+ * `{ object: name, key: id, method: "run", nonce: id }`, so every start of the same id
+ * collides on one id (admission dedups → at most one run).
+ */
+export const workflowRunId = <Name extends string, R extends HandlerFn, S extends Handlers>(
+  def: WorkflowDefinition<Name, R, S>,
+  id: string,
+): Effect.Effect<string, DurableExecutionError> =>
+  encodeObjectCallId({ object: def.name, key: id, method: WORKFLOW_RUN, nonce: id }).pipe(
+    Effect.mapError(durableError("workflow.runId")),
+  )
+
+/**
+ * Start a workflow's `run` for `id` (run-once). Returns `"started"` on the first start
+ * and `"alreadyStarted"` on any later start — never a second run. Await its result with
+ * `workflowAttach(def, id)`.
+ */
+export const workflowSubmit = <Name extends string, R extends HandlerFn, S extends Handlers>(
+  def: WorkflowDefinition<Name, R, S>,
+  id: string,
+  ...args: InvokeArgs<HandlerInput<R>>
+): Effect.Effect<WorkflowStartStatus, DurableExecutionError, DurableExecutionRuntime> =>
+  Effect.gen(function*() {
+    const runCallId = yield* workflowRunId(def, id)
+    const rt = yield* DurableExecutionRuntime
+    return yield* rt.workflowStart(def.compiledRun.handler, runCallId, args[0])
+  })
+
+/** Attach to a running/completed workflow `run` and return its decoded output. */
+export const workflowAttach = <Name extends string, R extends HandlerFn, S extends Handlers>(
+  def: WorkflowDefinition<Name, R, S>,
+  id: string,
+): Effect.Effect<HandlerOutput<R>, DurableExecutionError, DurableExecutionRuntime> =>
+  Effect.gen(function*() {
+    const runCallId = yield* workflowRunId(def, id)
+    const rt = yield* DurableExecutionRuntime
+     
+    return (yield* rt.attach(
+      runCallId,
+      def.compiledRun.handler.output as Schema.Codec<unknown, unknown, never, never>,
+    )) as HandlerOutput<R>
+  })
 
 /**
  * The engine layer **seeded with these definitions' handlers** so boot recovery can
  * re-drive their running/suspended work after a process restart. Use this instead of
  * the bare `DurableExecutionRuntime.layer()` whenever work can outlive the process
- * (it parks on `sleep`/`signal`/`awakeable`, or is a pending object call). Service
- * handlers seed the by-name registry; object methods seed object owner-stream recovery.
+ * (it parks on `sleep`/`signal`/`awakeable`, or is a pending object/workflow call).
+ * Service handlers seed the by-name registry; object/workflow methods seed owner-stream
+ * recovery (a workflow's `run` re-drives its pending head exactly like an object call).
  */
 export const serviceLayer = (
-  ...defs: ReadonlyArray<ServiceDefinition<string, Handlers> | ObjectDefinition<string, Handlers>>
+  ...defs: ReadonlyArray<
+    | ServiceDefinition<string, Handlers>
+    | ObjectDefinition<string, Handlers>
+    | WorkflowDefinition<string, HandlerFn, Handlers>
+  >
 ): Layer.Layer<DurableExecutionRuntime, DurableExecutionError, S2Client> => {
   const services = defs.filter((def): def is ServiceDefinition<string, Handlers> => def.kind === "service")
-  const objects = defs.filter((def): def is ObjectDefinition<string, Handlers> => def.kind === "object")
+  // objects and workflows share owner-stream recovery: seed each `compiled` method as
+  // `${name}/${method}`. (A workflow's only exclusive method is `run`.)
+  const ownerLogged = defs.filter(
+    (def): def is ObjectDefinition<string, Handlers> | WorkflowDefinition<string, HandlerFn, Handlers> =>
+      def.kind === "object" || def.kind === "workflow",
+  )
   return DurableExecutionRuntime.layer(
     services.flatMap((def): ReadonlyArray<RegisteredHandler> => Object.values(def.compiled).map((c) => c.handler)),
-    objects.flatMap((def): ReadonlyArray<ObjectHandlerSeed> =>
+    ownerLogged.flatMap((def): ReadonlyArray<ObjectHandlerSeed> =>
       Object.entries(def.compiled).map(([method, c]) => ({ object: def.name, method, handler: c.handler })),
     ),
   )
