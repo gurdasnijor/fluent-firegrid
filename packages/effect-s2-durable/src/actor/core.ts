@@ -80,13 +80,38 @@ const ObjectCallId = Schema.fromJsonString(
 )
 export type ObjectCallIdParts = typeof ObjectCallId.Type
 
-/** Encode `{ object, key, method, nonce }` into the opaque call id string. */
-export const encodeObjectCallId = (parts: ObjectCallIdParts): Effect.Effect<string, Schema.SchemaError> =>
-  Schema.encodeEffect(ObjectCallId)(parts).pipe(Effect.withSpan("effect-s2-durable.callId.encode"))
+/**
+ * Reserved namespace prefix for object call ids. An id is an object call ONLY if it
+ * carries this prefix — so a service id / `idempotencyKey` that merely happens to be
+ * JSON of the right shape is NOT misrouted to an owner stream. Service id minting
+ * rejects this prefix (see `service.ts`), so the namespaces are disjoint.
+ */
+export const OBJECT_ID_PREFIX = "durable.object.v1:"
 
-/** Decode a call id string back to its parts — owner recovery is a pure decode. */
+/** Encode `{ object, key, method, nonce }` into a namespaced, opaque call id string. */
+export const encodeObjectCallId = (parts: ObjectCallIdParts): Effect.Effect<string, Schema.SchemaError> =>
+  Schema.encodeEffect(ObjectCallId)(parts).pipe(
+    Effect.map((json) => OBJECT_ID_PREFIX + json),
+    Effect.withSpan("effect-s2-durable.callId.encode"),
+  )
+
+/**
+ * Decode a namespaced object call id back to its parts — owner recovery is a pure
+ * decode. A string WITHOUT the reserved prefix is not an object call id and fails
+ * to decode (the caller routes it to the service path).
+ */
 export const decodeObjectCallId = (id: string): Effect.Effect<ObjectCallIdParts, Schema.SchemaError> =>
-  Schema.decodeUnknownEffect(ObjectCallId)(id).pipe(Effect.withSpan("effect-s2-durable.callId.decode"))
+  // a non-prefixed id decodes a deliberately-invalid payload (empty string is not
+  // valid JSON) → SchemaError → service routing; never decode it as an object call.
+  Schema.decodeUnknownEffect(ObjectCallId)(id.startsWith(OBJECT_ID_PREFIX) ? id.slice(OBJECT_ID_PREFIX.length) : "")
+    .pipe(Effect.withSpan("effect-s2-durable.callId.decode"))
+
+/**
+ * Escape a raw string into a single S2 path segment that cannot contain a raw `/`,
+ * so distinct `(object, key)` pairs can never collide on one owner path — e.g.
+ * `(a/b, c)` ≠ `(a, b/c)`. Escaping `%` before `/` keeps the encoding injective.
+ */
+export const pathSegment = (raw: string): string => raw.replaceAll("%", "%25").replaceAll("/", "%2F")
 
 // ── projection (pure fold of the log) ────────────────────────────────────────
 
@@ -176,8 +201,14 @@ export const journalValue = (snapshot: ActorSnapshot, callId: string, step: stri
     Option.flatMap((sub) => (sub.has(step) ? Option.some(sub.get(step)) : Option.none())),
   )
 
-/** The user-visible status of a call, folded from its `Completed` event (if any). */
+/**
+ * The user-visible status of a call, folded from its `Completed` event (if any).
+ * `Unknown` = the callId was never admitted to this owner (distinct from `Pending`,
+ * an admitted-but-unsettled call) — so `attach` on a bogus id fails instead of
+ * looping forever.
+ */
 export type CallStatus =
+  | { readonly _tag: "Unknown" }
   | { readonly _tag: "Pending" }
   | { readonly _tag: "Success"; readonly value: unknown }
   | { readonly _tag: "Failure"; readonly error: string }
@@ -188,7 +219,7 @@ export type CallStatus =
 export const callStatus = (snapshot: ActorSnapshot, callId: string): CallStatus => {
   const exit = snapshot.results.get(callId)
   if (exit === undefined) {
-    return { _tag: "Pending" }
+    return snapshot.order.includes(callId) ? { _tag: "Pending" } : { _tag: "Unknown" }
   }
   switch (exit._tag) {
     case "Success":

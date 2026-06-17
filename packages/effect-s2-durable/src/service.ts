@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- handler input/output are existential at the definition boundary; `any` is required for inference across the handler record (mirrors restate-sdk-gen's define/free). Concrete types are recovered on the client surface via HandlerInput/HandlerOutput. */
 import { Effect, type Layer, Schema } from "effect"
 import type { S2Client } from "effect-s2"
-import { encodeObjectCallId } from "./actor/core.ts"
+import { encodeObjectCallId, OBJECT_ID_PREFIX } from "./actor/core.ts"
 import { type DurableExecutionError, durableError } from "./errors.ts"
 import { handler } from "./handler.ts"
 import { handlerRequest } from "./primitives.ts"
@@ -160,7 +160,19 @@ const mintId = (
   object: ObjectIdentity | undefined,
 ): Effect.Effect<string, DurableExecutionError> =>
   object === undefined
-    ? nonceFor(options)
+    // a service id IS its idempotencyKey/nonce — reserve the object namespace so a
+    // service id can never be misrouted to an owner stream.
+    ? nonceFor(options).pipe(
+      Effect.flatMap((id) =>
+        id.startsWith(OBJECT_ID_PREFIX)
+          ? Effect.fail(
+            durableError("submit")(
+              new Error(`idempotencyKey must not start with the reserved prefix ${JSON.stringify(OBJECT_ID_PREFIX)}`),
+            ),
+          )
+          : Effect.succeed(id),
+      ),
+    )
     : nonceFor(options).pipe(
       Effect.flatMap((nonce) =>
         encodeObjectCallId({ object: object.name, key: object.key, method, nonce }).pipe(

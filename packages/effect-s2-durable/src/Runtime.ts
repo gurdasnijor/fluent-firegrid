@@ -685,7 +685,10 @@ const makeRuntime = (
             const row = yield* db.executions.get(executionId)
             const inputEncoded = Option.match(row, { onNone: () => undefined, onSome: (r) => r.input })
             yield* runExecution(handler, executionId, db, inputEncoded)
-          }).pipe(Effect.ignore), // one execution's recovery must not abort boot
+          }).pipe(
+            Effect.withSpan("effect-s2-durable.recover-execution", { attributes: { executionId, handlerName } }),
+            Effect.ignore, // one execution's recovery must not abort boot
+          ),
       })
 
     // SLICE A RECOVERY GAP (consolidation SDD, Slice A "temporary recovery gap"):
@@ -702,6 +705,7 @@ const makeRuntime = (
         Effect.flatMap((services) =>
           Effect.forEach(services, (r) => recoverExecution(r.executionId, r.handlerName), { discard: true }),
         ),
+        Effect.withSpan("effect-s2-durable.boot-recover"),
         Effect.ignore, // recovery is best-effort; never fail engine startup on it
       )
 
@@ -713,10 +717,15 @@ const makeRuntime = (
 
     // Block on an object call by folding its owner projection until it settles —
     // no residency, no roster (the durable `Completed` event is the source of truth).
+    // `Pending` (admitted, unsettled) loops indefinitely; `Unknown` (never admitted)
+    // is retried a bounded number of times to absorb a transient read lag right after
+    // submit, then fails — a bogus id never loops forever.
+    const UNKNOWN_ATTACH_RETRIES = 40
     const attachObject = <A, I>(
       callId: string,
       parts: ObjectCallIdParts,
       schema: Schema.Codec<A, I, never, never>,
+      unknownBudget: number,
     ): Effect.Effect<A, DurableExecutionError> =>
       provideClient(store.status(callId, parts)).pipe(Effect.flatMap((st): Effect.Effect<A, DurableExecutionError> => {
         switch (st._tag) {
@@ -729,7 +738,15 @@ const makeRuntime = (
           case "Interrupt":
             return fail("attach", "call was interrupted")
           case "Pending":
-            return Effect.sleep(Duration.millis(25)).pipe(Effect.andThen(attachObject(callId, parts, schema)))
+            return Effect.sleep(Duration.millis(25)).pipe(
+              Effect.andThen(attachObject(callId, parts, schema, UNKNOWN_ATTACH_RETRIES)),
+            )
+          case "Unknown":
+            return unknownBudget <= 0
+              ? fail("attach", `unknown call: ${callId}`)
+              : Effect.sleep(Duration.millis(25)).pipe(
+                Effect.andThen(attachObject(callId, parts, schema, unknownBudget - 1)),
+              )
         }
       }))
 
@@ -740,7 +757,7 @@ const makeRuntime = (
       Effect.gen(function*() {
         const parts = yield* decodeParts(executionId)
         if (Option.isSome(parts)) {
-          return yield* attachObject(executionId, parts.value, schema)
+          return yield* attachObject(executionId, parts.value, schema, UNKNOWN_ATTACH_RETRIES)
         }
         // service: if we own it, wait for the waiter; then read + decode the roster.
         const live = yield* Ref.get(running)

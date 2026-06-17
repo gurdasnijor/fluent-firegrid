@@ -9,6 +9,7 @@ import {
   journalValue,
   type LogEntry,
   type ObjectCallIdParts,
+  pathSegment,
   replay,
   stateValue,
   transition,
@@ -70,12 +71,12 @@ export interface InvocationStoreApi {
 const MAX_CAS_RETRIES = 32
 
 // Derive the owner stream by encoding the key through the owner-key codec (String
-// today) — never a hand-built `name:key` identity string. The object name is a
-// stable path prefix from the definition, the key a schema-encoded segment.
+// today) — never a hand-built `name:key` identity string. The object name and key
+// are each escaped into a single collision-safe path segment (`pathSegment`).
 const ownerKeyCodec = Schema.String
 const ownerStream = (object: string, key: string): Effect.Effect<string, DurableExecutionError> =>
   Schema.encodeEffect(ownerKeyCodec)(key).pipe(
-    Effect.map((segment) => `obj/${object}/${segment}`),
+    Effect.map((segment) => `obj/${pathSegment(object)}/${pathSegment(segment)}`),
     Effect.mapError(toError("object.ownerStream")),
   )
 
