@@ -14,52 +14,37 @@ import {
   Schedule,
   Schema,
   type Scope,
-  Semaphore,
 } from "effect"
 import { S2Client } from "effect-s2"
 import type { AnyTable, RowOf, TableFacade } from "effect-s2-stream-db"
+import { type ActorExit, decodeObjectCallId, type ObjectCallIdParts } from "./actor/core.ts"
+import { InvocationStore, type ObjectStateBackend, type RunHead } from "./actor/object.ts"
 import { DurableExecutionError, durableError } from "./errors.ts"
-import { ExecutionId, type ObjectInboxRow, ObjectStateDb, RosterDb, WorkflowDb } from "./schema.ts"
+import { ExecutionId, RosterDb, WorkflowDb } from "./schema.ts"
 import type { Handler, RetryPolicy, RunOptions } from "./types.ts"
 
 /** The opened per-execution db (success type of `WorkflowDb.open`). */
 type WfDb = Effect.Success<ReturnType<typeof WorkflowDb.open>>
 
-/** The opened per-(object,key) state db: the persistent state + the FIFO inbox. */
-type ObjStateDb = Effect.Success<ReturnType<typeof ObjectStateDb.open>>
-
-/** One queued (not-yet-completed) object invocation in a key's FIFO inbox. */
-type InboxRow = RowOf<typeof ObjectInboxRow>
-
 /**
- * The durable record store a `state(Table)` binding writes to: the active
- * execution's own stream for a service, or the persistent per-key `ObjectStateDb`
- * for a virtual-object method. Only the generic `table(...)` accessor is needed;
- * both stream-db instances satisfy it structurally.
+ * The durable record store a service `state(Table)` binding writes to: the active
+ * execution's own stream. (Object state moved to the per-owner `ActorEvent` log —
+ * see `actor/object.ts`.)
  */
 type StateStore = { readonly table: <Tbl extends AnyTable>(table: Tbl) => TableFacade<RowOf<Tbl>> }
 
 /**
- * The shared per-(object,key) coordination. `state` is the one durable store +
- * inbox for the key (a single instance, so all methods share one materialized
- * fold + CAS tail). `mutex` guards enqueue/drainer-start atomicity; `draining`
- * is whether a serial drainer fiber is currently active for this key.
+ * The active invocation a free primitive (`run`/`sleep`/`state`/…) operates on.
+ * A `service` invocation runs against its per-execution `WorkflowDb`; an `object`
+ * invocation runs against its owner `ActorEvent` log via the journaled state
+ * backend (Slice A: `state` + completion; other primitives fail clearly).
  */
-interface ObjectScope {
-  readonly state: ObjStateDb
-  readonly mutex: Semaphore.Semaphore
-  readonly draining: Ref.Ref<boolean>
-}
-
-/** The active invocation a free primitive (`run`/`sleep`/`state`/…) operates on. */
-interface Invocation {
+interface ServiceInvocation {
+  readonly kind: "service"
   readonly executionId: string
   readonly handlerName: string
   readonly db: WfDb
-  /** Where `state(Table)` rows live: the execution stream (service) or per-key store (object). */
   readonly stateDb: StateStore
-  /** This object method's `"name:key"`, or `undefined` for a plain service. */
-  readonly objectKey: string | undefined
   readonly inputEncoded: unknown
   /** Monotonic per-activation counter for positionally-keyed `run` steps. */
   readonly runSeq: Ref.Ref<number>
@@ -68,6 +53,17 @@ interface Invocation {
   /** Monotonic per-activation counter for replay-stable `awakeable` ids. */
   readonly awakeSeq: Ref.Ref<number>
 }
+
+interface ObjectInvocation {
+  readonly kind: "object"
+  readonly callId: string
+  readonly method: string
+  readonly inputEncoded: unknown
+  /** The journaled per-owner durable `state` surface. */
+  readonly state: ObjectStateBackend
+}
+
+type Invocation = ServiceInvocation | ObjectInvocation
 
 /**
  * The active-invocation slot — a `Context.Reference` (default `None`), so it never
@@ -84,7 +80,8 @@ const ActiveInvocation = Context.Reference<Option.Option<Invocation>>(
 interface RunningEntry {
   readonly fiber: Fiber.Fiber<unknown, unknown>
   readonly deferred: Deferred.Deferred<Exit.Exit<unknown, unknown>, DurableExecutionError>
-  readonly invocation: Invocation
+  // Only service executions register here; object calls settle on their owner log.
+  readonly invocation: ServiceInvocation
 }
 
 const toError = durableError
@@ -107,6 +104,25 @@ const encode = <A, I>(
 const scheduleOf = (policy: RetryPolicy): Schedule.Schedule<Duration.Duration> =>
   Schedule.exponential(policy.initialInterval ?? Duration.millis(100), policy.intervalFactor ?? 2)
 
+// Slice A: an object handler that reaches for an unsupported durable primitive
+// fails clearly rather than silently mis-routing (consolidation SDD scope).
+const objectUnsupported = (op: string): Effect.Effect<never, DurableExecutionError> =>
+  fail(op, `${op} is not yet supported on the object call path (Slice A is state + completion only)`)
+
+// Object `state(Table)` rows are encoded/decoded through the table schema at the
+// log boundary; the durable key is the table's primary-key field value.
+// `table.schema` is a generic Struct whose codec services are `unknown`; pin them
+// off at the Effect boundary (as the service `state.get` path does internally).
+const encodeRowFor = (table: AnyTable, row: unknown): Effect.Effect<unknown, DurableExecutionError> =>
+  (Schema.encodeUnknownEffect(table.schema)(row) as Effect.Effect<unknown, Schema.SchemaError>).pipe(
+    Effect.mapError(durableError("state.set")),
+  )
+const decodeRowFor = (table: AnyTable, encoded: unknown): Effect.Effect<unknown, DurableExecutionError> =>
+  (Schema.decodeUnknownEffect(table.schema)(encoded) as Effect.Effect<unknown, Schema.SchemaError>).pipe(
+    Effect.mapError(durableError("state.get")),
+  )
+const pkOf = (table: AnyTable, row: unknown): string => String((row as Record<string, unknown>)[table.pkField])
+
 /** The encoded value of a resolved `deferreds` row, if present. */
 const resolvedValue = (row: Option.Option<{ readonly value?: unknown }>): Option.Option<unknown> =>
   Option.flatMap(row, (r) => Option.fromNullishOr(r.value))
@@ -114,15 +130,16 @@ const resolvedValue = (row: Option.Option<{ readonly value?: unknown }>): Option
 /** The public engine surface (host ops) plus the primitive ops the free functions delegate to. */
 export interface DurableExecutionRuntimeApi {
   /**
-   * Genesis + fork: persist the execution + roster rows, then run the handler.
-   * `objectKey` (a virtual object's `"name:key"`) routes `state(Table)` to the
-   * persistent per-key store and serializes same-key methods (exclusive access).
+   * Genesis + fork. A plain `executionId` is a stateless service execution
+   * (genesis + fork now). An `executionId` that decodes as an object call id routes
+   * to the per-owner `ActorEvent` log: durably admit the call, then fork the
+   * exclusive drainer (`state(Table)` is journaled to the owner stream; same-key
+   * methods run serially).
    */
   readonly submit: <I, O, E, R>(
     handler: Handler<I, O, E, R>,
     executionId: string,
     input: I,
-    objectKey?: string,
   ) => Effect.Effect<void, DurableExecutionError, R>
   /** Block until the execution finishes; decode its output via `schema` (or fail). */
   readonly attach: <A, I>(
@@ -176,7 +193,9 @@ export class DurableExecutionRuntime
   static layer(
     handlers: ReadonlyArray<RegisteredHandler> = [],
   ): Layer.Layer<DurableExecutionRuntime, DurableExecutionError, S2Client> {
-    return Layer.effect(DurableExecutionRuntime)(makeRuntime(handlers))
+    // The object-backed InvocationStore is an internal dependency of the one
+    // runtime boundary — provided here, never exported.
+    return Layer.effect(DurableExecutionRuntime)(makeRuntime(handlers)).pipe(Layer.provide(InvocationStore.layer))
   }
 }
 
@@ -185,7 +204,7 @@ export type RegisteredHandler = Handler<unknown, unknown, never, never>
 
 const makeRuntime = (
   handlers: ReadonlyArray<RegisteredHandler>,
-): Effect.Effect<DurableExecutionRuntimeApi, DurableExecutionError, S2Client | Scope.Scope> =>
+): Effect.Effect<DurableExecutionRuntimeApi, DurableExecutionError, S2Client | Scope.Scope | InvocationStore> =>
   Effect.gen(function*() {
     const client = yield* S2Client
     // The layer's scope IS the engine's long-lived scope; handler/timer fibers fork
@@ -208,30 +227,13 @@ const makeRuntime = (
     const openWf = (executionId: string) => provideClient(WorkflowDb.open(ExecutionId.make(executionId)))
     const waiterKey = (executionId: string, name: string) => `${executionId}/${name}`
 
-    // Per-(object,key) scope: ONE shared `ObjectStateDb` instance (so all methods
-    // observe the same materialized state + a single CAS tail — exactly as the
-    // roster is one instance) plus coordination for serial draining. Exclusive
-    // access is admission control, not a lock over racing bodies: at most one
-    // invocation per key is forked at a time; the rest wait in the durable inbox.
-    const objectScopes = yield* Ref.make(HashMap.empty<string, ObjectScope>())
-    const objectScopesMutex = yield* Semaphore.make(1)
-    const objectScopeFor = (objectKey: string): Effect.Effect<ObjectScope, DurableExecutionError> =>
-      objectScopesMutex.withPermits(1)(
-        Ref.get(objectScopes).pipe(Effect.flatMap((m) =>
-          Option.match(HashMap.get(m, objectKey), {
-            onSome: (scope) => Effect.succeed(scope),
-            onNone: () =>
-              Effect.all([
-                provideClient(ObjectStateDb.open(objectKey)).pipe(Effect.mapError(toError("open-object-state"))),
-                Semaphore.make(1),
-                Ref.make(false),
-              ]).pipe(
-                Effect.map(([state, mutex, draining]): ObjectScope => ({ state, mutex, draining })),
-                Effect.tap((scope) => Ref.update(objectScopes, HashMap.set(objectKey, scope))),
-              ),
-          }),
-        )),
-      )
+    // The object-backed durable store (admission, exclusive per-key drainer,
+    // journaled `state`) for the object call path. Internal to this runtime — never
+    // exported as a sibling runtime (consolidation SDD).
+    const store = yield* InvocationStore
+    // Object handlers keyed `${object}/${method}`, so the drainer can run a key's
+    // pending head by name. Self-registered on submit (recovery seeding is Slice B).
+    const objectHandlers = new Map<string, RegisteredHandler>()
 
     const withActive = (operation: string): Effect.Effect<Invocation, DurableExecutionError> =>
       Effect.flatMap(ActiveInvocation, (opt) =>
@@ -244,6 +246,7 @@ const makeRuntime = (
     ): Effect.Effect<A, E | DurableExecutionError, R> =>
       withActive("run").pipe(Effect.flatMap((active) =>
         Effect.gen(function*() {
+          if (active.kind === "object") return yield* objectUnsupported("run")
           // identity = the optional name, else this step's position in the journal
           const ordinal = yield* Ref.getAndUpdate(active.runSeq, (n) => n + 1)
           const stepKey = `${active.executionId}/${options?.name ?? `run/${ordinal}`}`
@@ -291,6 +294,7 @@ const makeRuntime = (
     const sleepStep = (name: string, duration: Duration.Duration): Effect.Effect<void, DurableExecutionError> =>
       withActive("sleep").pipe(Effect.flatMap((active) =>
         Effect.gen(function*() {
+          if (active.kind === "object") return yield* objectUnsupported("sleep")
           const db = active.db
           const existing = yield* db.clockWakeups.get(name).pipe(Effect.mapError(toError("sleep")))
           if (Option.isSome(existing) && existing.value.status === "fired") return
@@ -315,7 +319,19 @@ const makeRuntime = (
       key: string,
     ): Effect.Effect<Option.Option<RowOf<Tbl>>, DurableExecutionError> =>
       withActive("state.get").pipe(Effect.flatMap((active) =>
-        Effect.gen(function*() {
+        active.kind === "object"
+          ? provideClient(
+            active.state.get(table.tableName, key).pipe(
+              Effect.flatMap((opt) =>
+                Option.match(opt, {
+                  onNone: () => Effect.succeedNone,
+                  onSome: (encoded) =>
+                    decodeRowFor(table, encoded).pipe(Effect.map((row) => Option.some(row as RowOf<Tbl>))),
+                }),
+              ),
+            ),
+          )
+          : Effect.gen(function*() {
           const ordinal = yield* Ref.getAndUpdate(active.readSeq, (n) => n + 1)
           const readKey = `${active.executionId}/read/${ordinal}`
           // `NullOr(table.schema)` carries `unknown` codec services (generic Struct);
@@ -342,16 +358,22 @@ const makeRuntime = (
       ))
 
     const stateSet = <Tbl extends AnyTable>(table: Tbl, row: RowOf<Tbl>): Effect.Effect<void, DurableExecutionError> =>
-      withActive("state.set").pipe(
-        Effect.flatMap((active) => active.stateDb.table(table).upsert(row)),
-        Effect.mapError(toError("state.set")),
-      )
+      withActive("state.set").pipe(Effect.flatMap((active) =>
+        active.kind === "object"
+          ? provideClient(
+            encodeRowFor(table, row).pipe(
+              Effect.flatMap((encoded) => active.state.set(table.tableName, pkOf(table, row), encoded)),
+            ),
+          )
+          : active.stateDb.table(table).upsert(row).pipe(Effect.mapError(toError("state.set"))),
+      ))
 
     const stateDelete = <Tbl extends AnyTable>(table: Tbl, key: string): Effect.Effect<void, DurableExecutionError> =>
-      withActive("state.delete").pipe(
-        Effect.flatMap((active) => active.stateDb.table(table).delete(key)),
-        Effect.mapError(toError("state.delete")),
-      )
+      withActive("state.delete").pipe(Effect.flatMap((active) =>
+        active.kind === "object"
+          ? provideClient(active.state.delete(table.tableName, key))
+          : active.stateDb.table(table).delete(key).pipe(Effect.mapError(toError("state.delete"))),
+      ))
 
     // ── signals / awakeables / deferreds (park-and-resume) ────────────────────
     // One mechanism: a durable `deferreds` row is the resolution (truth); a
@@ -379,7 +401,7 @@ const makeRuntime = (
         Effect.andThen(poke(executionId, name)),
       )
 
-    const markSuspended = (active: Invocation, kind: "deferred-wait" | "pending-clock"): Effect.Effect<void> =>
+    const markSuspended = (active: ServiceInvocation, kind: "deferred-wait" | "pending-clock"): Effect.Effect<void> =>
       Clock.currentTimeMillis.pipe(
         Effect.flatMap((now) =>
           Effect.all([
@@ -387,7 +409,7 @@ const makeRuntime = (
               executionId: active.executionId,
               handlerName: active.handlerName,
               status: "suspended",
-              objectKey: active.objectKey,
+              objectKey: undefined,
               suspendKind: kind,
               updatedMs: now,
             }),
@@ -410,6 +432,7 @@ const makeRuntime = (
     ): Effect.Effect<A, DurableExecutionError> =>
       withActive("await").pipe(Effect.flatMap((active) =>
         Effect.gen(function*() {
+          if (active.kind === "object") return yield* objectUnsupported("await")
           // read fresh each time — observe the row as of now, not at build time
           const readRow = () =>
             active.db.deferreds.get(name).pipe(Effect.mapError(toError("await")), Effect.map(resolvedValue))
@@ -438,7 +461,9 @@ const makeRuntime = (
       value: A,
     ): Effect.Effect<void, DurableExecutionError> =>
       withActive("resolve").pipe(Effect.flatMap((active) =>
-        encode(schema, value).pipe(Effect.flatMap((enc) => resolveOn(active.db, active.executionId, name, enc))),
+        active.kind === "object"
+          ? objectUnsupported("resolve")
+          : encode(schema, value).pipe(Effect.flatMap((enc) => resolveOn(active.db, active.executionId, name, enc))),
       ))
 
     const resolveExternal = <A, I>(executionId: string, name: string, schema: Schema.Codec<A, I, never, never>, value: A): Effect.Effect<void, DurableExecutionError> =>
@@ -456,9 +481,11 @@ const makeRuntime = (
 
     const nextAwakeableId: Effect.Effect<string, DurableExecutionError> = withActive("awakeable").pipe(
       Effect.flatMap((active) =>
-        Ref.getAndUpdate(active.awakeSeq, (n) => n + 1).pipe(
-          Effect.map((ordinal) => `${active.executionId}/awk/${ordinal}`),
-        ),
+        active.kind === "object"
+          ? objectUnsupported("awakeable")
+          : Ref.getAndUpdate(active.awakeSeq, (n) => n + 1).pipe(
+            Effect.map((ordinal) => `${active.executionId}/awk/${ordinal}`),
+          ),
       ),
     )
 
@@ -507,28 +534,26 @@ const makeRuntime = (
         yield* Ref.update(running, HashMap.remove(executionId))
       }).pipe(Effect.mapError(toError("complete")))
 
-    // Fork ONE handler body into the engine scope, register it as the live owner,
-    // and hand back its completion waiter. Serialization-agnostic: a service forks
-    // directly; an object's serial drainer forks the head and awaits the waiter.
+    // Fork ONE service handler body into the engine scope, register it as the live
+    // owner, and hand back its completion waiter. (Object calls do NOT run here —
+    // they settle on their owner log via the InvocationStore drainer.)
     const runExecution = <E, R>(
       handler: Handler<unknown, unknown, E, R>,
       executionId: string,
       db: WfDb,
       inputEncoded: unknown,
-      stateDb: StateStore,
-      objectKey: string | undefined,
     ): Effect.Effect<Deferred.Deferred<Exit.Exit<unknown, unknown>, DurableExecutionError>, never, R> =>
       Effect.gen(function*() {
         const deferred = yield* Deferred.make<Exit.Exit<unknown, unknown>, DurableExecutionError>()
         const runSeq = yield* Ref.make(0)
         const readSeq = yield* Ref.make(0)
         const awakeSeq = yield* Ref.make(0)
-        const invocation: Invocation = {
+        const invocation: ServiceInvocation = {
+          kind: "service",
           executionId,
           handlerName: handler.name,
           db,
-          stateDb,
-          objectKey,
+          stateDb: db,
           inputEncoded,
           runSeq,
           readSeq,
@@ -552,146 +577,98 @@ const makeRuntime = (
         return deferred
       })
 
-    // ── virtual-object admission control: a per-key FIFO inbox + serial drainer ──
-    // At most ONE invocation per key is forked at a time; the rest wait durably in
-    // the inbox. This is what makes exclusivity crash-safe: recovery drains an
-    // ordered queue rather than re-racing N incomplete executions (whose journaled
-    // state reads would otherwise let a reordered replay clobber an intervening write).
-    const nextHead = (scope: ObjectScope): Effect.Effect<Option.Option<InboxRow>, DurableExecutionError> =>
-      scope.state.inbox.query((rows) => Option.fromNullishOr([...rows].sort((a, b) => a.seq - b.seq)[0])).pipe(
-        Effect.mapError(toError("drain")),
-      )
+    // ── object call path: admit + exclusive drain on the owner ActorEvent log ──
+    // Map a handler Exit to the durable ActorExit. A success value is already
+    // encoded by `runObjectBody` so `attach` decodes it symmetrically.
+    const toActorExit = (exit: Exit.Exit<unknown, unknown>): ActorExit => {
+      if (Exit.isSuccess(exit)) {
+        return { _tag: "Success", value: exit.value }
+      }
+      const cause = exit.cause
+      if (Cause.hasInterruptsOnly(cause)) {
+        return { _tag: "Interrupt" }
+      }
+      const failure = Cause.findErrorOption(cause)
+      return Option.isSome(failure)
+        ? { _tag: "Failure", error: String(failure.value) }
+        : { _tag: "Defect", defect: Cause.pretty(cause) }
+    }
 
-    const drainOne = (objectKey: string, scope: ObjectScope, head: InboxRow): Effect.Effect<void> =>
-      Effect.gen(function*() {
-        // a head whose roster row is already terminal must NOT re-run: a crash between
-        // its completion (roster written, stream dropped) and its inbox dequeue leaves
-        // a stale row; re-running it would double-apply the method against live state.
-        // Dequeue-only — the same terminal guard `submit` uses, on the drain path.
-        const prior = yield* roster.get(head.executionId)
-        if (Option.isSome(prior) && (prior.value.status === "completed" || prior.value.status === "failed")) {
-          yield* scope.state.inbox.delete(head.executionId)
-          return
-        }
-        const handler = registry.get(head.handlerName)
-        if (handler === undefined) {
-          // an unregistered handler can't be run — fail it terminally so the queue moves
-          const now = yield* Clock.currentTimeMillis
-          yield* roster.upsert({
-            executionId: head.executionId,
-            handlerName: head.handlerName,
-            status: "failed",
-            error: `no handler ${JSON.stringify(head.handlerName)} registered`,
-            resultAcked: true,
-            updatedMs: now,
-          })
-        } else {
-          const db = yield* openWf(head.executionId)
-          yield* db.executions.insertOrGet({
-            executionId: head.executionId,
-            handlerName: head.handlerName,
-            input: head.input,
-            status: "running",
-            suspended: false,
-            objectKey,
-          })
-          // fork the head and await its completion (through any parks) before dequeue,
-          // so the next method only starts once this one is fully done — single-writer.
-          // ignore the exit: a handler failure is still a completion (recorded on the
-          // roster); we must always dequeue so the key's queue advances.
-          const deferred = yield* runExecution(handler, head.executionId, db, head.input, scope.state, objectKey)
-          yield* Deferred.await(deferred).pipe(Effect.ignore)
-        }
-        yield* scope.state.inbox.delete(head.executionId)
-      }).pipe(Effect.mapError(toError("drain")), Effect.ignore) // a single drain failure must not stall the key
-
-    const drainLoop = (objectKey: string, scope: ObjectScope): Effect.Effect<void> =>
-      nextHead(scope).pipe(
-        Effect.flatMap((head) =>
-          Option.match(head, {
-            onSome: (h) => drainOne(objectKey, scope, h).pipe(Effect.andThen(drainLoop(objectKey, scope))),
-            // empty: re-check under the mutex (closing the enqueue race), then stop
-            onNone: () =>
-              scope.mutex.withPermits(1)(
-                nextHead(scope).pipe(Effect.flatMap((again) =>
-                  Option.isNone(again) ? Ref.set(scope.draining, false).pipe(Effect.as(true)) : Effect.succeed(false),
-                )),
-              ).pipe(Effect.flatMap((stopped) => stopped ? Effect.void : drainLoop(objectKey, scope))),
-          }),
-        ),
-        // on a read failure, release the drainer so a later enqueue can restart it
-        Effect.catchCause(() => Ref.set(scope.draining, false)),
-      )
-
-    // start a drainer for this key if one isn't already running. CALLER HOLDS `mutex`.
-    const ensureDrainerLocked = (objectKey: string, scope: ObjectScope): Effect.Effect<void> =>
-      Ref.get(scope.draining).pipe(Effect.flatMap((on) =>
-        on ? Effect.void : Ref.set(scope.draining, true).pipe(
-          Effect.andThen(Effect.forkIn(drainLoop(objectKey, scope), engineScope)),
-          Effect.asVoid,
-        ),
-      ))
-
-    const enqueueObject = (
-      objectKey: string,
-      executionId: string,
-      handlerName: string,
+    // Run one accepted object call with an object-backed invocation: `state` is
+    // journaled to the owner stream, other durable primitives fail clearly.
+    const runObjectBody = (
+      handler: RegisteredHandler,
+      callId: string,
+      method: string,
       inputEncoded: unknown,
-    ): Effect.Effect<void, DurableExecutionError> =>
-      objectScopeFor(objectKey).pipe(Effect.flatMap((scope) =>
-        scope.mutex.withPermits(1)(
-          Effect.gen(function*() {
-            // append to the durable FIFO (seq = max+1 among the not-yet-completed),
-            // publish a roster row so `attach`/`poll` can find it, then ensure draining.
-            const seq = yield* scope.state.inbox.query((rows) => rows.reduce((m, r) => Math.max(m, r.seq), 0) + 1)
-            yield* scope.state.inbox.insert({ executionId, seq, handlerName, input: inputEncoded })
-            const now = yield* Clock.currentTimeMillis
-            yield* roster.upsert({ executionId, handlerName, status: "running", objectKey, updatedMs: now })
-            yield* ensureDrainerLocked(objectKey, scope)
-          }),
-        ).pipe(Effect.mapError(toError("enqueue"))),
-      ))
+      state: ObjectStateBackend,
+    ): Effect.Effect<ActorExit, DurableExecutionError, S2Client> =>
+      Effect.gen(function*() {
+        const invocation: ObjectInvocation = { kind: "object", callId, method, inputEncoded, state }
+        const exit = yield* handler.program.pipe(
+          Effect.provideService(ActiveInvocation, Option.some(invocation)),
+          Effect.provideService(DurableExecutionRuntime, api),
+          Effect.exit,
+        )
+        if (Exit.isSuccess(exit)) {
+          const encoded = yield* encode(handler.output as Schema.Codec<unknown, unknown, never, never>, exit.value)
+          return { _tag: "Success", value: encoded }
+        }
+        return toActorExit(exit)
+      })
+
+    // The drainer's per-head runner for an object: resolve the head's handler by
+    // method and run it; the store appends the resulting `Completed`.
+    const makeRunHead = (object: string): RunHead => (call) => {
+      const key = `${object}/${call.method}`
+      const handler = objectHandlers.get(key)
+      return handler === undefined
+        ? Effect.succeed<ActorExit>({ _tag: "Failure", error: `no handler ${JSON.stringify(key)} registered` })
+        : runObjectBody(handler, call.callId, call.method, call.input, call.state)
+    }
 
     const submit = <I, O, E, R>(
       handler: Handler<I, O, E, R>,
       executionId: string,
       input: I,
-      objectKey?: string,
     ): Effect.Effect<void, DurableExecutionError, R> =>
       Effect.gen(function*() {
+        const inputEncoded = yield* encode(handler.input as Schema.Codec<unknown, unknown, never, never>, input)
+        // An object call id self-routes to its owner ActorEvent log; any other id is
+        // a stateless service execution on the WorkflowDb/roster path.
+        const parts = yield* decodeObjectCallId(executionId).pipe(
+          Effect.match({ onFailure: () => Option.none<ObjectCallIdParts>(), onSuccess: Option.some }),
+        )
+        if (Option.isSome(parts)) {
+          // eslint-disable-next-line local/no-launder-cast -- a compiled object handler is Handler<unknown,unknown,never,never>; submit's generics are existential here
+          objectHandlers.set(`${parts.value.object}/${parts.value.method}`, handler as unknown as RegisteredHandler)
+          yield* provideClient(store.admit(executionId, parts.value, inputEncoded)) // durable admission (idempotent)
+          // fork the exclusive drainer; it runs the pending head(s) to completion.
+          yield* Effect.forkIn(
+            provideClient(store.drain(parts.value.object, parts.value.key, makeRunHead(parts.value.object))),
+            engineScope,
+          )
+          return
+        }
+
+        // service: each call is an independent execution — genesis + fork now.
         const live = yield* Ref.get(running)
         if (HashMap.has(live, executionId)) return // already owned here — idempotent
-
-        // already finished? a terminal roster row means a re-submit must NOT re-run
-        // (the execution's stream is gone; the result lives on in the roster).
         const prior = yield* roster.get(executionId).pipe(Effect.mapError(toError("submit")))
         if (Option.isSome(prior) && (prior.value.status === "completed" || prior.value.status === "failed")) return
-
-        const inputEncoded = yield* encode(handler.input as Schema.Codec<unknown, unknown, never, never>, input)
-
-        if (objectKey === undefined) {
-          // service: each call is an independent execution — genesis + fork now.
-          const db = yield* openWf(executionId).pipe(Effect.mapError(toError("submit")))
-          const now = yield* Clock.currentTimeMillis
-          yield* db.executions.insertOrGet({
-            executionId,
-            handlerName: handler.name,
-            input: inputEncoded,
-            status: "running",
-            suspended: false,
-          }).pipe(Effect.mapError(toError("submit")))
-          yield* roster.upsert({ executionId, handlerName: handler.name, status: "running", updatedMs: now }).pipe(
-            Effect.mapError(toError("submit")),
-          )
-          yield* runExecution(handler, executionId, db, inputEncoded, db, undefined)
-        } else {
-          // object: enqueue into the per-key FIFO; the serial drainer runs it in turn.
-          // self-register so the live drainer can run it by name (recovery uses the
-          // registry seeded by `serviceLayer`).
-          // eslint-disable-next-line local/no-launder-cast -- a registered object handler is compiled as Handler<unknown,unknown,never,never>; submit's generic params are existential here
-          registry.set(handler.name, handler as unknown as RegisteredHandler)
-          yield* enqueueObject(objectKey, executionId, handler.name, inputEncoded)
-        }
+        const db = yield* openWf(executionId).pipe(Effect.mapError(toError("submit")))
+        const now = yield* Clock.currentTimeMillis
+        yield* db.executions.insertOrGet({
+          executionId,
+          handlerName: handler.name,
+          input: inputEncoded,
+          status: "running",
+          suspended: false,
+        }).pipe(Effect.mapError(toError("submit")))
+        yield* roster.upsert({ executionId, handlerName: handler.name, status: "running", updatedMs: now }).pipe(
+          Effect.mapError(toError("submit")),
+        )
+        yield* runExecution(handler, executionId, db, inputEncoded)
       })
 
     // ── boot recovery (SDD §B5): re-drive running/suspended executions ─────────
@@ -707,41 +684,65 @@ const makeRuntime = (
             const db = yield* openWf(executionId)
             const row = yield* db.executions.get(executionId)
             const inputEncoded = Option.match(row, { onNone: () => undefined, onSome: (r) => r.input })
-            yield* runExecution(handler, executionId, db, inputEncoded, db, undefined)
+            yield* runExecution(handler, executionId, db, inputEncoded)
           }).pipe(Effect.ignore), // one execution's recovery must not abort boot
       })
 
-    // start (or resume) the serial drainer for an object key — it reads the durable
-    // inbox and drives the head, so recovery never re-races queued invocations.
-    const recoverObjectKey = (objectKey: string): Effect.Effect<void> =>
-      objectScopeFor(objectKey).pipe(
-        Effect.flatMap((scope) => scope.mutex.withPermits(1)(ensureDrainerLocked(objectKey, scope))),
-        Effect.ignore,
-      )
-
+    // SLICE A RECOVERY GAP (consolidation SDD, Slice A "temporary recovery gap"):
+    // object boot-recovery is intentionally NOT wired here. The old per-key inbox
+    // drainer was deleted with the rest of the legacy object path; the S2 owner-
+    // stream recovery (enumerate keys + restart the pending head) lands in Slice B.
+    // Only stateless services are re-driven at boot; objects no longer write the
+    // roster, so this query returns service rows only.
     const bootRecover = roster
-      .query((rows) => rows.filter((r) => r.status === "running" || r.status === "suspended"))
+      .query((rows) =>
+        rows.filter((r) => (r.status === "running" || r.status === "suspended") && r.objectKey === undefined),
+      )
       .pipe(
-        Effect.flatMap((rows) => {
-          // services re-run independently; object methods are drained per key (ordered),
-          // never re-run individually — that ordering is the crash-safety guarantee.
-          const services = rows.filter((r) => r.objectKey === undefined)
-          const objectKeys = [...new Set(rows.flatMap((r) => r.objectKey === undefined ? [] : [r.objectKey]))]
-          return Effect.all([
-            Effect.forEach(services, (r) => recoverExecution(r.executionId, r.handlerName), { discard: true }),
-            Effect.forEach(objectKeys, (k) => recoverObjectKey(k), { discard: true }),
-          ], { discard: true })
-        }),
+        Effect.flatMap((services) =>
+          Effect.forEach(services, (r) => recoverExecution(r.executionId, r.handlerName), { discard: true }),
+        ),
         Effect.ignore, // recovery is best-effort; never fail engine startup on it
       )
+
+    // An id that decodes as an object call id routes to the owner projection.
+    const decodeParts = (id: string): Effect.Effect<Option.Option<ObjectCallIdParts>, DurableExecutionError> =>
+      decodeObjectCallId(id).pipe(
+        Effect.match({ onFailure: () => Option.none<ObjectCallIdParts>(), onSuccess: Option.some }),
+      )
+
+    // Block on an object call by folding its owner projection until it settles —
+    // no residency, no roster (the durable `Completed` event is the source of truth).
+    const attachObject = <A, I>(
+      callId: string,
+      parts: ObjectCallIdParts,
+      schema: Schema.Codec<A, I, never, never>,
+    ): Effect.Effect<A, DurableExecutionError> =>
+      provideClient(store.status(callId, parts)).pipe(Effect.flatMap((st): Effect.Effect<A, DurableExecutionError> => {
+        switch (st._tag) {
+          case "Success":
+            return decode(schema, st.value)
+          case "Failure":
+            return fail("attach", st.error)
+          case "Defect":
+            return fail("attach", st.defect)
+          case "Interrupt":
+            return fail("attach", "call was interrupted")
+          case "Pending":
+            return Effect.sleep(Duration.millis(25)).pipe(Effect.andThen(attachObject(callId, parts, schema)))
+        }
+      }))
 
     const attach = <A, I>(
       executionId: string,
       schema: Schema.Codec<A, I, never, never>,
     ): Effect.Effect<A, DurableExecutionError> =>
       Effect.gen(function*() {
-        // if we own it, wait for it to settle — `complete` has written the roster
-        // result by the time the waiter resolves, so both paths decode via `schema`.
+        const parts = yield* decodeParts(executionId)
+        if (Option.isSome(parts)) {
+          return yield* attachObject(executionId, parts.value, schema)
+        }
+        // service: if we own it, wait for the waiter; then read + decode the roster.
         const live = yield* Ref.get(running)
         const entry = HashMap.get(live, executionId)
         if (Option.isSome(entry)) {
@@ -755,15 +756,12 @@ const makeRuntime = (
               }),
             )
           }
-          // success: fall through to read + decode the durable roster result
         }
         const row = yield* roster.get(executionId).pipe(Effect.mapError(toError("attach")))
         if (Option.isNone(row)) return yield* fail("attach", `unknown execution: ${executionId}`)
         if (row.value.status === "completed") return yield* decode(schema, row.value.result)
         if (row.value.status === "failed") return yield* fail("attach", row.value.error ?? "execution failed")
-        // running/suspended but not (yet) owned here — e.g. an object method still
-        // queued in its key's inbox, or one awaiting recovery. Wait for it: re-check
-        // the running map (then take the waiter) and the roster until it settles.
+        // running/suspended but not (yet) owned here — wait and re-check.
         yield* Effect.sleep(Duration.millis(25))
         return yield* attach(executionId, schema)
       })
@@ -772,16 +770,17 @@ const makeRuntime = (
       executionId: string,
       schema: Schema.Codec<A, I, never, never>,
     ): Effect.Effect<Option.Option<A>, DurableExecutionError> =>
-      roster.get(executionId).pipe(
-        Effect.mapError(toError("poll")),
-        Effect.flatMap((row) =>
-          Option.isSome(row) && row.value.status === "completed"
-            ? decode(schema, row.value.result).pipe(
-              Effect.map(Option.some),
-            )
-            : Effect.succeedNone,
-        ),
-      )
+      Effect.gen(function*() {
+        const parts = yield* decodeParts(executionId)
+        if (Option.isSome(parts)) {
+          const st = yield* provideClient(store.status(executionId, parts.value))
+          return st._tag === "Success" ? Option.some(yield* decode(schema, st.value)) : Option.none<A>()
+        }
+        const row = yield* roster.get(executionId).pipe(Effect.mapError(toError("poll")))
+        return Option.isSome(row) && row.value.status === "completed"
+          ? Option.some(yield* decode(schema, row.value.result))
+          : Option.none<A>()
+      })
 
     const api: DurableExecutionRuntimeApi = {
       submit,

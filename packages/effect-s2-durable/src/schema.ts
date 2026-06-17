@@ -72,32 +72,10 @@ export class WorkflowDb extends StreamDb<WorkflowDb>("wf")({
   clockWakeups: ClockWakeupRow,
 }, ExecutionId) {}
 
-// ── virtual-object state (persistent per-key store, stream `obj/<name:key>`) ──
-
-/**
- * The durable FIFO inbox of a virtual object: the queued (not-yet-completed)
- * method invocations for one key, in `seq` order. It is the admission-control
- * ledger — at most one invocation per key is *active* (forked) at a time, the rest
- * wait here — so recovery has an ordered queue to drain, never a set of racing
- * incomplete executions. A row is removed only once its invocation completes.
- */
-export class ObjectInboxRow extends Table<ObjectInboxRow>("objectInbox")({
-  executionId: Schema.String.pipe(primaryKey),
-  /** Monotonic per-key order; the drainer always runs the lowest `seq` first. */
-  seq: Schema.Number,
-  handlerName: Schema.String,
-  input: Schema.Unknown,
-}) {}
-
-/**
- * The durable state of a virtual `object`, scoped to one `(objectName, key)` pair
- * and **never dropped** (it outlives any single method execution — that is what
- * makes the object stateful). A method's `state(Table)` binding reaches its rows
- * through the generic `db.table(...)` accessor, exactly as a service does over its
- * own execution stream; the declared `inbox` is the per-key admission queue. The
- * instance key is `"name:key"`.
- */
-export class ObjectStateDb extends StreamDb<ObjectStateDb>("obj")({ inbox: ObjectInboxRow }) {}
+// Virtual-object state moved to the per-owner `ActorEvent` log (see
+// `src/actor/`): admission, exclusive drain, journaled `state`, and completion now
+// live on one ordered owner stream, replacing the old `obj/<name:key>` inbox +
+// state store (consolidation SDD deletion targets).
 
 // ── roster (shared cross-execution index, stream `roster/<key>`) ──────────────
 

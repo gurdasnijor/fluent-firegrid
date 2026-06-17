@@ -1,0 +1,203 @@
+import { Effect, Option, Schema } from "effect"
+
+/**
+ * Internal object mechanics for `DurableExecutionRuntime` (consolidation SDD).
+ *
+ * NOT a public API and NOT a sibling runtime: these are the durable-event model
+ * the runtime's object call path folds over. One ordered `ActorEvent` log per
+ * `(object, key)` owner stream is the system of record; the latest-value view is a
+ * pure projection (`replay`) — never a separate table.
+ *
+ * Slice A scope: `Accepted` (admission) + `StateChanged`/`Journaled` (state) +
+ * `Completed` (result). Signals/timers/run-journal land in later vertical slices.
+ */
+
+/** The durable outcome of a settled call (JSON-safe at the event boundary). */
+export const ActorExit = Schema.Union([
+  // `value` is optional: a void-returning method encodes `undefined`, which JSON
+  // drops — the key must be allowed to be absent on decode.
+  Schema.TaggedStruct("Success", { value: Schema.optional(Schema.Unknown) }),
+  Schema.TaggedStruct("Failure", { error: Schema.String }),
+  Schema.TaggedStruct("Interrupt", {}),
+  Schema.TaggedStruct("Defect", { defect: Schema.String }),
+])
+export type ActorExit = typeof ActorExit.Type
+
+/** Admission: a method call entered the owner's FIFO (the head runs exclusively). */
+const Accepted = Schema.TaggedStruct("Accepted", {
+  callId: Schema.String,
+  method: Schema.String,
+  // optional: a no-arg method (`*value()`) has `undefined` input (JSON drops it).
+  input: Schema.optional(Schema.Unknown),
+})
+
+/** A durable user-state mutation (`state(Table).set/delete`). */
+const StateChanged = Schema.TaggedStruct("StateChanged", {
+  op: Schema.Literals(["set", "delete"]),
+  table: Schema.String,
+  key: Schema.String,
+  value: Schema.optional(Schema.Unknown),
+})
+
+/** A journaled fact (a `state.get` read), replayed verbatim so RMW is crash-stable. */
+const Journaled = Schema.TaggedStruct("Journaled", {
+  callId: Schema.String,
+  step: Schema.String,
+  value: Schema.Unknown,
+})
+
+/** Terminal: the call settled; its result outlives the running fiber. */
+const Completed = Schema.TaggedStruct("Completed", {
+  callId: Schema.String,
+  exit: ActorExit,
+})
+
+/** The one event type appended to an owner stream. */
+export const ActorEvent = Schema.Union([Accepted, StateChanged, Journaled, Completed])
+export type ActorEvent = typeof ActorEvent.Type
+
+/** A decoded log record: its S2 `seq_num` and event. */
+export interface LogEntry {
+  readonly seqNum: number
+  readonly event: ActorEvent
+}
+
+// ── schema-owned call id (self-routing, no side index) ───────────────────────
+
+/**
+ * An object call id encodes enough owner identity to derive the owner stream by a
+ * pure decode — `attach(callId)`/`poll(callId)` route without residency or a
+ * roster. `key` is the owner key (through the owner-key codec; `String` today);
+ * `object` is the definition name; `nonce` is the idempotency horizon.
+ */
+const ObjectCallId = Schema.fromJsonString(
+  Schema.Struct({
+    object: Schema.String,
+    key: Schema.String,
+    method: Schema.String,
+    nonce: Schema.String,
+  }),
+)
+export type ObjectCallIdParts = typeof ObjectCallId.Type
+
+/** Encode `{ object, key, method, nonce }` into the opaque call id string. */
+export const encodeObjectCallId = (parts: ObjectCallIdParts): Effect.Effect<string, Schema.SchemaError> =>
+  Schema.encodeEffect(ObjectCallId)(parts).pipe(Effect.withSpan("effect-s2-durable.callId.encode"))
+
+/** Decode a call id string back to its parts — owner recovery is a pure decode. */
+export const decodeObjectCallId = (id: string): Effect.Effect<ObjectCallIdParts, Schema.SchemaError> =>
+  Schema.decodeUnknownEffect(ObjectCallId)(id).pipe(Effect.withSpan("effect-s2-durable.callId.decode"))
+
+// ── projection (pure fold of the log) ────────────────────────────────────────
+
+/** The latest-value view folded from the log. Not durable — always re-derivable. */
+export interface ActorSnapshot {
+  /** callIds in `Accepted` order; the head is the lowest not-yet-`Completed`. */
+  readonly order: ReadonlyArray<string>
+  readonly results: ReadonlyMap<string, ActorExit>
+  /** table -> key -> latest value. */
+  readonly state: ReadonlyMap<string, ReadonlyMap<string, unknown>>
+  /** callId -> step -> journaled value. */
+  readonly journal: ReadonlyMap<string, ReadonlyMap<string, unknown>>
+}
+
+const empty: ActorSnapshot = {
+  order: [],
+  results: new Map(),
+  state: new Map(),
+  journal: new Map(),
+}
+
+const setNested = (
+  m: ReadonlyMap<string, ReadonlyMap<string, unknown>>,
+  outer: string,
+  inner: string,
+  value: unknown,
+): ReadonlyMap<string, ReadonlyMap<string, unknown>> => {
+  const next = new Map(m)
+  const sub = new Map(next.get(outer) ?? [])
+  sub.set(inner, value)
+  next.set(outer, sub)
+  return next
+}
+
+const deleteNested = (
+  m: ReadonlyMap<string, ReadonlyMap<string, unknown>>,
+  outer: string,
+  inner: string,
+): ReadonlyMap<string, ReadonlyMap<string, unknown>> => {
+  const next = new Map(m)
+  const sub = new Map(next.get(outer) ?? [])
+  sub.delete(inner)
+  next.set(outer, sub)
+  return next
+}
+
+/** Fold one event into the snapshot. */
+export const transition = (snapshot: ActorSnapshot, entry: LogEntry): ActorSnapshot => {
+  const event = entry.event
+  switch (event._tag) {
+    case "Accepted":
+      return snapshot.order.includes(event.callId)
+        ? snapshot
+        : { ...snapshot, order: [...snapshot.order, event.callId] }
+    case "Completed": {
+      const results = new Map(snapshot.results)
+      results.set(event.callId, event.exit)
+      return { ...snapshot, results }
+    }
+    case "StateChanged":
+      return {
+        ...snapshot,
+        state: event.op === "set"
+          ? setNested(snapshot.state, event.table, event.key, event.value)
+          : deleteNested(snapshot.state, event.table, event.key),
+      }
+    case "Journaled":
+      return { ...snapshot, journal: setNested(snapshot.journal, event.callId, event.step, event.value) }
+  }
+}
+
+/** Fold an entire log to its projection. */
+export const replay = (entries: ReadonlyArray<LogEntry>): ActorSnapshot => entries.reduce(transition, empty)
+
+/** Has this call settled? */
+export const isDone = (snapshot: ActorSnapshot, callId: string): boolean => snapshot.results.has(callId)
+
+/** The latest durable value of `table[key]`, if present. */
+export const stateValue = (snapshot: ActorSnapshot, table: string, key: string): Option.Option<unknown> =>
+  Option.fromNullishOr(snapshot.state.get(table)).pipe(
+    Option.flatMap((sub) => (sub.has(key) ? Option.some(sub.get(key)) : Option.none())),
+  )
+
+/** A journaled step value for `callId`, if recorded. */
+export const journalValue = (snapshot: ActorSnapshot, callId: string, step: string): Option.Option<unknown> =>
+  Option.fromNullishOr(snapshot.journal.get(callId)).pipe(
+    Option.flatMap((sub) => (sub.has(step) ? Option.some(sub.get(step)) : Option.none())),
+  )
+
+/** The user-visible status of a call, folded from its `Completed` event (if any). */
+export type CallStatus =
+  | { readonly _tag: "Pending" }
+  | { readonly _tag: "Success"; readonly value: unknown }
+  | { readonly _tag: "Failure"; readonly error: string }
+  | { readonly _tag: "Interrupt" }
+  | { readonly _tag: "Defect"; readonly defect: string }
+
+/** Project a call's status from the snapshot. */
+export const callStatus = (snapshot: ActorSnapshot, callId: string): CallStatus => {
+  const exit = snapshot.results.get(callId)
+  if (exit === undefined) {
+    return { _tag: "Pending" }
+  }
+  switch (exit._tag) {
+    case "Success":
+      return { _tag: "Success", value: exit.value }
+    case "Failure":
+      return { _tag: "Failure", error: exit.error }
+    case "Interrupt":
+      return { _tag: "Interrupt" }
+    case "Defect":
+      return { _tag: "Defect", defect: exit.defect }
+  }
+}
