@@ -15,7 +15,16 @@ export {
 } from "./primitives.ts"
 export { DurableExecutionRuntime } from "./Runtime.ts"
 export type { CallTarget, DurableExecutionRuntimeApi } from "./Runtime.ts"
-export { client, object, objectClient, objectSendClient, sendClient, service, serviceLayer } from "./service.ts"
+export {
+  client,
+  object,
+  objectClient,
+  objectSendClient,
+  sendClient,
+  service,
+  serviceLayer,
+  sharedClient,
+} from "./service.ts"
 export type {
   HandlerInput,
   HandlerOutput,
@@ -27,6 +36,7 @@ export type {
   ServiceClient,
   ServiceConfig,
   ServiceDefinition,
+  SharedClient,
 } from "./service.ts"
 export {
   ClockWakeupRow,

@@ -91,28 +91,36 @@ export const service = <const Name extends string, H extends Handlers>(
   compiled: compileHandlers(config.name, config.handlers, config.schemas as Record<string, HandlerSchemas> | undefined),
 })
 
-/** A keyed virtual-object definition — durable state + exclusive methods, per key. */
-export interface ObjectDefinition<Name extends string, H extends Handlers> {
+/** A keyed virtual-object definition — durable state + exclusive methods (+ shared read-only methods), per key. */
+export interface ObjectDefinition<Name extends string, H extends Handlers, S extends Handlers = Record<never, never>> {
   readonly name: Name
   readonly kind: "object"
   readonly handlers: H
+  readonly shared: S
   readonly compiled: Record<string, Compiled>
+  readonly compiledShared: Record<string, Compiled>
 }
 
 /**
  * Define a durable **virtual object** — a keyed, stateful entity. Each `(name, key)`
- * has its own persistent `state(Table)` store that survives across calls, and a
- * key's methods run **exclusively** (single-writer, serialized). Authoring is
- * identical to `service` (generator methods, input as the argument); the difference
- * is the call surface: `client(obj, key).method(input)`.
+ * has its own persistent `state(Table)` store that survives across calls; `handlers`
+ * run **exclusively** (single-writer, serialized via `client(obj, key)`), while
+ * optional `shared` handlers run **concurrently, read-only** over a snapshot (via
+ * `sharedClient(obj, key)`) and never block, nor are blocked by, the exclusive drainer.
  */
-export const object = <const Name extends string, H extends Handlers>(
-  config: ServiceConfig<Name, H>,
-): ObjectDefinition<Name, H> => ({
+export const object = <const Name extends string, H extends Handlers, S extends Handlers = Record<never, never>>(
+  config: ServiceConfig<Name, H> & { readonly shared?: S; readonly sharedSchemas?: SchemasFor<S> },
+): ObjectDefinition<Name, H, S> => ({
   name: config.name,
   kind: "object",
   handlers: config.handlers,
+  shared: (config.shared ?? {}) as S,
   compiled: compileHandlers(config.name, config.handlers, config.schemas as Record<string, HandlerSchemas> | undefined),
+  compiledShared: compileHandlers(
+    config.name,
+    config.shared ?? {},
+    config.sharedSchemas as Record<string, HandlerSchemas> | undefined,
+  ),
 })
 
 // ── clients ──────────────────────────────────────────────────────────────
@@ -139,6 +147,13 @@ export type SendClient<H extends Handlers> = {
   readonly [K in keyof H]: (
     ...args: InvokeArgs<HandlerInput<H[K]>>
   ) => Effect.Effect<string, DurableExecutionError, DurableExecutionRuntime>
+}
+
+/** Read-only call surface for an object's SHARED handlers: `sharedClient(obj, key).method(input)`. */
+export type SharedClient<S extends Handlers> = {
+  readonly [K in keyof S]: (
+    ...args: InvokeArgs<HandlerInput<S[K]>>
+  ) => Effect.Effect<HandlerOutput<S[K]>, DurableExecutionError, DurableExecutionRuntime>
 }
 
 /** A virtual object's identity for a call: its definition name + the typed key. */
@@ -301,6 +316,34 @@ export const objectSendClient = <Name extends string, H extends Handlers>(
       ] as const,
     ),
   ) as unknown as SendClient<H>
+
+/**
+ * A typed **shared** (read-only) call surface for a virtual object:
+ * `sharedClient(obj, key).method(input)`. Each call runs ephemerally over a folded
+ * snapshot — no admission, no exclusive lock — so reads never block (nor are blocked
+ * by) the drainer. Shared handlers cannot write state or use durable primitives.
+ */
+export const sharedClient = <Name extends string, H extends Handlers, S extends Handlers>(
+  def: ObjectDefinition<Name, H, S>,
+  key: string,
+): SharedClient<S> =>
+  // eslint-disable-next-line local/no-launder-cast -- dynamic proxy; each Effect<unknown> is the typed Effect<HandlerOutput> recovered structurally by SharedClient<S>
+  Object.fromEntries(
+    Object.entries(def.compiledShared).map(([method, compiled]) =>
+      [
+        method,
+        (input: unknown) =>
+          Effect.flatMap(DurableExecutionRuntime, (rt) =>
+            rt.sharedCall(
+              compiled.handler,
+              def.name,
+              key,
+              input,
+              compiled.handler.output as Schema.Codec<unknown, unknown, never, never>,
+            )),
+      ] as const,
+    ),
+  ) as unknown as SharedClient<S>
 
 /**
  * The engine layer **seeded with these definitions' handlers** so boot recovery can

@@ -12,6 +12,7 @@ import {
   run,
   sendClient,
   serviceLayer,
+  sharedClient,
   signal,
   sleep,
   state,
@@ -45,6 +46,13 @@ const counter = object({
     *value() {
       const st = state(Counter)
       return Option.match(yield* st.get("v"), { onNone: () => 0, onSome: (r) => r.value })
+    },
+    // an exclusive call that records a marker then PARKS — holding the per-key drainer
+    // lock open so a concurrent shared read can be observed running unblocked.
+    *holdOpen(token: string) {
+      holdMarkers.add(token)
+      yield* signal("release", Schema.Boolean) // park, holding the exclusive lock
+      return token
     },
     // same as add, but declared with a TRANSFORM input codec (NumberFromString:
     // decoded number ≠ encoded string) — proves a CHILD call encodes input through
@@ -93,6 +101,22 @@ const counter = object({
       return a + b
     },
   },
+  // SHARED (read-only) handlers: run concurrently over a folded snapshot, never
+  // admitted, never blocked by the exclusive drainer. Cannot write state.
+  shared: {
+    *peek() {
+      const st = state(Counter)
+      return Option.match(yield* st.get("v"), { onNone: () => 0, onSome: (r) => r.value })
+    },
+    // echoes its input — declared with a TRANSFORM input codec (NumberFromString:
+    // decoded number ≠ encoded string) to prove the input encode boundary is applied.
+    *echoNum(n: number) {
+      return n
+    },
+  },
+  sharedSchemas: {
+    echoNum: { input: Schema.NumberFromString, output: Schema.Number },
+  },
   schemas: {
     addStr: { input: Schema.NumberFromString, output: Schema.Number },
   },
@@ -100,6 +124,14 @@ const counter = object({
 
 // real executions of the `tally` run action (a duplicate/replayed call must NOT bump it).
 const runExecutions = { count: 0 }
+// marker set: a `holdOpen` exclusive call records its token once it is parked.
+const holdMarkers = new Set<string>()
+const waitForHold = (token: string): Effect.Effect<void> =>
+  Effect.suspend((): Effect.Effect<void> =>
+    holdMarkers.has(token)
+      ? Effect.void
+      : Effect.sleep(Duration.millis(10)).pipe(Effect.flatMap(() => waitForHold(token)))
+  )
 
 // A second object that durably CALLs / SENDs to the counter from inside its handlers
 // (restate's proxy pattern) — producer-only admission to another owner stream.
@@ -228,6 +260,33 @@ export default defineValidation({
           const start = yield* Clock.currentTimeMillis
           assertEquals(yield* client(counter, keyFor("nap")).nap(), "napped")
           assertEquals((yield* Clock.currentTimeMillis) - start >= 60, true)
+        }),
+    },
+    {
+      id: "EXECUTION.3",
+      description:
+        "a SHARED (read-only) object handler runs CONCURRENTLY over a folded snapshot WHILE an exclusive "
+        + "call is parked holding the drainer lock — it returns promptly over the last committed state and "
+        + "is never admitted/blocked (an admitted call would queue behind the parked head and hang). The "
+        + "input is decoded through the handler's (transform) input codec.",
+      evidence:
+        'spans.exists(s, named(s, "effect-s2-durable.object.shared")) && spans.exists(s, named(s, "effect-s2-durable.object.snapshot")) && spans.exists(s, named(s, "effect-s2-durable.log.read"))',
+      claim: ({ key }) =>
+        Effect.gen(function*() {
+          holdMarkers.delete(key)
+          yield* client(counter, key).add(5) // commit state v = 5
+          // start a long EXCLUSIVE call that parks holding the per-key drainer lock.
+          const holdId = yield* sendClient(counter, key).holdOpen(key)
+          yield* waitForHold(key) // the exclusive head is now parked, lock held
+          // a SHARED read runs concurrently and returns promptly over the committed
+          // snapshot — it is not queued behind the parked exclusive head (no admission).
+          assertEquals(yield* sharedClient(counter, key).peek(), 5)
+          // a transform input codec (NumberFromString) round-trips through the encode
+          // boundary — proving shared input is encoded, not stored raw.
+          assertEquals(yield* sharedClient(counter, key).echoNum(42), 42)
+          // release the parked exclusive call.
+          yield* resolveSignal(holdId, "release", Schema.Boolean, true)
+          yield* attach(holdId, Schema.String)
         }),
     },
     {
