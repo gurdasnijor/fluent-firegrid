@@ -167,17 +167,20 @@ export interface StreamDbClass<T extends Tables, Key extends KeySchema> {
    */
   readonly open: (key: Key["Type"], options?: OpenOptions) => Effect.Effect<StreamDbInstance<T>, S2StreamDbError, S2Client>
   /**
-   * The instance keys that currently exist as streams under `basePath`
-   * (discovery, not name construction): list by prefix, strip `basePath`, decode
-   * each suffix through `key`. `keyPrefix` narrows enumeration to matching keys;
-   * streams being deleted are excluded.
+   * The typed instance keys that currently exist as streams under `basePath`:
+   * `listStreams` by `basePath` prefix, strip `basePath`, decode each suffix
+   * through the `key` schema — discovery that returns typed keys (only this layer
+   * can invert stream-name → key), not name construction. Streams being deleted
+   * are excluded. No `keyPrefix`: an encoded-prefix filter bypasses the key
+   * schema, so schema-owned prefix enumeration is a follow-up.
    */
-  readonly list: (
-    options?: { readonly keyPrefix?: string },
-  ) => Effect.Effect<ReadonlyArray<Key["Type"]>, S2StreamDbError, S2Client>
-  /** Whether `key`'s stream exists, without creating it (`checkTail`). */
-  readonly exists: (key: Key["Type"]) => Effect.Effect<boolean, S2StreamDbError, S2Client>
-  /** Open `key` only if its stream already exists; never creates (unlike `open`). */
+  readonly list: () => Effect.Effect<ReadonlyArray<Key["Type"]>, S2StreamDbError, S2Client>
+  /**
+   * Open `key` only if its stream already exists; never creates (unlike `open`,
+   * which creates-if-absent). Existence is decided by the open itself (the
+   * preload's `checkTail`), so there is no separate probe to race against — a
+   * missing stream resolves to `None`.
+   */
   readonly openExisting: (
     key: Key["Type"],
   ) => Effect.Effect<Option.Option<StreamDbInstance<T>>, S2StreamDbError, S2Client>
@@ -217,10 +220,8 @@ export const StreamDb =
           Effect.flatMap((segment) =>
             openStream(`${basePath}/${segment}`, tables, options?.config === undefined ? {} : { config: options.config })),
         )
-      static readonly list = (
-        options?: { readonly keyPrefix?: string },
-      ): Effect.Effect<ReadonlyArray<Key["Type"]>, S2StreamDbError, S2Client> =>
-        listStreamInfos(`${prefix}${options?.keyPrefix ?? ""}`, undefined, []).pipe(
+      static readonly list = (): Effect.Effect<ReadonlyArray<Key["Type"]>, S2StreamDbError, S2Client> =>
+        listStreamInfos(prefix, undefined, []).pipe(
           Effect.flatMap((infos) =>
             Effect.forEach(
               infos.filter((info) => info.deletedAt == null),
@@ -230,24 +231,22 @@ export const StreamDb =
           Effect.withSpan("effect-s2-stream-db.list", { attributes: { basePath } }),
           Effect.mapError(toError("list")),
         )
-      static readonly exists = (value: Key["Type"]): Effect.Effect<boolean, S2StreamDbError, S2Client> =>
-        encodeKey(value).pipe(
-          Effect.flatMap((segment) => S2Client.checkTail(`${basePath}/${segment}`).pipe(Effect.as(true))),
-          Effect.catch((cause) => (cause instanceof S2NotFound ? Effect.succeed(false) : Effect.fail(cause))),
-          Effect.withSpan("effect-s2-stream-db.exists", { attributes: { basePath } }),
-          Effect.mapError(toError("exists")),
-        )
+      // Race-free: the open's own preload `checkTail` is the single authoritative
+      // existence check — `create: false` propagates `S2NotFound`, which maps to
+      // `None`. No separate `exists` probe to race against a concurrent drop.
       static readonly openExisting = (
         value: Key["Type"],
       ): Effect.Effect<Option.Option<StreamDbInstance<T>>, S2StreamDbError, S2Client> =>
-        Effect.flatMap(StreamDbImpl.exists(value), (present) =>
-          present
-            ? encodeKey(value).pipe(
-              Effect.mapError(toError("openExisting")),
-              Effect.flatMap((segment) => openStream(`${basePath}/${segment}`, tables, { create: false })),
-              Effect.map(Option.some),
-            )
-            : Effect.succeedNone)
+        encodeKey(value).pipe(
+          Effect.mapError(toError("openExisting")),
+          Effect.flatMap((segment) => openStream(`${basePath}/${segment}`, tables, { create: false })),
+          Effect.map(Option.some<StreamDbInstance<T>>),
+          Effect.catch((error) =>
+            error instanceof S2StreamDbError && error.cause instanceof S2NotFound
+              ? Effect.succeedNone
+              : Effect.fail(error)),
+          Effect.withSpan("effect-s2-stream-db.openExisting", { attributes: { basePath } }),
+        )
     }
     // eslint-disable-next-line local/no-launder-cast -- class-factory: the static shape (typed `open`/`tables`/`key` + `new()`) can't be expressed structurally on a class declaration
     return StreamDbImpl as unknown as StreamDbClass<T, Key>
@@ -377,9 +376,14 @@ const openStream = <T extends Tables>(
     }
     // An empty stream (tail 0) is a 416 on read and a never-appended one is a 404 —
     // both mean "nothing to fold". `checkTail` distinguishes empty from non-empty.
+    // When `create: false` (openExisting), a missing stream (404) is NOT swallowed:
+    // the checkTail is the authoritative existence check, so `S2NotFound` propagates
+    // and the caller maps it to `None`.
+    const swallowMissing = options?.create !== false
     yield* client.checkTail(stream).pipe(
       Effect.flatMap((tail) => (tail.tail.seqNum === 0 ? Ref.set(tailRef, 0) : preloadFrom(0))),
-      Effect.catch((cause) => (cause instanceof S2NotFound ? Ref.set(tailRef, 0) : Effect.fail(cause))),
+      Effect.catch((cause) =>
+        cause instanceof S2NotFound && swallowMissing ? Ref.set(tailRef, 0) : Effect.fail(cause)),
       Effect.mapError(toError("preload")),
     )
 

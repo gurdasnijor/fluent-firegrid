@@ -39,8 +39,7 @@ export default defineValidation({
         open: (suffix: string) => StorageDb.open(keyFor(suffix)),
         openConfigured: (suffix: string, config: Parameters<typeof StorageDb.open>[1]) =>
           StorageDb.open(keyFor(suffix), config),
-        list: (keyPrefix?: string) => StorageDb.list(keyPrefix === undefined ? {} : { keyPrefix }),
-        exists: (k: string) => StorageDb.exists(k),
+        list: () => StorageDb.list(),
         openExisting: (k: string) => StorageDb.openExisting(k),
         reopen: () => StorageDb.open(key),
       }
@@ -90,13 +89,13 @@ export default defineValidation({
     // ── ENUMERATE ─────────────────────────────────────────────────────────────
     {
       id: "ENUMERATE.1",
-      description: "list returns the instance keys that currently exist as streams under basePath",
+      description: "list() returns the typed instance keys that currently exist as streams under basePath",
       evidence: 'spans.exists(s, named(s, "effect-s2-stream-db.list")) && spans.exists(s, named(s, "S2.listStreams"))',
       claim: ({ key, keyFor, open, list }) =>
         Effect.gen(function*() {
           yield* open("e1")
           yield* open("e2")
-          const keys = yield* list(key)
+          const keys = yield* list() // typed keys, decoded through the key schema
           assertTrue(keys.includes(key), "list includes the base instance")
           assertTrue(keys.includes(keyFor("e1")), "list includes e1")
           assertTrue(keys.includes(keyFor("e2")), "list includes e2")
@@ -104,30 +103,15 @@ export default defineValidation({
     },
     {
       id: "ENUMERATE.2",
-      description: "a keyPrefix narrows enumeration to matching keys",
-      evidence: 'spans.exists(s, named(s, "effect-s2-stream-db.list")) && spans.exists(s, named(s, "S2.listStreams"))',
-      claim: ({ key, keyFor, open, list }) =>
-        Effect.gen(function*() {
-          yield* open("aa")
-          yield* open("ab")
-          yield* open("zz")
-          const narrowed = yield* list(`${key}.a`)
-          assertTrue(narrowed.includes(keyFor("aa")), "narrowed list includes aa")
-          assertTrue(narrowed.includes(keyFor("ab")), "narrowed list includes ab")
-          assertTrue(!narrowed.includes(keyFor("zz")), "narrowed list excludes zz")
-        }),
-    },
-    {
-      id: "ENUMERATE.3",
       description: "includeDeleted defaults false — a dropped instance no longer enumerates",
       evidence: 'spans.exists(s, named(s, "effect-s2-stream-db.list")) && spans.exists(s, named(s, "effect-s2-stream-db.drop")) && spans.exists(s, named(s, "S2.deleteStream"))',
-      claim: ({ key, keyFor, open, list }) =>
+      claim: ({ keyFor, open, list }) =>
         Effect.gen(function*() {
           yield* open("live")
           const gone = yield* open("gone")
-          assertTrue((yield* list(key)).includes(keyFor("gone")), "gone enumerates before drop")
+          assertTrue((yield* list()).includes(keyFor("gone")), "gone enumerates before drop")
           yield* gone.drop
-          const after = yield* list(key)
+          const after = yield* list()
           assertTrue(after.includes(keyFor("live")), "live still enumerates")
           assertTrue(!after.includes(keyFor("gone")), "dropped instance is excluded")
         }),
@@ -135,26 +119,14 @@ export default defineValidation({
     // ── EXISTENCE ─────────────────────────────────────────────────────────────
     {
       id: "EXISTENCE.1",
-      description: "exists(key) reports existence without creating the stream (checkTail)",
-      evidence: 'spans.exists(s, named(s, "effect-s2-stream-db.exists")) && spans.exists(s, named(s, "S2.checkTail"))',
-      claim: ({ keyFor, exists, open, list }) =>
-        Effect.gen(function*() {
-          const ghost = keyFor("ghost")
-          assertTrue((yield* exists(ghost)) === false, "missing stream does not exist")
-          assertTrue((yield* list(ghost)).length === 0, "probing did not create the stream")
-          yield* open("ghost")
-          assertTrue((yield* exists(ghost)) === true, "exists is true once created")
-        }),
-    },
-    {
-      id: "EXISTENCE.2",
-      description: "openExisting returns None for a missing stream and never creates it",
-      evidence: 'spans.exists(s, named(s, "effect-s2-stream-db.exists")) && spans.exists(s, named(s, "S2.checkTail"))',
-      claim: ({ keyFor, exists, openExisting, open }) =>
+      description: "openExisting returns None for a missing stream and never creates it (race-free)",
+      evidence: 'spans.exists(s, named(s, "effect-s2-stream-db.openExisting")) && spans.exists(s, named(s, "S2.checkTail"))',
+      claim: ({ keyFor, openExisting, open, list }) =>
         Effect.gen(function*() {
           const absent = keyFor("absent")
           assertTrue(Option.isNone(yield* openExisting(absent)), "openExisting is None for a missing stream")
-          assertTrue((yield* exists(absent)) === false, "openExisting did not create the stream")
+          // the non-creating probe is the open itself — the stream still does not enumerate.
+          assertTrue(!(yield* list()).includes(absent), "openExisting did not create the stream")
           yield* open("absent")
           const reopened = yield* openExisting(absent)
           assertTrue(Option.isSome(reopened), "openExisting is Some once the stream exists")

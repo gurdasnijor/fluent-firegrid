@@ -18,17 +18,15 @@ components:
       3: Age/size retention is for ephemeral streams only; a stream that mixes permanent state with transient records must not be GC'd by age retention (it uses CHECKPOINT instead).
 
   ENUMERATE:
-    name: Enumerate instances by prefix
+    name: Enumerate instances
     requirements:
-      1: StreamDb.list returns the instance keys that currently exist as streams under basePath (listStreams by basePath prefix, strip basePath, decode the key) — discovery, not name construction.
-      2: A keyPrefix filter is offered only for structured keys; an opaque-key db (e.g. UUID) offers no sub-prefix.
-      3: 'Existence equals liveness only for streams dropped on completion; for persistent streams, existence means the instance exists, and a separate work check is required. includeDeleted defaults false.'
+      1: 'StreamDb.list() returns the typed instance keys that currently exist as streams under basePath (listStreams by basePath prefix, strip basePath, decode through the key schema) — discovery returning typed keys (only this layer can invert stream-name to key), not name construction. No raw keyPrefix is offered: an encoded-prefix filter bypasses the key schema, so schema-owned prefix enumeration is a follow-up.'
+      2: 'Existence equals liveness only for streams dropped on completion; for persistent streams, existence means the instance exists, and a separate work check is required. includeDeleted defaults false — a dropped instance no longer enumerates.'
 
   EXISTENCE:
-    name: Non-creating existence and read
+    name: Non-creating open
     requirements:
-      1: exists(key) reports whether a stream exists without creating it (checkTail).
-      2: openExisting(key) returns None for a missing stream and never creates it (unlike open, which creates-if-absent).
+      1: openExisting(key) returns None for a missing stream and never creates it (unlike open, which creates-if-absent); existence is decided by the open itself (a single checkTail in preload), so there is no separate probe to race against a concurrent drop.
 
   PROJECTION:
     name: Latest-value table projection
