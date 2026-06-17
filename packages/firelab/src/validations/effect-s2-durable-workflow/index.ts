@@ -61,9 +61,10 @@ export default defineValidation({
       id: "WORKFLOW.1",
       description:
         "a workflow `run` is an exclusive handler admitted at most once per workflow id: a duplicate start "
-        + "returns \"alreadyStarted\" (NOT a deduped second run) both while running and after an engine restart; "
-        + "the run body executes EXACTLY ONCE; the parked run is boot-recovered by a fresh engine and resumed "
-        + "by a residency-independent ingress signal, then attach returns its result",
+        + "returns \"alreadyStarted\" (NOT a deduped second run) while running, after an engine restart, AND "
+        + "after completion (the AlreadyCompleted projection branch); the run body executes EXACTLY ONCE; the "
+        + "parked run is boot-recovered by a fresh engine and resumed by a residency-independent ingress signal, "
+        + "then attach returns its result",
       evidence:
         'spans.exists(s, named(s, "effect-s2-durable.object.admit")) && spans.exists(s, named(s, "effect-s2-durable.object.boot-recover")) && spans.exists(s, named(s, "effect-s2-durable.object.ownerKeys")) && spans.exists(s, named(s, "effect-s2-durable.object.drain"))',
       claim: ({ key }) =>
@@ -82,17 +83,23 @@ export default defineValidation({
             assertEquals(dup, "alreadyStarted") // run-once: not a deduped second run
           }).pipe(Effect.provide(engine), Effect.scoped)
           // process 2: a fresh engine boot-recovers the parked run. A duplicate start is STILL
-          // "alreadyStarted"; a residency-independent ingress signal resolves the promise; attach
-          // returns the decoded result.
+          // "alreadyStarted" (the pending branch across a restart); a residency-independent ingress
+          // signal resolves the promise; attach returns the decoded result; and a duplicate start
+          // AFTER completion is "alreadyStarted" too (the AlreadyCompleted admit branch — the one
+          // case run-once must also cover, never a re-run).
           const result = yield* Effect.gen(function*() {
-            const dup = yield* workflowSubmit(approval, id, 5)
-            assertEquals(dup, "alreadyStarted") // already started across the restart, too
+            const dupPending = yield* workflowSubmit(approval, id, 5)
+            assertEquals(dupPending, "alreadyStarted") // already started across the restart (pending branch)
             const runId = yield* workflowRunId(approval, id)
             yield* resolveSignal(runId, "approved", Schema.Boolean, true)
-            return yield* workflowAttach(approval, id)
+            const out = yield* workflowAttach(approval, id) // the run has now COMPLETED
+            const dupCompleted = yield* workflowSubmit(approval, id, 5)
+            assertEquals(dupCompleted, "alreadyStarted") // already started AFTER completion (completed branch)
+            return out
           }).pipe(Effect.provide(engine), Effect.scoped)
           assertEquals(result, 5) // the run resumed and returned its (replayed) value
-          // executed EXACTLY once — across two duplicate starts AND an engine restart.
+          // executed EXACTLY once — across duplicate starts while PENDING, across an engine
+          // restart, AND across a duplicate start after COMPLETION (none re-ran the body).
           assertEquals(runExecutions.count - before, 1)
         }),
     },

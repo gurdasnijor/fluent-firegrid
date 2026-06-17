@@ -144,4 +144,11 @@ describe("workflow run-id is deterministic (run-once anchor)", () => {
       const id = yield* workflowRunId(wf, "order-1")
       expect(yield* decodeObjectCallId(id)).toEqual({ object: "wf-test", key: "order-1", method: "run", nonce: "order-1" })
     }))
+
+  it("rejects a shared handler named `run` (reserved for the entrypoint)", () => {
+    // the `as any` deliberately bypasses the type-level guard to prove the runtime guard fires.
+    expect(() =>
+      workflow({ name: "wf-clash", *run(n: number) { return n }, handlers: { *run() { return 0 } } as any }),
+    ).toThrow(/reserved for the run-once entrypoint/)
+  })
 })

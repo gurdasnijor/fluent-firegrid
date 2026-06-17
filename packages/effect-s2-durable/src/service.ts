@@ -149,8 +149,12 @@ export interface WorkflowConfig<Name extends string, R extends HandlerFn, S exte
   readonly name: Name
   /** The exclusive, run-once entrypoint. */
   readonly run: R
-  /** Optional shared, read-only query handlers over the workflow's owner projection. */
-  readonly handlers?: S
+  /**
+   * Optional shared, read-only query handlers over the workflow's owner projection.
+   * The method name `run` is RESERVED for the entrypoint — a shared `run` is typed out
+   * (and rejected at definition time) so `sharedClient(wf, id).run` can never be ambiguous.
+   */
+  readonly handlers?: S & { readonly run?: never }
   /** Durable I/O schema for the `run` entrypoint (default: opaque JSON). */
   readonly runSchema?: HandlerSchemas<HandlerInput<R>, HandlerOutput<R>>
   /** Durable I/O schemas for the shared query handlers. */
@@ -166,6 +170,11 @@ export interface WorkflowConfig<Name extends string, R extends HandlerFn, S exte
 export const workflow = <const Name extends string, R extends HandlerFn, S extends Handlers = Record<never, never>>(
   config: WorkflowConfig<Name, R, S>,
 ): WorkflowDefinition<Name, R, S> => {
+  // `run` is the reserved exclusive entrypoint — a shared handler of the same name would
+  // shadow it on `sharedClient(wf, id).run`. Typed out above; guard at runtime too.
+  if (config.handlers !== undefined && Object.prototype.hasOwnProperty.call(config.handlers, WORKFLOW_RUN)) {
+    throw new Error(`workflow ${JSON.stringify(config.name)}: a shared handler may not be named ${JSON.stringify(WORKFLOW_RUN)} (reserved for the run-once entrypoint)`)
+  }
   const compiledRun = compileHandlers(
     config.name,
     { [WORKFLOW_RUN]: config.run },
