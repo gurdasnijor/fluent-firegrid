@@ -25,7 +25,7 @@ import {
   type ObjectCallIdParts,
   stateValue,
 } from "./actor/core.ts"
-import { InvocationStore, type ObjectStateBackend, type RunHead } from "./actor/object.ts"
+import { type AdmitResult, InvocationStore, type ObjectStateBackend, type RunHead } from "./actor/object.ts"
 import { DurableExecutionError, durableError } from "./errors.ts"
 import { ExecutionId, RosterDb, WorkflowDb } from "./schema.ts"
 import type { Handler, RetryPolicy, RunOptions } from "./types.ts"
@@ -84,6 +84,14 @@ export interface CallTarget {
   readonly key: string
   readonly method: string
 }
+
+/**
+ * The outcome of starting a workflow. A workflow `run` is admitted **at most once**
+ * per workflow id: the first start is `"started"`; any later start (while running or
+ * after completion) is `"alreadyStarted"` — never a second run (Restate workflow
+ * semantics: duplicate start returns already-started, not a deduped second run).
+ */
+export type WorkflowStartStatus = "started" | "alreadyStarted"
 
 /**
  * A SHARED object handler activation: an ephemeral, READ-ONLY execution over a folded
@@ -257,6 +265,17 @@ export interface DurableExecutionRuntimeApi {
     input: unknown,
     inputSchema: Schema.Codec<B, J, never, never>,
   ) => Effect.Effect<string, DurableExecutionError>
+  /**
+   * Start a workflow's `run` at its DETERMINISTIC owner call id (`runCallId`), encoding
+   * input via the handler's input codec, and report whether this admitted a fresh run
+   * (`"started"`) or hit an existing one (`"alreadyStarted"`). Run-once: a second start
+   * never re-runs the body. Attach to the result via `attach(runCallId, …)`.
+   */
+  readonly workflowStart: <I, O, E, R>(
+    handler: Handler<I, O, E, R>,
+    runCallId: string,
+    input: I,
+  ) => Effect.Effect<WorkflowStartStatus, DurableExecutionError, R>
 }
 
 export class DurableExecutionRuntime
@@ -904,6 +923,42 @@ const makeRuntime = (
         : runObjectBody(handler, call.callId, call.method, call.input, call.state)
     }
 
+    // Durably admit an object call onto its owner log + fork the exclusive drainer,
+    // returning the admission outcome (`Admitted` once; `AlreadyPending`/`AlreadyCompleted`
+    // on a re-admit of the same id). Shared by `submit` (object branch, discards the
+    // outcome) and `workflowStart` (which surfaces it as a run-once status).
+    const admitObject = (
+      handler: RegisteredHandler,
+      callId: string,
+      parts: ObjectCallIdParts,
+      inputEncoded: unknown,
+    ): Effect.Effect<AdmitResult, DurableExecutionError> =>
+      Effect.gen(function*() {
+        objectHandlers.set(`${parts.object}/${parts.method}`, handler)
+        const outcome = yield* provideClient(store.admit(callId, parts, inputEncoded)) // idempotent by callId
+        // fork the exclusive drainer; it runs the pending head(s) to completion.
+        yield* Effect.forkIn(
+          provideClient(store.drain(parts.object, parts.key, makeRunHead(parts.object))),
+          engineScope,
+        )
+        return outcome
+      })
+
+    const workflowStart = <I, O, E, R>(
+      handler: Handler<I, O, E, R>,
+      runCallId: string,
+      input: I,
+    ): Effect.Effect<WorkflowStartStatus, DurableExecutionError, R> =>
+      Effect.gen(function*() {
+        const inputEncoded = yield* encode(handler.input as Schema.Codec<unknown, unknown, never, never>, input)
+        const parts = yield* decodeObjectCallId(runCallId).pipe(Effect.mapError(toError("workflowStart")))
+        // eslint-disable-next-line local/no-launder-cast -- a compiled workflow `run` handler is Handler<unknown,unknown,never,never>; the generics are existential here
+        const outcome = yield* admitObject(handler as unknown as RegisteredHandler, runCallId, parts, inputEncoded)
+        // a fresh `Admitted` is the only "started"; an existing pending/completed run is
+        // already-started (run-once: the body is never executed a second time).
+        return outcome._tag === "Admitted" ? "started" : "alreadyStarted"
+      })
+
     const submit = <I, O, E, R>(
       handler: Handler<I, O, E, R>,
       executionId: string,
@@ -918,13 +973,7 @@ const makeRuntime = (
         )
         if (Option.isSome(parts)) {
           // eslint-disable-next-line local/no-launder-cast -- a compiled object handler is Handler<unknown,unknown,never,never>; submit's generics are existential here
-          objectHandlers.set(`${parts.value.object}/${parts.value.method}`, handler as unknown as RegisteredHandler)
-          yield* provideClient(store.admit(executionId, parts.value, inputEncoded)) // durable admission (idempotent)
-          // fork the exclusive drainer; it runs the pending head(s) to completion.
-          yield* Effect.forkIn(
-            provideClient(store.drain(parts.value.object, parts.value.key, makeRunHead(parts.value.object))),
-            engineScope,
-          )
+          yield* admitObject(handler as unknown as RegisteredHandler, executionId, parts.value, inputEncoded)
           return
         }
 
@@ -1110,6 +1159,7 @@ const makeRuntime = (
       sharedCall,
       callStep,
       sendStep,
+      workflowStart,
     }
 
     // re-drive any running/suspended executions left by a prior process before

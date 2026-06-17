@@ -14,7 +14,7 @@ export {
   state,
 } from "./primitives.ts"
 export { DurableExecutionRuntime } from "./Runtime.ts"
-export type { CallTarget, DurableExecutionRuntimeApi } from "./Runtime.ts"
+export type { CallTarget, DurableExecutionRuntimeApi, WorkflowStartStatus } from "./Runtime.ts"
 export {
   client,
   object,
@@ -24,6 +24,10 @@ export {
   service,
   serviceLayer,
   sharedClient,
+  workflow,
+  workflowAttach,
+  workflowRunId,
+  workflowSubmit,
 } from "./service.ts"
 export type {
   HandlerInput,
@@ -37,6 +41,8 @@ export type {
   ServiceConfig,
   ServiceDefinition,
   SharedClient,
+  WorkflowConfig,
+  WorkflowDefinition,
 } from "./service.ts"
 export {
   ClockWakeupRow,
