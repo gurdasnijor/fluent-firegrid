@@ -93,6 +93,20 @@ export const awakeable = <A, I>(
 export const resolveSignal: IngressResolve = (executionId, name, schema, value) =>
   Effect.flatMap(DurableExecutionRuntime, (rt) => rt.resolveExternal(executionId, name, schema, value))
 
+/**
+ * From inside a SHARED workflow handler, resolve a durable promise the workflow's `run`
+ * body awaits via `signal(name)`. The workflow is identified by the active shared call's
+ * owner (object + key), so a shared signal handler reads `sharedClient(wf, id).approve(v)`
+ * naturally. This appends an ingress `SignalResolved` to the run's owner stream — the one
+ * write a shared handler may perform (HANDLERS.5); it never mutates user state.
+ */
+export const resolvePromise = <A, I>(
+  name: string,
+  schema: Schema.Codec<A, I, never, never>,
+  value: A,
+): Effect.Effect<void, DurableExecutionError, DurableExecutionRuntime> =>
+  Effect.flatMap(DurableExecutionRuntime, (rt) => rt.resolvePromise(name, schema, value))
+
 /** Ingress door: resolve an `awakeable()` by its `id` on `executionId`. */
 export const resolveAwakeable: IngressResolve = (executionId, id, schema, value) =>
   Effect.flatMap(DurableExecutionRuntime, (rt) => rt.resolveExternal(executionId, id, schema, value))

@@ -7,6 +7,7 @@ export {
   handlerRequest,
   poll,
   resolveAwakeable,
+  resolvePromise,
   resolveSignal,
   run,
   signal,

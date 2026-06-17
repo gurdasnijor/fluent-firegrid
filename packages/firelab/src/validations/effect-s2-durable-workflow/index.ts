@@ -1,18 +1,33 @@
-import { Duration, Effect, Schema } from "effect"
-import { resolveSignal, run, signal, workflow, workflowAttach, workflowRunId, workflowSubmit } from "effect-s2-durable"
-import { serviceLayer } from "effect-s2-durable"
+import { Duration, Effect, Option, Schema } from "effect"
+import {
+  resolvePromise,
+  resolveSignal,
+  run,
+  serviceLayer,
+  sharedClient,
+  signal,
+  state,
+  workflow,
+  workflowAttach,
+  workflowRunId,
+  workflowSubmit,
+} from "effect-s2-durable"
+import { primaryKey, Table } from "effect-s2-stream-db"
 import { assertEquals } from "../../assertions.ts"
 import { S2LiteLive } from "../../s2lite.ts"
 import { defineValidation } from "../../types.ts"
 
 // A workflow is an OBJECT SPECIALIZATION, not a third runtime: its `run` is an exclusive
-// handler admitted AT MOST ONCE per workflow id. This proves the load-bearing run-once
-// mechanic VERTICALLY over one s2 lite backend, through the public workflow surface
-// (workflowSubmit / workflowAttach / workflowRunId + residency-independent resolveSignal):
-// a duplicate start returns "alreadyStarted" (NOT a deduped second run), the run body
-// executes exactly once, the long-running run parks on a durable promise across an engine
-// restart, and a fresh engine recovers + resumes it via ingress (the SDD's long-running
-// workflow scenario with restart and signal ingress).
+// handler admitted AT MOST ONCE per workflow id, and its signal/query handlers are
+// ordinary SHARED handlers over the run's owner projection. This proves, VERTICALLY over
+// one s2 lite backend through the public workflow surface:
+//  • WORKFLOW.1 run-once: a duplicate start returns "alreadyStarted" (never a deduped
+//    second run) while running, after a restart, AND after completion; exactly-once exec.
+//  • WORKFLOW.2 shared handlers: a query runs CONCURRENTLY over the snapshot while the run
+//    is parked (not queued behind the exclusive run) and reads the run's committed state.
+//  • WORKFLOW.3 promises resolved by shared handlers: the run parks on a durable promise;
+//    a SHARED signal handler resolves it (an ingress SignalResolved append, not a
+//    user-state write); the run resumes and attach returns the result.
 
 // real executions of the run body's durable step — a duplicate start or a restart replay
 // must NEVER execute it twice.
@@ -22,15 +37,32 @@ const runExecutions = { count: 0 }
 // this so the duplicate-start / teardown genuinely race a parked run, not a bare admission.
 const reachedPark = new Set<string>()
 
+// the workflow's user state — the run writes it before parking; a shared query reads it.
+class Amt extends Table<Amt>("amt")({ id: Schema.String.pipe(primaryKey), value: Schema.Number }) {}
+
 const approval = workflow({
   name: "firelab-wf-approval",
   *run(amount: number) {
+    yield* state(Amt).set({ id: "v", value: amount }) // committed user state a query can read
     const n = yield* run(Effect.sync(() => (runExecutions.count++, amount)), { output: Schema.Number })
     reachedPark.add(`${amount}`) // run fact is durable; about to park on the promise
-    const ok = yield* signal("approved", Schema.Boolean) // park until ingress resolves it
+    const ok = yield* signal("approved", Schema.Boolean) // park until the promise is resolved
     return ok ? n : 0
   },
+  handlers: {
+    // a SHARED query handler — read-only over the snapshot, concurrent with the parked run.
+    *peek() {
+      return Option.match(yield* state(Amt).get("v"), { onNone: () => -1, onSome: (r) => r.value })
+    },
+    // a SHARED signal handler — resolves the run's durable promise via an INGRESS append
+    // (resolvePromise → SignalResolved on the run stream); it never mutates user state.
+    *approve(ok: boolean) {
+      yield* resolvePromise("approved", Schema.Boolean, ok)
+      return ok ? "approved" : "denied"
+    },
+  },
   runSchema: { input: Schema.Number, output: Schema.Number },
+  sharedSchemas: { approve: { input: Schema.Boolean } },
 })
 
 // poll until the run body has passed its `run` step and is about to park (bounded by the
@@ -101,6 +133,61 @@ export default defineValidation({
           // executed EXACTLY once — across duplicate starts while PENDING, across an engine
           // restart, AND across a duplicate start after COMPLETION (none re-ran the body).
           assertEquals(runExecutions.count - before, 1)
+        }),
+    },
+    {
+      id: "WORKFLOW.2",
+      description:
+        "workflow signal/query handlers are ordinary SHARED handlers: while the run is parked on its promise "
+        + "(holding the exclusive head), a shared QUERY handler runs CONCURRENTLY over the folded snapshot — it "
+        + "is never queued behind the parked exclusive run — and reads the user state the run committed before "
+        + "parking (an admitted exclusive call would hang behind the parked head; the shared read returns promptly)",
+      evidence:
+        'spans.exists(s, named(s, "effect-s2-durable.object.admit")) && spans.exists(s, named(s, "effect-s2-durable.object.drain")) && spans.exists(s, named(s, "effect-s2-durable.object.shared")) && spans.exists(s, named(s, "effect-s2-durable.object.snapshot"))',
+      claim: ({ key }) =>
+        Effect.gen(function*() {
+          const id = key
+          reachedPark.delete("42")
+          const engine = serviceLayer(approval)
+          yield* Effect.gen(function*() {
+            yield* workflowSubmit(approval, id, 42)
+            yield* waitForPark(42) // the run committed its state, then parked holding the exclusive head
+            // a SHARED query runs concurrently over the snapshot — if it were queued behind the
+            // parked exclusive run this would hang; instead it returns the committed state promptly.
+            const seen = yield* sharedClient(approval, id).peek()
+            assertEquals(seen, 42)
+            // resolve via the shared signal handler + attach so the scope completes cleanly.
+            yield* sharedClient(approval, id).approve(true)
+            assertEquals(yield* workflowAttach(approval, id), 42)
+          }).pipe(Effect.provide(engine), Effect.scoped)
+        }),
+    },
+    {
+      id: "WORKFLOW.3",
+      description:
+        "a durable promise the run body awaits is resolved BY a shared handler: the run parks on signal(\"approved\"); "
+        + "a SHARED signal handler (sharedClient(wf, id).approve) resolves it via resolvePromise — appending a "
+        + "SignalResolved INGRESS event to the run's owner stream, NOT a user-state write — and the parked run "
+        + "resumes and attach returns its result (no residency-independent ingress door involved)",
+      evidence:
+        'spans.exists(s, named(s, "effect-s2-durable.object.admit")) && spans.exists(s, named(s, "effect-s2-durable.object.drain")) && spans.exists(s, named(s, "effect-s2-durable.object.shared")) && spans.exists(s, named(s, "effect-s2-durable.resolveSignal"))',
+      claim: ({ key }) =>
+        Effect.gen(function*() {
+          const id = key
+          reachedPark.delete("8")
+          const engine = serviceLayer(approval)
+          const before = runExecutions.count
+          const result = yield* Effect.gen(function*() {
+            const started = yield* workflowSubmit(approval, id, 8)
+            assertEquals(started, "started")
+            yield* waitForPark(8) // the run is parked on the durable promise
+            // the SHARED signal handler resolves the promise the run awaits (ingress append).
+            const verdict = yield* sharedClient(approval, id).approve(true)
+            assertEquals(verdict, "approved")
+            return yield* workflowAttach(approval, id) // the run resumed and completed
+          }).pipe(Effect.provide(engine), Effect.scoped)
+          assertEquals(result, 8) // resumed via the shared-handler resolution
+          assertEquals(runExecutions.count - before, 1) // the run executed once; the shared handler never ran it
         }),
     },
   ],
