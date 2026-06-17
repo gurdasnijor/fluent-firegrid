@@ -31,9 +31,9 @@ const counter = object({
       return Option.match(yield* st.get("v"), { onNone: () => 0, onSome: (r) => r.value })
     },
     // two run steps with the SAME name: the first executes the effect and records a
-    // `Journaled` run fact; the second REPLAYS that fact (no re-execution). A separate
-    // positional run (`run/2`) and a `state.get` (a read journal) run alongside to show
-    // run vs read journals do not collide. `runExecutions` counts real executions.
+    // `Journaled` run fact; the second REPLAYS that fact (no re-execution). The
+    // `state.get` writes a read-journal fact alongside (a distinct kind, so it cannot
+    // collide with the run fact). `runExecutions` counts real executions.
     *tally(amount: number) {
       const a = yield* run(Effect.sync(() => (runExecutions.count++, amount * 2)), { name: "double", output: Schema.Number })
       const b = yield* run(Effect.sync(() => (runExecutions.count++, amount * 2)), { name: "double", output: Schema.Number })
