@@ -92,6 +92,7 @@ const EVIDENCE_SPAN_NAMES: ReadonlySet<string> = new Set([
 const EVIDENCE_SPAN_PREFIXES: ReadonlyArray<string> = [
   "S2.",
   "effect-s2-stream-db.",
+  "effect-s2-durable.",
   "firelab.s2.",
   "firelab.s2lite.",
 ]
