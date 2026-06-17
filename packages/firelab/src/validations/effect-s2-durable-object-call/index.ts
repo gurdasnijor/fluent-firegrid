@@ -10,6 +10,7 @@ import {
   run,
   sendClient,
   serviceLayer,
+  sharedClient,
   signal,
   sleep,
   state,
@@ -79,6 +80,14 @@ const counter = object({
       const cur = Option.match(yield* st.get("v"), { onNone: () => 0, onSome: (r) => r.value })
       yield* st.set({ id: "v", value: cur + a + b })
       return a + b
+    },
+  },
+  // SHARED (read-only) handlers: run concurrently over a folded snapshot, never
+  // admitted, never blocked by the exclusive drainer. Cannot write state.
+  shared: {
+    *peek() {
+      const st = state(Counter)
+      return Option.match(yield* st.get("v"), { onNone: () => 0, onSome: (r) => r.value })
     },
   },
 })
@@ -169,6 +178,21 @@ export default defineValidation({
           const start = yield* Clock.currentTimeMillis
           assertEquals(yield* client(counter, keyFor("nap")).nap(), "napped")
           assertEquals((yield* Clock.currentTimeMillis) - start >= 60, true)
+        }),
+    },
+    {
+      id: "EXECUTION.3",
+      description:
+        "a SHARED (read-only) object handler runs ephemerally over a folded snapshot — concurrent with "
+        + "the exclusive drainer, never admitted to the accept-log; it observes committed state writes",
+      evidence:
+        'spans.exists(s, named(s, "effect-s2-durable.object.shared")) && spans.exists(s, named(s, "effect-s2-durable.object.snapshot")) && spans.exists(s, named(s, "effect-s2-durable.log.read"))',
+      claim: ({ key }) =>
+        Effect.gen(function*() {
+          yield* client(counter, key).add(5) // exclusive write
+          assertEquals(yield* sharedClient(counter, key).peek(), 5) // shared read sees it (no admission)
+          yield* client(counter, key).add(3)
+          assertEquals(yield* sharedClient(counter, key).peek(), 8)
         }),
     },
     {

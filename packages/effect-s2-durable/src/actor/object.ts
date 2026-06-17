@@ -116,6 +116,14 @@ export interface InvocationStoreApi {
    * path segment back to the raw key (`RECOVERY.1`).
    */
   readonly ownerKeys: (object: string) => Effect.Effect<ReadonlyArray<string>, DurableExecutionError, S2Client>
+  /**
+   * Fold the owner stream to its latest-value projection — the read-only snapshot a
+   * SHARED handler runs over (no admission, no drainer; `EXECUTION.3`).
+   */
+  readonly readSnapshot: (
+    object: string,
+    key: string,
+  ) => Effect.Effect<ReturnType<typeof replay>, DurableExecutionError, S2Client>
 }
 
 const MAX_CAS_RETRIES = 32
@@ -440,7 +448,16 @@ const make = (): Effect.Effect<InvocationStoreApi> =>
         Effect.withSpan("effect-s2-durable.object.ownerKeys", { attributes: { object } }),
       )
 
-    return { admit, status, drain, resolveSignal, ownerKeys }
+    const readSnapshot = (
+      object: string,
+      key: string,
+    ): Effect.Effect<ReturnType<typeof replay>, DurableExecutionError, S2Client> =>
+      Effect.gen(function*() {
+        const log = openLog(yield* ownerStream(object, key))
+        return replay(yield* log.read())
+      }).pipe(Effect.withSpan("effect-s2-durable.object.snapshot", { attributes: { object, key } }))
+
+    return { admit, status, drain, resolveSignal, ownerKeys, readSnapshot }
   })
 
 export class InvocationStore extends Context.Service<InvocationStore, InvocationStoreApi>()(

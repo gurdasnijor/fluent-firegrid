@@ -17,7 +17,7 @@ import {
 } from "effect"
 import { S2Client } from "effect-s2"
 import type { AnyTable, RowOf, TableFacade } from "effect-s2-stream-db"
-import { type ActorExit, decodeObjectCallId, type ObjectCallIdParts } from "./actor/core.ts"
+import { type ActorExit, type ActorSnapshot, decodeObjectCallId, type ObjectCallIdParts, stateValue } from "./actor/core.ts"
 import { InvocationStore, type ObjectStateBackend, type RunHead } from "./actor/object.ts"
 import { DurableExecutionError, durableError } from "./errors.ts"
 import { ExecutionId, RosterDb, WorkflowDb } from "./schema.ts"
@@ -67,7 +67,21 @@ interface ObjectInvocation {
   readonly awakeSeq: Ref.Ref<number>
 }
 
-type Invocation = ServiceInvocation | ObjectInvocation
+/**
+ * A SHARED object handler activation: an ephemeral, READ-ONLY execution over a folded
+ * snapshot of the owner stream (`HANDLERS.3`/`EXECUTION.3`). It never enters the
+ * accept-log and is never blocked by, nor blocks, the exclusive drainer; durable
+ * writes (`state.set`/`run`/`sleep`/`signal`/…) are forbidden — only `state.get`
+ * (snapshot read) + `handlerRequest` are allowed.
+ */
+interface SharedObjectInvocation {
+  readonly kind: "shared"
+  readonly method: string
+  readonly inputEncoded: unknown
+  readonly snapshot: ActorSnapshot
+}
+
+type Invocation = ServiceInvocation | ObjectInvocation | SharedObjectInvocation
 
 /**
  * The active-invocation slot — a `Context.Reference` (default `None`), so it never
@@ -105,6 +119,10 @@ const toError = durableError
 
 const fail = (operation: string, message: string): Effect.Effect<never, DurableExecutionError> =>
   Effect.fail(new DurableExecutionError({ operation, message, cause: undefined }))
+
+// A shared (read-only) object handler may only read state; durable writes are forbidden.
+const sharedForbidden = (op: string): Effect.Effect<never, DurableExecutionError> =>
+  fail(op, `${op} is not allowed in a shared (read-only) object handler`)
 
 const decode = <A, I>(
   schema: Schema.Codec<A, I, never, never>,
@@ -196,6 +214,18 @@ export interface DurableExecutionRuntimeApi {
   readonly resolveExternal: <A, I>(executionId: string, name: string, schema: Schema.Codec<A, I, never, never>, value: A) => Effect.Effect<void, DurableExecutionError>
   /** A fresh replay-stable awakeable id for the active execution. */
   readonly nextAwakeableId: Effect.Effect<string, DurableExecutionError>
+  /**
+   * Run a SHARED (read-only) object handler ephemerally over a folded snapshot —
+   * no admission, no drainer, concurrent with the exclusive drainer (`EXECUTION.3`).
+   * Delegated to by the `sharedClient(...)` proxy.
+   */
+  readonly sharedCall: <A, I>(
+    handler: Handler<unknown, unknown, never, never>,
+    object: string,
+    key: string,
+    input: unknown,
+    schema: Schema.Codec<A, I, never, never>,
+  ) => Effect.Effect<A, DurableExecutionError>
 }
 
 export class DurableExecutionRuntime
@@ -275,7 +305,7 @@ const makeRuntime = (
     // per-execution `WorkflowDb.steps` table; for an object it is the owner stream's
     // `Journaled` facts (callId + step are separate event fields — no composed key
     // string). The replay logic over it is identical (see `runStep`).
-    const runJournalFor = (active: Invocation) =>
+    const runJournalFor = (active: ServiceInvocation | ObjectInvocation) =>
       active.kind === "object"
         ? {
           get: (step: string): Effect.Effect<Option.Option<StepRecord>, DurableExecutionError> =>
@@ -301,6 +331,7 @@ const makeRuntime = (
     ): Effect.Effect<A, E | DurableExecutionError, R> =>
       withActive("run").pipe(Effect.flatMap((active) =>
         Effect.gen(function*() {
+          if (active.kind === "shared") return yield* sharedForbidden("run")
           // identity = the optional name, else this step's position in the journal.
           // The run-journal is the per-execution `WorkflowDb.steps` for a service, or
           // the owner stream's `Journaled` facts for an object — same replay logic.
@@ -350,7 +381,7 @@ const makeRuntime = (
     // pending wakeup across a restart is the slice-4 recovery job.
     // The durable timer store: a service `clockWakeups` row, or an object `kind:"sleep"`
     // journal fact on the owner stream. Same pending→fired replay logic (see `sleepStep`).
-    const sleepTimerFor = (active: Invocation) =>
+    const sleepTimerFor = (active: ServiceInvocation | ObjectInvocation) =>
       active.kind === "object"
         ? {
           get: (name: string): Effect.Effect<Option.Option<TimerRecord>, DurableExecutionError> =>
@@ -374,6 +405,7 @@ const makeRuntime = (
     const sleepStep = (name: string, duration: Duration.Duration): Effect.Effect<void, DurableExecutionError> =>
       withActive("sleep").pipe(Effect.flatMap((active) =>
         Effect.gen(function*() {
+          if (active.kind === "shared") return yield* sharedForbidden("sleep")
           // a durable timer fact (`pending` deadline → `fired`). For a service it is a
           // `clockWakeups` row; for an object it is a `kind:"sleep"` journal fact on the
           // owner stream. On replay a `fired` fact short-circuits and a `pending` fact
@@ -402,7 +434,13 @@ const makeRuntime = (
       key: string,
     ): Effect.Effect<Option.Option<RowOf<Tbl>>, DurableExecutionError> =>
       withActive("state.get").pipe(Effect.flatMap((active) =>
-        active.kind === "object"
+        active.kind === "shared"
+          // shared (read-only) handler: read the folded snapshot directly, no journal.
+          ? Option.match(stateValue(active.snapshot, table.tableName, key), {
+            onNone: () => Effect.succeedNone,
+            onSome: (encoded) => decodeRowFor(table, encoded).pipe(Effect.map((row) => Option.some(row as RowOf<Tbl>))),
+          })
+          : active.kind === "object"
           ? provideClient(
             active.state.get(table.tableName, key).pipe(
               Effect.flatMap((opt) =>
@@ -442,7 +480,9 @@ const makeRuntime = (
 
     const stateSet = <Tbl extends AnyTable>(table: Tbl, row: RowOf<Tbl>): Effect.Effect<void, DurableExecutionError> =>
       withActive("state.set").pipe(Effect.flatMap((active) =>
-        active.kind === "object"
+        active.kind === "shared"
+          ? sharedForbidden("state.set")
+          : active.kind === "object"
           ? provideClient(
             encodeRowFor(table, row).pipe(
               Effect.flatMap((encoded) => active.state.set(table.tableName, pkOf(table, row), encoded)),
@@ -453,7 +493,9 @@ const makeRuntime = (
 
     const stateDelete = <Tbl extends AnyTable>(table: Tbl, key: string): Effect.Effect<void, DurableExecutionError> =>
       withActive("state.delete").pipe(Effect.flatMap((active) =>
-        active.kind === "object"
+        active.kind === "shared"
+          ? sharedForbidden("state.delete")
+          : active.kind === "object"
           ? provideClient(active.state.delete(table.tableName, key))
           : active.stateDb.table(table).delete(key).pipe(Effect.mapError(toError("state.delete"))),
       ))
@@ -514,7 +556,9 @@ const makeRuntime = (
       schema: Schema.Codec<A, I, never, never>,
     ): Effect.Effect<A, DurableExecutionError> =>
       withActive("await").pipe(Effect.flatMap((active) =>
-        active.kind === "object"
+        active.kind === "shared"
+          ? sharedForbidden("await")
+          : active.kind === "object"
           // object: park on a durable `SignalResolved` on the owner stream, then decode.
           ? provideClient(active.state.signal.await(name)).pipe(Effect.flatMap((raw) => decode(schema, raw)))
           : Effect.gen(function*() {
@@ -546,7 +590,9 @@ const makeRuntime = (
       value: A,
     ): Effect.Effect<void, DurableExecutionError> =>
       withActive("resolve").pipe(Effect.flatMap((active) =>
-        active.kind === "object"
+        active.kind === "shared"
+          ? sharedForbidden("resolve")
+          : active.kind === "object"
           // handler-side resolve: append `SignalResolved` to the running call's owner stream.
           ? encode(schema, value).pipe(Effect.flatMap((enc) => provideClient(active.state.signal.resolve(name, enc))))
           : encode(schema, value).pipe(Effect.flatMap((enc) => resolveOn(active.db, active.executionId, name, enc))),
@@ -572,7 +618,9 @@ const makeRuntime = (
 
     const nextAwakeableId: Effect.Effect<string, DurableExecutionError> = withActive("awakeable").pipe(
       Effect.flatMap((active) =>
-        active.kind === "object"
+        active.kind === "shared"
+          ? sharedForbidden("awakeable")
+          : active.kind === "object"
           ? Ref.getAndUpdate(active.awakeSeq, (n) => n + 1).pipe(
             Effect.map((ordinal) => `${active.callId}/awk/${ordinal}`),
           )
@@ -581,6 +629,30 @@ const makeRuntime = (
           ),
       ),
     )
+
+    // ── shared (read-only) object handlers ────────────────────────────────────
+    const sharedCall = <A, I>(
+      handler: Handler<unknown, unknown, never, never>,
+      object: string,
+      key: string,
+      input: unknown,
+      schema: Schema.Codec<A, I, never, never>,
+    ): Effect.Effect<A, DurableExecutionError> =>
+      Effect.gen(function*() {
+        // fold the owner stream once; the handler reads this snapshot, never the log.
+        const snapshot = yield* provideClient(store.readSnapshot(object, key))
+        const invocation: SharedObjectInvocation = { kind: "shared", method: handler.name, inputEncoded: input, snapshot }
+        const exit = yield* handler.program.pipe(
+          Effect.provideService(ActiveInvocation, Option.some(invocation)),
+          Effect.provideService(DurableExecutionRuntime, api),
+          Effect.exit,
+        )
+        if (Exit.isFailure(exit)) {
+          return yield* fail("shared", `shared handler failed: ${Cause.pretty(exit.cause)}`)
+        }
+        const encoded = yield* encode(handler.output as Schema.Codec<unknown, unknown, never, never>, exit.value)
+        return yield* decode(schema, encoded)
+      }).pipe(Effect.withSpan("effect-s2-durable.object.shared", { attributes: { object, key, method: handler.name } }))
 
     // ── completion (SDD §B6): the result must outlive the dropped stream ───────
     const complete = (
@@ -925,6 +997,7 @@ const makeRuntime = (
       resolveLocal,
       resolveExternal,
       nextAwakeableId,
+      sharedCall,
     }
 
     // re-drive any running/suspended executions left by a prior process before
