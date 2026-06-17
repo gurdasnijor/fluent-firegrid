@@ -65,7 +65,7 @@ export default defineValidation({
         Effect.gen(function*() {
           reachedRunFor.delete(5)
           const engine = serviceLayer(ledger)
-          // process 1: submit AND wait until the handler is genuinely parked, then tear down.
+          // process 1: submit AND wait until the handler is past its run step (about to park), then tear down.
           const id = yield* Effect.gen(function*() {
             const id = yield* sendClient(ledger, key).post(5)
             yield* waitForRun(5)
