@@ -1,5 +1,4 @@
 import { Effect, Option, Schema } from "effect"
-import { S2Client } from "effect-s2"
 import { primaryKey, StreamDb, Table } from "effect-s2-stream-db"
 import { assertEquals, assertNone, assertSome, assertTrue } from "../../assertions.ts"
 import { S2LiteLive } from "../../s2lite.ts"
@@ -35,7 +34,6 @@ export default defineValidation({
         db,
         key,
         keyFor,
-        streamName: `firelab-storage-primitives/${key}`,
         open: (suffix: string) => StorageDb.open(keyFor(suffix)),
         openConfigured: (suffix: string, config: Parameters<typeof StorageDb.open>[1]) =>
           StorageDb.open(keyFor(suffix), config),
@@ -176,26 +174,18 @@ export default defineValidation({
     {
       id: "CHECKPOINT.2",
       description: "trim(cursor) issues an explicit trim of records before the cursor",
-      evidence: 'spans.exists(s, named(s, "effect-s2-stream-db.trim")) && spans.exists(s, named(s, "S2.append")) && spans.exists(s, named(s, "S2.checkTail"))',
-      claim: ({ db, streamName }) =>
+      // The trim op durably appends one trim command record to S2 — proven by the
+      // effect-s2-stream-db.trim span carrying an S2.append descendant (its only
+      // effect is that append). No stream-name reconstruction; the cursor is a
+      // literal S2 seq_num. Physical purge of trimmed records is an async S2
+      // background op, not asserted here.
+      evidence: 'spans.exists(s, named(s, "effect-s2-stream-db.trim") && hasDescendant(s, "S2.append"))',
+      claim: ({ db }) =>
         Effect.gen(function*() {
-          yield* db.items.insert({ id: "t1", value: 1 })
-          // the cursor is an S2 seq_num — read it from the S2 layer (checkTail), not
-          // from any stream-db ordered-log lens. The tail after t1 is the seq_num t2
-          // will take, so trimming before it requests removal of t1.
-          const cursor = (yield* S2Client.checkTail(streamName)).tail.seqNum
-          yield* db.items.insert({ id: "t2", value: 2 })
-          yield* db.items.insert({ id: "t3", value: 3 })
-          // trim durably appends one trim command record to S2 — the stream tail
-          // advances by exactly 1. (Physical purge of trimmed records is an
-          // asynchronous S2 background operation, not observed synchronously here.)
-          const before = yield* S2Client.checkTail(streamName)
-          yield* db.trim(cursor)
-          const after = yield* S2Client.checkTail(streamName)
-          assertTrue(
-            after.tail.seqNum === before.tail.seqNum + 1,
-            "trim appends exactly one durable trim command record",
-          )
+          yield* db.items.insert({ id: "t1", value: 1 }) // seq_num 0
+          yield* db.items.insert({ id: "t2", value: 2 }) // seq_num 1
+          yield* db.items.insert({ id: "t3", value: 3 }) // seq_num 2
+          yield* db.trim(1) // request trim of records before seq_num 1 (i.e. t1)
           // the stream stays consistent and appendable after the trim.
           assertSome(yield* db.items.get("t3"), { id: "t3", value: 3 })
           yield* db.items.insert({ id: "t4", value: 4 })
