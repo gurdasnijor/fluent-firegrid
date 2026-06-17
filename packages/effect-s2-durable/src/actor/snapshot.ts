@@ -38,6 +38,13 @@ export interface ActorSnapshot {
    * `ChangeMessage` internals; `LAYERING.4`). A `delete` op removes the key.
    */
   readonly state: ReadonlyMap<string, ReadonlyMap<string, unknown>>
+  /**
+   * Per-call journal, nested `callId -> step -> value` — folded from `Journaled`
+   * events (`EXECUTION.2`). A recorded read/run fact replays its ORIGINAL value, so
+   * a read-modify-write across a crash recomputes against the value first seen, not
+   * the already-mutated durable state (no double-apply).
+   */
+  readonly journal: ReadonlyMap<string, ReadonlyMap<string, unknown>>
 }
 
 /** The empty projection — the fold seed (no records applied). */
@@ -48,6 +55,7 @@ export const empty: ActorSnapshot = {
   results: new Map(),
   signals: new Map(),
   state: new Map(),
+  journal: new Map(),
 }
 
 /** What the pure core asks the effectful shell to do — never decided by the shell. */
@@ -132,10 +140,15 @@ export const transition = (
       const state = withNested(snapshot.state, event.table, update)
       return [{ ...snapshot, cursor, state }, []]
     }
-    case "Journaled":
+    case "Journaled": {
+      // record the per-call fact so a re-execution after a crash replays the
+      // ORIGINAL value (EXECUTION.2 read/run memoization).
+      const journal = withNested(snapshot.journal, event.callId, innerSet(event.step, event.value))
+      return [{ ...snapshot, cursor, journal }, []]
+    }
     case "Checkpointed":
-      // journal facts and checkpoint markers only advance the cursor in the pure
-      // core; their effectful meaning (resume/replay-from-cursor) is a later slice.
+      // checkpoint markers only advance the cursor in the pure core; resume-from-
+      // cursor is a later slice.
       return [{ ...snapshot, cursor }, []]
   }
 }
@@ -161,6 +174,10 @@ export const stateValue = (snapshot: ActorSnapshot, table: string, key: string):
 /** The resolved value of signal `name` for `callId` — `None` if unresolved. */
 export const signalValue = (snapshot: ActorSnapshot, callId: string, name: string): Option.Option<unknown> =>
   nestedGet(snapshot.signals, callId, name)
+
+/** A recorded journal fact for `callId` at `step` — `None` if not yet journaled. */
+export const journalValue = (snapshot: ActorSnapshot, callId: string, step: string): Option.Option<unknown> =>
+  nestedGet(snapshot.journal, callId, step)
 
 /**
  * The at-most-one `StartCall` for the recovered durable head — emitted when the

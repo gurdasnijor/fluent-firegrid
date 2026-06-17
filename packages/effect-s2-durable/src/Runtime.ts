@@ -18,7 +18,7 @@ import {
 } from "effect"
 import { S2Client } from "effect-s2"
 import type { AnyTable, RowOf, TableFacade } from "effect-s2-stream-db"
-import { DurableExecutionError } from "./errors.ts"
+import { DurableExecutionError, durableError } from "./errors.ts"
 import { ExecutionId, type ObjectInboxRow, ObjectStateDb, RosterDb, WorkflowDb } from "./schema.ts"
 import type { Handler, RetryPolicy, RunOptions } from "./types.ts"
 
@@ -87,12 +87,7 @@ interface RunningEntry {
   readonly invocation: Invocation
 }
 
-const toError = (operation: string) => (cause: unknown): DurableExecutionError =>
-  new DurableExecutionError({
-    operation,
-    message: cause instanceof Error ? cause.message : String(cause),
-    cause,
-  })
+const toError = durableError
 
 const fail = (operation: string, message: string): Effect.Effect<never, DurableExecutionError> =>
   Effect.fail(new DurableExecutionError({ operation, message, cause: undefined }))

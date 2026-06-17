@@ -112,6 +112,14 @@ describe("actor transition (pure)", () => {
     expect(Option.getOrNull(Actor.stateValue(snap, "a/b", "c"))).toBe(2)
   })
 
+  it("folds Journaled facts into the per-call journal, replay-stable (EXECUTION.2)", () => {
+    const snap = fold([
+      { seqNum: 0, event: { _tag: "Journaled", callId: "c", step: "read/0", value: { present: true, value: 7 } } },
+    ])
+    expect(Option.getOrNull(Actor.journalValue(snap, "c", "read/0"))).toEqual({ present: true, value: 7 })
+    expect(Option.isNone(Actor.journalValue(snap, "c", "read/1"))).toBe(true) // distinct steps don't collide
+  })
+
   it("SignalResolved records an ingress fact and asks to wake the waiter (INGRESS)", () => {
     const [snap, actions] = Actor.transition(Actor.empty, {
       seqNum: 0,
