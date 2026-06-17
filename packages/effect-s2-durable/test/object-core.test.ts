@@ -9,6 +9,7 @@ import {
   OBJECT_ID_PREFIX,
   pathSegment,
   replay,
+  signalValue,
 } from "../src/actor/core.ts"
 
 // Pure (no S2) invariants for the object call-id routing + projection. S2-backed
@@ -71,6 +72,21 @@ describe("journal identity is kind-aware (run vs read cannot collide)", () => {
   it("a cross-kind lookup misses (no collision)", () => {
     expect(Option.isNone(journalValue(snap, "c1", "run", "0"))).toBe(true)
     expect(Option.isNone(journalValue(snap, "c1", "read", "read/0"))).toBe(true)
+  })
+})
+
+describe("signals projection (durable ingress, first-write-wins)", () => {
+  const first: LogEntry = { seqNum: 1, event: { _tag: "SignalResolved", callId: "c1", name: "approved", value: true } }
+  const second: LogEntry = { seqNum: 2, event: { _tag: "SignalResolved", callId: "c1", name: "approved", value: false } }
+
+  it("resolves to the FIRST value (a double-resolve is a no-op)", () => {
+    expect(signalValue(replay([first, second]), "c1", "approved")).toEqual(Option.some(true))
+  })
+
+  it("an unresolved signal / different name / different call is None", () => {
+    expect(Option.isNone(signalValue(replay([first]), "c1", "other"))).toBe(true)
+    expect(Option.isNone(signalValue(replay([first]), "c2", "approved"))).toBe(true)
+    expect(Option.isNone(signalValue(replay([]), "c1", "approved"))).toBe(true)
   })
 })
 

@@ -37,7 +37,7 @@ type StateStore = { readonly table: <Tbl extends AnyTable>(table: Tbl) => TableF
  * The active invocation a free primitive (`run`/`sleep`/`state`/…) operates on.
  * A `service` invocation runs against its per-execution `WorkflowDb`; an `object`
  * invocation runs against its owner `ActorEvent` log via the journaled state
- * backend (Slice A: `state` + completion; other primitives fail clearly).
+ * backend (`state`/`run`/`signal`/`deferred`/`awakeable`; `sleep` not yet wired).
  */
 interface ServiceInvocation {
   readonly kind: "service"
@@ -59,10 +59,12 @@ interface ObjectInvocation {
   readonly callId: string
   readonly method: string
   readonly inputEncoded: unknown
-  /** The journaled per-owner durable `state` + run-journal surface. */
+  /** The journaled per-owner durable `state` + run-journal + signal surface. */
   readonly state: ObjectStateBackend
   /** Monotonic per-activation counter for positionally-keyed `run` steps. */
   readonly runSeq: Ref.Ref<number>
+  /** Monotonic per-activation counter for replay-stable `awakeable` ids. */
+  readonly awakeSeq: Ref.Ref<number>
 }
 
 type Invocation = ServiceInvocation | ObjectInvocation
@@ -113,10 +115,10 @@ const encode = <A, I>(
 const scheduleOf = (policy: RetryPolicy): Schedule.Schedule<Duration.Duration> =>
   Schedule.exponential(policy.initialInterval ?? Duration.millis(100), policy.intervalFactor ?? 2)
 
-// Slice A: an object handler that reaches for an unsupported durable primitive
-// fails clearly rather than silently mis-routing (consolidation SDD scope).
+// An object handler that reaches for a not-yet-wired durable primitive (currently
+// only `sleep`) fails clearly rather than silently mis-routing.
 const objectUnsupported = (op: string): Effect.Effect<never, DurableExecutionError> =>
-  fail(op, `${op} is not yet supported on the object call path (Slice A is state + completion only)`)
+  fail(op, `${op} is not yet supported on the object call path`)
 
 // Object `state(Table)` rows are encoded/decoded through the table schema at the
 // log boundary; the durable key is the table's primary-key field value.
@@ -466,8 +468,10 @@ const makeRuntime = (
       schema: Schema.Codec<A, I, never, never>,
     ): Effect.Effect<A, DurableExecutionError> =>
       withActive("await").pipe(Effect.flatMap((active) =>
-        Effect.gen(function*() {
-          if (active.kind === "object") return yield* objectUnsupported("await")
+        active.kind === "object"
+          // object: park on a durable `SignalResolved` on the owner stream, then decode.
+          ? provideClient(active.state.signal.await(name)).pipe(Effect.flatMap((raw) => decode(schema, raw)))
+          : Effect.gen(function*() {
           // read fresh each time — observe the row as of now, not at build time
           const readRow = () =>
             active.db.deferreds.get(name).pipe(Effect.mapError(toError("await")), Effect.map(resolvedValue))
@@ -497,27 +501,35 @@ const makeRuntime = (
     ): Effect.Effect<void, DurableExecutionError> =>
       withActive("resolve").pipe(Effect.flatMap((active) =>
         active.kind === "object"
-          ? objectUnsupported("resolve")
+          // handler-side resolve: append `SignalResolved` to the running call's owner stream.
+          ? encode(schema, value).pipe(Effect.flatMap((enc) => provideClient(active.state.signal.resolve(name, enc))))
           : encode(schema, value).pipe(Effect.flatMap((enc) => resolveOn(active.db, active.executionId, name, enc))),
       ))
 
     const resolveExternal = <A, I>(executionId: string, name: string, schema: Schema.Codec<A, I, never, never>, value: A): Effect.Effect<void, DurableExecutionError> =>
-      Ref.get(running).pipe(Effect.flatMap((live) =>
-        Option.match(HashMap.get(live, executionId), {
-          // single-writer: resolve through the owner's db instance (serialized by
-          // its lock), not a second db over the same stream
+      Effect.gen(function*() {
+        const parts = yield* decodeParts(executionId)
+        if (Option.isSome(parts)) {
+          // object ingress is RESIDENCY-INDEPENDENT: route by the call id and append
+          // SignalResolved to the owner stream whether or not the call is resident.
+          const enc = yield* encode(schema, value)
+          return yield* provideClient(store.resolveSignal(executionId, parts.value, name, enc))
+        }
+        // service: resolve through the resident owner's db (single-writer, serialized).
+        const live = yield* Ref.get(running)
+        return yield* Option.match(HashMap.get(live, executionId), {
           onNone: () => fail("resolve", `execution ${executionId} is not running locally`),
           onSome: (entry) =>
-            encode(schema, value).pipe(
-              Effect.flatMap((enc) => resolveOn(entry.invocation.db, executionId, name, enc)),
-            ),
-        }),
-      ))
+            encode(schema, value).pipe(Effect.flatMap((enc) => resolveOn(entry.invocation.db, executionId, name, enc))),
+        })
+      })
 
     const nextAwakeableId: Effect.Effect<string, DurableExecutionError> = withActive("awakeable").pipe(
       Effect.flatMap((active) =>
         active.kind === "object"
-          ? objectUnsupported("awakeable")
+          ? Ref.getAndUpdate(active.awakeSeq, (n) => n + 1).pipe(
+            Effect.map((ordinal) => `${active.callId}/awk/${ordinal}`),
+          )
           : Ref.getAndUpdate(active.awakeSeq, (n) => n + 1).pipe(
             Effect.map((ordinal) => `${active.executionId}/awk/${ordinal}`),
           ),
@@ -640,7 +652,8 @@ const makeRuntime = (
     ): Effect.Effect<ActorExit, DurableExecutionError, S2Client> =>
       Effect.gen(function*() {
         const runSeq = yield* Ref.make(0)
-        const invocation: ObjectInvocation = { kind: "object", callId, method, inputEncoded, state, runSeq }
+        const awakeSeq = yield* Ref.make(0)
+        const invocation: ObjectInvocation = { kind: "object", callId, method, inputEncoded, state, runSeq, awakeSeq }
         const exit = yield* handler.program.pipe(
           Effect.provideService(ActiveInvocation, Option.some(invocation)),
           Effect.provideService(DurableExecutionRuntime, api),
@@ -727,11 +740,11 @@ const makeRuntime = (
           ),
       })
 
-    // SLICE A RECOVERY GAP (consolidation SDD, Slice A "temporary recovery gap"):
-    // object boot-recovery is intentionally NOT wired here. The old per-key inbox
-    // drainer was deleted with the rest of the legacy object path; the S2 owner-
-    // stream recovery (enumerate keys + restart the pending head) lands in Slice B.
-    // Only stateless services are re-driven at boot; objects no longer write the
+    // OBJECT RECOVERY GAP (consolidation SDD "temporary recovery gap"): object
+    // boot-recovery is intentionally NOT wired here yet. The old per-key inbox drainer
+    // was deleted with the rest of the legacy object path; the S2 owner-stream recovery
+    // (enumerate keys + restart the pending head) is a later Object API Completion Batch
+    // item. Only stateless services are re-driven at boot; objects no longer write the
     // roster, so this query returns service rows only.
     const bootRecover = roster
       .query((rows) =>
