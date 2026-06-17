@@ -14,7 +14,8 @@ import { defineValidation } from "../../types.ts"
 const runExecutions = { count: 0 }
 // test-side marker: the handler records its amount AFTER `run` returns (so its
 // Journaled run fact is durable) and BEFORE it parks. Process 1 waits for this so the
-// restart genuinely happens with a recorded fact + a parked call (not merely admitted).
+// restart genuinely happens with a durable run fact and the handler about to park
+// (not merely admitted) — enough to drive recovery's pending-head path.
 const reachedRunFor = new Set<number>()
 
 const ledger = object({
@@ -56,7 +57,7 @@ export default defineValidation({
       id: "RECOVERY.1",
       description:
         "boot enumerates object owner keys and restarts the pending head: a signal-parked object call, "
-        + "left incomplete (genuinely parked) when its engine tore down, is re-driven by a fresh engine and "
+        + "left incomplete (past its run step, about to park) when its engine tore down, is re-driven by a fresh engine and "
         + "then settled by a residency-independent resolveSignal + attach",
       evidence:
         'spans.exists(s, named(s, "effect-s2-durable.object.boot-recover")) && spans.exists(s, named(s, "effect-s2-durable.object.ownerKeys")) && spans.exists(s, named(s, "effect-s2-durable.object.drain"))',
