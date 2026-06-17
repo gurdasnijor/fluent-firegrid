@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect"
+import { Duration, Effect, Schema } from "effect"
 import { attach, object, resolveSignal, run, sendClient, serviceLayer, signal } from "effect-s2-durable"
 import { assertEquals } from "../../assertions.ts"
 import { S2LiteLive } from "../../s2lite.ts"
@@ -12,19 +12,31 @@ import { defineValidation } from "../../types.ts"
 
 // real executions of the `post` run step — recovery must never double-execute it.
 const runExecutions = { count: 0 }
+// test-side marker: the handler records its amount AFTER `run` returns (so its
+// Journaled run fact is durable) and BEFORE it parks. Process 1 waits for this so the
+// restart genuinely happens with a recorded fact + a parked call (not merely admitted).
+const reachedRunFor = new Set<number>()
 
 const ledger = object({
   name: "firelab-rec-ledger",
   handlers: {
-    // a durable run step (counts executions) followed by a park on a signal, so the
-    // call is left pending across a restart with a recorded run fact.
     *post(amount: number) {
       const n = yield* run(Effect.sync(() => (runExecutions.count++, amount)), { output: Schema.Number })
+      reachedRunFor.add(amount) // run fact is now durable; about to park
       yield* signal("posted", Schema.Boolean) // park until released
       return n
     },
   },
 })
+
+// poll until the handler has passed its run step in the live engine (bounded by the
+// firelab run timeout; if the run never happens that is itself a failure).
+const waitForRun = (amount: number): Effect.Effect<void> =>
+  Effect.suspend((): Effect.Effect<void> =>
+    reachedRunFor.has(amount)
+      ? Effect.void
+      : Effect.sleep(Duration.millis(10)).pipe(Effect.flatMap(() => waitForRun(amount)))
+  )
 
 export default defineValidation({
   id: "effect-s2-durable-object-recovery",
@@ -44,15 +56,20 @@ export default defineValidation({
       id: "RECOVERY.1",
       description:
         "boot enumerates object owner keys and restarts the pending head: a signal-parked object call, "
-        + "left incomplete when its engine tore down, is re-driven by a fresh engine and then settled by a "
-        + "residency-independent resolveSignal + attach",
+        + "left incomplete (genuinely parked) when its engine tore down, is re-driven by a fresh engine and "
+        + "then settled by a residency-independent resolveSignal + attach",
       evidence:
         'spans.exists(s, named(s, "effect-s2-durable.object.boot-recover")) && spans.exists(s, named(s, "effect-s2-durable.object.ownerKeys")) && spans.exists(s, named(s, "effect-s2-durable.object.drain"))',
       claim: ({ key }) =>
         Effect.gen(function*() {
+          reachedRunFor.delete(5)
           const engine = serviceLayer(ledger)
-          // process 1: submit; the handler parks on the signal; tear the engine down.
-          const id = yield* sendClient(ledger, key).post(5).pipe(Effect.provide(engine), Effect.scoped)
+          // process 1: submit AND wait until the handler is genuinely parked, then tear down.
+          const id = yield* Effect.gen(function*() {
+            const id = yield* sendClient(ledger, key).post(5)
+            yield* waitForRun(5)
+            return id
+          }).pipe(Effect.provide(engine), Effect.scoped)
           // process 2: a fresh engine boot-recovers the pending head (re-parks), then a
           // residency-independent resolve + attach settle it.
           const result = yield* Effect.gen(function*() {
@@ -65,22 +82,30 @@ export default defineValidation({
     {
       id: "RECOVERY.3",
       description:
-        "replay folds without re-executing: a recorded `run` fact on a recovered, still-pending call "
-        + "replays its value exactly once across the restart (the run effect is never re-executed)",
+        "replay folds without re-executing: a `run` fact recorded + made durable in process 1 (the handler "
+        + "is parked) replays its value exactly once when a fresh engine re-drives the call — the run effect "
+        + "is never re-executed across the restart",
       evidence:
         'spans.exists(s, named(s, "effect-s2-durable.object.boot-recover")) && spans.exists(s, named(s, "effect-s2-durable.object.drain"))',
       claim: ({ keyFor }) =>
         Effect.gen(function*() {
           const k = keyFor("replay")
+          reachedRunFor.delete(9)
           const engine = serviceLayer(ledger)
           const before = runExecutions.count
-          const id = yield* sendClient(ledger, k).post(9).pipe(Effect.provide(engine), Effect.scoped)
+          // process 1: run EXECUTES here (count++), its fact becomes durable, then it parks.
+          const id = yield* Effect.gen(function*() {
+            const id = yield* sendClient(ledger, k).post(9)
+            yield* waitForRun(9) // guarantees the run executed + the Journaled fact is durable
+            return id
+          }).pipe(Effect.provide(engine), Effect.scoped)
+          // process 2: recovery re-drives the call; `run` must REPLAY the recorded fact.
           const result = yield* Effect.gen(function*() {
             yield* resolveSignal(id, "posted", Schema.Boolean, true)
             return yield* attach(id, Schema.Number)
           }).pipe(Effect.provide(engine), Effect.scoped)
           assertEquals(result, 9)
-          // the run effect ran EXACTLY once across process 1 + the recovered process 2.
+          // executed exactly once (in process 1); process 2 replayed the fact, no re-exec.
           assertEquals(runExecutions.count - before, 1)
         }),
     },
