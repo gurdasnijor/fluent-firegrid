@@ -87,12 +87,29 @@ describe("actor transition (pure)", () => {
     expect(snap.cursor).toBe(12) // last applied seq_num
   })
 
-  it("StateChanged folds latest-value-per-key into the projection (LAYERING.4)", () => {
+  it("StateChanged folds set/delete/re-set latest-value-per-key (LAYERING.4)", () => {
+    const set = (seqNum: number, table: string, key: string, value: unknown): Actor.LogEntry => ({
+      seqNum,
+      event: { _tag: "StateChanged", op: "set", table, key, value },
+    })
+    const del = (seqNum: number, table: string, key: string): Actor.LogEntry => ({
+      seqNum,
+      event: { _tag: "StateChanged", op: "delete", table, key },
+    })
+    const snap = fold([set(0, "balance", "acct", 1), set(1, "balance", "acct", 7), del(2, "balance", "acct")])
+    expect(Option.isNone(Actor.stateValue(snap, "balance", "acct"))).toBe(true) // deleted
+    const reSet = Actor.transition(snap, set(3, "balance", "acct", 9))[0]
+    expect(Option.getOrNull(Actor.stateValue(reSet, "balance", "acct"))).toBe(9) // re-set after delete
+  })
+
+  it("composite identities are structural, never delimiter-joined (PLANNING.3)", () => {
+    // (table 'a', key 'b/c') must not collide with (table 'a/b', key 'c').
     const snap = fold([
-      { seqNum: 0, event: { _tag: "StateChanged", table: "balance", key: "acct", value: 1 } },
-      { seqNum: 1, event: { _tag: "StateChanged", table: "balance", key: "acct", value: 7 } },
+      { seqNum: 0, event: { _tag: "StateChanged", op: "set", table: "a", key: "b/c", value: 1 } },
+      { seqNum: 1, event: { _tag: "StateChanged", op: "set", table: "a/b", key: "c", value: 2 } },
     ])
-    expect(snap.state.get("balance/acct")).toBe(7) // latest wins
+    expect(Option.getOrNull(Actor.stateValue(snap, "a", "b/c"))).toBe(1)
+    expect(Option.getOrNull(Actor.stateValue(snap, "a/b", "c"))).toBe(2)
   })
 
   it("SignalResolved records an ingress fact and asks to wake the waiter (INGRESS)", () => {
@@ -100,8 +117,15 @@ describe("actor transition (pure)", () => {
       seqNum: 0,
       event: { _tag: "SignalResolved", callId: "c", name: "approval", value: true },
     })
-    expect(snap.signals.get("c/approval")).toBe(true)
+    expect(Option.getOrNull(Actor.signalValue(snap, "c", "approval"))).toBe(true)
     expect(actions).toEqual([{ _tag: "WakeWaiter", callId: "c", name: "approval" }])
+  })
+
+  it("completion is idempotent: a duplicate Completed is first-writer-wins, no re-action (PLANNING.6)", () => {
+    const settled = fold([accepted(0, "a"), completed(1, "a", { _tag: "Success", value: 1 })])
+    const [after, actions] = Actor.transition(settled, completed(2, "a", { _tag: "Success", value: 999 }))
+    expect(after.results.get("a")).toEqual({ _tag: "Success", value: 1 }) // first result retained
+    expect(actions).toEqual([]) // no second checkpoint / start
   })
 })
 

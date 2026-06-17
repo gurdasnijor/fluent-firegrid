@@ -31,5 +31,7 @@ export {
   recoveredHeadActions,
   replay,
   replayLog,
+  signalValue,
+  stateValue,
   transition,
 } from "./snapshot.ts"

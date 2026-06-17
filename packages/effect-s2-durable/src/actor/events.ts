@@ -7,8 +7,11 @@ import { Schema } from "effect"
  * table-fold. The latest-value table fold is a projection over this log
  * (`ActorSnapshot`), never the persisted format.
  *
- * Every event is JSON-serializable so it round-trips through `readDecoded` /
- * `S2Client.append`.
+ * Payload fields (`input`, `value`, `exit`, …) are **already-schema-encoded JSON
+ * values**: the `ActorLog.append` boundary (a later slice) schema-encodes a
+ * handler's input/result/state to a JSON value before wrapping it in an event, so
+ * the whole event round-trips through `readDecoded`'s JSON codec. The core type
+ * carries the encoded form; it does not re-encode.
  */
 
 // ── ActorExit — the durable encoding of a settled call's outcome (COMPLETION.1) ──
@@ -34,7 +37,8 @@ export const CheckpointSnapshot = Schema.Struct({
   pending: Schema.Array(Schema.String),
   active: Schema.NullOr(Schema.String),
   results: Schema.Array(Schema.Struct({ callId: Schema.String, exit: ActorExit })),
-  signals: Schema.Array(Schema.Struct({ key: Schema.String, value: Schema.Unknown })),
+  // the live set — composite identities are kept as distinct fields (never delimiter-joined).
+  signals: Schema.Array(Schema.Struct({ callId: Schema.String, name: Schema.String, value: Schema.Unknown })),
   state: Schema.Array(Schema.Struct({ table: Schema.String, key: Schema.String, value: Schema.Unknown })),
 })
 export type CheckpointSnapshot = typeof CheckpointSnapshot.Type
@@ -68,11 +72,16 @@ export const Completed = Schema.TaggedStruct("Completed", {
   exit: ActorExit,
 })
 
-/** A user-state write — the projection's source for materialized state. */
+/**
+ * A user-state mutation — the projection's source for materialized state. `op`
+ * carries the full `state(Table)` surface (`set` and `delete`); `value` is present
+ * for `set`, absent for `delete` (a tombstone).
+ */
 export const StateChanged = Schema.TaggedStruct("StateChanged", {
+  op: Schema.Literals(["set", "delete"]),
   table: Schema.String,
   key: Schema.String,
-  value: Schema.Unknown,
+  value: Schema.optional(Schema.Unknown),
 })
 
 /** A durable checkpoint marker carrying the snapshot at `cursor` (`CHECKPOINTING.2`). */

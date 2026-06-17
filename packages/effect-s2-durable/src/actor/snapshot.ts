@@ -26,14 +26,18 @@ export interface ActorSnapshot {
   readonly active: Option.Option<string>
   /** A call is done iff present here (`COMPLETION.2`). */
   readonly results: ReadonlyMap<string, ActorExit>
-  /** Resolved signals, keyed `${callId}/${name}` (`INGRESS`). */
-  readonly signals: ReadonlyMap<string, unknown>
   /**
-   * User state, keyed `${table}/${key}` — the latest-value-per-key fold over
-   * `StateChanged` events (the reused materialization MECHANISM, not `ChangeMessage`
-   * internals; `LAYERING.4`).
+   * Resolved signals, nested `callId -> name -> value` (`INGRESS`). Composite
+   * identity is structural — never a delimiter-joined string — so it cannot
+   * collide (`PLANNING.3`).
    */
-  readonly state: ReadonlyMap<string, unknown>
+  readonly signals: ReadonlyMap<string, ReadonlyMap<string, unknown>>
+  /**
+   * User state, nested `table -> key -> value` — the latest-value-per-key fold
+   * over `StateChanged` events (the reused materialization MECHANISM, not
+   * `ChangeMessage` internals; `LAYERING.4`). A `delete` op removes the key.
+   */
+  readonly state: ReadonlyMap<string, ReadonlyMap<string, unknown>>
 }
 
 /** The empty projection — the fold seed (no records applied). */
@@ -54,6 +58,30 @@ export type ActorAction =
 
 const withMapSet = <V>(map: ReadonlyMap<string, V>, key: string, value: V): ReadonlyMap<string, V> =>
   new Map(map).set(key, value)
+
+// Nested `outer -> inner -> value` updates, so composite identities (table/key,
+// callId/name) are structural and collision-free (PLANNING.3).
+type Nested = ReadonlyMap<string, ReadonlyMap<string, unknown>>
+
+const withNested = (
+  outer: Nested,
+  k1: string,
+  update: (inner: ReadonlyMap<string, unknown>) => ReadonlyMap<string, unknown>,
+): Nested => new Map(outer).set(k1, update(outer.get(k1) ?? new Map()))
+
+const innerSet = (key: string, value: unknown) => (inner: ReadonlyMap<string, unknown>): ReadonlyMap<string, unknown> =>
+  new Map(inner).set(key, value)
+
+const innerDelete = (key: string) => (inner: ReadonlyMap<string, unknown>): ReadonlyMap<string, unknown> => {
+  const next = new Map(inner)
+  next.delete(key)
+  return next
+}
+
+const nestedGet = (outer: Nested, k1: string, k2: string): Option.Option<unknown> => {
+  const inner = outer.get(k1)
+  return inner !== undefined && inner.has(k2) ? Option.some(inner.get(k2)) : Option.none()
+}
 
 /**
  * The pure transition. Completion *derives* the advance (no dequeue write → a
@@ -80,6 +108,12 @@ export const transition = (
         : [base, []] // busy → just enqueue (single-writer, HANDLERS.2 / EXECUTION.1)
     }
     case "Completed": {
+      // first-writer-wins: a duplicate Completed for an already-settled call is a
+      // no-op — it never overwrites the retained result nor re-emits actions
+      // (completion-derived continuations are idempotent, PLANNING.6).
+      if (snapshot.results.has(event.callId)) {
+        return [{ ...snapshot, cursor }, []]
+      }
       const results = withMapSet(snapshot.results, event.callId, event.exit)
       const pending = snapshot.pending.filter((id) => id !== event.callId) // "advance" = re-derive pending
       const head = Option.fromNullishOr(pending[0])
@@ -90,11 +124,12 @@ export const transition = (
       })
     }
     case "SignalResolved": {
-      const signals = withMapSet(snapshot.signals, `${event.callId}/${event.name}`, event.value)
+      const signals = withNested(snapshot.signals, event.callId, innerSet(event.name, event.value))
       return [{ ...snapshot, cursor, signals }, [{ _tag: "WakeWaiter", callId: event.callId, name: event.name }]]
     }
     case "StateChanged": {
-      const state = withMapSet(snapshot.state, `${event.table}/${event.key}`, event.value)
+      const update = event.op === "delete" ? innerDelete(event.key) : innerSet(event.key, event.value)
+      const state = withNested(snapshot.state, event.table, update)
       return [{ ...snapshot, cursor, state }, []]
     }
     case "Journaled":
@@ -118,6 +153,14 @@ export const head = (snapshot: ActorSnapshot): Option.Option<string> => Option.f
 
 /** A call is done iff its `Completed` event has been folded in. */
 export const isDone = (snapshot: ActorSnapshot, callId: string): boolean => snapshot.results.has(callId)
+
+/** The latest user-state value at `(table, key)` — `None` if unset or deleted. */
+export const stateValue = (snapshot: ActorSnapshot, table: string, key: string): Option.Option<unknown> =>
+  nestedGet(snapshot.state, table, key)
+
+/** The resolved value of signal `name` for `callId` — `None` if unresolved. */
+export const signalValue = (snapshot: ActorSnapshot, callId: string, name: string): Option.Option<unknown> =>
+  nestedGet(snapshot.signals, callId, name)
 
 /**
  * The at-most-one `StartCall` for the recovered durable head — emitted when the
