@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option, Ref, Schema, Semaphore } from "effect"
+import { Context, Deferred, Effect, Layer, Option, Ref, Schema, Semaphore } from "effect"
 import { S2Client, S2Conflict } from "effect-s2"
 import { DurableExecutionError, durableError as toError } from "../errors.ts"
 import {
@@ -11,6 +11,7 @@ import {
   type ObjectCallIdParts,
   pathSegment,
   replay,
+  signalValue,
   stateValue,
   transition,
 } from "./core.ts"
@@ -46,6 +47,23 @@ export interface ObjectStateBackend {
     readonly get: (step: string) => Effect.Effect<Option.Option<unknown>, DurableExecutionError, S2Client>
     readonly put: (step: string, value: unknown) => Effect.Effect<void, DurableExecutionError, S2Client>
   }
+  /**
+   * Durable named-promise ingress (signal / awakeable / deferred). `await` parks
+   * until a `SignalResolved` for `name` is durable on the owner stream (refreshing
+   * the projection); `resolve` is the handler-side (deferred.resolve) append.
+   */
+  readonly signal: {
+    readonly await: (name: string) => Effect.Effect<unknown, DurableExecutionError, S2Client>
+    readonly resolve: (name: string, value: unknown) => Effect.Effect<void, DurableExecutionError, S2Client>
+  }
+}
+
+// In-process best-effort wakeup for parked signal awaits (the durable SignalResolved
+// is the source of truth; a poke just accelerates a resident waiter — INGRESS.2).
+interface SignalPort {
+  readonly register: (callId: string, name: string) => Effect.Effect<Deferred.Deferred<void>>
+  readonly poke: (callId: string, name: string) => Effect.Effect<void>
+  readonly remove: (callId: string, name: string) => Effect.Effect<void>
 }
 
 /** Run one accepted call to an `ActorExit` (handler exit captured, never thrown). */
@@ -73,6 +91,17 @@ export interface InvocationStoreApi {
     object: string,
     key: string,
     runHead: RunHead,
+  ) => Effect.Effect<void, DurableExecutionError, S2Client>
+  /**
+   * Residency-independent ingress: append a `SignalResolved` to the owner stream
+   * (routed by the call id) and best-effort poke a local waiter — succeeds whether
+   * or not the call is currently resident (`INGRESS.1`).
+   */
+  readonly resolveSignal: (
+    callId: string,
+    parts: ObjectCallIdParts,
+    name: string,
+    value: unknown,
   ) => Effect.Effect<void, DurableExecutionError, S2Client>
 }
 
@@ -105,6 +134,7 @@ const makeBackend = (
   snapshotRef: Ref.Ref<ReturnType<typeof replay>>,
   callId: string,
   readCounter: Ref.Ref<number>,
+  signalPort: SignalPort,
 ): ObjectStateBackend => {
   const write = (
     op: "set" | "delete",
@@ -148,6 +178,43 @@ const makeBackend = (
           yield* Ref.update(snapshotRef, (snapshot) => transition(snapshot, { seqNum, event }))
         }),
     },
+    signal: {
+      await: (name) => {
+        // refresh the projection from the live log (picks up own writes + ingress
+        // appended during the park) and read the resolved value, if any.
+        const check = Effect.gen(function*() {
+          const live = replay(yield* log.read())
+          yield* Ref.set(snapshotRef, live)
+          return signalValue(live, callId, name)
+        })
+        const loop = (): Effect.Effect<unknown, DurableExecutionError, S2Client> =>
+          Effect.gen(function*() {
+            const resolved = yield* check
+            if (Option.isSome(resolved)) {
+              return resolved.value
+            }
+            // register a waiter, RE-CHECK (closes the resolve-before-register race),
+            // then park until poked; the durable row remains the source of truth.
+            const waiter = yield* signalPort.register(callId, name)
+            const again = yield* check
+            if (Option.isSome(again)) {
+              yield* signalPort.remove(callId, name)
+              return again.value
+            }
+            yield* Deferred.await(waiter)
+            yield* signalPort.remove(callId, name)
+            return yield* loop()
+          })
+        return loop()
+      },
+      resolve: (name, value) =>
+        Effect.gen(function*() {
+          const event = { _tag: "SignalResolved" as const, callId, name, value }
+          const seqNum = yield* log.append(event)
+          yield* Ref.update(snapshotRef, (snapshot) => transition(snapshot, { seqNum, event }))
+          yield* signalPort.poke(callId, name)
+        }),
+    },
   }
 }
 
@@ -175,6 +242,31 @@ const make = (): Effect.Effect<InvocationStoreApi> =>
       started.set(stream, fresh)
       return fresh
     }
+    // In-process signal waiters (best-effort wakeup; durable SignalResolved is truth).
+    // Keyed by an injective JSON tuple of callId + name; a key collision only
+    // causes a spurious poke, which the await harmlessly re-checks against the log.
+    const waiters = yield* Ref.make(new Map<string, Deferred.Deferred<void>>())
+    const waiterKey = (callId: string, name: string): string => JSON.stringify([callId, name])
+    const signalPort: SignalPort = {
+      register: (callId, name) =>
+        Effect.gen(function*() {
+          const deferred = yield* Deferred.make<void>()
+          yield* Ref.update(waiters, (m) => new Map(m).set(waiterKey(callId, name), deferred))
+          return deferred
+        }),
+      poke: (callId, name) =>
+        Ref.get(waiters).pipe(Effect.flatMap((m) => {
+          const deferred = m.get(waiterKey(callId, name))
+          return deferred === undefined ? Effect.void : Effect.asVoid(Deferred.succeed(deferred, undefined))
+        })),
+      remove: (callId, name) =>
+        Ref.update(waiters, (m) => {
+          const next = new Map(m)
+          next.delete(waiterKey(callId, name))
+          return next
+        }),
+    }
+
     const lockCreation = yield* Semaphore.make(1)
     const lockFor = (stream: string): Effect.Effect<Semaphore.Semaphore> =>
       lockCreation.withPermits(1)(
@@ -256,7 +348,7 @@ const make = (): Effect.Effect<InvocationStoreApi> =>
             }
             const snapshotRef = yield* Ref.make(snapshot)
             const readCounter = yield* Ref.make(0)
-            const backend = makeBackend(log, snapshotRef, headCall, readCounter)
+            const backend = makeBackend(log, snapshotRef, headCall, readCounter, signalPort)
             const exit = yield* runHead({
               callId: headCall,
               method: accepted.event.method,
@@ -308,7 +400,21 @@ const make = (): Effect.Effect<InvocationStoreApi> =>
         )
       }).pipe(Effect.withSpan("effect-s2-durable.object.drain", { attributes: { object, key } }))
 
-    return { admit, status, drain }
+    const resolveSignal = (
+      callId: string,
+      parts: ObjectCallIdParts,
+      name: string,
+      value: unknown,
+    ): Effect.Effect<void, DurableExecutionError, S2Client> =>
+      Effect.gen(function*() {
+        const log = openLog(yield* ownerStream(parts.object, parts.key))
+        // residency-independent: the durable append IS the resolution; the poke just
+        // accelerates a locally-parked waiter (first-write-wins is enforced by the fold).
+        yield* log.append({ _tag: "SignalResolved", callId, name, value })
+        yield* signalPort.poke(callId, name)
+      }).pipe(Effect.withSpan("effect-s2-durable.resolveSignal", { attributes: { callId, name } }))
+
+    return { admit, status, drain, resolveSignal }
   })
 
 export class InvocationStore extends Context.Service<InvocationStore, InvocationStoreApi>()(

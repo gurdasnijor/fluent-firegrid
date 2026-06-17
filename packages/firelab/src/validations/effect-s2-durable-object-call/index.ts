@@ -1,5 +1,5 @@
 import { Effect, Layer, Option, Schema } from "effect"
-import { attach, client, object, run, sendClient, serviceLayer, state } from "effect-s2-durable"
+import { attach, client, object, resolveSignal, run, sendClient, serviceLayer, signal, state } from "effect-s2-durable"
 import { primaryKey, Table } from "effect-s2-stream-db"
 import { assertEquals } from "../../assertions.ts"
 import { S2LiteLive } from "../../s2lite.ts"
@@ -29,6 +29,12 @@ const counter = object({
     *value() {
       const st = state(Counter)
       return Option.match(yield* st.get("v"), { onNone: () => 0, onSome: (r) => r.value })
+    },
+    // parks on a durable signal; the value is supplied by a residency-independent
+    // resolveSignal(callId, ...) appended to the owner stream.
+    *awaitApproval() {
+      const approved = yield* signal("approved", Schema.Boolean)
+      return approved ? "approved" : "denied"
     },
     // two run steps with the SAME name: the first executes the effect and records a
     // `Journaled` run fact; the second REPLAYS that fact (no re-execution). The
@@ -163,6 +169,21 @@ export default defineValidation({
           assertEquals(yield* attach(id, Schema.Number), 4)
           assertEquals(yield* attach(id, Schema.Number), 4) // duplicate served from the projection
           assertEquals(yield* client(counter, key).value(), 4) // not re-applied
+        }),
+    },
+    {
+      id: "INGRESS.1",
+      description:
+        "object signal ingress is residency-independent: a parked object method resumes when "
+        + "resolveSignal(callId, name, value) appends a SignalResolved to the owner stream (routed by the "
+        + "call id), then attach returns the signal-derived result",
+      evidence:
+        'spans.exists(s, named(s, "effect-s2-durable.resolveSignal")) && spans.exists(s, named(s, "effect-s2-durable.object.drain")) && spans.exists(s, named(s, "effect-s2-durable.log.append"))',
+      claim: ({ key }) =>
+        Effect.gen(function*() {
+          const id = yield* sendClient(counter, key).awaitApproval() // forks the drainer; handler parks on the signal
+          yield* resolveSignal(id, "approved", Schema.Boolean, true) // residency-independent append by call id
+          assertEquals(yield* attach(id, Schema.String), "approved")
         }),
     },
     {

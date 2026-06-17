@@ -54,6 +54,18 @@ const Journaled = Schema.TaggedStruct("Journaled", {
   value: Schema.Unknown,
 })
 
+/**
+ * A durable ingress/wakeup fact: a named promise (signal / awakeable / deferred) was
+ * resolved for a call. Residency-independent — appended to the owner stream by
+ * `resolveSignal(callId, …)` whether or not the call is currently resident; the row
+ * is the source of truth and an in-process waiter is poked best-effort (`INGRESS`).
+ */
+const SignalResolved = Schema.TaggedStruct("SignalResolved", {
+  callId: Schema.String,
+  name: Schema.String,
+  value: Schema.optional(Schema.Unknown),
+})
+
 /** Terminal: the call settled; its result outlives the running fiber. */
 const Completed = Schema.TaggedStruct("Completed", {
   callId: Schema.String,
@@ -61,7 +73,7 @@ const Completed = Schema.TaggedStruct("Completed", {
 })
 
 /** The one event type appended to an owner stream. */
-export const ActorEvent = Schema.Union([Accepted, StateChanged, Journaled, Completed])
+export const ActorEvent = Schema.Union([Accepted, StateChanged, Journaled, SignalResolved, Completed])
 export type ActorEvent = typeof ActorEvent.Type
 
 /** A decoded log record: its S2 `seq_num` and event. */
@@ -130,8 +142,10 @@ export interface ActorSnapshot {
   readonly results: ReadonlyMap<string, ActorExit>
   /** table -> key -> latest value. */
   readonly state: ReadonlyMap<string, ReadonlyMap<string, unknown>>
-  /** callId -> step -> journaled value. */
+  /** callId -> (kind,step) -> journaled value. */
   readonly journal: ReadonlyMap<string, ReadonlyMap<string, unknown>>
+  /** callId -> signal name -> resolved value (durable ingress, first-write-wins). */
+  readonly signals: ReadonlyMap<string, ReadonlyMap<string, unknown>>
 }
 
 const empty: ActorSnapshot = {
@@ -139,6 +153,7 @@ const empty: ActorSnapshot = {
   results: new Map(),
   state: new Map(),
   journal: new Map(),
+  signals: new Map(),
 }
 
 const setNested = (
@@ -188,6 +203,14 @@ export const transition = (snapshot: ActorSnapshot, entry: LogEntry): ActorSnaps
       }
     case "Journaled":
       return { ...snapshot, journal: setNested(snapshot.journal, event.callId, journalKey(event.kind, event.step), event.value) }
+    case "SignalResolved": {
+      // first-write-wins: a resolution is terminal, a double-resolve is a no-op.
+      const sub = snapshot.signals.get(event.callId)
+      if (sub !== undefined && sub.has(event.name)) {
+        return snapshot
+      }
+      return { ...snapshot, signals: setNested(snapshot.signals, event.callId, event.name, event.value) }
+    }
   }
 }
 
@@ -204,6 +227,12 @@ export const isDone = (snapshot: ActorSnapshot, callId: string): boolean => snap
 export const stateValue = (snapshot: ActorSnapshot, table: string, key: string): Option.Option<unknown> =>
   Option.fromNullishOr(snapshot.state.get(table)).pipe(
     Option.flatMap((sub) => (sub.has(key) ? Option.some(sub.get(key)) : Option.none())),
+  )
+
+/** A resolved signal's value for `callId`/`name`, if resolved (the value may be `undefined`). */
+export const signalValue = (snapshot: ActorSnapshot, callId: string, name: string): Option.Option<unknown> =>
+  Option.fromNullishOr(snapshot.signals.get(callId)).pipe(
+    Option.flatMap((sub) => (sub.has(name) ? Option.some(sub.get(name)) : Option.none())),
   )
 
 /** A journaled `(kind, step)` value for `callId`, if recorded. */
