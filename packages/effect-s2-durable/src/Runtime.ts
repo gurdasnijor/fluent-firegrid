@@ -37,7 +37,7 @@ type StateStore = { readonly table: <Tbl extends AnyTable>(table: Tbl) => TableF
  * The active invocation a free primitive (`run`/`sleep`/`state`/…) operates on.
  * A `service` invocation runs against its per-execution `WorkflowDb`; an `object`
  * invocation runs against its owner `ActorEvent` log via the journaled state
- * backend (Slice A: `state` + completion; other primitives fail clearly).
+ * backend (`state`/`run`/`signal`/`deferred`/`awakeable`; `sleep` not yet wired).
  */
 interface ServiceInvocation {
   readonly kind: "service"
@@ -115,10 +115,10 @@ const encode = <A, I>(
 const scheduleOf = (policy: RetryPolicy): Schedule.Schedule<Duration.Duration> =>
   Schedule.exponential(policy.initialInterval ?? Duration.millis(100), policy.intervalFactor ?? 2)
 
-// Slice A: an object handler that reaches for an unsupported durable primitive
-// fails clearly rather than silently mis-routing (consolidation SDD scope).
+// An object handler that reaches for a not-yet-wired durable primitive (currently
+// only `sleep`) fails clearly rather than silently mis-routing.
 const objectUnsupported = (op: string): Effect.Effect<never, DurableExecutionError> =>
-  fail(op, `${op} is not yet supported on the object call path (Slice A is state + completion only)`)
+  fail(op, `${op} is not yet supported on the object call path`)
 
 // Object `state(Table)` rows are encoded/decoded through the table schema at the
 // log boundary; the durable key is the table's primary-key field value.
@@ -740,11 +740,11 @@ const makeRuntime = (
           ),
       })
 
-    // SLICE A RECOVERY GAP (consolidation SDD, Slice A "temporary recovery gap"):
-    // object boot-recovery is intentionally NOT wired here. The old per-key inbox
-    // drainer was deleted with the rest of the legacy object path; the S2 owner-
-    // stream recovery (enumerate keys + restart the pending head) lands in Slice B.
-    // Only stateless services are re-driven at boot; objects no longer write the
+    // OBJECT RECOVERY GAP (consolidation SDD "temporary recovery gap"): object
+    // boot-recovery is intentionally NOT wired here yet. The old per-key inbox drainer
+    // was deleted with the rest of the legacy object path; the S2 owner-stream recovery
+    // (enumerate keys + restart the pending head) is a later Object API Completion Batch
+    // item. Only stateless services are re-driven at boot; objects no longer write the
     // roster, so this query returns service rows only.
     const bootRecover = roster
       .query((rows) =>

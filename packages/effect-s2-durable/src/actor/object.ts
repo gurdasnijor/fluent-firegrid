@@ -24,8 +24,8 @@ import { type ActorLog, openLog } from "./log.ts"
  * from the package and is NOT a sibling runtime: only `DurableExecutionRuntime`
  * constructs and calls it.
  *
- * Slice A scope: admit + state + completion + by-id status. Recovery, checkpoint,
- * signals, and run-journal arrive in later vertical slices.
+ * Scope so far: admit + state + run-journal + signal ingress + completion + by-id
+ * status. Boot-recovery, timers (`sleep`), and checkpointing land in later batch items.
  */
 
 /** The outcome of admitting a call (idempotent on a re-admit of the same id). */

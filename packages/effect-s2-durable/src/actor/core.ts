@@ -8,8 +8,9 @@ import { Effect, Option, Schema } from "effect"
  * `(object, key)` owner stream is the system of record; the latest-value view is a
  * pure projection (`replay`) — never a separate table.
  *
- * Slice A scope: `Accepted` (admission) + `StateChanged`/`Journaled` (state) +
- * `Completed` (result). Signals/timers/run-journal land in later vertical slices.
+ * Event vocabulary: `Accepted` (admission), `StateChanged` (user state), `Journaled`
+ * (run + state-read facts), `SignalResolved` (ingress), `Completed` (result). Timers
+ * (`sleep`) and checkpointing land in later batch items.
  */
 
 /** The durable outcome of a settled call (JSON-safe at the event boundary). */
