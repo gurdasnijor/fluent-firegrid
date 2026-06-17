@@ -207,14 +207,19 @@ export interface DurableExecutionRuntimeApi {
   readonly resolveExternal: <A, I>(executionId: string, name: string, schema: Schema.Codec<A, I, never, never>, value: A) => Effect.Effect<void, DurableExecutionError>
   /** A fresh replay-stable awakeable id for the active execution. */
   readonly nextAwakeableId: Effect.Effect<string, DurableExecutionError>
-  /** Durable `call` (delegated to by the `call` free primitive): issue a child object call and await its result. */
-  readonly callStep: <A, I>(
+  /** Durable `call`: issue a child object call (encoding input via `inputSchema`) and await its decoded result. */
+  readonly callStep: <A, I, B, J>(
     target: CallTarget,
     input: unknown,
+    inputSchema: Schema.Codec<B, J, never, never>,
     schema: Schema.Codec<A, I, never, never>,
   ) => Effect.Effect<A, DurableExecutionError>
-  /** Durable one-way `send` (delegated to by the `send` free primitive): issue a child object call, returning its id. */
-  readonly sendStep: (target: CallTarget, input: unknown) => Effect.Effect<string, DurableExecutionError>
+  /** Durable one-way `send`: issue a child object call (encoding input via `inputSchema`), returning its id. */
+  readonly sendStep: <B, J>(
+    target: CallTarget,
+    input: unknown,
+    inputSchema: Schema.Codec<B, J, never, never>,
+  ) => Effect.Effect<string, DurableExecutionError>
 }
 
 export class DurableExecutionRuntime
@@ -636,17 +641,29 @@ const makeRuntime = (
         return callId
       })
 
-    const callStep = <A, I>(
+    const callStep = <A, I, B, J>(
       target: CallTarget,
       input: unknown,
+      inputSchema: Schema.Codec<B, J, never, never>,
       schema: Schema.Codec<A, I, never, never>,
     ): Effect.Effect<A, DurableExecutionError> =>
       withActive("call").pipe(Effect.flatMap((active) =>
-        issueCall(active, target, input).pipe(Effect.flatMap((callId) => attach(callId, schema))),
+        // encode the input through the target's input codec — the same boundary submit
+        // uses — so a transform codec (decoded ≠ encoded) round-trips on the target.
+        encode(inputSchema, input as B).pipe(
+          Effect.flatMap((enc) => issueCall(active, target, enc)),
+          Effect.flatMap((callId) => attach(callId, schema)),
+        ),
       ))
 
-    const sendStep = (target: CallTarget, input: unknown): Effect.Effect<string, DurableExecutionError> =>
-      withActive("send").pipe(Effect.flatMap((active) => issueCall(active, target, input)))
+    const sendStep = <B, J>(
+      target: CallTarget,
+      input: unknown,
+      inputSchema: Schema.Codec<B, J, never, never>,
+    ): Effect.Effect<string, DurableExecutionError> =>
+      withActive("send").pipe(Effect.flatMap((active) =>
+        encode(inputSchema, input as B).pipe(Effect.flatMap((enc) => issueCall(active, target, enc))),
+      ))
 
     // ── completion (SDD §B6): the result must outlive the dropped stream ───────
     const complete = (

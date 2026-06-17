@@ -271,6 +271,7 @@ export const objectClient = <Name extends string, H extends Handlers>(
             rt.callStep(
               { object: def.name, key, method },
               input,
+              compiled.handler.input as Schema.Codec<unknown, unknown, never, never>,
               compiled.handler.output as Schema.Codec<unknown, unknown, never, never>,
             )),
       ] as const,
@@ -287,11 +288,16 @@ export const objectSendClient = <Name extends string, H extends Handlers>(
 ): SendClient<H> =>
   // eslint-disable-next-line local/no-launder-cast -- dynamic proxy (see objectClient)
   Object.fromEntries(
-    Object.entries(def.compiled).map(([method, _compiled]) =>
+    Object.entries(def.compiled).map(([method, compiled]) =>
       [
         method,
         (input: unknown) =>
-          Effect.flatMap(DurableExecutionRuntime, (rt) => rt.sendStep({ object: def.name, key, method }, input)),
+          Effect.flatMap(DurableExecutionRuntime, (rt) =>
+            rt.sendStep(
+              { object: def.name, key, method },
+              input,
+              compiled.handler.input as Schema.Codec<unknown, unknown, never, never>,
+            )),
       ] as const,
     ),
   ) as unknown as SendClient<H>

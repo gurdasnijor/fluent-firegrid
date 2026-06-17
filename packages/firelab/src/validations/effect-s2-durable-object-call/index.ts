@@ -46,6 +46,16 @@ const counter = object({
       const st = state(Counter)
       return Option.match(yield* st.get("v"), { onNone: () => 0, onSome: (r) => r.value })
     },
+    // same as add, but declared with a TRANSFORM input codec (NumberFromString:
+    // decoded number ≠ encoded string) — proves a CHILD call encodes input through
+    // the target's input codec, not raw.
+    *addStr(amount: number) {
+      const st = state(Counter)
+      const cur = Option.match(yield* st.get("v"), { onNone: () => 0, onSome: (r) => r.value })
+      const next = cur + amount
+      yield* st.set({ id: "v", value: next })
+      return next
+    },
     // parks on a durable signal; the value is supplied by a residency-independent
     // resolveSignal(callId, ...) appended to the owner stream.
     *awaitApproval() {
@@ -83,6 +93,9 @@ const counter = object({
       return a + b
     },
   },
+  schemas: {
+    addStr: { input: Schema.NumberFromString, output: Schema.Number },
+  },
 })
 
 // real executions of the `tally` run action (a duplicate/replayed call must NOT bump it).
@@ -101,6 +114,11 @@ const caller = object({
     // durable one-way send: fire-and-forget; returns the child call id.
     *bumpAsync(amount: number) {
       return yield* objectSendClient(counter, "acct").add(amount)
+    },
+    // a child call whose target input is a transform codec (NumberFromString) — proves
+    // the child input is encoded through the target codec, not stored raw.
+    *bumpStr(amount: number) {
+      return yield* objectClient(counter, "acct-str").addStr(amount)
     },
   },
 })
@@ -162,6 +180,9 @@ export default defineValidation({
           const childId = yield* client(caller, keyFor("c")).bumpAsync(4)
           assertEquals(yield* attach(childId, Schema.Number), 12) // 8 + 4
           assertEquals(yield* client(counter, "acct").value(), 12) // the target reflects all calls
+          // a child call to a TRANSFORM-input target (NumberFromString) round-trips —
+          // the child input is encoded through the target codec, not stored raw.
+          assertEquals(yield* client(caller, keyFor("str")).bumpStr(9), 9)
         }),
     },
     {
