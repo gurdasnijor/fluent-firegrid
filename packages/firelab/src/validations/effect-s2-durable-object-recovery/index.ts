@@ -1,5 +1,6 @@
-import { Duration, Effect, Schema } from "effect"
-import { attach, object, resolveSignal, run, sendClient, serviceLayer, signal } from "effect-s2-durable"
+import { Duration, Effect, Option, Schema } from "effect"
+import { attach, object, objectClient, resolveSignal, run, sendClient, serviceLayer, signal, state } from "effect-s2-durable"
+import { primaryKey, Table } from "effect-s2-stream-db"
 import { assertEquals } from "../../assertions.ts"
 import { S2LiteLive } from "../../s2lite.ts"
 import { defineValidation } from "../../types.ts"
@@ -37,6 +38,47 @@ const waitForRun = (amount: number): Effect.Effect<void> =>
     reachedRunFor.has(amount)
       ? Effect.void
       : Effect.sleep(Duration.millis(10)).pipe(Effect.flatMap(() => waitForRun(amount)))
+  )
+
+// ── replay-stable child calls (a parent re-driven by recovery does not re-issue) ──
+class Bal extends Table<Bal>("bal")({ id: Schema.String.pipe(primaryKey), value: Schema.Number }) {}
+// real executions of the CHILD `add` step — a parent replay must NOT re-execute it.
+const childRuns = { count: 0 }
+const reachedRelay = new Set<number>()
+
+// the call TARGET: its `add` records a child run + accumulates state.
+const target = object({
+  name: "firelab-rec-target",
+  handlers: {
+    *add(amount: number) {
+      const st = state(Bal)
+      const cur = Option.match(yield* st.get("b"), { onNone: () => 0, onSome: (r) => r.value })
+      const stepped = yield* run(Effect.sync(() => (childRuns.count++, amount)), { output: Schema.Number })
+      yield* st.set({ id: "b", value: cur + stepped })
+      return cur + stepped
+    },
+  },
+})
+
+// the PARENT: durably calls target.add (awaits it), then parks. On a restart, recovery
+// re-drives it and must re-issue the SAME child id (dedup), not re-execute the child.
+const caller = object({
+  name: "firelab-rec-caller",
+  handlers: {
+    *relay(amount: number) {
+      const r = yield* objectClient(target, "acct").add(amount) // durable child call (awaited)
+      reachedRelay.add(amount) // child completed + about to park
+      yield* signal("go", Schema.Boolean) // park until released
+      return r
+    },
+  },
+})
+
+const waitForRelay = (amount: number): Effect.Effect<void> =>
+  Effect.suspend((): Effect.Effect<void> =>
+    reachedRelay.has(amount)
+      ? Effect.void
+      : Effect.sleep(Duration.millis(10)).pipe(Effect.flatMap(() => waitForRelay(amount)))
   )
 
 export default defineValidation({
@@ -108,6 +150,36 @@ export default defineValidation({
           assertEquals(result, 9)
           // executed exactly once (in process 1); process 2 replayed the fact, no re-exec.
           assertEquals(runExecutions.count - before, 1)
+        }),
+    },
+    {
+      id: "ADMISSION.4",
+      description:
+        "replay-stable child calls: a parent handler issues a durable child object call, then parks; a "
+        + "fresh engine recovers the parent and re-drives it, RE-ISSUING the same deterministic child id — "
+        + "admission dedups, the target does NOT execute twice, and the parent re-reads the original result",
+      evidence:
+        'spans.exists(s, named(s, "effect-s2-durable.object.boot-recover")) && spans.exists(s, named(s, "effect-s2-durable.object.drain")) && spans.exists(s, named(s, "effect-s2-durable.callId.encode"))',
+      claim: ({ keyFor }) =>
+        Effect.gen(function*() {
+          const k = keyFor("relay")
+          reachedRelay.delete(7)
+          const engine = serviceLayer(target, caller)
+          const before = childRuns.count
+          // process 1: relay durably calls target.add(7) — the child EXECUTES here — then parks.
+          const id = yield* Effect.gen(function*() {
+            const id = yield* sendClient(caller, k).relay(7)
+            yield* waitForRelay(7) // the child call completed + the parent is about to park
+            return id
+          }).pipe(Effect.provide(engine), Effect.scoped)
+          // process 2: a fresh engine recovers the parent; re-running relay re-issues the
+          // SAME child id → admission dedups → the child is NOT re-executed.
+          const result = yield* Effect.gen(function*() {
+            yield* resolveSignal(id, "go", Schema.Boolean, true)
+            return yield* attach(id, Schema.Number)
+          }).pipe(Effect.provide(engine), Effect.scoped)
+          assertEquals(result, 7) // the parent re-read the original child result
+          assertEquals(childRuns.count - before, 1) // the child executed EXACTLY once across the parent replay
         }),
     },
     {

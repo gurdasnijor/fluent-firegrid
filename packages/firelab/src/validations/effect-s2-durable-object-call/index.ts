@@ -2,14 +2,14 @@ import { Clock, Duration, Effect, Layer, Option, Schema } from "effect"
 import {
   attach,
   awakeable,
-  call,
   client,
   deferred,
   object,
+  objectClient,
+  objectSendClient,
   resolveAwakeable,
   resolveSignal,
   run,
-  send,
   sendClient,
   serviceLayer,
   signal,
@@ -93,13 +93,14 @@ const runExecutions = { count: 0 }
 const caller = object({
   name: "firelab-object-caller",
   handlers: {
-    // durable call: forward to counter("acct").add and await the new total.
+    // durable call: forward to counter("acct").add and await the new total (typed,
+    // identity derived from the counter DEFINITION — no raw strings).
     *bump(amount: number) {
-      return yield* call({ object: "firelab-object-counter", key: "acct", method: "add" }, amount, Schema.Number)
+      return yield* objectClient(counter, "acct").add(amount)
     },
     // durable one-way send: fire-and-forget; returns the child call id.
     *bumpAsync(amount: number) {
-      return yield* send({ object: "firelab-object-counter", key: "acct", method: "add" }, amount)
+      return yield* objectSendClient(counter, "acct").add(amount)
     },
   },
 })

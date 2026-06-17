@@ -608,6 +608,16 @@ const makeRuntime = (
     // never re-issued). No new event: it reuses admission (idempotent) + attach.
     const issueCall = (active: Invocation, target: CallTarget, input: unknown): Effect.Effect<string, DurableExecutionError> =>
       Effect.gen(function*() {
+        // a same-owner self-call (a handler calling its own object+key) would deadlock
+        // on the per-key drainer lock — reject it clearly instead.
+        if (active.kind === "object") {
+          const self = yield* decodeObjectCallId(active.callId).pipe(
+            Effect.match({ onFailure: () => undefined, onSuccess: (p) => p }),
+          )
+          if (self !== undefined && self.object === target.object && self.key === target.key) {
+            return yield* fail("call", `self-call to the same object/key (${target.object}/${target.key}) is not supported`)
+          }
+        }
         const ordinal = yield* Ref.getAndUpdate(active.callSeq, (n) => n + 1)
         const parentId = active.kind === "object" ? active.callId : active.executionId
         const parts: ObjectCallIdParts = {
