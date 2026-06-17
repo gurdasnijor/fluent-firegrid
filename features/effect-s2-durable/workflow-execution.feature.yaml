@@ -1,0 +1,26 @@
+feature:
+  name: workflow-execution
+  product: effect-s2-durable
+  description: >-
+    Durable workflow execution semantics. A workflow is a specialization of
+    stateful execution: the workflow id is the owner key, the reserved run
+    handler is admitted at most once, and shared handlers provide query/signal
+    behavior over the workflow owner stream.
+
+components:
+  WORKFLOW:
+    name: Workflow as a stateful-execution specialization
+    requirements:
+      1: A workflow run handler is an exclusive handler admitted at most once per workflow id; a second run admission returns alreadyStarted, not a dedup-returned second run.
+      2: Workflow signal/query handlers are ordinary shared handlers (concurrent, read-only, ingress via append).
+      3: Promises a run body awaits use the existing park-and-resume primitives, resolved by shared handlers.
+      4: workflowRunId(def, id) deterministically derives the run call id for a workflow id and decodes to the workflow owner plus reserved run method.
+      5: workflowSubmit(def, id, input) starts the workflow at most once and reports started or alreadyStarted across pending, recovered, and completed states.
+      6: workflowAttach(def, id) attaches to the workflow run and decodes its result through the run output schema.
+
+constraints:
+  BOUNDARIES:
+    requirements:
+      1: Workflow execution is not a separate persistence boundary; it reuses stateful-execution owner streams, admission, shared handlers, ingress, recovery, and attach semantics.
+      2: The method name run is reserved for the workflow entrypoint and is rejected for shared handlers at both the type boundary and definition-time guard.
+      3: A long-running workflow with process restart and signal ingress must recover and resume from its owner stream like any stateful execution.

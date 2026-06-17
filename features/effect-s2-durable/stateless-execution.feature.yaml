@@ -1,0 +1,87 @@
+feature:
+  name: stateless-execution
+  product: effect-s2-durable
+  description: >-
+    Stateless durable service executions: public service/client/sendClient APIs,
+    one execution stream per call, durable primitives, attach/poll, idempotency,
+    ingress, and boot recovery. Stateful object semantics are specified in
+    stateful-execution and workflow semantics are specified in workflow-execution.
+    This feature covers the stateless service path that continues to use
+    WorkflowDb/RosterDb until a dedicated stateless-execution rewrite.
+
+components:
+  PUBLIC_API:
+    name: Service definition and clients
+    requirements:
+      1: service({ name, handlers, schemas }) defines a stateless durable service; each method input is decoded through its schema before handler execution and each result is encoded through its output schema before completion.
+      2: client(service).method(input) submits the service execution, waits for completion through attach, decodes the result, and returns the decoded value.
+      3: sendClient(service).method(input) submits the service execution and returns its execution id without waiting for completion.
+      4: attach(id, schema) waits for a pending service execution and decodes the completed result through the provided schema; poll(id, schema) is non-blocking and returns None while pending.
+      5: serviceLayer(...services) registers handlers for boot recovery; executions whose handler name is not registered are skipped rather than crashing recovery.
+
+  ADMISSION:
+    name: Service admission and idempotency
+    requirements:
+      1: A service call uses the provided idempotencyKey as its execution id, or mints a fresh id when no idempotencyKey is supplied.
+      2: "A completed service execution id is idempotent: re-submitting the same id returns the existing result and does not re-run the handler."
+      3: "A pinned id with divergent input does not alias durable primitive facts: the existing execution/result wins, and the new input does not mutate the recorded execution."
+      4: Service execution ids are disjoint from the reserved object-call-id namespace; a service idempotencyKey using the object prefix is rejected.
+
+  RUN:
+    name: Durable run step
+    requirements:
+      1: run(action, options) records a terminal success or typed failure fact; replay returns the recorded terminal fact without re-executing the action.
+      2: run supports named and positional step identity; positional identity is valid only for deterministic control flow, while named identity is stable across handler refactors.
+      3: run retry policy controls attempts before a terminal fact is recorded; once a terminal fact exists, retries are not reattempted on replay.
+      4: A run action cannot require DurableExecutionRuntime or call durable primitives; this is rejected at the type level.
+      5: A typed run failure is encoded through the declared error schema and propagates to the caller through attach/client.
+
+  STATE:
+    name: Durable service state
+    requirements:
+      1: state(Table).get/set/delete operate on durable records scoped to the service execution stream and table schema.
+      2: "state.get is replay-stable for read-modify-write flows: the read value is journaled so recovery replays the same observed value instead of reading a later mutated value."
+      3: state.set and state.delete are durable only after their underlying append is acknowledged; deterministic state writes self-heal by replaying from the handler body.
+      4: State mutations inside a run action are rejected by the run-action type guard.
+
+  TIMERS:
+    name: Durable sleep
+    requirements:
+      1: sleep(name, duration) records a durable timer intent and delays completion until the duration has elapsed.
+      2: On replay, a fired sleep fact short-circuits; a pending sleep recomputes the remaining delay from the durable deadline.
+      3: Boot recovery re-arms sleep by re-running the handler from the top and replaying the durable timer facts.
+
+  PROMISES:
+    name: Durable signals, deferreds, and awakeables
+    requirements:
+      1: signal(name, schema) parks the handler until resolveSignal(id, name, schema, value) writes a durable resolution fact.
+      2: deferred(name, schema) creates an invocation-scoped promise; resolve writes the durable value and get reads or parks until that value exists.
+      3: awakeable(schema) returns a replay-stable id and a promise; resolveAwakeable(id, awakeableId, schema, value) resolves it through ingress.
+      4: "Resolve-before-await is not lost: a durable resolution fact written before the handler parks is picked up when the handler reaches the await."
+      5: Durable promise rows are the source of truth; in-process waiters are best-effort wakeups only.
+
+  RECOVERY:
+    name: Service boot recovery
+    requirements:
+      1: A fresh engine over the same S2 backend re-drives a non-resident parked service execution from the roster plus WorkflowDb, so it becomes resident and attachable as if freshly submitted.
+      2: A recovered service execution replays run/state/sleep facts without re-executing completed side effects or double-applying journaled reads.
+      3: An ingress resolution on a recovered service execution settles it; signal or awakeable resolution by replay-stable id works after recovery.
+      4: Completed service executions are not boot-recovered as pending work.
+
+  LIFECYCLE:
+    name: Service stream lifecycle
+    requirements:
+      1: Service executions use the ephemeral one-stream-per-call model; service streams may be dropped after completion once result/attach semantics no longer require them.
+      2: Result acknowledgement or retention policy is explicit; a service result is not reclaimed while attach/poll are still expected to serve it.
+
+constraints:
+  SERVICE_BACKEND:
+    name: Service backend stability
+    requirements:
+      1: Services may keep the existing WorkflowDb/RosterDb implementation as long as it satisfies the public-api primitive contract.
+      2: The object owner-stream cutover does not require changing the service backend; a separate stateless-execution pass owns any later rewrite.
+
+  BOUNDARIES:
+    requirements:
+      1: Stateless execution behavior is driven through the public service/client/sendClient/attach/poll/resolveSignal/resolveAwakeable APIs, not by calling WorkflowDb or RosterDb directly from validation code.
+      2: S2-backed service behavior is proven by Firelab validations; package-local tests remain pure/type-level.

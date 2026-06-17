@@ -2,14 +2,30 @@ feature:
   name: storage-primitives
   product: effect-s2-stream-db
   description: >-
-    Stream-db storage primitives consumed by durable engines and any other client:
-    per-stream config on open, instance enumeration, non-creating opens,
-    the latest-value table projection, and caller-driven checkpoint+trim. Ordered
-    ActorEvent replay is not a stream-db concern — it is a schema-owned actor-log
-    over effect-s2.readDecoded (object-actor-model LAYERING.6). Design:
-    docs/sdds/s2-resource-provisioning-sdd.md §2.
+    Schema-owned latest-value storage over S2 streams: table definitions, typed
+    instance keys, create/open/list/openExisting lifecycle, table facades,
+    transactions, materialized reads, and caller-driven checkpoint+trim. Ordered
+    ActorEvent replay is not a stream-db concern; stateful execution reads owner
+    streams as schema-owned ActorEvent logs over effect-s2.readDecoded
+    (stateful-execution LAYERING.6). Design:
+    docs/sdds/s2-resource-provisioning-sdd.md.
 
 components:
+  TABLES:
+    name: Schema-owned table definitions
+    requirements:
+      1: Table(name)(fields) derives tableName, row schema, and primary-key field from the Effect Schema definition.
+      2: A primary key field is declared by annotating a field schema with primaryKey; defining a table without a primary key fails at definition time.
+      3: Row input/output crosses the storage boundary through the table schema; invalid rows fail before appending and stored rows are decoded before get/query returns them.
+      4: A Table class is self-describing, so db.table(TableClass) can produce a typed facade without mutating a registry.
+
+  INSTANCE_KEYS:
+    name: Schema-owned instance keys
+    requirements:
+      1: StreamDb(basePath)(tables, keySchema?) derives the full stream name by encoding the instance key through the key schema.
+      2: The key schema defaults to Schema.String, but branded/refined key schemas are preserved through open/list/openExisting.
+      3: Instance enumeration decodes stream-name suffixes back through the key schema before returning keys.
+
   STREAM_CONFIG:
     name: Per-stream config on open
     requirements:
@@ -31,7 +47,28 @@ components:
   PROJECTION:
     name: Latest-value table projection
     requirements:
-      1: 'The latest-value materialized fold is the read lens for user state and materialized views — get/query read the current value per (table, key). Stream-db is the table-projection layer and exposes no generic ordered event-log lens; ordered ActorEvent replay by S2 seq_num is a schema-owned actor-log over effect-s2.readDecoded (object-actor-model LAYERING.6), not a stream-db primitive.'
+      1: The latest-value materialized fold is the read lens for user state and materialized views — get/query read the current value per (table, key).
+      2: The same MaterializedState fold is used for cold preload and live apply-after-ack, so replay and live state cannot diverge by using different materializers.
+      3: 'Control messages are fold controls: snapshot-start/reset clear the materialized view, snapshot-end is a boundary marker with no table effect.'
+      4: S2 command records such as trim/fence are skipped by the ChangeMessage fold and are never decoded as table rows.
+
+  WRITES:
+    name: Table writes and read-after-ack visibility
+    requirements:
+      1: insert appends an insert ChangeMessage and does not perform a first-writer check.
+      2: 'insertOrGet is first-writer-wins within the opened single-writer instance: it returns Found with the decoded existing row when the key is already live, otherwise appends the insert and returns Inserted.'
+      3: upsert appends insert for an absent key and update for a live key.
+      4: delete appends a delete ChangeMessage and removes the key from subsequent get/query projection reads.
+      5: Writes become visible to get/query only after the S2 append acknowledgement and local projection application.
+      6: Reusing a get/query Effect observes state at run time, not at Effect construction time.
+
+  TRANSACTIONS:
+    name: Atomic cross-table commits
+    requirements:
+      1: transact buffers insert/upsert/delete intents across tables and commits them as one conditional S2 append batch.
+      2: A successful transaction applies every buffered mutation to the local projection after the append acknowledgement.
+      3: A failed transaction does not partially apply buffered mutations to the local projection.
+      4: Transaction writes are keyed by self-describing Table classes, so declared db tables and db.table(TableClass) participate in the same atomic commit.
 
   CHECKPOINT:
     name: Caller-driven checkpoint + trim
@@ -41,7 +78,40 @@ components:
       3: A snapshot must be durable before any trim that depends on it.
       4: A checkpoint snapshot must fit one S2 batch (MAX_BATCH_RECORDS); larger snapshots require framed/chunked snapshots (a follow-up).
 
+  LIFECYCLE:
+    name: Stream lifecycle
+    requirements:
+      1: compact remains a compatibility alias for checkpoint and preserves its snapshot+trim semantics.
+      2: drop deletes the underlying S2 stream; after drop, default enumeration excludes the instance.
+      3: openExisting is the only public non-creating existence path; there is no separate exists probe.
+
 constraints:
+  BOUNDARY:
+    name: Latest-value storage, not generic event log
+    requirements:
+      1: Stream-db exposes a latest-value ChangeMessage projection over S2; it is not a generic ordered event-log abstraction.
+      2: Ordered ActorEvent replay by S2 seq_num is a schema-owned actor log over effect-s2.readDecoded (stateful-execution LAYERING.6), not a StreamDb primitive.
+      3: Stream-db must not add readLog/collectLog-style event-log APIs as a convenience over this latest-value abstraction.
+
+  IDENTITY:
+    name: Schema-derived identity only
+    requirements:
+      1: Public callers open/list by typed keys, not by hand-built stream paths.
+      2: StreamDb.list decodes existing stream names through the key schema; raw encoded-prefix filtering is intentionally out of scope.
+      3: Table identity is the schema-owned tableName plus schema-owned primary key, not caller-composed delimiter strings.
+
+  SINGLE_WRITER:
+    name: Opened instance ownership
+    requirements:
+      1: One opened StreamDb instance serializes writes through its local lock and CAS tail.
+      2: Cross-process or multi-owner writes to the same stream are outside the StreamDb guarantee unless a higher-level owner/fencing protocol serializes them.
+
+  OBSERVABILITY:
+    name: Production tracing
+    requirements:
+      1: Public operations emit effect-s2-stream-db spans with enough attributes to identify the operation, stream, and table where applicable.
+      2: S2-backed behavior is proven by Firelab validations over production spans; package-local tests remain pure and type-level.
+
   COMPAT:
     requirements:
       1: All additions are backward compatible — existing open/get/query/transact/compact/drop behaviour is unchanged when the new options/primitives are not used.

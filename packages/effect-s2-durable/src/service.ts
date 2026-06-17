@@ -338,6 +338,36 @@ export function sendClient<Name extends string, H extends Handlers>(
   return makeProxy(def, (_compiled, { id }) => Effect.succeed(id), objectIdentity(def, key)) as unknown as SendClient<H>
 }
 
+type RuntimeCodec = Schema.Codec<unknown, unknown, never, never>
+type ObjectCallTarget = { readonly object: string; readonly key: string; readonly method: string }
+
+const makeObjectStepProxy = <T>(
+  def: ObjectDefinition<string, Handlers>,
+  key: string,
+  invoke: (
+    rt: DurableExecutionRuntimeApi,
+    target: ObjectCallTarget,
+    input: unknown,
+    inputCodec: RuntimeCodec,
+    outputCodec: RuntimeCodec,
+  ) => Effect.Effect<T, DurableExecutionError, DurableExecutionRuntime>,
+): Record<string, (input: unknown) => Effect.Effect<T, DurableExecutionError, DurableExecutionRuntime>> =>
+  Object.entries(def.compiled).reduce<Record<string, (input: unknown) => Effect.Effect<T, DurableExecutionError, DurableExecutionRuntime>>>(
+    (proxy, [method, compiled]) => ({
+      ...proxy,
+      [method]: (input: unknown) =>
+        Effect.flatMap(DurableExecutionRuntime, (rt) =>
+          invoke(
+            rt,
+            { object: def.name, key, method },
+            input,
+            compiled.handler.input as RuntimeCodec,
+            compiled.handler.output as RuntimeCodec,
+          )),
+    }),
+    {},
+  )
+
 /**
  * The typed **in-handler** call surface to another object: `objectClient(Def, key).method(input)`.
  * Issues a durable child object call and awaits its decoded result. Identity is derived
@@ -349,21 +379,8 @@ export const objectClient = <Name extends string, H extends Handlers>(
   key: string,
 ): ServiceClient<H> =>
   // eslint-disable-next-line local/no-launder-cast -- dynamic proxy; each Effect<unknown> is the typed Effect<HandlerOutput> recovered structurally by ServiceClient<H>
-  Object.fromEntries(
-    Object.entries(def.compiled).map(([method, compiled]) =>
-      [
-        method,
-        (input: unknown) =>
-          Effect.flatMap(DurableExecutionRuntime, (rt) =>
-            rt.callStep(
-              { object: def.name, key, method },
-              input,
-              compiled.handler.input as Schema.Codec<unknown, unknown, never, never>,
-              compiled.handler.output as Schema.Codec<unknown, unknown, never, never>,
-            )),
-      ] as const,
-    ),
-  ) as unknown as ServiceClient<H>
+  makeObjectStepProxy(def, key, (rt, target, input, inputCodec, outputCodec) =>
+    rt.callStep(target, input, inputCodec, outputCodec)) as unknown as ServiceClient<H>
 
 /**
  * The typed **in-handler** one-way send surface: `objectSendClient(Def, key).method(input)`
@@ -374,20 +391,8 @@ export const objectSendClient = <Name extends string, H extends Handlers>(
   key: string,
 ): SendClient<H> =>
   // eslint-disable-next-line local/no-launder-cast -- dynamic proxy (see objectClient)
-  Object.fromEntries(
-    Object.entries(def.compiled).map(([method, compiled]) =>
-      [
-        method,
-        (input: unknown) =>
-          Effect.flatMap(DurableExecutionRuntime, (rt) =>
-            rt.sendStep(
-              { object: def.name, key, method },
-              input,
-              compiled.handler.input as Schema.Codec<unknown, unknown, never, never>,
-            )),
-      ] as const,
-    ),
-  ) as unknown as SendClient<H>
+  makeObjectStepProxy(def, key, (rt, target, input, inputCodec) =>
+    rt.sendStep(target, input, inputCodec)) as unknown as SendClient<H>
 
 /**
  * A typed **shared** (read-only) call surface for a virtual object or workflow:

@@ -165,7 +165,7 @@ export default defineValidation({
     + "the object runtime used ActorEvent log operations.",
   feature: {
     product: "effect-s2-durable",
-    name: "object-actor-model",
+    name: "stateful-execution",
   },
   // the one runtime boundary, seeded with the object's handlers, over s2 lite.
   backend: serviceLayer(counter, caller).pipe(Layer.provide(S2LiteLive)),
@@ -294,8 +294,9 @@ export default defineValidation({
       description: "a single per-key drainer runs exclusive calls serially — concurrent RMW is lost-update-free",
       evidence:
         'spans.exists(s, named(s, "effect-s2-durable.object.drain")) && spans.exists(s, named(s, "effect-s2-durable.log.casAppend"))',
-      claim: ({ key }) =>
+      claim: ({ keyFor }) =>
         Effect.gen(function*() {
+          const key = keyFor("exclusive-rmw")
           yield* Effect.all(Array.from({ length: 8 }, () => client(counter, key).add(1)), {
             concurrency: "unbounded",
           })

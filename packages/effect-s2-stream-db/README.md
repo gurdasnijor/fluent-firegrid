@@ -88,9 +88,10 @@ and
 
 ## Status
 
-Built and tested. Landed: the State-Protocol codec (`ChangeMessage`), the fold
+Built and validated. Landed: the State-Protocol codec (`ChangeMessage`), the fold
 (`MaterializedState`), the `Table`/`StreamDb` definition surface, and the live runtime
 (`open` / `list` / `openExisting` / table facades / `transact` / `checkpoint` /
-`compact` / `trim` / `drop`) over `effect-s2` — with acceptance tests and Firelab
-validations against a real `s2 lite` server (snapshot+trim replay, transaction
+`compact` / `trim` / `drop`) over `effect-s2` — with Firelab validations against a
+real `s2 lite` server (snapshot+trim replay, transaction
 atomicity, read-after-ack visibility, enumeration, existence, and config).
+Package-local tests are kept pure; S2-backed behavioral proofs belong in Firelab.

@@ -16,7 +16,7 @@ path in the same PR.
 
 The actor requirements remain specified in:
 
-- [`features/effect-s2-durable/object-actor-model.feature.yaml`](../../features/effect-s2-durable/object-actor-model.feature.yaml)
+- [`features/effect-s2-durable/stateful-execution.feature.yaml`](../../features/effect-s2-durable/stateful-execution.feature.yaml)
 - [`effect-durable-execution-sdd.md`](./effect-durable-execution-sdd.md)
 
 This document owns the integration shape: how object semantics enter the existing runtime without
@@ -585,7 +585,8 @@ As public object behavior moves to the object-backed `InvocationStore`, delete:
 - window-2 idempotent guard;
 - residency-retry signal behavior.
 
-Services may keep the current `WorkflowDb` / `RosterDb` model until a separate service-runtime pass.
+Services may keep the current `WorkflowDb` / `RosterDb` model until a separate
+stateless-execution pass.
 
 ## Firelab Rule
 

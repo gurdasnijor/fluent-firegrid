@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import { primaryKey, StreamDb, Table } from "effect-s2-stream-db"
 
 /**
- * The current service-runtime per-execution and roster schemas — ordinary
+ * The current stateless-execution per-execution and roster schemas — ordinary
  * `effect-s2-stream-db` definitions. The canonical runtime direction is tracked in
  * `docs/sdds/effect-durable-execution-sdd.md`; object calls are being moved away from
  * these two-stream/roster schemas toward the per-key S2 owner-stream model described in

@@ -1,0 +1,79 @@
+feature:
+  name: production-readiness
+  product: effect-s2-durable
+  description: >-
+    Net-new production requirements needed to consider the durable workstream
+    feature-complete beyond the currently proven single-process public API:
+    coverage discipline, checkpoint/trim, owner discovery, multi-worker safety,
+    version compatibility, batching, and observability.
+
+components:
+  SPEC_COVERAGE:
+    name: Spec and proof completeness
+    requirements:
+      1: Every public durable API surface has a feature requirement in public-api, stateless-execution, stateful-execution, workflow-execution, or production-readiness.
+      2: Every non-deferred feature requirement has a Firelab proof or a pure package test when the requirement is explicitly pure/type-level.
+      3: S2-backed behavioral proofs live only in Firelab; effect-s2-durable and effect-s2-stream-db package tests remain pure/type-level.
+      4: Firelab proof checks can run in strict mode for completed features with no --allow-missing.
+
+  CHECKPOINT_TRIM:
+    name: Object checkpoint and trim implementation
+    requirements:
+      1: Object owner streams emit verifiable Checkpointed ActorEvents carrying coveredSeqNum, retained projection state, idempotency horizon metadata, and a projection fingerprint.
+      2: A trim command record is issued only after the checkpoint is durable and replay/fingerprint verification succeeds.
+      3: Replay from a checkpoint plus later records reconstructs the same projection as replay from the untrimmed log.
+      4: Single-batch checkpoints are allowed as a v1 limit; framed/chunked checkpointing is required before advertising support for objects whose live footprint exceeds one S2 append batch.
+
+  OWNER_DISCOVERY:
+    name: Owner registry recovery
+    requirements:
+      1: A basin/namespace owner registry stream records owner keys monotonically before first admission for that owner.
+      2: Object boot recovery folds the owner registry to discover owners and starts drainers only for owners with a pending head.
+      3: Stream listing is not the correctness source for production owner recovery.
+
+  MULTI_WORKER:
+    name: Multi-worker safety
+    requirements:
+      1: Multi-worker execution remains disabled or explicitly unsupported until log-backed lease renewal and S2 fencing are implemented and proven.
+      2: Lease renewal, campaign, self-demotion, and token-protected writes are covered by Firelab scenarios with two competing workers over one S2 backend.
+      3: A stale worker must be unable to append protected owner/checkpoint writes after a newer owner has fenced the stream.
+
+  VERSION_COMPATIBILITY:
+    name: Rolling deploy safety
+    requirements:
+      1: ActorEvent schema/runtime versions are encoded in durable records before any incompatible event vocabulary can be written.
+      2: Older readers halt rather than mis-fold newer unsupported events.
+      3: Deployment guidance requires checkpoint compatibility with the oldest running reader during rolling upgrades.
+
+  PERFORMANCE:
+    name: Hot-path efficiency
+    requirements:
+      1: Resident owner loops use tail/read-session style incremental consumption for hot keys instead of whole-log reads per operation.
+      2: Same-turn durable primitive writes are batched where this reduces append cost without changing replay semantics.
+      3: Firelab captures append count, read count, tail/check-tail count, and wall-clock timing for representative service, object, workflow, and recovery scenarios.
+
+  OBSERVABILITY:
+    name: Firelab proofs over production paths
+    requirements:
+      1: Firelab drives public APIs such as sendClient, client, attach, and resolveSignal while asserting both public results and production evidence spans.
+      2: Recovery is proven by restarting runtime scopes over the same S2/S2Lite streams; package Vitest keeps pure and type-level coverage only.
+      3: Evidence spans must come from production code paths, not validation-only instrumentation.
+      4: Firelab must not call Actor.admit, Actor.drain, or any validation-only facade as the product path.
+
+  EXAMPLES:
+    name: Restate-style tutorial coverage
+    requirements:
+      1: The repo includes executable examples or validations equivalent to basic services, virtual objects, durable steps, durable sleeps, signals/promises, send/attach, object-to-object calls, workflows, query handlers, and signal handlers.
+      2: "Examples use the public Effect-native APIs only: service, object, workflow, client/sendClient/objectClient/objectSendClient/sharedClient, and free primitives."
+      3: Examples do not use internal ActorEvent/log APIs or validation-only shortcuts.
+
+constraints:
+  MIGRATION:
+    name: Superseded object topology
+    requirements:
+      1: ObjectInboxRow and ObjectStateDb are superseded by stateful-execution admission and StateChanged facts for the object path.
+      2: Object-path per-call WorkflowDb primitive journals are superseded by owner-stream Journaled facts.
+      3: Object-path RosterDb completion/result/recovery rows are superseded by Completed events and owner-stream recovery.
+      4: Object-specific drainLoop / drainOne / ensureDrainerLocked code is superseded by the resident owner loop and per-key single-writer discipline.
+      5: The window-2 idempotent guard is superseded by append-only admission plus done-derived completion.
+      6: Residency-retry signal behavior is superseded by durable ingress append plus best-effort waiter pokes.

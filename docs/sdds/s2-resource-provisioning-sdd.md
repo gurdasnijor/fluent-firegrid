@@ -113,7 +113,7 @@ order) is owned by **`effect-s2.readDecoded`**, which decodes each record to a t
 **preserving its S2 metadata** (`seqNum`, `timestamp`, `headers`, `body`). The actor engine folds
 that typed, ordered stream as a **schema-owned actor-log in `effect-s2-durable`**; the latest-value
 table fold here stays the projection lens for materialized state, never the source of event order
-(object-actor-model `LAYERING.6`). Stream-db deliberately does **not** expose a `readLog`/ordered-log
+(stateful-execution `LAYERING.6`). Stream-db deliberately does **not** expose a `readLog`/ordered-log
 lens — that would conflate the table-projection layer with the event-log layer and would leak
 checkpoint/snapshot records as if they were domain events.
 

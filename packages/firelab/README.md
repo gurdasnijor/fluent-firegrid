@@ -58,7 +58,7 @@ pnpm --filter firelab validate:proofs check effect-s2-stream-db/storage-primitiv
 pnpm --filter firelab validate:proofs check effect-s2-stream-db/storage-primitives
 
 # Bootstrap a validation module from an existing feature spec
-pnpm --filter firelab validate:proofs init effect-s2-durable/object-actor-model
+pnpm --filter firelab validate:proofs init effect-s2-durable/stateful-execution
 
 # Generate requirement proof stubs for missing feature requirements
 pnpm --filter firelab validate:proofs scaffold effect-s2-stream-db/storage-primitives

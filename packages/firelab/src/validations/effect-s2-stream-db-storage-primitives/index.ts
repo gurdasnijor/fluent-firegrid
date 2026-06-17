@@ -143,7 +143,7 @@ export default defineValidation({
         Effect.gen(function*() {
           // get/query read the CURRENT value per (table, key) — the projection lens,
           // not an ordered event log (that is a schema-owned actor-log over
-          // effect-s2.readDecoded, in effect-s2-durable; see object-actor-model LAYERING.6).
+          // effect-s2.readDecoded, in effect-s2-durable; see stateful-execution LAYERING.6).
           yield* db.transact((tx) => {
             tx.insert(Item, { id: "b", value: 1 })
             tx.insert(Note, { key: "n", text: "hi" })

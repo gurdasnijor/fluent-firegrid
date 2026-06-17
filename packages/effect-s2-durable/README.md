@@ -6,7 +6,7 @@ The canonical design lives in
 [`docs/sdds/effect-durable-execution-sdd.md`](../../docs/sdds/effect-durable-execution-sdd.md).
 The S2 owner-stream object rewrite is specified in
 [`docs/sdds/effect-s2-durable-consolidation-sdd.md`](../../docs/sdds/effect-s2-durable-consolidation-sdd.md) and
-[`features/effect-s2-durable/object-actor-model.feature.yaml`](../../features/effect-s2-durable/object-actor-model.feature.yaml).
+[`features/effect-s2-durable/stateful-execution.feature.yaml`](../../features/effect-s2-durable/stateful-execution.feature.yaml).
 
 Implementation is currently transitional:
 
@@ -198,7 +198,7 @@ map for some park-and-resume paths until those semantics are moved through the a
 
 ## Status
 
-Built + tested against `s2 lite` for the existing service/runtime surface:
+Built and validated through Firelab against `s2 lite` for the existing service/runtime surface:
 - `handler` / `handlerRequest`; `run` (memoize / retry / typed-failure facts);
   `submit` / `attach` / `poll`; completion ordering.
 - `sleep` (durable timer row, `pending`→`fired`).
@@ -214,13 +214,14 @@ Built + tested against `s2 lite` for the existing service/runtime surface:
   recomputes its remaining delay, and a `signal`/`awakeable` reads its resolved row or
   re-parks. A recovered execution is resident again, so `attach` / ingress resolution work
   across a restart (proven end-to-end over s2 lite by the Firelab validation
-  `effect-s2-durable-service-recovery`, feature `service-recovery`). An execution whose
+  `effect-s2-durable-service-recovery`, feature `stateless-execution`). An execution whose
   `handlerName` isn't in the registry is skipped (so a partial registry never crashes boot).
 
 Use **`serviceLayer(...services)`** (not the bare `DurableExecutionRuntime.layer()`)
 whenever an execution can outlive the process, so its handlers are registered for recovery.
 
 The object actor runtime is tracked by the top-level SDD and feature spec linked above.
+Package-local tests are kept pure; S2-backed behavioral proofs belong in Firelab validations.
 
 **Not yet:** `resultAcked` is written but not yet consumed (no post-completion reclaim
 sweep). Durable timers (`sleep`) recover their *remaining* delay on boot, but there is no

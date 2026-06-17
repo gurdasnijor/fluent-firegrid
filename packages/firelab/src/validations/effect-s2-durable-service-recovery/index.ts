@@ -23,9 +23,8 @@ import { defineValidation } from "../../types.ts"
 // the roster + WorkflowDb, re-drives it (re-parking), and an ingress resolution +
 // attach then settle it. Only ONE engine is live at a time.
 //
-// (Object boot-recovery is the Slice A recovery gap — it lands in the Object API
-// Completion Batch as its own vertical validation. This covers the service runtime,
-// which keeps the WorkflowDb/roster model until the service-runtime pass.)
+// Object boot recovery is covered separately by the stateful-execution validations.
+// This covers stateless execution, which still uses the WorkflowDb/roster model.
 
 const Approval = Schema.Struct({ approved: Schema.Boolean })
 
@@ -38,14 +37,14 @@ export default defineValidation({
     + "ingress resolution settles it — with OTel spans for boot recovery and the StreamDb/S2 reads.",
   feature: {
     product: "effect-s2-durable",
-    name: "service-recovery",
+    name: "stateless-execution",
   },
   // just the s2 lite backend (the S2Client); the claims build engine scopes over it.
   backend: S2LiteLive,
   component: () => Effect.void,
   requirements: [
     {
-      id: "BOOT_RECOVERY.1",
+      id: "RECOVERY.1",
       description:
         "a fresh engine re-drives a non-resident parked SERVICE execution from the roster + WorkflowDb "
         + "(signal-parked service re-driven across an engine restart, then resolved + attached)",
@@ -78,7 +77,7 @@ export default defineValidation({
         }),
     },
     {
-      id: "BOOT_RECOVERY.2",
+      id: "RECOVERY.3",
       description:
         "an ingress resolution on a recovered SERVICE execution settles it — the replay-stable "
         + "awakeable id minted in process 1 is resolvable in process 2 after recovery, and attach returns",

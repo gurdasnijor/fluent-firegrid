@@ -14,7 +14,7 @@ the whole plan from several lower-level documents.
 
 Normative contracts:
 
-- [`features/effect-s2-durable/object-actor-model.feature.yaml`](../../features/effect-s2-durable/object-actor-model.feature.yaml)
+- [`features/effect-s2-durable/stateful-execution.feature.yaml`](../../features/effect-s2-durable/stateful-execution.feature.yaml)
   — virtual-object actor model, admission, execution, completion, ingress, recovery,
   checkpointing, workflow specialization.
 - [`features/effect-s2-stream-db/storage-primitives.feature.yaml`](../../features/effect-s2-stream-db/storage-primitives.feature.yaml)
@@ -34,7 +34,7 @@ Supporting executable validation:
 
 - [`packages/firelab`](../../packages/firelab) validates feature requirements against real
   system behavior and OpenTelemetry evidence.
-- `pnpm --filter firelab validate:proofs check effect-s2-durable/object-actor-model --allow-missing`
+- `pnpm --filter firelab validate:proofs check effect-s2-durable/stateful-execution --allow-missing`
   reports which actor-model requirements still need proofs.
 
 ## Purpose

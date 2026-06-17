@@ -84,7 +84,7 @@ export default defineValidation({
     + "residency-independent ingress — with OTel evidence for admission, owner enumeration, drain, and boot-recovery.",
   feature: {
     product: "effect-s2-durable",
-    name: "object-actor-model",
+    name: "workflow-execution",
   },
   backend: S2LiteLive,
   component: ({ key }) => Effect.succeed({ key }),

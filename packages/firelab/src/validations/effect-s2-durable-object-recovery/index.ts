@@ -90,7 +90,7 @@ export default defineValidation({
     + "call is never re-run) — with OTel evidence for object boot-recovery + owner enumeration + drain.",
   feature: {
     product: "effect-s2-durable",
-    name: "object-actor-model",
+    name: "stateful-execution",
   },
   backend: S2LiteLive,
   component: ({ key, keyFor }) => Effect.succeed({ key, keyFor }),

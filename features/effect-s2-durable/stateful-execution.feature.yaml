@@ -1,24 +1,24 @@
 feature:
-  name: object-actor-model
+  name: stateful-execution
   product: effect-s2-durable
   description: >-
-    Virtual objects as per-key actor streams: one authoritative durable log per
-    object key holding state, the exclusive-call accept-log, per-call journals,
-    ingress rows, and results. Exclusive handlers are single-writer per key;
-    shared handlers run concurrently read-only. Design:
+    Keyed stateful executions (public object(...) semantics): one authoritative
+    durable log per object key holding state, the exclusive-call accept-log,
+    per-call journals, ingress rows, and results. Exclusive handlers are
+    single-writer per key; shared handlers run concurrently read-only. Design:
     docs/sdds/effect-s2-durable-consolidation-sdd.md.
 
 components:
   LAYERING:
-    name: Actor abstraction layer
+    name: Stateful execution layer
     requirements:
-      1: The actor abstraction is internal to effect-s2-durable; it is not a replacement for the public service/object/client/sendClient/attach/poll API.
-      2: An actor instance is one schema-addressed durable object stream plus a deterministic runtime interpreter over that stream.
+      1: The stateful execution implementation is internal to effect-s2-durable; it is not a replacement for the public service/object/client/sendClient/attach/poll API.
+      2: A stateful execution instance is one schema-addressed durable object stream plus a deterministic interpreter over that stream.
       3: "effect-s2-durable owns admission, callId routing, ordered replay, per-key draining, shared-handler snapshots, signal ingress, completion, recovery, and result status."
-      4: "effect-s2-stream-db owns the latest-value ChangeMessage projection mechanism: StreamDb key schemas, Table schemas, primary keys, latest-value materialization, transactions, and compaction. The actor projection REUSES (refactors, if shared) the generic latest-value-per-key fold MECHANISM, applying it to the StateChanged subset of the ActorEvent log; it does NOT feed ActorEvents through the ChangeMessage-typed MaterializedState internals, and does NOT open object streams as StreamDb table-fold instances (object streams store ActorEvents, not ChangeMessage table rows)."
+      4: "effect-s2-stream-db owns the latest-value ChangeMessage projection mechanism: StreamDb key schemas, Table schemas, primary keys, latest-value materialization, transactions, and compaction. Stateful execution may reuse that latest-value-per-key fold mechanism for the StateChanged subset of the ActorEvent log."
       5: S2 owns durable append order through seq_num plus stream reads, durability, and trim.
       6: Engine bookkeeping (accepts/journals/signals/timers/completions/checkpoints) is one ordered ActorEvent log read by S2 seq_num; the latest-value table fold is the projection lens for user state and materialized views, not the source of engine-event order. This supersedes modelling engine concerns as several independent latest-value tables in one stream.
-      7: "The actor log is read and written via effect-s2.readDecoded(ActorEvent) + S2Client.append on the stream path derived from the owner key codec — NOT via StreamDb.open, whose preload folds ChangeMessage table rows and would misdecode an ActorEvent stream. StreamDb is the latest-value ChangeMessage projection layer; using it as a generic event-log container is a layering violation. The actor layer reuses only StreamDb's key codec (identity/path) and StreamDb.list() (name-based enumeration), never its open/fold or compact for object streams."
+      7: The actor log is read and written via effect-s2.readDecoded(ActorEvent) + S2Client.append on the stream path derived from the owner key codec.
 
   HANDLERS:
     name: Exclusive vs shared handler behaviour
@@ -44,7 +44,7 @@ components:
     name: Serial drainer
     requirements:
       1: A single per-key drainer runs the pending exclusive call with the lowest S2 seq_num to completion (through parks) before starting the next.
-      2: A call's active invocation points its durable primitives (run/sleep/signal/state) at the owner stream, its journal facts written as Journaled ActorEvents keyed by callId (`${callId}/run/N`, …) — the durable-primitive API is reused, not a separate StreamDb table.
+      2: A call's active invocation points its durable primitives (run/sleep/signal/state) at the owner stream, with journal facts written as Journaled ActorEvents keyed by callId plus a kind-specific step identity — the durable-primitive API is reused, not a separate StreamDb table.
       3: A shared handler runs immediately as an ephemeral execution over a snapshot of the object's materialized state; it never enters the accept-log and is never blocked by, nor blocks, the drainer.
 
   COMPLETION:
@@ -82,19 +82,12 @@ components:
     requirements:
       1: The object drainer plans the next action from the actor-stream projection before running external effects; recovery can re-plan from durable events without consulting in-memory state.
       2: Runtime state is exposed as an actor snapshot/projection at an S2 cursor; attach and poll are views over that projection.
-      3: Durable engine events include path-aware identity (e.g. calls/<callId>/run/<name>, state/<table>/<key>, signals/<callId>/<name>) so events sharing one object stream cannot collide by tag alone.
+      3: Durable engine events include schema-aware, collision-free identity so events sharing one object stream cannot collide by tag alone.
       4: Schema decode failures identify the failed boundary (accepted-input, journal, signal, timer, state, result, or checkpoint) and include path/callId when known.
       5: Timers, signal waits, child workflows, and spawned/background work have a durable owner scope so checkpoint, trim, recovery, and rerun can determine whether the work is live.
       6: Completion-derived continuations are idempotent and can be re-planned from durable facts without double-applying.
       7: Runtime ordering, parking, resume, completion, and checkpoint-eligibility live in a PURE transition `(snapshot, event) -> (snapshot, action[])`; an interpreter executes the emitted actions only after durable facts exist. The transition decides validity; the interpreter never does.
-      8: Because the transition is pure, the bulk of runtime behaviour is testable as `snapshot + event -> snapshot + actions` without S2, timers, fibers, or real handlers.
-
-  WORKFLOW:
-    name: Workflow as an object specialization
-    requirements:
-      1: A workflow run handler is an exclusive handler admitted at most once per key; a second run admission is rejected ("already started"), not dedup-returned.
-      2: Workflow signal/query handlers are ordinary shared handlers (concurrent, read-only, ingress via append).
-      3: Promises a run body awaits use the existing park-and-resume primitives, resolved by shared handlers.
+      8: Because the transition is pure, the bulk of execution behaviour is testable as `snapshot + event -> snapshot + actions` without S2, timers, fibers, or real handlers.
 
   CHECKPOINTING:
     name: Checkpointing, compaction, and idempotency horizon
@@ -107,7 +100,88 @@ components:
       6: A Checkpointed event whose snapshot exceeds a single S2 batch (the effect-s2-stream-db MAX_BATCH_RECORDS limit) requires framed/chunked snapshots; a single-batch checkpoint is a documented v1 limit on per-object live footprint.
       7: Checkpoint fidelity — replaying the log forward from a Checkpointed event's cursor reconstructs a snapshot equal to the one the checkpoint recorded; the Checkpointed event is durable before any trim below its cursor.
 
+  OWNER_LOOP:
+    name: Resident owner loop and projection freshness
+    requirements:
+      1: A resident owner maintains an ActorProjection, lastAppliedSeqNum, read cursor, local waiter registry, and optional lease/fence metadata derived from the owner stream.
+      2: The hot path must not re-read the whole owner log for every primitive operation; whole-log collection is allowed only for bootstrap, recovery scans, tests, and bounded diagnostics.
+      3: The owner loop tails ordered S2 records from its cursor and applies records incrementally; append acknowledgements advance durability, and the projection advances only after the acknowledged records are applied.
+      4: A strong attach/poll/state view is served only from a projection known to be caught up to the relevant tail; non-owner or uncertain views use check-tail/read freshness before returning.
+      5: A running handler observes its own planned state writes through a local overlay, but external visibility and completion still wait for the corresponding S2 append acknowledgement and projection application.
+
+  OWNER_REGISTRY:
+    name: Recoverable owner-key discovery
+    requirements:
+      1: Production object recovery discovers owner keys from an append-only owner-key registry stream, not from a timing assumption that a just-created owner stream is immediately listable.
+      2: The owner key is appended to the registry before the first Accepted event for that owner; callers are acknowledged only after the owner-stream Accepted append is durable.
+      3: "Registry crash windows are safe: before registry append nothing was promised; after registry-before-Accepted recovery sees an empty/no-pending owner; after Accepted the call is discoverable and recoverable."
+      4: StreamDb.list() name enumeration may remain a temporary bootstrap/debugging fallback, but it is not the final correctness source for production object recovery.
+
+  LEASING:
+    name: Multi-worker ownership and fencing
+    requirements:
+      1: Multi-worker object execution is not supported unless ownership is protected by a log-backed lease-renewal protocol plus S2 fencing.
+      2: A worker may campaign for ownership only from a caught-up projection after the prior lease has expired; lease renewal is an ActorEvent in the owner log, not a storage TTL.
+      3: Protected owner/checkpoint writes must use the active fencing token; a worker that cannot renew its lease or append with the expected token self-demotes before serving more exclusive work.
+      4: "Fencing is cooperative: all writers participating in the protected protocol must supply the expected token, and unfenced writes are forbidden for protected operations."
+
+  VERSIONING:
+    name: Durable event version compatibility
+    requirements:
+      1: Every ActorEvent carries a producer schema/runtime version sufficient for readers to decide compatibility during replay.
+      2: A reader that encounters a newer unsupported event version must stop folding and surface an alarm/error rather than reinterpret or skip the record.
+      3: During rolling deploys, checkpointing remains compatible with the oldest still-running reader until every process can understand the newer event vocabulary.
+
+  PERFORMANCE:
+    name: Append cost and batching
+    requirements:
+      1: Durable primitive writes may be coalesced into one S2 append batch within a deterministic turn, preserving record order and treating the append acknowledgement as the single external durability point.
+      2: "Batching must not change replay semantics: no fact in a batch is externally durable or externally visible until the whole append is acknowledged and applied."
+      3: Firelab performance evidence should track append count, whole-log read count, and tail/read-session usage for representative object and workflow scenarios.
+
 constraints:
+  DURABLE_COMMIT:
+    name: Append acknowledgement is the commit point
+    requirements:
+      1: Admission, state mutation, primitive journal, ingress, and completion are not durable until S2 acknowledges the append and assigns seq_num.
+      2: The write path may coalesce same-turn durable facts into one S2 append batch; the batch preserves per-record order and none of its facts are externally durable until the batch is acknowledged.
+      3: Append latency is the dominant primitive cost; reducing the per-primitive append tax is the main performance lever.
+
+  ORDER:
+    name: S2 seq_num is authoritative order
+    requirements:
+      1: Admission, replay, wait-resolution, and checkpoint-cursor order all come from S2 seq_num.
+      2: Do not invent an application-level sequence field to recover order from a latest-value projection.
+
+  REPLAY:
+    name: Replay is fold-only
+    requirements:
+      1: Historical events rebuild the snapshot but do not execute actions.
+      2: Only the recovered pending head and live-tail events are interpreted and executed.
+
+  OWNER_IDENTITY:
+    name: Owner identity is schema-owned
+    requirements:
+      1: The owner stream is derived by exactly one reversible owner key codec; hand-built path parsing is not part of the model.
+      2: Object name and key cannot collide through delimiter composition.
+      3: Durable primitive and state keys at the store boundary are schema-derived typed identities or opaque encoded keys, never delimiter-composed string pairs.
+
+  RECORD_KINDS:
+    name: S2 command records are stream control, not ActorEvents
+    requirements:
+      1: Typed facts are ActorEvents decoded via readDecoded(ActorEvent).
+      2: S2 command records such as fence and trim are stream-control directives interpreted by S2; they consume seq_num and may appear in reads.
+      3: The actor read path filters or handles command records separately from typed ActorEvent decoding.
+      4: A trim command may be appended only after a durable Checkpointed event covers every semantic fact below the trim cursor.
+      5: A fence command is a stream-control fact used for cooperative ownership/checkpoint protocols; it is not a substitute for a typed ActorEvent lease or result.
+
+  STORAGE_BOUNDARY:
+    name: StreamDb is not a generic event log
+    requirements:
+      1: Object owner streams must not be opened through StreamDb.open; its ChangeMessage latest-value fold would collapse admission and replay order.
+      2: The actor projection may reuse the latest-value-per-key fold mechanism for the StateChanged subset only.
+      3: When a lower layer already exposes an affordance such as pagination, stream listing, key decoding, or tracing, the durable layer uses it rather than reimplementing it.
+
   SYSTEM_OF_RECORD:
     requirements:
       1: The schema-derived object stream is the single durable system of record for a key — state, accept-log, per-call journals, ingress events, and results all live in it as one ActorEvent log.
