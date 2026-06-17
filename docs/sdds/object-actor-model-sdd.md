@@ -72,23 +72,29 @@ requirement (durable per-key state + restart-safe exclusivity) and remove the se
 
 ## Model: the object key schema **is** the durable execution boundary
 
-One stream — opened through the object's `StreamDb` key schema, for example
-`ObjectActorDb.open(ObjectActorKey.make(...))` — is the object's whole durable world and
-**single system of record** (`SYSTEM_OF_RECORD.1`). The encoded S2 stream path is a codec output,
-not a hand-built conceptual API. In-memory fibers/waiters/drainer are cache derived from it, never
-required for durability or ingress (`SYSTEM_OF_RECORD.2`). It hosts:
+One stream — whose S2 path is **derived by encoding the owner through the object's key codec** (the
+same codec a `StreamDb` derives its stream name with) — is the object's whole durable world and
+**single system of record** (`SYSTEM_OF_RECORD.1`). The encoded path is a codec output, not a
+hand-built conceptual API. Crucially, the stream is **read/written as an ordered `ActorEvent` log**
+via `effect-s2.readDecoded(ActorEvent)` + `S2Client.append` — it is **not** opened as a
+`StreamDb` table-fold instance (`StreamDb.open` preloads/folds `ChangeMessage` rows and would
+misdecode this stream; `LAYERING.7`). In-memory fibers/waiters/drainer are cache derived from the
+log, never required for durability or ingress (`SYSTEM_OF_RECORD.2`).
 
-| in-stream table | role |
-|---|---|
-| `accept-log` | admitted exclusive calls, append-only: `callId` (pk), `method`, `input` — **no status**; admission order is S2 `seq_num` |
-| `steps` / `stateReads` / `deferreds` / `clockWakeups` | each call's journal, keyed by `callId` (`${callId}/run/N`, …) — identical to today's per-execution keying |
-| `results` | a settled call's `Completed` event: `callId`, an `Exit` (success/failure/interrupt/defect) |
-| user `state(Table)` rows | the object's persistent state |
+The log carries these **logical projection buckets** (views folded from the `ActorEvent` log by
+`seq_num`, *not* separately-stored tables):
+
+| projection bucket | folded from | role |
+|---|---|---|
+| `accept-log` | `Accepted` events | admitted exclusive calls, append-only: `callId`, `method`, `input` — **no status**; admission order is S2 `seq_num` |
+| per-call journals | `Journaled` events | each call's run/state/signal/timer facts, keyed by `callId` (`${callId}/run/N`, …) |
+| `results` | `Completed` events | a settled call's `Exit` (success/failure/interrupt/defect) |
+| user state | `StateChanged` events | the object's persistent state, materialized by reusing the stream-db latest-value-per-key fold MECHANISM applied to `StateChanged` — not by feeding `ActorEvent`s into `ChangeMessage`/`MaterializedState` internals (`LAYERING.4`) |
 
 There is **no** separate `wf/<executionId>` stream for object methods and no roster row. A
 single **serial drainer** per key runs exclusive calls (`EXECUTION.1`).
 
-> **Read model (`LAYERING.6`).** The table above is the *projection lens*, not the source of
+> **Read model (`LAYERING.6`).** The buckets above are the *projection lens*, not the source of
 > truth. Engine bookkeeping is **one ordered `ActorEvent` log** — `Accepted | Journaled |
 > SignalResolved | TimerFired | Completed | StateChanged | Checkpointed` — consumed by S2
 > `seq_num`. The latest-value table fold materializes user state and the result/pending views
@@ -116,8 +122,9 @@ type ActorInstance<OwnerKey> = {
 ```
 
 The `ActorInstance` is runtime structure, not storage structure. Its durable source of truth is the
-`StreamDb` instance opened from `owner`; its in-memory projection and drainer can be discarded and
-recreated from the stream.
+**`ActorEvent` log** addressed by encoding `owner` through the key codec (read via `readDecoded`,
+written via `S2Client.append` — not a `StreamDb` table-fold open); its in-memory projection and
+drainer can be discarded and recreated by folding the log.
 
 ### Exclusive vs shared handlers (`HANDLERS`)
 
@@ -159,15 +166,16 @@ Expired` (`COMPLETION.5`) — `Expired` coming from the idempotency horizon (see
 
 `attach`/`poll`/`resolveSignal` take only a `callId` and must find the owner stream **without a
 roster or index**. So the callId carries a schema-decodable owner identity: an object call routes
-to the object stream by decoding the owner key and opening the owner `StreamDb`; a service call's
-callId resolves to its execution stream. Ingress/attach derive the stream from the id alone, but
-they do not delimiter-parse a hand-built stream string.
+to the object stream by decoding the owner key, encoding it through the owner key codec to the S2
+path, and opening that path as an `ActorLog` (`readDecoded`/`append`) — not a `StreamDb` table fold;
+a service call's callId resolves to its execution stream. Ingress/attach derive the stream from the
+id alone, but they do not delimiter-parse a hand-built stream string.
 
 ### Ingress is an append (`INGRESS`)
 
 `resolveSignal(callId, name, value)` derives the owner stream from the id and **appends a
-`deferreds` row** — durable whether or not the call is resident. An in-process waiter is poked
-best-effort; the row is the truth. This dissolves residency-dependent ingress (no
+`SignalResolved` event** — durable whether or not the call is resident. An in-process waiter is poked
+best-effort; the durable event is the truth. This dissolves residency-dependent ingress (no
 retry-until-resident).
 
 ## Consumer surface (unchanged ergonomics)
@@ -198,8 +206,8 @@ before:  obj/counter:k   (state + inbox)        ← dequeue here
          wf/call-b        (journal + result)
          + roster row + running-map residency for ingress
 
-after:   ObjectActorDb.open(key) (state + accept-log + per-call journals + results)
-         one serial drainer; done = result exists; ingress = append   ✓ one stream
+after:   actor-log @ encode(key)  (Accepted + Journaled + StateChanged + Completed events)
+         one serial drainer; done = Completed exists; ingress = append   ✓ one ActorEvent stream
 ```
 
 Deletes from the engine: per-method `wf` streams for objects, the `obj`↔`wf` handshake, the
@@ -246,6 +254,34 @@ direction for us, but it contributes useful internal semantics:
 
 These are internal runtime constraints; they do not change the consumer surface below.
 
+## Settled decisions & build sequencing (read before implementing)
+
+The read-model is **settled as Model A** (`LAYERING.6`): the object stream is one ordered
+`ActorEvent` log; latest-value state is a *projection* over it, never the persisted bookkeeping
+format. Six guardrails follow — each is now normative in the feature, and the single failure mode
+they prevent is **reusing `StreamDb` as a generic event-log container** (it is a latest-value
+`ChangeMessage` projection layer, nothing more):
+
+1. **The actor log is NOT a `StreamDb` open.** Read/write the object stream via
+   `effect-s2.readDecoded(ActorEvent)` + `S2Client.append` (`LAYERING.7`). `StreamDb.open` folds
+   `ChangeMessage` rows and would misdecode an `ActorEvent` stream.
+2. **Identity is the key codec, not a table open.** The owner becomes an S2 path *only* by encoding
+   it through the owner key codec (`ROUTING.3`); the actor layer reuses `StreamDb`'s key codec and
+   `StreamDb.list()` (name-based enumeration), nothing else.
+3. **Replay folds only; the live tail interprets** (`RECOVERY.3`). Recovery folds history into a
+   snapshot with **no** action execution, plans once from the recovered pending head, then runs
+   actions only for records after the recovered cursor. Never fork a handler while replaying history.
+4. **Admission dedup is a read-then-CAS-append protocol** (`ADMISSION.4`), not `StreamDb.insertOrGet`:
+   read the log for an existing `Accepted` for the callId, append only if absent under a
+   `matchSeqNum` CAS, and on CAS loss re-read and return the existing entry.
+5. **Checkpointing is actor-specific** (`CHECKPOINTING`), not `StreamDb.checkpoint`/`compact`: append
+   a `Checkpointed` event carrying the `ActorSnapshot`, then S2-trim once it is durable.
+6. **Phase 3a is pure types/functions only** — `ActorEvent`, `ActorSnapshot`, the `CallId` codec,
+   `replay`/fold, pending derivation, `attach`/`poll` views, and the pure `transition`
+   (`PLANNING.7–8`). **No S2, no `Runtime.ts` edits, no `StreamDb.open`.** The effectful `ActorLog`
+   (over `readDecoded`/`append`), the drainer, recovery, checkpointing, and the cutover that deletes
+   the old two-stream engine come in later slices.
+
 ## Illustrative runtime shape (non-normative)
 
 The feature file is the contract; this is just to make "pure transition + interpreter" concrete.
@@ -273,12 +309,22 @@ interface LogEntry { readonly seqNum: number; readonly event: ActorEvent }
 interface ActorSnapshot {
   readonly cursor: number                                   // last applied seqNum
   readonly pending: ReadonlyArray<CallId>                   // accepted ∧ ¬completed, in seqNum order
-  readonly active: Option.Option<CallId>                    // the call currently being run
+  readonly active: Option.Option<CallId>                    // DURABLE head pointer = pending[0] — the call that
+                                                            // SHOULD be running. NOT "a fiber is resident": after a
+                                                            // cold replay `active` can be Some with no live fiber.
   readonly results: ReadonlyMap<CallId, Exit.Exit<unknown, unknown>>  // done = present here
-  readonly signals: ReadonlyMap<string, unknown>            // resolved rows, key `${callId}/${name}`
-  readonly state: MaterializedState                         // the user state(Table) fold
+  readonly signals: ReadonlyMap<string, unknown>            // resolved, key `${callId}/${name}`
+  readonly state: MaterializedState                         // user-state fold — the latest-value-per-key MECHANISM
+                                                            // REUSED over StateChanged events, NOT ActorEvents fed
+                                                            // through ChangeMessage internals (LAYERING.4)
 }
 ```
+
+**`active` is durable, not liveness.** `active` is just `pending[0]` — the head that *should* be
+running. Whether a fiber is actually *resident* is a separate in-memory fact the snapshot does not
+carry. This matters for recovery (Finding below): after a cold, fold-only replay, `active` may be
+`Some(head)` with **no** running fiber, so the start decision must key off "is the head's fiber
+resident?", never off `active === None`.
 
 **What the pure core asks the shell to do:**
 
@@ -326,19 +372,36 @@ const transition = (s: ActorSnapshot, e: LogEntry): readonly [ActorSnapshot, Rea
 }
 ```
 
-**The effectful shell** — fold the log to rebuild the snapshot, running each emitted action. The
-*same* fold is recovery (replay history) and steady-state (tail new entries): replay is just
-transition over older `LogEntry`s, so boot and live use one code path.
+**The effectful shell.** The same *pure* `transition` powers both recovery and steady state, but
+**replay must NOT execute the historical actions** (`RECOVERY.3`). Folding the whole log and running
+every emitted action would re-fork a call whose `Completed` is also in history — re-running settled
+work. So recovery **folds history into a snapshot discarding actions**, plans once from the recovered
+pending head, then interprets only the **live tail** (records appended after the recovered cursor):
 
 ```ts
-const drain = (db: ActorDb) =>
-  ActorLog.read(db).pipe(Effect.flatMap((entries) =>          // ordered by seqNum; history then live tail
-    Effect.reduce(entries, ActorSnapshot.empty, (snap, entry) => {
-      const [next, actions] = transition(snap, entry)         // PURE
-      return Effect.forEach(actions, interpret(db, next), { discard: true }).pipe(Effect.as(next))
-    })
-  ))
+// pure fold — actions discarded; this is the ONLY thing replay does.
+const replay = (entries: ReadonlyArray<LogEntry>): ActorSnapshot =>
+  entries.reduce((snap, entry) => transition(snap, entry)[0], ActorSnapshot.empty)
 
+const drain = (db: ActorDb) =>
+  Effect.gen(function*() {
+    const history = yield* ActorLog.read(db)              // readDecoded(db, ActorEvent), ordered by seqNum
+    let snap = replay(history)                            // FOLD ONLY — no forkHandler during replay
+    // Start the DURABLE head (snap.active = pending[0]) if it isn't done — at cold boot no fiber is
+    // resident, so this restarts a call that was active-but-unfinished when we crashed. Keyed off the
+    // durable head + "is its fiber resident?", NOT off active === None (replay leaves active = Some).
+    yield* Effect.forEach(startHeadIfNotResident(snap), interpret(db, snap), { discard: true })
+    yield* ActorLog.tail(db, { from: snap.cursor + 1 }).pipe(   // LIVE tail: new records execute actions
+      Stream.runForEach((entry) => {
+        const [next, actions] = transition(snap, entry)
+        snap = next
+        return Effect.forEach(actions, interpret(db, next), { discard: true })
+      }),
+    )
+  })
+
+// startHeadIfNotResident emits the at-most-one StartCall for the durable head (snap.active) when it
+// is not done and no fiber is resident — at cold boot that always restarts the recovered head.
 // the interpreter — the ONLY place effects happen; it never decides validity
 const interpret = (db: ActorDb, snap: ActorSnapshot) => (a: ActorAction) => {
   switch (a._tag) {
@@ -359,33 +422,36 @@ const forkHandler = (db: ActorDb, snap: ActorSnapshot, callId: CallId) =>
   )
 ```
 
-**Routing (`ROUTING`)** — the callId *is* a reversible codec, so `callId → owner DB` is a pure
-decode; the owner becomes an S2 path **only** inside `StreamDb.open(owner)`'s key codec (no
-delimiter parsing, no index):
+**Routing (`ROUTING`)** — the callId *is* a reversible codec, so `callId → owner` is a pure decode;
+the owner becomes an S2 path **only** by encoding it through the owner key codec (the same codec a
+`StreamDb` derives its name with), and the resulting stream is opened as an **`ActorLog`** (over
+`readDecoded`/`append`), not a `StreamDb` table fold (no delimiter parsing, no index):
 
 ```ts
 const CallId: Schema.Codec<{ owner: OwnerKey; method: string; nonce: string }, string> = /* … */
 
-const openFromCallId = (encoded: string) =>
+const actorLogFromCallId = (encoded: string) =>
   Schema.decodeUnknownEffect(CallId)(encoded).pipe(
-    Effect.flatMap(({ owner }) => ObjectActorDb.open(owner)),   // the ONLY place owner → path
+    Effect.map(({ owner }) => ActorLog.forOwner(ownerKeyCodec, owner)),  // encode owner → path; the ONLY place owner → path
   )
 
 // so the by-id entrypoints take a bare string and need no residency, roster, or parsing:
 const resolveSignalById = (encoded: string, name: string, value: unknown) =>
-  openFromCallId(encoded).pipe(Effect.flatMap((db) => resolveSignal(db, encoded, name, value)))
+  actorLogFromCallId(encoded).pipe(Effect.flatMap((log) => resolveSignal(log, encoded, name, value)))
 ```
 
-**Checkpoint (`CHECKPOINTING`)** — `interpret`'s `Checkpoint` action snapshots the live set,
-records it, then trims history before the cursor. The transition only emits `Checkpoint` when no
-call is `active` (queue drained), so trimming `< cursor` is safe:
+**Checkpoint (`CHECKPOINTING`)** — actor checkpointing is **not** `StreamDb.checkpoint`/`compact`
+(those snapshot a `ChangeMessage` table). It writes a `Checkpointed` **ActorEvent** carrying the
+`ActorSnapshot`, then issues an **S2-level trim** (append a trim command) once that event is durable.
+The transition only emits `Checkpoint` when no call is `active` (queue drained), so trimming
+`< cursor` is safe:
 
 ```ts
-const writeCheckpoint = (db: ActorDb, snap: ActorSnapshot) =>
+const writeCheckpoint = (db: ActorLog, snap: ActorSnapshot) =>
   Effect.gen(function*() {
     // snap must fit one S2 batch (MAX_BATCH_RECORDS) — else framed/chunked (CHECKPOINTING.6)
     yield* ActorLog.append(db, { _tag: "Checkpointed", cursor: snap.cursor, snapshot: snap })  // durable first
-    yield* db.trim(snap.cursor)                          // then discard < cursor, now covered by the snapshot
+    yield* ActorLog.trim(db, snap.cursor)                // S2 trim command; discard < cursor, now covered by snapshot
   })
 // fidelity (CHECKPOINTING.7): folding the log forward from `cursor` must reconstruct an equal snapshot,
 // so boot can resume from the latest Checkpointed event instead of from seq 0.
@@ -473,13 +539,17 @@ first is what makes the leasing pass tractable.
 - Object lifecycle (`clearAll`/destroy); framed/chunked snapshots for large object state
   (`CHECKPOINTING.6` ↔ `storage-primitives.CHECKPOINT.4`).
 - Cross-process leasing/fencing (its own SDD; this model is the prerequisite).
+- A dedicated `StreamNamespace.list(basePath, keyCodec)` lower primitive, so recovery enumerates
+  actor keys without constructing a `StreamDb` class purely to call its name-based `list()`
+  (`DEPENDENCIES.1`, Finding 4).
 - **Storage primitives** (one layer down, behind the `DurableStore` port — policy injected, not
-  hardcoded): the engine consumes `storage-primitives` `ENUMERATE` (recovery), `EXISTENCE`
-  (non-creating open), and `CHECKPOINT` (GC), reads the ordered ActorEvent log via
-  `effect-s2.readDecoded` (typed decode preserving `seq_num`), and requires control-plane basin
-  provisioning with `createStreamOnAppend` disabled via existing `effect-s2` operations or external
-  S2 tooling. See
-  [`s2-resource-provisioning-sdd.md`](./s2-resource-provisioning-sdd.md).
+  hardcoded): the OBJECT engine consumes `storage-primitives` `ENUMERATE` (name-based recovery
+  scan) + the key codec, and reads/writes the object stream as an ordered ActorEvent log via
+  `effect-s2.readDecoded` + `S2Client.append` — it does NOT use `EXISTENCE`/`CHECKPOINT` on object
+  streams (existence is `checkTail`; checkpointing is a `Checkpointed` event + S2 trim).
+  Ephemeral *service* streams keep using `EXISTENCE`/`CHECKPOINT`. Control-plane basins are
+  provisioned with `createStreamOnAppend` disabled via existing `effect-s2` operations or external
+  S2 tooling. See [`s2-resource-provisioning-sdd.md`](./s2-resource-provisioning-sdd.md).
 - **Not borrowed** (per the Encore note): no `Actor.fromObject(...)` public API, no Effect Cluster
   `MessageStorage`/`deleteEnvelope` as the durable mailbox, no mutable completion-status row, no
   delimiter-parsed routing, and no XState/Stately runtime dependency.

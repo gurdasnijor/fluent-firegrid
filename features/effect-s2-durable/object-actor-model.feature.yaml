@@ -14,9 +14,10 @@ components:
       1: The actor abstraction is internal to effect-s2-durable; it is not a replacement for the public service/object/client/sendClient/attach/poll API.
       2: An actor instance is one schema-addressed durable object stream plus a deterministic runtime interpreter over that stream.
       3: "effect-s2-durable owns admission, callId routing, ordered replay, per-key draining, shared-handler snapshots, signal ingress, completion, recovery, and result status."
-      4: "effect-s2-stream-db owns storage mechanics: StreamDb key schemas, Table schemas, primary keys, latest-value materialization, transactions, and compaction."
+      4: "effect-s2-stream-db owns the latest-value ChangeMessage projection mechanism: StreamDb key schemas, Table schemas, primary keys, latest-value materialization, transactions, and compaction. The actor projection REUSES (refactors, if shared) the generic latest-value-per-key fold MECHANISM, applying it to the StateChanged subset of the ActorEvent log; it does NOT feed ActorEvents through the ChangeMessage-typed MaterializedState internals, and does NOT open object streams as StreamDb table-fold instances (object streams store ActorEvents, not ChangeMessage table rows)."
       5: S2 owns durable append order through seq_num plus stream reads, durability, and trim.
       6: Engine bookkeeping (accepts/journals/signals/timers/completions/checkpoints) is one ordered ActorEvent log read by S2 seq_num; the latest-value table fold is the projection lens for user state and materialized views, not the source of engine-event order. This supersedes modelling engine concerns as several independent latest-value tables in one stream.
+      7: "The actor log is read and written via effect-s2.readDecoded(ActorEvent) + S2Client.append on the stream path derived from the owner key codec — NOT via StreamDb.open, whose preload folds ChangeMessage table rows and would misdecode an ActorEvent stream. StreamDb is the latest-value ChangeMessage projection layer; using it as a generic event-log container is a layering violation. The actor layer reuses only StreamDb's key codec (identity/path) and StreamDb.list() (name-based enumeration), never its open/fold or compact for object streams."
 
   HANDLERS:
     name: Exclusive vs shared handler behaviour
@@ -25,16 +26,16 @@ components:
       2: At most one exclusive handler runs at a time per object key (single-writer).
       3: Shared handlers are declared explicitly (e.g. object.shared) and run concurrently with the exclusive handler and with one another.
       4: A shared handler must not mutate user state; this is enforced at the type level, analogously to the guard that forbids durable primitives inside a run action.
-      5: 'For a shared handler, "read-only" means no user-state writes — it MAY append system ingress rows (signal/promise resolutions) to the object stream.'
+      5: 'For a shared handler, "read-only" means no user-state writes — it MAY append system ingress events (SignalResolved for signal/promise resolutions) to the object stream.'
 
   ADMISSION:
     name: Durable accept-log (mailbox) for exclusive calls
     requirements:
-      1: An exclusive call is admitted by appending an accept-log entry to the object stream; admission is durable and decoupled from execution.
-      1-1: An accept-log entry is `{ callId, method, input }`; admission order is the S2 seq_num assigned to the append.
-      2: The accept-log is append-only — entries are never mutated; there is no status field.
+      1: An exclusive call is admitted by appending an Accepted ActorEvent to the owner stream; admission is durable and decoupled from execution.
+      1-1: An Accepted event carries `{ callId, method, input }`; admission order is the S2 seq_num assigned to the append.
+      2: The accept-log is append-only — Accepted events are never mutated; there is no status field.
       3: S2 seq_num establishes a durable total order over a key's exclusive calls; the engine does not invent a second app-level sequence field.
-      4: Admission is idempotent by callId — re-admitting an in-flight callId returns the existing entry (insertOrGet), never a duplicate.
+      4: "Admission is idempotent by callId via a read-then-CAS-append protocol, not a StreamDb insertOrGet (the object stream is an ActorEvent log, not a table). Dedup is checked against the callId IDEMPOTENCY PROJECTION folded from the log INCLUDING the latest Checkpointed snapshot — a pending Accepted, a retained Completed result (within the horizon), or an Expired watermark — not a literal scan for an Accepted event, since a completed call's original Accepted may already be trimmed under a checkpoint (CHECKPOINTING.3/.5). A producer CAS-appends a new Accepted (matchSeqNum) only when the callId is unknown to that projection; concurrent producers serialize on the CAS, and a loser re-reads and returns the existing/expired status rather than appending a duplicate."
       5: Shared calls are never admitted to the accept-log.
       6: Admission is producer-only — any producer admits a call by appending the Accepted event to the owner stream without hosting the per-key drainer; the owning drainer picks it up. (The dispatch-side twin of residency-independent ingress; load-bearing for multi-process.)
 
@@ -42,7 +43,7 @@ components:
     name: Serial drainer
     requirements:
       1: A single per-key drainer runs the pending exclusive call with the lowest S2 seq_num to completion (through parks) before starting the next.
-      2: A call's active invocation points its durable primitives (run/sleep/signal/state) at the object stream, journaled keyed by callId (`${callId}/run/N`, …); the primitive layer is reused unchanged.
+      2: A call's active invocation points its durable primitives (run/sleep/signal/state) at the owner stream, its journal facts written as Journaled ActorEvents keyed by callId (`${callId}/run/N`, …) — the durable-primitive API is reused, not a separate StreamDb table.
       3: A shared handler runs immediately as an ephemeral execution over a snapshot of the object's materialized state; it never enters the accept-log and is never blocked by, nor blocks, the drainer.
 
   COMPLETION:
@@ -57,29 +58,30 @@ components:
   INGRESS:
     name: External resolution is an append
     requirements:
-      1: resolveSignal(callId, name, value) appends a deferreds row to the owner stream and succeeds whether or not the target call is currently resident or running.
+      1: resolveSignal(callId, name, value) appends a SignalResolved event to the owner stream and succeeds whether or not the target call is currently resident or running.
       2: An in-process waiter is poked best-effort; the durable row is the source of truth (row-is-truth, poke-is-best-effort).
 
   ROUTING:
     name: callId self-routes to its owner stream
     requirements:
-      1: A callId carries a schema-decodable owner identity; object calls route by opening the owner StreamDb through its key schema, while service calls resolve to their execution stream.
+      1: A callId carries a schema-decodable owner identity; object calls route by deriving the owner stream path from that owner through the owner key codec (then reading/writing it as an ActorEvent log), while service calls resolve to their execution stream.
       2: attach / poll / resolveSignal derive the owner stream from the callId alone, with no roster, side index, or delimiter-parsed stream string.
-      3: The callId encoding is a reversible Effect Schema codec (decode∘encode and encode∘decode round-trip); owner recovery is a pure decode, and the owner becomes an S2 path segment only through StreamDb.open(owner)'s key codec.
+      3: "The callId encoding is a reversible Effect Schema codec (decode∘encode and encode∘decode round-trip); owner recovery is a pure decode, and the owner becomes an S2 path segment only by encoding it through the owner key codec (the same codec a StreamDb derives its stream name with) — never by opening a StreamDb table fold or by hand-building a path string."
 
   RECOVERY:
     name: Recover by draining pending work per key
     requirements:
-      1: Boot enumerates schema-decoded object stream keys via StreamDb.list() and starts a drainer only for keys whose actor projection has a pending head.
+      1: Boot enumerates schema-decoded object stream keys via StreamDb.list() (name-based enumeration + key-codec decode; object stream contents are not opened as a StreamDb fold) and starts a drainer only for keys whose actor projection has a pending head.
       2: Stream existence is not liveness — an object stream persists as state with an empty accept-log; the pending head is the work signal.
-      3: Recovery never re-races invocations; the ordered accept-log plus derived-pending replays deterministically.
+      3: "Recovery never re-races invocations: historical records are folded into the snapshot WITHOUT executing actions (no handler is forked during replay) — only records appended after the recovered cursor drive interpretation, so replaying an old Accepted ahead of its Completed never re-runs completed work. The ordered accept-log plus derived-pending replays deterministically."
+      4: "The snapshot's active is the DURABLE head pointer (pending[0] — the call that should be running), not a liveness flag; after a cold fold-only replay it can be Some with no resident fiber. Recovery therefore restarts the durable head (the lowest-seq Accepted without a Completed) whenever its fiber is not resident — never gating that decision on active === None — so a call that was mid-flight at the crash resumes; steady-state starts thereafter come from live-tail transition actions."
 
   PLANNING:
     name: Deterministic planning, snapshots, and scoped work
     requirements:
       1: The object drainer plans the next action from the actor-stream projection before running external effects; recovery can re-plan from durable events without consulting in-memory state.
       2: Runtime state is exposed as an actor snapshot/projection at an S2 cursor; attach and poll are views over that projection.
-      3: Durable engine rows include path-aware identity (e.g. calls/<callId>/run/<name>, state/<table>/<key>, signals/<callId>/<name>) so rows sharing one object stream cannot collide by tag alone.
+      3: Durable engine events include path-aware identity (e.g. calls/<callId>/run/<name>, state/<table>/<key>, signals/<callId>/<name>) so events sharing one object stream cannot collide by tag alone.
       4: Schema decode failures identify the failed boundary (accepted-input, journal, signal, timer, state, result, or checkpoint) and include path/callId when known.
       5: Timers, signal waits, child workflows, and spawned/background work have a durable owner scope so checkpoint, trim, recovery, and rerun can determine whether the work is live.
       6: Completion-derived continuations are idempotent and can be re-planned from durable facts without double-applying.
@@ -101,13 +103,13 @@ components:
       3: A checkpoint covers user state, pending accepts, active per-call journals, unresolved signals/timers, retained completed-call results/idempotency metadata, and a completed/expired watermark.
       4: Records before a checkpoint cursor may be S2-trimmed only when their semantic state is represented by the checkpoint.
       5: Result/idempotency retention is explicit (a horizon) — within the horizon a duplicate callId returns the existing/pending result; after expiry, attach or a duplicate callId resolves as Expired and is never re-run.
-      6: A checkpoint that exceeds a single S2 batch (effect-s2-stream-db MAX_BATCH_RECORDS) requires framed/chunked snapshots; single-batch compaction is a documented v1 limit on per-object live footprint.
+      6: A Checkpointed event whose snapshot exceeds a single S2 batch (the effect-s2-stream-db MAX_BATCH_RECORDS limit) requires framed/chunked snapshots; a single-batch checkpoint is a documented v1 limit on per-object live footprint.
       7: Checkpoint fidelity — replaying the log forward from a Checkpointed event's cursor reconstructs a snapshot equal to the one the checkpoint recorded; the Checkpointed event is durable before any trim below its cursor.
 
 constraints:
   SYSTEM_OF_RECORD:
     requirements:
-      1: The schema-derived object stream is the single durable system of record for a key — state, accept-log, per-call journals, ingress rows, and results all live in it.
+      1: The schema-derived object stream is the single durable system of record for a key — state, accept-log, per-call journals, ingress events, and results all live in it as one ActorEvent log.
       2: In-memory state (running fibers, waiters, the drainer) is cache derived from the stream; it is never required for durability or ingress.
       3: No object call uses a separate per-call execution stream or a shared roster row.
 
@@ -119,5 +121,5 @@ constraints:
 
   DEPENDENCIES:
     requirements:
-      1: This engine consumes the storage primitives storage-primitives.ENUMERATE (recovery scan), storage-primitives.EXISTENCE (non-creating open), and storage-primitives.CHECKPOINT (CHECKPOINTING) behind the DurableStore port; the ordered ActorEvent log (LAYERING.6) is read via effect-s2.readDecoded (typed decode preserving seq_num) as a schema-owned actor-log in effect-s2-durable, not a stream-db ordered-log lens. Policy (basin, retention, namespace) is injected, not hardcoded.
+      1: "The object engine consumes storage-primitives.ENUMERATE (StreamDb.list — name enumeration ONLY: list stream names under basePath + decode through the key codec, never folding stream contents) and the schema-derived key codec (owner→path identity); it reads and writes the object stream as an ordered ActorEvent log via effect-s2.readDecoded(ActorEvent) + S2Client.append (LAYERING.6/7), and does NOT open object streams as StreamDb table folds nor use StreamDb.openExisting/checkpoint/compact on them — object-stream existence is an S2 checkTail and object-stream checkpointing is a Checkpointed event + S2 trim (CHECKPOINTING). Ephemeral service streams keep using the StreamDb ChangeMessage primitives (EXISTENCE, CHECKPOINT). A dedicated lower primitive StreamNamespace.list(basePath, keyCodec) may later replace constructing a StreamDb class purely to enumerate keys (a follow-up). Policy (basin, retention, namespace) is injected behind the DurableStore port, not hardcoded."
       2: Runtime/control-plane basins are provisioned before recovery with createStreamOnAppend false, using existing effect-s2 control-plane operations or external S2 tooling, so stream enumeration is trustworthy.
