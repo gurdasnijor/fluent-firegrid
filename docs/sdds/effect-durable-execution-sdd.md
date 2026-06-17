@@ -173,6 +173,24 @@ This gives workflow semantics without adding another storage topology.
 10. **StreamDb is not a generic event log.** `StreamDb.open` folds `ChangeMessage` rows. Object
     owner streams use S2 ordered reads/tails, typed `ActorEvent` decoding, and actor-specific
     checkpointing.
+11. **Recoverable ownership should be structural.** Recovery should not depend on a timing-sensitive
+    stream-list visibility property once object recovery is production-critical. A basin-level
+    append-only owner registry is the preferred recovery source; it records owner keys before their
+    first acknowledged `Accepted` event.
+12. **Multi-worker safety requires leases and fences.** A single in-process drainer is enough only
+    for one worker. Before multi-worker object execution is supported, owner loops must acquire a
+    log-backed lease/fence, renew it, self-demote on renewal failure, and write protected records
+    with the active token.
+13. **Handlers read their own writes.** Inside one object handler, `state.set` / `state.delete`
+    should be visible through a local overlay as soon as the write is planned; external visibility,
+    completion, and other handlers remain gated on the S2 append acknowledgement and projection
+    application.
+14. **Actor records are versioned.** Permanent owner streams outlive deploys. Every appended
+    ActorEvent must carry a producer schema/runtime version, and a reader that sees a newer
+    unsupported version must halt rather than mis-fold it.
+15. **Append latency is the dominant primitive cost.** The `InvocationStore` write path should be
+    able to coalesce same-turn durable facts into one S2 append batch while preserving per-record
+    order and commit semantics.
 
 ## Semantic Coverage Target
 
@@ -232,6 +250,9 @@ API-complete means:
 7. **Firelab proves the feature without gaps for API semantics.** Remaining `--allow-missing`
    requirements, if any, are explicitly production-hardening requirements such as cross-process
    fencing or large framed checkpoints, not missing public API behavior.
+8. **Recovery has an authoritative key source.** Object recovery either uses the append-only owner
+   registry or has an explicit short-lived gate proving enumeration safety. The registry is the
+   preferred path because it makes acknowledged admission recoverable by construction.
 
 This is closer to a single integrated completion pass than a long sequence of layers. It may still
 be reviewed in smaller PRs for risk, but each PR must land a public behavior and delete/replace the
@@ -308,6 +329,12 @@ Required behavior:
 - `attach`/`poll` are owner-projection views for object calls and roster views for service calls.
 - Recovery enumerates owner streams, folds from the latest available cursor, restarts the recovered
   pending head, and never re-runs a completed call.
+- First admission for a cold key records the owner key in an append-only registry before the
+  acknowledged `Accepted`; orphan registry entries with empty streams are safe and compactable.
+- A handler observes its own state writes through a local overlay, while caller-visible results and
+  other handlers observe only acked owner-stream facts.
+- The store may batch same-turn facts, but the public operation is not considered durable until S2
+  acknowledges the batch.
 - Firelab proves these scenarios through public APIs and production spans.
 
 This batch is the real API-completion milestone for `object(...)`.
@@ -321,7 +348,9 @@ as a performance debt with a clear owner-loop follow-up:
 - maintain `lastAppliedSeqNum` in resident owner projections;
 - tail owner streams from a cursor with `readDecoded`/read sessions;
 - use `check-tail` before strong projection reads when freshness matters;
-- handle S2 command records separately from typed `ActorEvent`s.
+- handle S2 command records separately from typed `ActorEvent`s;
+- once a worker holds a valid owner lease/fence, serve owner-local strong reads from its projection
+  without an extra `check-tail`; non-owner reads still need a freshness boundary.
 
 Do not let this become a separate public runtime or validation-only facade. It is an internal
 implementation improvement behind the same object scenarios.
@@ -342,9 +371,13 @@ Required behavior:
 
 These are important, but they should not block declaring the public object API coherent:
 
-- checkpoint + trim to bound replay;
+- checkpoint + trim to bound replay, including a checkpoint fingerprint and covered `seq_num` that
+  Firelab can verify by fold-reproduction before any trim;
 - explicit idempotency/result horizon with `Expired`;
-- S2 fencing/leases for multi-process per-key ownership;
+- S2 fencing/leases for multi-process per-key ownership; this is required before any multi-worker
+  object execution is advertised, not an optional optimization;
+- producer/reader version compatibility: older readers halt on newer unsupported ActorEvent
+  versions, and deploy-window checkpointing is pinned to the oldest running compatible version;
 - framed/chunked checkpoints beyond a single S2 batch;
 - object lifecycle APIs such as `clearAll` / destroy;
 - delayed send, cancellation, interruption, timeout/deadline, and richer retry policy;
@@ -352,12 +385,15 @@ These are important, but they should not block declaring the public object API c
 
 When implemented, checkpointing should still follow the S2-native model: `Checkpointed` as an
 ActorEvent, `trim` as an S2 command record, and no trim before durable checkpoint coverage exists.
+Checkpoint scheduling should be based on replay freshness, especially tail distance, write
+throughput, and projected state size. Off-box snapshotting is not the default; consider it only for
+large state classes whose checkpoint serialization would stall the single owner loop.
 
 ## Deferred work
 
 These remain explicitly out of the current actor build:
 
-- cross-process per-key leasing/fencing;
+- cross-process per-key leasing/fencing for multi-worker execution;
 - object lifecycle APIs such as `clearAll` / destroy;
 - framed or chunked checkpoints beyond a single S2 batch;
 - multi-basin tenancy and encryption policy;

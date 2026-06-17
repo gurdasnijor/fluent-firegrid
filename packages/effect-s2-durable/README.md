@@ -213,8 +213,9 @@ Built + tested against `s2 lite` for the existing service/runtime surface:
   `run` short-circuits from its `steps` fact, journaled `state.get` replays, `sleep`
   recomputes its remaining delay, and a `signal`/`awakeable` reads its resolved row or
   re-parks. A recovered execution is resident again, so `attach` / ingress resolution work
-  across a restart (see `test/recovery.test.ts`). An execution whose `handlerName` isn't in
-  the registry is skipped (so a partial registry never crashes boot).
+  across a restart (proven end-to-end over s2 lite by the Firelab validation
+  `effect-s2-durable-service-recovery`, feature `service-recovery`). An execution whose
+  `handlerName` isn't in the registry is skipped (so a partial registry never crashes boot).
 
 Use **`serviceLayer(...services)`** (not the bare `DurableExecutionRuntime.layer()`)
 whenever an execution can outlive the process, so its handlers are registered for recovery.

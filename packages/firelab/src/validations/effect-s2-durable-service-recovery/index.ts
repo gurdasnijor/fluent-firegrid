@@ -38,17 +38,17 @@ export default defineValidation({
     + "ingress resolution settles it — with OTel spans for boot recovery and the StreamDb/S2 reads.",
   feature: {
     product: "effect-s2-durable",
-    name: "object-actor-model",
+    name: "service-recovery",
   },
   // just the s2 lite backend (the S2Client); the claims build engine scopes over it.
   backend: S2LiteLive,
   component: () => Effect.void,
   requirements: [
     {
-      id: "RECOVERY.4",
+      id: "BOOT_RECOVERY.1",
       description:
-        "a fresh engine restarts a non-resident parked execution from durable state (signal-parked "
-        + "service re-driven across an engine restart, then resolved + attached)",
+        "a fresh engine re-drives a non-resident parked SERVICE execution from the roster + WorkflowDb "
+        + "(signal-parked service re-driven across an engine restart, then resolved + attached)",
       evidence:
         'spans.exists(s, named(s, "effect-s2-durable.boot-recover")) && spans.exists(s, named(s, "effect-s2-durable.recover-execution")) && spans.exists(s, named(s, "effect-s2-stream-db.open"))',
       claim: () =>
@@ -78,10 +78,10 @@ export default defineValidation({
         }),
     },
     {
-      id: "INGRESS.1",
+      id: "BOOT_RECOVERY.2",
       description:
-        "resolving an awakeable on a recovered execution succeeds regardless of residency — the "
-        + "replay-stable awakeable id minted in process 1 is resolvable in process 2 after recovery",
+        "an ingress resolution on a recovered SERVICE execution settles it — the replay-stable "
+        + "awakeable id minted in process 1 is resolvable in process 2 after recovery, and attach returns",
       evidence:
         'spans.exists(s, named(s, "effect-s2-durable.boot-recover")) && spans.exists(s, named(s, "effect-s2-durable.recover-execution")) && spans.exists(s, named(s, "S2.append"))',
       claim: () =>
