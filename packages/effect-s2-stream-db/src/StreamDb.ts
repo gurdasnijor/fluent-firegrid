@@ -166,18 +166,18 @@ export interface StreamDbClass<T extends Tables, Key extends KeySchema> {
   readonly open: (key: Key["Type"], options?: OpenOptions) => Effect.Effect<StreamDbInstance<T>, S2StreamDbError, S2Client>
   /**
    * The typed instance keys that currently exist as streams under `basePath`:
-   * `listStreams` by `basePath` prefix, strip `basePath`, decode each suffix
-   * through the `key` schema — discovery that returns typed keys (only this layer
-   * can invert stream-name → key), not name construction. Streams being deleted
-   * are excluded. No `keyPrefix`: an encoded-prefix filter bypasses the key
-   * schema, so schema-owned prefix enumeration is a follow-up.
+   * enumerate by db base path, strip `basePath`, decode each suffix through the
+   * `key` schema — discovery that returns typed keys (only this layer can invert
+   * stream-name → key), not name construction. Streams being deleted are excluded.
+   * No `keyPrefix`: an encoded-prefix filter bypasses the key schema, so
+   * schema-owned prefix enumeration is a follow-up.
    */
   readonly list: () => Effect.Effect<ReadonlyArray<Key["Type"]>, S2StreamDbError, S2Client>
   /**
    * Open `key` only if its stream already exists; never creates (unlike `open`,
    * which creates-if-absent). Existence is decided by the open itself (the
-   * preload's `checkTail`), so there is no separate probe to race against — a
-   * missing stream resolves to `None`.
+   * preload's non-creating path), so there is no separate public probe to race
+   * against — a missing stream resolves to `None`.
    */
   readonly openExisting: (
     key: Key["Type"],
@@ -226,12 +226,12 @@ export const StreamDb =
           Stream.mapEffect((info) => decodeKey(info.name.slice(prefix.length))),
           Stream.runCollect,
           Effect.map((keys) => Array.from(keys)),
-          Effect.withSpan("effect-s2-stream-db.list", { attributes: { basePath } }),
+          withStreamDbSpan("list", { basePath }),
           Effect.mapError(toError("list")),
         )
-      // Race-free: the open's own preload `checkTail` is the single authoritative
-      // existence check — `create: false` propagates `S2NotFound`, which maps to
-      // `None`. No separate `exists` probe to race against a concurrent drop.
+      // Race-free: the open's non-creating preload is authoritative —
+      // `create: false` propagates `S2NotFound`, which maps to `None`. No
+      // separate public `exists` probe races against a concurrent drop.
       static readonly openExisting = (
         value: Key["Type"],
       ): Effect.Effect<Option.Option<StreamDbInstance<T>>, S2StreamDbError, S2Client> =>
@@ -243,7 +243,7 @@ export const StreamDb =
             error instanceof S2StreamDbError && error.cause instanceof S2NotFound
               ? Effect.succeedNone
               : Effect.fail(error)),
-          Effect.withSpan("effect-s2-stream-db.openExisting", { attributes: { basePath } }),
+          withStreamDbSpan("openExisting", { basePath }),
         )
     }
     // eslint-disable-next-line local/no-launder-cast -- class-factory: the static shape (typed `open`/`tables`/`key` + `new()`) can't be expressed structurally on a class declaration
@@ -258,6 +258,14 @@ const toError = (operation: string) => (cause: unknown): S2StreamDbError =>
     message: cause instanceof Error ? cause.message : String(cause),
     cause,
   })
+
+type TraceAttributeValue = string | number | boolean
+type TraceAttributes = Record<string, TraceAttributeValue>
+
+const withStreamDbSpan =
+  (operation: string, attributes: TraceAttributes = {}) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    effect.pipe(Effect.withSpan(`effect-s2-stream-db.${operation}`, { attributes }))
 
 
 /** Command records (fence/trim) carry an empty-name header; data records do not. */
@@ -387,7 +395,7 @@ const openStream = <T extends Tables>(
         const ack = yield* client.append(stream, AppendInput.create(records, { matchSeqNum }))
         yield* Ref.set(tailRef, ack.tail.seqNum)
         messages.forEach((message) => state.apply(message))
-      }).pipe(Effect.withSpan("effect-s2-stream-db.commit"))
+      }).pipe(withStreamDbSpan("commit", { stream }))
 
     const makeFacade = (meta: TableMeta): TableFacade<unknown> => ({
       insert: (row) =>
@@ -396,9 +404,7 @@ const openStream = <T extends Tables>(
             Effect.flatMap(({ encoded, key, type }) => commitLocked([change("insert", type, key, encoded)])),
           ),
         ).pipe(
-          Effect.withSpan("effect-s2-stream-db.table.insert", {
-            attributes: { stream, table: meta.type },
-          }),
+          withStreamDbSpan("table.insert", { stream, table: meta.type }),
           Effect.mapError(toError("insert")),
         ),
       upsert: (row) =>
@@ -410,16 +416,12 @@ const openStream = <T extends Tables>(
             }),
           ),
         ).pipe(
-          Effect.withSpan("effect-s2-stream-db.table.upsert", {
-            attributes: { stream, table: meta.type },
-          }),
+          withStreamDbSpan("table.upsert", { stream, table: meta.type }),
           Effect.mapError(toError("upsert")),
         ),
       delete: (key) =>
         lock.withPermits(1)(commitLocked([change("delete", meta.type, key)])).pipe(
-          Effect.withSpan("effect-s2-stream-db.table.delete", {
-            attributes: { stream, table: meta.type },
-          }),
+          withStreamDbSpan("table.delete", { stream, table: meta.type }),
           Effect.mapError(toError("delete")),
         ),
       insertOrGet: (row) =>
@@ -435,9 +437,7 @@ const openStream = <T extends Tables>(
             return { _tag: "Inserted" } satisfies InsertOrGetResult<unknown>
           }),
         ).pipe(
-          Effect.withSpan("effect-s2-stream-db.table.insertOrGet", {
-            attributes: { stream, table: meta.type },
-          }),
+          withStreamDbSpan("table.insertOrGet", { stream, table: meta.type }),
           Effect.mapError(toError("insertOrGet")),
         ),
       // `Effect.suspend` so the read observes `MaterializedState` when the Effect
@@ -450,16 +450,12 @@ const openStream = <T extends Tables>(
             onSome: (encoded) => decodeRow(meta, encoded).pipe(Effect.map(Option.some)),
           }),
         ).pipe(
-          Effect.withSpan("effect-s2-stream-db.table.get", {
-            attributes: { stream, table: meta.type },
-          }),
+          withStreamDbSpan("table.get", { stream, table: meta.type }),
           Effect.mapError(toError("get")),
         ),
       query: (build) =>
         Effect.suspend(() => Effect.forEach(state.values(meta.type), (encoded) => decodeRow(meta, encoded))).pipe(
-          Effect.withSpan("effect-s2-stream-db.table.query", {
-            attributes: { stream, table: meta.type },
-          }),
+          withStreamDbSpan("table.query", { stream, table: meta.type }),
           Effect.map(build),
           Effect.mapError(toError("query")),
         ),
@@ -494,7 +490,7 @@ const openStream = <T extends Tables>(
               )
         }),
       ).pipe(
-        Effect.withSpan("effect-s2-stream-db.transact", { attributes: { stream } }),
+        withStreamDbSpan("transact", { stream }),
         Effect.mapError(toError("transact")),
       )
 
@@ -527,13 +523,13 @@ const openStream = <T extends Tables>(
     )
 
     const checkpoint = runCheckpoint.pipe(
-      Effect.withSpan("effect-s2-stream-db.checkpoint", { attributes: { stream } }),
+      withStreamDbSpan("checkpoint", { stream }),
       Effect.mapError(toError("checkpoint")),
     )
 
     // `compact` is the original name for `checkpoint`, kept for backward compat.
     const compact = runCheckpoint.pipe(
-      Effect.withSpan("effect-s2-stream-db.compact", { attributes: { stream } }),
+      withStreamDbSpan("compact", { stream }),
       Effect.mapError(toError("compact")),
     )
 
@@ -546,15 +542,15 @@ const openStream = <T extends Tables>(
           yield* Ref.set(tailRef, ack.tail.seqNum)
         }),
       ).pipe(
-        Effect.withSpan("effect-s2-stream-db.trim", { attributes: { stream } }),
+        withStreamDbSpan("trim", { stream }),
         Effect.mapError(toError("trim")),
       )
 
     const drop = client.deleteStream({ stream }).pipe(
-      Effect.withSpan("effect-s2-stream-db.drop", { attributes: { stream } }),
+      withStreamDbSpan("drop", { stream }),
       Effect.mapError(toError("drop")),
     )
 
     // eslint-disable-next-line local/no-launder-cast -- the dynamic `facades` record (typed per-table at the type level) can't be proven to match the mapped `StreamDbInstance<T>` shape structurally
     return { ...facades, table, transact, checkpoint, trim, compact, drop } as unknown as StreamDbInstance<T>
-  }).pipe(Effect.withSpan("effect-s2-stream-db.open", { attributes: { stream } }))
+  }).pipe(withStreamDbSpan("open", { stream }))

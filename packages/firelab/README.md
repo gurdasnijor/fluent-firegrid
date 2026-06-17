@@ -58,7 +58,7 @@ pnpm --filter firelab validate:proofs check effect-s2-stream-db/storage-primitiv
 pnpm --filter firelab validate:proofs check effect-s2-stream-db/storage-primitives
 
 # Bootstrap a validation module from an existing feature spec
-pnpm --filter firelab validate:proofs init effect-s2/resource-spec
+pnpm --filter firelab validate:proofs init effect-s2-durable/object-actor-model
 
 # Generate requirement proof stubs for missing feature requirements
 pnpm --filter firelab validate:proofs scaffold effect-s2-stream-db/storage-primitives
@@ -228,10 +228,10 @@ Use `proofs init` when a feature has no validation module yet:
 
 ```bash
 # Print the file that would be generated.
-pnpm --filter firelab validate:proofs init effect-s2/resource-spec --dry-run
+pnpm --filter firelab validate:proofs init effect-s2-durable/object-actor-model --dry-run
 
-# Create packages/firelab/src/validations/effect-s2-resource-spec/index.ts.
-pnpm --filter firelab validate:proofs init effect-s2/resource-spec
+# Create packages/firelab/src/validations/effect-s2-durable-object-actor-model/index.ts.
+pnpm --filter firelab validate:proofs init effect-s2-durable/object-actor-model
 ```
 
 `proofs init` parses the feature YAML, infers the validation id from

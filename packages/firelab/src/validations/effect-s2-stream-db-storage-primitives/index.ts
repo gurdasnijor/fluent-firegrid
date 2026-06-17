@@ -20,7 +20,7 @@ export default defineValidation({
   id: "effect-s2-stream-db-storage-primitives",
   description:
     "Drives every effect-s2-stream-db storage primitive against s2 lite: per-stream "
-    + "config on open, instance enumeration, non-creating existence probes, the "
+    + "config on open, instance enumeration, non-creating opens, the "
     + "latest-value table projection, and caller-driven checkpoint + trim.",
   feature: {
     product: "effect-s2-stream-db",

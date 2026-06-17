@@ -475,9 +475,10 @@ first is what makes the leasing pass tractable.
 - Cross-process leasing/fencing (its own SDD; this model is the prerequisite).
 - **Storage primitives** (one layer down, behind the `DurableStore` port — policy injected, not
   hardcoded): the engine consumes `storage-primitives` `ENUMERATE` (recovery), `EXISTENCE`
-  (probes), and `CHECKPOINT` (GC), reads the ordered ActorEvent log via `effect-s2.readDecoded`
-  (typed decode preserving `seq_num`), and uses `resource-spec` `SPEC_RECONCILE` (basin
-  provisioning). See
+  (non-creating open), and `CHECKPOINT` (GC), reads the ordered ActorEvent log via
+  `effect-s2.readDecoded` (typed decode preserving `seq_num`), and requires control-plane basin
+  provisioning with `createStreamOnAppend` disabled via existing `effect-s2` operations or external
+  S2 tooling. See
   [`s2-resource-provisioning-sdd.md`](./s2-resource-provisioning-sdd.md).
 - **Not borrowed** (per the Encore note): no `Actor.fromObject(...)` public API, no Effect Cluster
   `MessageStorage`/`deleteEnvelope` as the durable mailbox, no mutable completion-status row, no

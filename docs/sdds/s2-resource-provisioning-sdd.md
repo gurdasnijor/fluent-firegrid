@@ -2,8 +2,9 @@
 
 Status: **proposal** · Scope: `effect-s2`, `effect-s2-stream-db` · Date: 2026-06-16
 Normative contracts:
-[`features/effect-s2/resource-spec.feature.yaml`](../../features/effect-s2/resource-spec.feature.yaml),
 [`features/effect-s2-stream-db/storage-primitives.feature.yaml`](../../features/effect-s2-stream-db/storage-primitives.feature.yaml)
+Deferred exploration:
+[`docs/deferred-features/effect-s2/resource-spec.feature.yaml`](../deferred-features/effect-s2/resource-spec.feature.yaml)
 Primary consumer: [`object-actor-model-sdd.md`](./object-actor-model-sdd.md) (the `effect-s2-durable` engine)
 
 This is the **storage/resource layer** beneath the durable engine. It exists on its own because
@@ -25,8 +26,9 @@ about **resource lifecycle, ordering, and config**:
    records in `seq_num` order. An event-log consumer (the actor engine) needs ordered reads.
 4. **No first-class trim/checkpoint.** `compact` (snapshot+trim) exists internally but isn't a
    surfaced, caller-driven primitive.
-5. **No provisioning story.** Basins are created ad hoc (tests set `create_stream_on_append` via an
-   init file); no Effect-native reconcile, though S2 has the SDK ops and a declarative CLI.
+5. **Provisioning is a policy boundary.** Basins are created outside the hot path (tests set
+   `create_stream_on_append` via an init file). An Effect-native reconciler may be useful later,
+   but direct `effect-s2` control-plane calls or external S2 tooling are sufficient for this slice.
 
 ## What S2 actually gives us (confirmed against `@s2-dev/streamstore` 0.24.1 + docs)
 
@@ -50,10 +52,10 @@ and a **data plane** (dynamic, `open`-time).
 
 | Primitive | Layer | Why |
 |---|---|---|
-| Declarative basin/stream **spec reconcile** (SDK analog of `s2 apply`) | **effect-s2** | Pure S2 resource management; useful with or without stream-db. |
+| Control-plane basin/stream provisioning | **effect-s2** or external S2 tooling | Policy/bootstrap concern; no new public reconciler is required in this slice. |
 | `StreamDb.open({ config })` — per-stream `StreamConfig` | **effect-s2-stream-db** | `open` already creates the stream; it just needs to pass config. |
-| `StreamDb.list({ keyPrefix })` — enumerate instances | **effect-s2-stream-db** | It owns the `basePath`/key → stream-name mapping. |
-| Non-creating `exists` / `openExisting` | **effect-s2-stream-db** | Probes must not materialize a stream as a side effect. |
+| `StreamDb.list()` — enumerate instances | **effect-s2-stream-db** | It owns the schema codec that can invert stream names back to typed keys. |
+| Non-creating `openExisting` | **effect-s2-stream-db** | Non-creating opens must not materialize a stream as a side effect. |
 | **Ordered event-log read** (records by `seq_num`) | **effect-s2** (`readDecoded`) → **effect-s2-durable** actor-log | Typed decode preserving `seq_num`/metadata; the actor-log is schema-owned. NOT a stream-db lens — stream-db owns the latest-value projection only. |
 | **Checkpoint + trim** (snapshot live set, trim history) | **effect-s2-stream-db** | Bounded replay for persistent streams; surfaces existing `compact`. |
 | Which basins, what retention, recovery policy | **effect-s2-durable** | Policy + the durable model; consumes the above via `DurableStore`. |
@@ -62,28 +64,18 @@ Principle: **mechanism low, policy high.**
 
 ## Proposal
 
-### 1. `effect-s2` — declarative resource reconcile (`resource-spec`)
+### 1. `effect-s2` / external tooling — control-plane provisioning
 
-A small `S2Spec` module: an Effect-native reconciler mirroring `s2 apply`, for bootstrap/runtime
-use where the CLI isn't available (tests, server start, CI). A thin fold over existing client ops
-— no new transport.
+Runtime/control-plane basins must be provisioned before recovery, especially when
+`createStreamOnAppend` is false. For now that is satisfied by existing `effect-s2`
+control-plane operations (`ensureBasin`, `reconfigureBasin`, `ensureStream`, etc.) or external S2
+tooling such as `s2 apply`.
 
-```ts
-interface S2Spec {                                  // subset of the CLI JSON; basins + named streams
-  readonly basins: ReadonlyArray<{
-    readonly name: string
-    readonly config?: BasinConfig                   // createStreamOnAppend, defaultStreamConfig, streamCipher
-    readonly streams?: ReadonlyArray<{ readonly name: string; readonly config?: StreamConfig }>
-  }>
-}
-const plan:  (spec: S2Spec) => Effect.Effect<S2Plan, S2ClientError, S2Client>   // +/~/= diff (dry-run)
-const apply: (spec: S2Spec) => Effect.Effect<S2Plan, S2ClientError, S2Client>   // ensure + reconfigure
-```
+A public Effect-native `S2Spec`/`plan`/`apply` reconciler is deferred until there is a concrete
+runtime/bootstrap caller. The deferred sketch lives outside active Firelab features so it does not
+read as current implementation scope.
 
-Non-goal: full CLI parity (no token/ACL). Handles basins + default config + singleton streams —
-the "coarse, named" resources.
-
-### 2. `effect-s2-stream-db` — config, enumerate, existence, ordered-read, trim (`storage-primitives`)
+### 2. `effect-s2-stream-db` — config, enumerate, non-creating open, projection, trim (`storage-primitives`)
 
 **(a) Per-instance stream config.** `open` gains an options arg whose `config` flows into the
 `createStream` it already does (default: today's behaviour, basin defaults — backward compatible):
@@ -96,13 +88,12 @@ Use it for **ephemeral** streams (short retention / `deleteOnEmpty`). **Do not**
 retention for streams that hold *permanent* state mixed with transient records (e.g. an object
 actor stream) — that would trim live state; those are GC'd by checkpoint+trim (§2e) instead.
 
-**(b) Enumerate instances.** `open(key)` derives the name deterministically
-(`${basePath}/${encode(key)}`); `list` is the inverse — `listStreams({ prefix: basePath })` → strip
-`basePath/` → decode back to keys. Discovery of live instances, not name construction:
+**(b) Enumerate instances.** `open(key)` derives the name through the owning Effect Schema;
+`list()` is the inverse — enumerate streams under the db base path, strip that base path, then
+decode back to typed keys. Discovery of live instances, not name construction:
 
 ```ts
 WorkflowDb.list()                              // → ReadonlyArray<ExecutionId>  (every live wf/<id>)
-ObjectActorDb.list({ keyPrefix: "counter:" })  // structured keys only — all instances of one object
 ```
 
 "Exists = live" holds **only for ephemeral streams dropped on completion**. A persistent stream's
@@ -110,10 +101,9 @@ existence means "it exists," not "there is work" — a `list()` caller must then
 work (the actor engine checks the mailbox head). `includeDeleted` defaults false; callers tolerate
 the brief delete-pending window.
 
-**(c) Non-creating existence / read.** A probe must not create the stream:
+**(c) Non-creating open.** A non-creating read must not create the stream:
 
 ```ts
-ResultDb.exists(id)        // Effect<boolean>           — checkTail, never creates
 ResultDb.openExisting(id)  // Effect<Option<Instance>>  — None if the stream doesn't exist
 ```
 
@@ -140,14 +130,15 @@ caller-driven primitive: append a snapshot of the live set at a cursor, then tri
 Bounded by one S2 batch (`MAX_BATCH_RECORDS`); larger snapshots need framing (a follow-up).
 
 ```ts
-SomeDb.checkpoint(key)            // snapshot live rows + trim history before the cursor
-SomeDb.trim(key, cursor)          // explicit trim command (records < cursor)
+const db = yield* SomeDb.open(key)
+yield* db.checkpoint              // snapshot live rows + trim history before the cursor
+yield* db.trim(cursor)            // explicit trim command (records < cursor)
 ```
 
 ## Consumers (pointer, not a redesign)
 
 - **Services (ephemeral):** one stream per call, GC'd by `drop`/`deleteOnEmpty`/age-retention (§2a);
-  results readable via `exists`/`openExisting` (§2c); recovery via `list()` (§2b).
+  results readable via `openExisting` (§2c); recovery via `list()` (§2b).
 - **The actor engine (persistent objects):** one stream per key as an **ordered event log** —
   reads via §2d, GC via §2e (checkpoint+trim, *not* age-retention), enumeration via §2b. The full
   consumption model (admission, drainer, completion, recovery) is the **actor SDD**; this doc only
@@ -158,17 +149,16 @@ injected, not hardcoded — and a non-S2 backend can answer the same contract.
 
 ## Boundaries (control plane vs data plane)
 
-- **Control plane (static, rare):** basins + default config + singleton streams → declared once via
-  `S2Spec.apply` (or `s2 apply`). **Auto-create off** here, so the data-plane stream set is
-  intentional and `list()` is trustworthy.
+- **Control plane (static, rare):** basins + default config + singleton streams → provisioned via
+  direct `effect-s2` operations or external S2 tooling. **Auto-create off** here, so the data-plane
+  stream set is intentional and `list()` is trustworthy.
 - **Data plane (dynamic, hot):** per-key / per-execution streams → created at runtime by
   `open({ config })`, GC'd by retention/`deleteOnEmpty` (ephemeral) or checkpoint+trim (persistent).
 
 ## Non-goals / open questions
 
-- **No token/ACL modeling** in `S2Spec` v1 (the CLI spec doesn't cover it either).
 - **`reconfigure` on open** — leaning: `open` only *creates* with config; reconfiguration is
-  `S2Spec`/CLI territory (no hot-path reconfigure). Decide before implementing §2a.
+  control-plane territory (no hot-path reconfigure). Decide before implementing §2a.
 - **Multi-basin addressing.** `S2Client` is basin-scoped (one `S2_BASIN`); per-tenant/per-boundary
   basins imply multiple clients or a basin-parameterized client — the tenancy-pass lever, flagged
   not designed.

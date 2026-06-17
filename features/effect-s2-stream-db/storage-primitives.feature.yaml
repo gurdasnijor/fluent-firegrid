@@ -3,7 +3,7 @@ feature:
   product: effect-s2-stream-db
   description: >-
     Stream-db storage primitives consumed by durable engines and any other client:
-    per-stream config on open, instance enumeration, non-creating existence probes,
+    per-stream config on open, instance enumeration, non-creating opens,
     the latest-value table projection, and caller-driven checkpoint+trim. Ordered
     ActorEvent replay is not a stream-db concern — it is a schema-owned actor-log
     over effect-s2.readDecoded (object-actor-model LAYERING.6). Design:
@@ -20,13 +20,13 @@ components:
   ENUMERATE:
     name: Enumerate instances
     requirements:
-      1: 'StreamDb.list() returns the typed instance keys that currently exist as streams under basePath (listStreams by basePath prefix, strip basePath, decode through the key schema) — discovery returning typed keys (only this layer can invert stream-name to key), not name construction. No raw keyPrefix is offered: an encoded-prefix filter bypasses the key schema, so schema-owned prefix enumeration is a follow-up.'
+      1: 'StreamDb.list() returns typed instance keys for existing streams under the db base path, decoded through the key schema. The operation is discovery, not name construction; raw encoded-prefix filtering is intentionally out of scope.'
       2: 'Existence equals liveness only for streams dropped on completion; for persistent streams, existence means the instance exists, and a separate work check is required. includeDeleted defaults false — a dropped instance no longer enumerates.'
 
   EXISTENCE:
     name: Non-creating open
     requirements:
-      1: openExisting(key) returns None for a missing stream and never creates it (unlike open, which creates-if-absent); existence is decided by the open itself (a single checkTail in preload), so there is no separate probe to race against a concurrent drop.
+      1: openExisting(key) returns None for a missing stream and never creates it; the non-creating open path is authoritative, with no separate public exists/probe API that can race with deletion.
 
   PROJECTION:
     name: Latest-value table projection
@@ -36,8 +36,8 @@ components:
   CHECKPOINT:
     name: Caller-driven checkpoint + trim
     requirements:
-      1: checkpoint(key) appends a snapshot of the live set at a cursor, then trims records before that cursor (surfacing today's internal compact as a first-class operation).
-      2: trim(key, cursor) issues an explicit trim of records before cursor.
+      1: An opened StreamDb instance exposes checkpoint, which appends a snapshot of its live set at a cursor, then trims records before that cursor (surfacing today's internal compact as a first-class operation).
+      2: An opened StreamDb instance exposes trim(cursor), which issues an explicit trim before cursor.
       3: A snapshot must be durable before any trim that depends on it.
       4: A checkpoint snapshot must fit one S2 batch (MAX_BATCH_RECORDS); larger snapshots require framed/chunked snapshots (a follow-up).
 

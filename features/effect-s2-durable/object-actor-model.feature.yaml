@@ -70,7 +70,7 @@ components:
   RECOVERY:
     name: Recover by draining pending work per key
     requirements:
-      1: Boot enumerates object streams by prefix (StreamDb.list) and starts a drainer only for keys whose accept-log has a pending head.
+      1: Boot enumerates schema-decoded object stream keys via StreamDb.list() and starts a drainer only for keys whose actor projection has a pending head.
       2: Stream existence is not liveness — an object stream persists as state with an empty accept-log; the pending head is the work signal.
       3: Recovery never re-races invocations; the ordered accept-log plus derived-pending replays deterministically.
 
@@ -119,5 +119,5 @@ constraints:
 
   DEPENDENCIES:
     requirements:
-      1: This engine consumes the storage primitives storage-primitives.ENUMERATE (recovery scan), storage-primitives.EXISTENCE (probes), and storage-primitives.CHECKPOINT (CHECKPOINTING) behind the DurableStore port; the ordered ActorEvent log (LAYERING.6) is read via effect-s2.readDecoded (typed decode preserving seq_num) as a schema-owned actor-log in effect-s2-durable, not a stream-db ordered-log lens. Policy (basin, retention, namespace) is injected, not hardcoded.
-      2: Runtime/control-plane basins are provisioned via resource-spec.SPEC_RECONCILE with createStreamOnAppend false, which is what makes ENUMERATE-based recovery trustworthy.
+      1: This engine consumes the storage primitives storage-primitives.ENUMERATE (recovery scan), storage-primitives.EXISTENCE (non-creating open), and storage-primitives.CHECKPOINT (CHECKPOINTING) behind the DurableStore port; the ordered ActorEvent log (LAYERING.6) is read via effect-s2.readDecoded (typed decode preserving seq_num) as a schema-owned actor-log in effect-s2-durable, not a stream-db ordered-log lens. Policy (basin, retention, namespace) is injected, not hardcoded.
+      2: Runtime/control-plane basins are provisioned before recovery with createStreamOnAppend false, using existing effect-s2 control-plane operations or external S2 tooling, so stream enumeration is trustworthy.
