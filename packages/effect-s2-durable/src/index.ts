@@ -1,7 +1,4 @@
 export { DurableExecutionError } from "./errors.ts"
-// The actor abstraction is internal to effect-s2-durable (object-actor-model
-// LAYERING.1) — namespaced so it does not collide with the public attach/poll API.
-export * as Actor from "./actor/index.ts"
 export { handler } from "./handler.ts"
 export {
   attach,
@@ -36,8 +33,6 @@ export {
   DeferredRow,
   ExecutionId,
   ExecutionRow,
-  ObjectInboxRow,
-  ObjectStateDb,
   RosterDb,
   RosterRow,
   StateReadRow,

@@ -1,0 +1,18 @@
+feature:
+  name: service-recovery
+  product: effect-s2-durable
+  description: >-
+    Boot recovery of the stateless SERVICE runtime (distinct from object
+    owner-stream recovery, which is object-actor-model RECOVERY). A parked durable
+    service execution is re-driven by a fresh engine after a restart over the same
+    S2 streams, from the roster + per-execution WorkflowDb, and an ingress
+    resolution then settles it. The service runtime keeps the WorkflowDb/RosterDb
+    model until a dedicated service-runtime pass. Design:
+    docs/sdds/effect-durable-execution-sdd.md.
+
+components:
+  BOOT_RECOVERY:
+    name: Re-drive parked service executions after restart
+    requirements:
+      1: A fresh engine over the same S2 backend re-drives a non-resident parked service execution from the roster + per-execution WorkflowDb (re-running from the top — journaled run/state/sleep facts replay, signal/awakeable re-park), so it becomes resident and attachable as if freshly submitted.
+      2: An ingress resolution on a recovered service execution settles it — a signal or awakeable resolved by its replay-stable id (minted before the restart) is picked up after recovery and attach returns the result.

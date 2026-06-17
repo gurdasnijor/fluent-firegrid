@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- handler input/output are existential at the definition boundary; `any` is required for inference across the handler record (mirrors restate-sdk-gen's define/free). Concrete types are recovered on the client surface via HandlerInput/HandlerOutput. */
 import { Effect, type Layer, Schema } from "effect"
 import type { S2Client } from "effect-s2"
-import type { DurableExecutionError } from "./errors.ts"
+import { encodeObjectCallId, OBJECT_ID_PREFIX } from "./actor/core.ts"
+import { type DurableExecutionError, durableError } from "./errors.ts"
 import { handler } from "./handler.ts"
 import { handlerRequest } from "./primitives.ts"
 import { DurableExecutionRuntime } from "./Runtime.ts"
@@ -140,20 +141,58 @@ export type SendClient<H extends Handlers> = {
   ) => Effect.Effect<string, DurableExecutionError, DurableExecutionRuntime>
 }
 
-const freshId = Effect.sync(() => globalThis.crypto.randomUUID())
-const idFor = (options: InvokeOptions | undefined) => options?.idempotencyKey === undefined ? freshId : Effect.succeed(options.idempotencyKey)
+/** A virtual object's identity for a call: its definition name + the typed key. */
+interface ObjectIdentity {
+  readonly name: string
+  readonly key: string
+}
+
+const freshNonce = Effect.sync(() => globalThis.crypto.randomUUID())
+const nonceFor = (options: InvokeOptions | undefined) =>
+  options?.idempotencyKey === undefined ? freshNonce : Effect.succeed(options.idempotencyKey)
+
+// Service ids are an opaque nonce; object ids are a schema-owned call id that
+// carries `{ object, key, method, nonce }` so `attach`/`poll` self-route to the
+// owner stream (no legacy `name:key` delimiter identity).
+const mintId = (
+  method: string,
+  options: InvokeOptions | undefined,
+  object: ObjectIdentity | undefined,
+): Effect.Effect<string, DurableExecutionError> =>
+  object === undefined
+    // a service id IS its idempotencyKey/nonce — reserve the object namespace so a
+    // service id can never be misrouted to an owner stream.
+    ? nonceFor(options).pipe(
+      Effect.flatMap((id) =>
+        id.startsWith(OBJECT_ID_PREFIX)
+          ? Effect.fail(
+            durableError("submit")(
+              new Error(`idempotencyKey must not start with the reserved prefix ${JSON.stringify(OBJECT_ID_PREFIX)}`),
+            ),
+          )
+          : Effect.succeed(id),
+      ),
+    )
+    : nonceFor(options).pipe(
+      Effect.flatMap((nonce) =>
+        encodeObjectCallId({ object: object.name, key: object.key, method, nonce }).pipe(
+          Effect.mapError(durableError("object.callId")),
+        ),
+      ),
+    )
 
 /** Mint the execution id, submit, and hand back the id + runtime for the caller to finish. */
 const beginInvoke = (
   compiled: Compiled,
+  method: string,
   input: unknown,
   options: InvokeOptions | undefined,
-  objectKey: string | undefined,
+  object: ObjectIdentity | undefined,
 ): Effect.Effect<{ readonly id: string; readonly rt: DurableExecutionRuntimeApi }, DurableExecutionError, DurableExecutionRuntime> =>
   Effect.gen(function*() {
-    const id = yield* idFor(options)
+    const id = yield* mintId(method, options, object)
     const rt = yield* DurableExecutionRuntime
-    yield* rt.submit(compiled.handler, id, input, objectKey)
+    yield* rt.submit(compiled.handler, id, input)
     return { id, rt }
   })
 
@@ -164,23 +203,23 @@ const makeProxy = <T>(
     compiled: Compiled,
     ctx: { readonly id: string; readonly rt: DurableExecutionRuntimeApi },
   ) => Effect.Effect<T, DurableExecutionError, DurableExecutionRuntime>,
-  objectKey: string | undefined,
+  object: ObjectIdentity | undefined,
 ): Record<string, (input: unknown, options?: InvokeOptions) => Effect.Effect<T, DurableExecutionError, DurableExecutionRuntime>> =>
   Object.fromEntries(
     Object.entries(def.compiled).map(([method, compiled]) =>
       [
         method,
         (input: unknown, options?: InvokeOptions) =>
-          beginInvoke(compiled, input, options, objectKey).pipe(Effect.flatMap((ctx) => finish(compiled, ctx))),
+          beginInvoke(compiled, method, input, options, object).pipe(Effect.flatMap((ctx) => finish(compiled, ctx))),
       ] as const,
     ),
   )
 
-/** The composite per-key state/lock scope `"name:key"`, or `undefined` for a service. */
-const scopeKey = (
+/** The object identity for a call, or `undefined` for a stateless service. */
+const objectIdentity = (
   def: { readonly name: string },
   key: string | undefined,
-): string | undefined => key === undefined ? undefined : `${def.name}:${key}`
+): ObjectIdentity | undefined => key === undefined ? undefined : { name: def.name, key }
 
 /**
  * A typed call client: `client(service).method(input)` for a stateless service, or
@@ -195,7 +234,7 @@ export function client<Name extends string, H extends Handlers>(
 ): ServiceClient<H> {
   // eslint-disable-next-line local/no-launder-cast -- dynamic proxy; each Effect<unknown> is the typed Effect<HandlerOutput> recovered structurally by ServiceClient<H>
   return makeProxy(def, (compiled, { id, rt }) =>
-    rt.attach(id, compiled.handler.output as Schema.Codec<unknown, unknown, never, never>), scopeKey(def, key)) as unknown as ServiceClient<H>
+    rt.attach(id, compiled.handler.output as Schema.Codec<unknown, unknown, never, never>), objectIdentity(def, key)) as unknown as ServiceClient<H>
 }
 
 /**
@@ -209,7 +248,7 @@ export function sendClient<Name extends string, H extends Handlers>(
   key?: string,
 ): SendClient<H> {
   // eslint-disable-next-line local/no-launder-cast -- dynamic proxy (see client)
-  return makeProxy(def, (_compiled, { id }) => Effect.succeed(id), scopeKey(def, key)) as unknown as SendClient<H>
+  return makeProxy(def, (_compiled, { id }) => Effect.succeed(id), objectIdentity(def, key)) as unknown as SendClient<H>
 }
 
 /**

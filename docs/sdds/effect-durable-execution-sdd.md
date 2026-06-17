@@ -22,9 +22,10 @@ Normative contracts:
 
 Narrative sub-SDDs:
 
-- [`object-actor-model-sdd.md`](./object-actor-model-sdd.md) — the current execution target for
-  keyed virtual objects: one schema-addressed actor stream per key, one ordered `ActorEvent` log,
-  pure transition plus effectful interpreter.
+- [`effect-s2-durable-consolidation-sdd.md`](./effect-s2-durable-consolidation-sdd.md) — the active
+  implementation correction: keep `DurableExecutionRuntime` as the only runtime and implement
+  object calls as S2-native owner streams with resident projections and an object-backed
+  `InvocationStore`.
 - [`s2-resource-provisioning-sdd.md`](./s2-resource-provisioning-sdd.md) — the storage/resource
   layer beneath the runtime: `effect-s2`, `effect-s2-stream-db`, stream config, enumeration,
   ordered reads, checkpoints, and deferred provisioning policy.
@@ -35,8 +36,6 @@ Supporting executable validation:
   system behavior and OpenTelemetry evidence.
 - `pnpm --filter firelab validate:proofs check effect-s2-durable/object-actor-model --allow-missing`
   reports which actor-model requirements still need proofs.
-- `pnpm --filter firelab validate:run effect-s2-durable-object-actor-model --timeout-ms 120000`
-  runs the current actor-model validation slice.
 
 ## Purpose
 
@@ -77,7 +76,7 @@ user code
 effect-s2-durable
   public authoring API
   service runtime: ephemeral one-stream-per-call execution
-  object runtime: per-key ActorEvent log + projection + drainer
+  object runtime: per-key S2 owner stream + resident projection + drainer
   workflow runtime: object specialization with run-once admission
   durable primitive semantics: run, sleep, signal, deferred, state, attach, poll
   DurableStore port and recovery/checkpoint policies
@@ -92,17 +91,19 @@ effect-s2-stream-db
 effect-s2
   typed S2 client
   readDecoded preserving seq_num and metadata
-  append/read/list/checkTail/trim/fence/resource operations
+  append/read/read-session/list/checkTail/trim/fence/resource operations
 
 S2
-  append order, durability, stream lifecycle, trim, retention, seq_num
+  append acknowledgement, seq_num order, read cursors, check-tail, command records, durability
 ```
 
 The most important boundary is this:
 
 - object streams are **not** opened as `StreamDb` table instances;
-- object streams are read/written as ordered `ActorEvent` logs via `effect-s2.readDecoded` and
-  `S2Client.append`;
+- object streams are S2 owner streams: typed `ActorEvent` records plus S2 command records for
+  stream-control operations such as trim/fence;
+- resident owner loops maintain projections from ordered reads/tails and track `lastAppliedSeqNum`;
+- `check-tail` is the freshness boundary before serving strong projection views;
 - `effect-s2-stream-db` remains the latest-value `ChangeMessage` projection layer for service
   streams and reusable table-fold mechanics;
 - schema-owned codecs derive stream identity. Hand-built path parsing is not part of the model.
@@ -128,12 +129,13 @@ stream. That stream is the single system of record for:
 - persistent user state changes;
 - checkpoints.
 
-The object runtime folds an ordered `ActorEvent` log into an `ActorSnapshot`. A pure transition
-plans `StartCall`, `WakeWaiter`, and `Checkpoint` actions; an effectful interpreter executes those
-actions. Recovery replays history without executing historical actions, then starts the recovered
-pending head if no resident fiber exists.
+The object runtime maintains a resident owner projection from the S2 stream. Historical reads fold
+records without executing actions; the live owner loop tails new records, drives the pending head,
+and serves `InvocationStore` point reads from the projection. Recovery replays from the latest
+checkpoint cursor, then starts the recovered pending head if no resident fiber exists.
 
-Details live in [`object-actor-model-sdd.md`](./object-actor-model-sdd.md).
+Implementation details live in
+[`effect-s2-durable-consolidation-sdd.md`](./effect-s2-durable-consolidation-sdd.md).
 
 ### Workflows
 
@@ -147,28 +149,54 @@ This gives workflow semantics without adding another storage topology.
 
 ## Settled decisions
 
-1. **One authoritative log per object key.** The object actor stream is one ordered `ActorEvent`
-   log. Projection buckets such as pending calls, results, signals, and user state are derived
-   views, not independent storage tables.
+1. **One authoritative S2 owner stream per object key.** The object stream contains typed
+   `ActorEvent` records and S2 command records. Projection buckets such as pending calls, results,
+   signals, and user state are derived views, not independent storage tables.
 2. **S2 `seq_num` is the order.** Admission order and replay order come from S2. Do not invent an
    app-level sequence field to recover order from a latest-value projection.
-3. **Done is derived.** A call is done iff a `Completed` event exists. There is no mutable inbox
+3. **Append acknowledgement is the commit point.** Admission, state mutation, primitive journal,
+   ingress, and completion are not durable until S2 acknowledges the append and assigns `seq_num`.
+4. **Done is derived.** A call is done iff a `Completed` event exists. There is no mutable inbox
    `status`, no dequeue row, and no atomic result/status transaction to get wrong.
-4. **Ingress is an append.** `resolveSignal(callId, ...)` routes from the call id to the owner
+5. **Ingress is an append.** `resolveSignal(callId, ...)` routes from the call id to the owner
    stream and appends a durable event. In-process waiter wakeups are best-effort only.
-5. **Call ids self-route through schemas.** A call id carries a schema-decodable owner identity.
+6. **Call ids self-route through schemas.** A call id carries a schema-decodable owner identity.
    The owner becomes an S2 path only through the owner key codec.
-6. **Checkpointing is explicit.** Persistent object streams cannot rely on age retention because
-   they hold permanent state. The drainer writes `Checkpointed` and trims only after the checkpoint
-   is durable.
-7. **Replay is fold-only.** Historical events rebuild the snapshot but do not execute actions.
+7. **Checkpointing is explicit.** Persistent object streams cannot rely on age retention because
+   they hold permanent state. The owner loop writes `Checkpointed` as an ActorEvent and trims with
+   an S2 `trim` command record only after checkpoint coverage is durable.
+8. **Command records are not ActorEvents.** S2 `trim`/`fence` records consume sequence numbers and
+   appear in reads; the actor read path must filter or handle them separately from typed
+   `ActorEvent` decoding.
+9. **Replay is fold-only.** Historical events rebuild the snapshot but do not execute actions.
    Only the recovered head and live-tail events are interpreted.
-8. **StreamDb is not a generic event log.** `StreamDb.open` folds `ChangeMessage` rows. The actor
-   log uses `readDecoded(ActorEvent)` and actor-specific checkpointing.
+10. **StreamDb is not a generic event log.** `StreamDb.open` folds `ChangeMessage` rows. Object
+    owner streams use S2 ordered reads/tails, typed `ActorEvent` decoding, and actor-specific
+    checkpointing.
+11. **Recoverable ownership should be structural.** Recovery should not depend on a timing-sensitive
+    stream-list visibility property once object recovery is production-critical. A basin-level
+    append-only owner registry is the preferred recovery source; it records owner keys before their
+    first acknowledged `Accepted` event.
+12. **Multi-worker safety requires leases and fences.** A single in-process drainer is enough only
+    for one worker. Before multi-worker object execution is supported, owner loops must acquire a
+    log-backed lease/fence, renew it, self-demote on renewal failure, and write protected records
+    with the active token.
+13. **Handlers read their own writes.** Inside one object handler, `state.set` / `state.delete`
+    should be visible through a local overlay as soon as the write is planned; external visibility,
+    completion, and other handlers remain gated on the S2 append acknowledgement and projection
+    application.
+14. **Actor records are versioned.** Permanent owner streams outlive deploys. Every appended
+    ActorEvent must carry a producer schema/runtime version, and a reader that sees a newer
+    unsupported version must halt rather than mis-fold it.
+15. **Append latency is the dominant primitive cost.** The `InvocationStore` write path should be
+    able to coalesce same-turn durable facts into one S2 append batch while preserving per-record
+    order and commit semantics.
 
-## Semantic coverage target
+## Semantic Coverage Target
 
-The runtime should cover these semantics before the old object implementation is removed:
+The runtime is complete when the public API below has one coherent durable meaning across services,
+objects, and workflows. Implementation may keep different storage backends for services and objects,
+but users should not see partial semantics depending on which authoring surface they choose.
 
 | Area | Target semantics |
 |---|---|
@@ -184,16 +212,59 @@ The runtime should cover these semantics before the old object implementation is
 | Error / interruption | Success, typed failure, defect, interrupt, timeout/cancel policy, and retry policy are explicit durable outcomes. |
 | Observability | Firelab proofs require behavioral assertions plus spans emitted by production code paths. |
 
-The current actor-model feature file covers the object/workflow core. Some broader service and
-durable-primitive lifecycle semantics are still implemented by the legacy runtime and should receive
-their own feature groups or follow-up feature files as they are moved onto the actor architecture.
+The actor-model feature file covers the object/workflow core. The service runtime may keep its
+existing `WorkflowDb` implementation while it satisfies the same public primitive semantics. Object
+calls must not keep the old inbox/state/roster object topology once their public behavior has moved
+to the owner-stream path.
 
-## Build order
+## API Completion Bar
 
-Each slice should land as a green stacked PR with unit tests and Firelab proof coverage for the
-requirements it claims.
+Do not treat the remaining work as horizontal layers. After the first object call slice lands, the
+work should be driven by user-visible behavior:
 
-### Phase 1 — storage primitives
+```txt
+given object({ handlers })
+when client/sendClient/attach/poll/resolveSignal/run/sleep/state/deferred/awakeable are used
+then the object behaves like the service primitive model,
+but its durable facts live in the object owner stream.
+```
+
+API-complete means:
+
+1. **Object calls route safely.** Object call ids have an unambiguous namespace or explicit submit
+   kind, service ids cannot decode as object ids, and syntactically valid but unknown object ids
+   return `Unknown`/`NotFound` rather than polling forever.
+2. **Owner identity is schema-owned.** The owner stream is derived by one reversible owner codec.
+   Object name and key cannot collide through delimiter composition.
+3. **All object primitives work through the owner stream.** `state`, `run`, `sleep`, `signal`,
+   `deferred`, `awakeable`, `attach`, and completion append or read durable owner-stream facts.
+   Unsupported-object-primitive failures are removed.
+4. **Recovery is product behavior, not a unit test.** Recovery is proven through Firelab over
+   S2/S2Lite by restarting runtime scopes over the same streams and driving public APIs. Package
+   vitest keeps pure/unit coverage only.
+5. **Ingress is residency-independent.** `resolveSignal(callId, ...)` and awakeable/deferred
+   resolution route from call id to owner stream and succeed whether or not a process currently
+   hosts the call.
+6. **The old object topology is gone.** No object call uses `ObjectInboxRow`, `ObjectStateDb`,
+   object-path `WorkflowDb`, or object-path `RosterDb` for admission/state/completion/recovery.
+7. **Firelab proves the feature without gaps for API semantics.** Remaining `--allow-missing`
+   requirements, if any, are explicitly production-hardening requirements such as cross-process
+   fencing or large framed checkpoints, not missing public API behavior.
+8. **Recovery has an authoritative key source.** Object recovery either uses the append-only owner
+   registry or has an explicit short-lived gate proving enumeration safety. The registry is the
+   preferred path because it makes acknowledged admission recoverable by construction.
+
+This is closer to a single integrated completion pass than a long sequence of layers. It may still
+be reviewed in smaller PRs for risk, but each PR must land a public behavior and delete/replace the
+old behavior it supersedes.
+
+## Completion Plan
+
+The active build plan is S2-first and vertical. Do not add horizontal actor helpers unless they are
+introduced through a public `object(...)` behavior and delete or disable the corresponding legacy
+object path in the same PR.
+
+### Foundation — storage primitives
 
 Status: implemented in the storage layer.
 
@@ -201,111 +272,128 @@ Purpose: give the runtime reliable lower affordances without smuggling policy in
 
 - `StreamDb.open(key, { config })` for stream config at creation.
 - `StreamDb.list()` for schema-decoded stream enumeration.
-- `StreamDb.openExisting()` for non-creating reads.
+- `StreamDb.openExisting()` for non-creating service-stream reads.
 - `checkpoint`/`trim` for latest-value table streams.
 - `effect-s2.readDecoded` for metadata-preserving ordered reads.
-- Centralized tracing in `S2Client` and `StreamDb`.
+- `S2Client` append/read/check-tail/trim/fence affordances with centralized tracing.
 
 Relevant contract: `storage-primitives`.
 
-### Phase 3a — pure actor core
+### Immediate Slice A Closeout
 
-Status: first actor-runtime slice.
+The first owner-stream object call path is the right vertical slice, but it is not mergeable as
+complete until these correctness details are closed:
 
-Purpose: implement the deterministic core without touching S2 or the legacy runtime.
+- call-id classification cannot be "decode any JSON string as an object id"; object ids need an
+  explicit namespace/tag or `submit` needs an explicit object/service kind;
+- `attach`/`poll` must distinguish unknown object call ids from pending calls;
+- owner-stream path derivation must use one collision-resistant schema-owned owner codec, not
+  delimiter-built `obj/${object}/${key}` strings;
+- recovery coverage that touches S2 must move from package-local vitest into Firelab.
 
-- `ActorEvent` schemas.
-- reversible `CallId` / owner codecs.
-- `ActorSnapshot`.
-- pure `transition(snapshot, event) -> [snapshot, actions]`.
-- `replay` fold that discards actions.
-- `attach`/`poll` projection views.
+These are not new layers. They are the identity and observability bar for the public object call
+path.
 
-This phase must not edit `Runtime.ts`, open S2 streams, or call `StreamDb.open`.
+### Object API Completion Batch
 
-### Phase 3b — ActorLog and drainer
+Purpose: finish the public object semantics in one cohesive vertical pass.
 
-Purpose: add the effectful shell over the pure core.
+Drive the batch from these product scenarios:
 
-- `ActorLog` over `effect-s2.readDecoded(ActorEvent)` and `S2Client.append`.
-- admission as read-projection then CAS append.
-- one per-key drainer for exclusive calls.
-- durable primitive journal facts as `Journaled` events.
-- completion append and derived advance.
-- live-tail interpretation only after recovery has folded history.
+```txt
+sendClient(counter, "acct").add(5)
+attach(callId)
 
-Recommended internal split:
+client(counter, "acct").methodThatUsesRunAndState(...)
+client(counter, "acct").methodThatSleeps(...)
+sendClient(counter, "acct").methodThatWaitsForSignal(...)
+resolveSignal(callId, "approved", payload)
+attach(callId)
 
-1. ActorLog read/append/tail/trim with tracing and S2-lite tests.
-2. admission protocol with CAS loss and duplicate tests.
-3. drainer loop over the pure transition.
-4. ingress and waiter wake integration.
+restart runtime over same S2Lite basin
+attach(callId) / resolveSignal(callId, ...) / next object call
+```
 
-### Phase 3c — recovery, checkpointing, and idempotency horizon
+Required behavior:
 
-Purpose: make the actor runtime restart-safe and replay-bounded.
+- `DurableExecutionRuntime.submit(... object key ...)` derives the owner stream through schemas.
+- Admission CAS-appends `Accepted`; the S2 append ack is the commit point.
+- The resident owner projection sees appended records and owns the per-key drainer.
+- Existing handler machinery runs with the object-backed active invocation store.
+- `state.get` / `state.set` / `state.delete` append/fold owner-stream facts.
+- `run` records terminal success/failure facts in the owner stream and never re-runs recorded
+  steps.
+- `sleep` records timer intent/fired facts and survives restart.
+- `signal`, `deferred`, and `awakeable` record durable pending/resolved facts in the owner stream;
+  in-memory waiters are best-effort acceleration only.
+- `attach`/`poll` are owner-projection views for object calls and roster views for service calls.
+- Recovery enumerates owner streams, folds from the latest available cursor, restarts the recovered
+  pending head, and never re-runs a completed call.
+- First admission for a cold key records the owner key in an append-only registry before the
+  acknowledged `Accepted`; orphan registry entries with empty streams are safe and compactable.
+- A handler observes its own state writes through a local overlay, while caller-visible results and
+  other handlers observe only acked owner-stream facts.
+- The store may batch same-turn facts, but the public operation is not considered durable until S2
+  acknowledges the batch.
+- Firelab proves these scenarios through public APIs and production spans.
 
-- boot enumerate keys via `StreamDb.list()` for names only;
-- fold each actor stream via `readDecoded(ActorEvent)`;
-- start only keys with a pending head;
-- write `Checkpointed` snapshots and trim after durability;
-- retain completed-call metadata for a horizon;
-- return `Expired` after the horizon without re-running;
-- prove checkpoint fidelity.
+This batch is the real API-completion milestone for `object(...)`.
 
-### Phase 3d — shared handlers and workflow specialization
+### Projection Freshness And Performance
 
-Purpose: finish the object/workflow semantic model.
+The API can be correct with bounded reads in early validation, but the production owner path should
+not repeatedly read the whole log. If whole-log reads remain after the object API works, treat them
+as a performance debt with a clear owner-loop follow-up:
 
-- shared handlers run concurrently over a snapshot;
-- shared handlers cannot mutate user state at the type level;
-- shared handlers may append system ingress events;
-- workflow `run` is admitted at most once per workflow id;
-- workflow signal/query handlers are shared handlers.
+- maintain `lastAppliedSeqNum` in resident owner projections;
+- tail owner streams from a cursor with `readDecoded`/read sessions;
+- use `check-tail` before strong projection reads when freshness matters;
+- handle S2 command records separately from typed `ActorEvent`s;
+- once a worker holds a valid owner lease/fence, serve owner-local strong reads from its projection
+  without an extra `check-tail`; non-owner reads still need a freshness boundary.
 
-### Phase 3e — cutover and deletion
+Do not let this become a separate public runtime or validation-only facade. It is an internal
+implementation improvement behind the same object scenarios.
 
-Purpose: move `object(...)` onto the actor runtime and remove the old seams.
+### Workflow Completion
 
-Delete or retire:
+Purpose: expose workflow semantics as an object specialization, not a third runtime.
 
-- `ObjectStateDb` inbox admission as the durable object model;
-- separate per-object-call `wf/<executionId>` streams;
-- roster dependency for object calls;
-- window-2 idempotent guard;
-- residency-retry signal tests.
+Required behavior:
 
-Keep:
+- workflow `run` is an exclusive handler admitted at most once per workflow id;
+- duplicate workflow start returns an already-started status, not a deduped second run;
+- workflow signal/query handlers are shared handlers over the owner projection;
+- workflow waits, timers, durable steps, and state reuse the same object primitive facts;
+- Firelab includes a long-running workflow scenario with restart and signal ingress.
 
-- `service(...)` on the ephemeral one-stream-per-call model;
-- storage primitives used by service streams;
-- public authoring ergonomics.
+### Production Hardening
 
-Definition of done: existing durable/recovery tests pass on the new runtime, Firelab checks the
-object-actor feature without `--allow-missing`, and no object call depends on the legacy two-stream
-coordination path.
+These are important, but they should not block declaring the public object API coherent:
 
-## Post-cutover semantic passes
+- checkpoint + trim to bound replay, including a checkpoint fingerprint and covered `seq_num` that
+  Firelab can verify by fold-reproduction before any trim;
+- explicit idempotency/result horizon with `Expired`;
+- S2 fencing/leases for multi-process per-key ownership; this is required before any multi-worker
+  object execution is advertised, not an optional optimization;
+- producer/reader version compatibility: older readers halt on newer unsupported ActorEvent
+  versions, and deploy-window checkpointing is pinned to the oldest running compatible version;
+- framed/chunked checkpoints beyond a single S2 batch;
+- object lifecycle APIs such as `clearAll` / destroy;
+- delayed send, cancellation, interruption, timeout/deadline, and richer retry policy;
+- durable concurrency guardrails for advanced Effect concurrency inside handlers.
 
-These are not blockers for deleting the object two-stream seam, but they are needed to get closer
-to the intended durable-execution semantic envelope:
-
-- **Durable primitive parity:** re-check `run`, `sleep`, `state`, `signal`, `awakeable`, and
-  `deferred` under the actor runtime rather than only the service runtime.
-- **Invocation lifecycle:** delayed send, cancellation, interruption, timeout/deadline, attach/poll
-  status transitions, and terminal retention.
-- **Retry/error policy:** retryable vs terminal failures, typed failure encoding, defect encoding,
-  and user-visible status normalization.
-- **Durable concurrency guardrails:** document and enforce which Effect concurrency forms are
-  durable-safe inside handlers, and where named branches or durable scopes are required.
-- **Agent-style validation:** a long-running workflow/object scenario with LLM/tool-call shaped
-  steps, signals, timers, and restart recovery.
+When implemented, checkpointing should still follow the S2-native model: `Checkpointed` as an
+ActorEvent, `trim` as an S2 command record, and no trim before durable checkpoint coverage exists.
+Checkpoint scheduling should be based on replay freshness, especially tail distance, write
+throughput, and projected state size. Off-box snapshotting is not the default; consider it only for
+large state classes whose checkpoint serialization would stall the single owner loop.
 
 ## Deferred work
 
 These remain explicitly out of the current actor build:
 
-- cross-process per-key leasing/fencing;
+- cross-process per-key leasing/fencing for multi-worker execution;
 - object lifecycle APIs such as `clearAll` / destroy;
 - framed or chunked checkpoints beyond a single S2 batch;
 - multi-basin tenancy and encryption policy;

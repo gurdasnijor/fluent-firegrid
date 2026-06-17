@@ -4,15 +4,15 @@ An Effect-native durable execution runtime over S2.
 
 The canonical design lives in
 [`docs/sdds/effect-durable-execution-sdd.md`](../../docs/sdds/effect-durable-execution-sdd.md).
-The virtual-object actor rewrite is specified in
-[`docs/sdds/object-actor-model-sdd.md`](../../docs/sdds/object-actor-model-sdd.md) and
+The S2 owner-stream object rewrite is specified in
+[`docs/sdds/effect-s2-durable-consolidation-sdd.md`](../../docs/sdds/effect-s2-durable-consolidation-sdd.md) and
 [`features/effect-s2-durable/object-actor-model.feature.yaml`](../../features/effect-s2-durable/object-actor-model.feature.yaml).
 
 Implementation is currently transitional:
 
 - `service(...)` uses the existing ephemeral one-stream-per-call runtime.
 - `object(...)` is being moved from the legacy two-stream/roster path to the per-key
-  `ActorEvent` log model.
+  S2 owner-stream model.
 - `workflow(...)` is planned as an object specialization, not a third runtime.
 
 ## Authoring surface
@@ -213,8 +213,9 @@ Built + tested against `s2 lite` for the existing service/runtime surface:
   `run` short-circuits from its `steps` fact, journaled `state.get` replays, `sleep`
   recomputes its remaining delay, and a `signal`/`awakeable` reads its resolved row or
   re-parks. A recovered execution is resident again, so `attach` / ingress resolution work
-  across a restart (see `test/recovery.test.ts`). An execution whose `handlerName` isn't in
-  the registry is skipped (so a partial registry never crashes boot).
+  across a restart (proven end-to-end over s2 lite by the Firelab validation
+  `effect-s2-durable-service-recovery`, feature `service-recovery`). An execution whose
+  `handlerName` isn't in the registry is skipped (so a partial registry never crashes boot).
 
 Use **`serviceLayer(...services)`** (not the bare `DurableExecutionRuntime.layer()`)
 whenever an execution can outlive the process, so its handlers are registered for recovery.
