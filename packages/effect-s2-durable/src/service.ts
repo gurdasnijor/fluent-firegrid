@@ -150,9 +150,9 @@ export interface WorkflowConfig<Name extends string, R extends HandlerFn, S exte
   /** The exclusive, run-once entrypoint. */
   readonly run: R
   /**
-   * Optional shared, read-only query handlers over the workflow's owner projection.
-   * The method name `run` is RESERVED for the entrypoint — a shared `run` is typed out
-   * (and rejected at definition time) so `sharedClient(wf, id).run` can never be ambiguous.
+   * Optional shared, read-only query/signal handlers over the workflow's owner projection.
+   * The method name `run` is RESERVED for the entrypoint — typed out here AND rejected at
+   * definition time (see `workflow()`), so `sharedClient(wf, id).run` can never be ambiguous.
    */
   readonly handlers?: S & { readonly run?: never }
   /** Durable I/O schema for the `run` entrypoint (default: opaque JSON). */

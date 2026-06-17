@@ -102,6 +102,9 @@ export type WorkflowStartStatus = "started" | "alreadyStarted"
  */
 interface SharedObjectInvocation {
   readonly kind: "shared"
+  /** The owner object + key this shared call reads (and may append ingress to). */
+  readonly object: string
+  readonly key: string
   readonly method: string
   readonly inputEncoded: unknown
   readonly snapshot: ActorSnapshot
@@ -238,6 +241,18 @@ export interface DurableExecutionRuntimeApi {
   ) => Effect.Effect<void, DurableExecutionError>
   /** Resolve a named durable promise on another execution (ingress `signal`/`awakeable`). */
   readonly resolveExternal: <A, I>(executionId: string, name: string, schema: Schema.Codec<A, I, never, never>, value: A) => Effect.Effect<void, DurableExecutionError>
+  /**
+   * From a SHARED workflow handler, resolve a durable promise the workflow's `run` body
+   * awaits via `signal(name)`. Appends a `SignalResolved` to the run's owner stream
+   * (derived from the active shared call's object + key) — an INGRESS append, the one
+   * write HANDLERS.5 permits a shared handler (it never mutates user state). Delegated to
+   * by the `resolvePromise(...)` free primitive; forbidden outside a shared handler.
+   */
+  readonly resolvePromise: <A, I>(
+    name: string,
+    schema: Schema.Codec<A, I, never, never>,
+    value: A,
+  ) => Effect.Effect<void, DurableExecutionError>
   /** A fresh replay-stable awakeable id for the active execution. */
   readonly nextAwakeableId: Effect.Effect<string, DurableExecutionError>
   /**
@@ -666,6 +681,28 @@ const makeRuntime = (
         })
       })
 
+    const resolvePromise = <A, I>(
+      name: string,
+      schema: Schema.Codec<A, I, never, never>,
+      value: A,
+    ): Effect.Effect<void, DurableExecutionError> =>
+      withActive("resolvePromise").pipe(Effect.flatMap((active) =>
+        // only a SHARED handler resolves the workflow's run promise this way (an object
+        // handler resolves its OWN call via `deferred.resolve`; a workflow's run promise
+        // is resolved BY a separate shared signal handler).
+        active.kind !== "shared"
+          ? fail("resolvePromise", "resolvePromise is only valid inside a shared workflow handler")
+          : Effect.gen(function*() {
+            // the workflow run's owner call id is deterministic — `{ object, key, run, nonce:key }`
+            // (mirrors `workflowRunId`), so this resolves the promise the run body awaits.
+            const runParts: ObjectCallIdParts = { object: active.object, key: active.key, method: "run", nonce: active.key }
+            const runCallId = yield* encodeObjectCallId(runParts).pipe(Effect.mapError(toError("resolvePromise")))
+            const enc = yield* encode(schema, value)
+            // an INGRESS append (SignalResolved on the run's stream) — never a user-state write.
+            yield* provideClient(store.resolveSignal(runCallId, runParts, name, enc))
+          }),
+      ))
+
     const nextAwakeableId: Effect.Effect<string, DurableExecutionError> = withActive("awakeable").pipe(
       Effect.flatMap((active) =>
         active.kind === "shared"
@@ -694,7 +731,7 @@ const makeRuntime = (
         const inputEncoded = yield* encode(handler.input as Schema.Codec<unknown, unknown, never, never>, input)
         // fold the owner stream once; the handler reads this snapshot, never the log.
         const snapshot = yield* provideClient(store.readSnapshot(object, key))
-        const invocation: SharedObjectInvocation = { kind: "shared", method: handler.name, inputEncoded, snapshot }
+        const invocation: SharedObjectInvocation = { kind: "shared", object, key, method: handler.name, inputEncoded, snapshot }
         const exit = yield* handler.program.pipe(
           Effect.provideService(ActiveInvocation, Option.some(invocation)),
           Effect.provideService(DurableExecutionRuntime, api),
@@ -1155,6 +1192,7 @@ const makeRuntime = (
       awaitDeferred,
       resolveLocal,
       resolveExternal,
+      resolvePromise,
       nextAwakeableId,
       sharedCall,
       callStep,
