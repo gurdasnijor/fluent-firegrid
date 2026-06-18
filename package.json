@@ -44,6 +44,7 @@
     "dependency-cruiser": "^17.4.0",
     "effect": "4.0.0-beta.78",
     "effect-s2": "workspace:*",
+    "effect-s2-durable": "workspace:*",
     "effect-s2-stream-db": "workspace:*",
     "eslint": "^10.3.0",
     "eslint-plugin-functional": "^10.0.0",

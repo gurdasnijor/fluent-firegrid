@@ -59,6 +59,9 @@ importers:
       effect-s2:
         specifier: workspace:*
         version: link:packages/effect-s2
+      effect-s2-durable:
+        specifier: workspace:*
+        version: link:packages/effect-s2-durable
       effect-s2-stream-db:
         specifier: workspace:*
         version: link:packages/effect-s2-stream-db

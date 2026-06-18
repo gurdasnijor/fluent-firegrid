@@ -10,6 +10,7 @@ const sourceFiles = [
   "packages/**/*.tsx",
   "apps/**/*.ts",
   "apps/**/*.tsx",
+  "features/**/*.ts",
 ]
 
 const packageSourceFiles = [
