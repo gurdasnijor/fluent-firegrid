@@ -196,7 +196,7 @@ without any scenario ever asserting nothing.
 
 ---
 
-## Worked example: `effect-s2-durable/executable-coverage.feature`
+## Worked example: `effect-s2-durable/durable-executions/durable-executions.feature`
 
 **Before** — one scenario, four actions, names = SDK methods, `Then`
 re-states internal mechanics:
@@ -216,20 +216,22 @@ keeping a focused `@sql` proof of its production trace shape:
 
 ```gherkin
 @sql:service_call
-Scenario: A durable call returns its handler result
-  When a caller doubles 21 as a durable call
-  Then the call returns 42
+Scenario: A service execution completes with its durable step result
+  Given a service execution will double 21
+  When the service execution starts
+  Then the service execution result is 42
 
 @sql:service_send_attach
-Scenario: A fire-and-forget submission is awaited later by its execution id
-  Given a caller submitted "double 7" without waiting
-  When the caller attaches to that execution id
-  Then it resolves to 14
+Scenario: A submitted service execution keeps a stable id for later attachment
+  Given a service execution was submitted without waiting for input 7
+  When the caller attaches to the submitted service execution
+  Then the submitted service execution result is 14
 
 @sql:service_deferred
-Scenario: A handler resolves and reads its own deferred result within one execution
-  When a caller invokes the echo handler with "ok"
-  Then the call returns "ok"
+Scenario: An invocation-local promise resumes the same service execution
+  Given a service execution has local promise payload "ok"
+  When the service execution resolves its local promise
+  Then the local promise result is "ok"
 ```
 
 Splitting one proof into three means each `.sql` block now asserts the trace

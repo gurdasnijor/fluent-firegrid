@@ -91,7 +91,7 @@ spans from other scenarios.
 - **Assert ordering:** `sequenceMatch('(?1).*(?2)')(ts, cond1, cond2)`
 - **Parent/child relationship:** self-join `scenario_spans` on
   `child.ParentSpanId = parent.SpanId` (see `workflow_trace` in
-  `features/effect-s2-durable/executable-coverage.sql`).
+  `features/effect-s2-durable/durable-executions/durable-executions.sql`).
 
 ## Adding a new behavioral scenario
 

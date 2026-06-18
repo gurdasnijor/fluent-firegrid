@@ -25,7 +25,7 @@ import {
   workflowSubmit,
 } from "effect-s2-durable"
 import { primaryKey, Table } from "effect-s2-stream-db"
-import { scenarioKey } from "../../packages/spec-harness/src/runtime.ts"
+import { scenarioKey } from "../../../packages/spec-harness/src/runtime.ts"
 
 class CounterRow extends Table<CounterRow>("counter")({
   id: Schema.String.pipe(primaryKey),
@@ -155,17 +155,25 @@ const ApprovalWorkflow = workflow({
 
 interface DurableProofState {
   service: {
+    input?: number
+    echoPayload?: string
     direct?: number
     sentId?: string
     attached?: number
     deferred?: string
   }
   object: {
+    increment?: number
+    routedIncrement?: number
     counterKey?: string
     routerKey?: string
     gateKey?: string
     gateId?: string
+    gateSignal?: string
+    gatePending?: boolean
     gateResult?: string
+    submittedId?: string
+    submittedResult?: number
     first?: number
     second?: number
     shared?: number
@@ -173,10 +181,13 @@ interface DurableProofState {
   }
   signal: {
     id?: string
+    name?: string
+    pending?: boolean
     result?: string
   }
   workflow: {
     id?: string
+    input?: number
     runCallId?: string
     firstStart?: string
     secondStart?: string
@@ -262,6 +273,42 @@ const resolveCalculatorDeferredEcho = (world: IWorld, input: string) =>
     stateFor(world).service.deferred = deferredResult
   })
 
+Given("a service execution will double {int}", function(this: IWorld, input: number) {
+  stateFor(this).service.input = input
+})
+
+When("the service execution starts", function(this: IWorld) {
+  return withCalculator(callCalculatorDouble(this, requireValue(stateFor(this).service.input, "Calculation input")))
+})
+
+Then("the service execution result is {int}", function(this: IWorld, expected: number) {
+  assert.equal(stateFor(this).service.direct, expected)
+})
+
+Given("a service execution was submitted without waiting for input {int}", function(this: IWorld, input: number) {
+  return withCalculator(sendCalculatorDouble(this, input))
+})
+
+When("the caller attaches to the submitted service execution", function(this: IWorld) {
+  return withCalculator(attachCalculatorExecution(this))
+})
+
+Then("the submitted service execution result is {int}", function(this: IWorld, expected: number) {
+  assert.equal(stateFor(this).service.attached, expected)
+})
+
+Given("a service execution has local promise payload {string}", function(this: IWorld, payload: string) {
+  stateFor(this).service.echoPayload = payload
+})
+
+When("the service execution resolves its local promise", function(this: IWorld) {
+  return withCalculator(resolveCalculatorDeferredEcho(this, requireValue(stateFor(this).service.echoPayload, "Echo payload")))
+})
+
+Then("the local promise result is {string}", function(this: IWorld, expected: string) {
+  assert.equal(stateFor(this).service.deferred, expected)
+})
+
 When("I call Calculator.double with {int} through the durable client", function(this: IWorld, input: number) {
   return withCalculator(callCalculatorDouble(this, input))
 })
@@ -335,6 +382,79 @@ const sendCounterThroughRouter = (world: IWorld, amount: number) =>
     stateFor(world).object.sent = sent
   })
 
+const readCounterSnapshot = (world: IWorld) =>
+  Effect.gen(function*() {
+    const counterKey = requireValue(stateFor(world).object.counterKey, "Counter owner key")
+    stateFor(world).object.shared = yield* sharedClient(Counter, counterKey).get()
+  })
+
+const submitCounterThroughRouter = (world: IWorld, amount: number) =>
+  Effect.gen(function*() {
+    const { counterKey, routerKey } = objectOwnerKeys(world)
+    const submittedId = yield* client(Router, routerKey).sendChild({
+      key: counterKey,
+      amount,
+    }, { idempotencyKey: scenarioKey(world, `router-submit-${amount}`) })
+    stateFor(world).object.submittedId = submittedId
+  })
+
+const attachSubmittedObjectCall = (world: IWorld) =>
+  Effect.gen(function*() {
+    const submittedId = requireValue(stateFor(world).object.submittedId, "Submitted object execution id")
+    stateFor(world).object.submittedResult = yield* attach(submittedId, Schema.Number)
+  })
+
+Given("a counter owner", function(this: IWorld) {
+  initializeCounterOwners(this)
+})
+
+Given("the increment is {int}", function(this: IWorld, amount: number) {
+  stateFor(this).object.increment = amount
+})
+
+When("the owner applies the increment", function(this: IWorld) {
+  return withObjects(addCounterObject(this, requireValue(stateFor(this).object.increment, "Counter increment")))
+})
+
+Then("the owner value is {int}", function(this: IWorld, expected: number) {
+  assert.equal(stateFor(this).object.first, expected)
+})
+
+Given("a counter owner already holds {int}", function(this: IWorld, value: number) {
+  initializeCounterOwners(this)
+  return withObjects(addCounterObject(this, value))
+})
+
+Given("the routed increment is {int}", function(this: IWorld, amount: number) {
+  stateFor(this).object.routedIncrement = amount
+})
+
+When("another owner applies the routed increment", function(this: IWorld) {
+  return withObjects(callCounterThroughRouter(this, requireValue(stateFor(this).object.routedIncrement, "Routed increment")))
+})
+
+Then("the routed update result is {int}", function(this: IWorld, expected: number) {
+  assert.equal(stateFor(this).object.second, expected)
+})
+
+When("the caller reads the owner snapshot", function(this: IWorld) {
+  return withObjects(readCounterSnapshot(this))
+})
+
+Then("the owner snapshot value is {int}", function(this: IWorld, expected: number) {
+  assert.equal(stateFor(this).object.shared, expected)
+})
+
+When("another owner submits the routed increment without waiting", function(this: IWorld) {
+  return withObjects(submitCounterThroughRouter(this, requireValue(stateFor(this).object.routedIncrement, "Routed increment")))
+})
+
+Then("the submitted object result is {int}", function(this: IWorld, expected: number) {
+  return withObjects(attachSubmittedObjectCall(this)).pipe(
+    Effect.tap(() => Effect.sync(() => assert.equal(stateFor(this).object.submittedResult, expected))),
+  )
+})
+
 const initializeGateOwner = (world: IWorld): void => {
   stateFor(world).object.gateKey = scenarioKey(world, "gate")
 }
@@ -369,6 +489,28 @@ const attachGateExecution = (world: IWorld, expected: string) =>
     stateFor(world).object.gateResult = result
     assert.equal(result, expected)
   })
+
+Given("a gate owner is waiting for signal {string} with value {string}", function(
+  this: IWorld,
+  signalName: string,
+  value: string,
+) {
+  initializeGateOwner(this)
+  stateFor(this).object.gateSignal = signalName
+  return withObjects(sendGateWait(this, signalName, value))
+})
+
+When("signal {string} is resolved with {string} after runtime re-entry", function(
+  this: IWorld,
+  signalName: string,
+  value: string,
+) {
+  return withObjects(resolveGateSignal(this, signalName, value))
+})
+
+Then("the gate result is {string}", function(this: IWorld, expected: string) {
+  return withObjects(attachGateExecution(this, expected))
+})
 
 Given("a durable Counter owner and Router owner", function(this: IWorld) {
   initializeCounterOwners(this)
@@ -444,7 +586,7 @@ const pollWaiterExecution = (world: IWorld) =>
   Effect.gen(function*() {
     const id = requireValue(stateFor(world).signal.id, "Waiter execution id")
     const result = yield* poll(id, Schema.String)
-    assert.equal(Option.isNone(result), true)
+    stateFor(world).signal.pending = Option.isNone(result)
   })
 
 const resolveWaiterSignal = (world: IWorld, name: string, value: string) =>
@@ -460,6 +602,27 @@ const attachWaiterExecution = (world: IWorld, expected: string) =>
     stateFor(world).signal.result = result
     assert.equal(result, expected)
   })
+
+Given("a service execution is waiting for signal {string}", function(this: IWorld, name: string) {
+  stateFor(this).signal.name = name
+  return withWaiter(sendWaitingExecution(this, name))
+})
+
+When("the caller checks the execution status", function(this: IWorld) {
+  return withWaiter(pollWaiterExecution(this))
+})
+
+Then("the execution is still pending", function(this: IWorld) {
+  assert.equal(stateFor(this).signal.pending, true)
+})
+
+When("signal {string} is resolved with {string}", function(this: IWorld, name: string, value: string) {
+  return withWaiter(resolveWaiterSignal(this, name, value))
+})
+
+Then("the service execution result is {string}", function(this: IWorld, expected: string) {
+  return withWaiter(attachWaiterExecution(this, expected))
+})
 
 When("I send a Waiter execution waiting on signal {string}", function(this: IWorld, name: string) {
   return withWaiter(sendWaitingExecution(this, name))
@@ -514,6 +677,57 @@ const attachApprovalWorkflow = (world: IWorld, expected: number) =>
     assert.equal(attached, expected)
   })
 
+const initializeApprovalWorkflow = (world: IWorld, input: number): void => {
+  const workflowState = stateFor(world).workflow
+  workflowState.id = scenarioKey(world, "approval")
+  workflowState.input = input
+}
+
+const startApprovalWorkflowTwice = (world: IWorld) =>
+  Effect.gen(function*() {
+    const workflowState = stateFor(world).workflow
+    const workflowId = approvalWorkflowId(world)
+    workflowState.runCallId = yield* workflowRunId(ApprovalWorkflow, workflowId)
+    workflowState.firstStart = yield* workflowSubmit(
+      ApprovalWorkflow,
+      workflowId,
+      requireValue(workflowState.input, "Approval workflow input"),
+    )
+    workflowState.secondStart = yield* workflowSubmit(ApprovalWorkflow, workflowId, 99)
+  })
+
+const submitWaitingApprovalWorkflow = (world: IWorld) =>
+  Effect.gen(function*() {
+    const workflowState = stateFor(world).workflow
+    workflowState.runCallId = yield* workflowRunId(ApprovalWorkflow, approvalWorkflowId(world))
+    workflowState.firstStart = yield* workflowSubmit(
+      ApprovalWorkflow,
+      approvalWorkflowId(world),
+      requireValue(workflowState.input, "Approval workflow input"),
+    )
+  })
+
+Given("the approval workflow input is {int}", function(this: IWorld, input: number) {
+  initializeApprovalWorkflow(this, input)
+})
+
+When("the workflow is started twice", function(this: IWorld) {
+  return withApprovalWorkflow(startApprovalWorkflowTwice(this))
+})
+
+Given("the approval workflow is waiting for approval of {int}", function(this: IWorld, input: number) {
+  initializeApprovalWorkflow(this, input)
+  return withApprovalWorkflow(submitWaitingApprovalWorkflow(this))
+})
+
+When("the run is approved", function(this: IWorld) {
+  return withApprovalWorkflow(approveWorkflow(this))
+})
+
+Then("the workflow result is {int}", function(this: IWorld, expected: number) {
+  return withApprovalWorkflow(attachApprovalWorkflow(this, expected))
+})
+
 When("I derive the approval workflow run id", function(this: IWorld) {
   return withApprovalWorkflow(deriveWorkflowRunId(this))
 })
@@ -534,7 +748,6 @@ Then("the workflow starts are {string} and {string}", function(this: IWorld, fir
   const actual = stateFor(this).workflow
   assert.equal(actual.firstStart, firstStart)
   assert.equal(actual.secondStart, secondStart)
-  assert.equal(actual.signalResult, "approved")
   assert.equal(requireValue(actual.runCallId, "Approval workflow run call id").length > 0, true)
 })
 
