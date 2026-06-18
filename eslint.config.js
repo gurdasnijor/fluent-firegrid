@@ -62,19 +62,6 @@ const effectDebtGuardrails = [
   },
 ]
 
-const nodeProcessImportMessage =
-  "Do not import node:process from product source; use @effect/platform / @effect/platform-node runtime boundaries instead."
-
-// Gaps not covered by Effect LS `nodeBuiltinImport`. LS owns fs/path/child_process/http/https.
-const nodeBuiltinImportGapMessages = {
-  "node:url": "Use @effect/platform Path (`fromFileUrl` / `toFileUrl`) instead of node:url.",
-  // tf-h1ld: node:net banned in product source — bind via @effect/platform-node
-  // `NodeHttpServer.layer` and read the bound address with `HttpServer.addressWith`.
-  "node:net": "Use @effect/platform HttpServer (`NodeHttpServer.layer` + `HttpServer.addressWith`) instead of node:net.",
-  // node:stream is banned in product source; bin/ stdio bridges (process.stdin/stdout
-  // → WHATWG Web streams for the ACP edge) are scoped out as genuine boundaries.
-  "node:stream": "Use @effect/platform Stream / `@effect/platform-node` NodeStream instead of node:stream (bin/ stdio bridges are exempt).",
-}
 const tsOnly = (configs) =>
   configs.map((config) => ({
     ...config,
@@ -86,18 +73,8 @@ const durableAuthorityNamePattern =
   /(?:cache|registry|registries|runs|claims|completions|pending|subscribers|eventplanes?|eventPlane)/u
 const hostAuthorityRegistryNamePattern =
   /(?:(?:run|completion|claim|eventPlane).*(?:cache|registry)|(?:cache|registry).*(?:run|completion|claim|eventPlane))/u
-const controlPlaneImportPattern =
-  /^(?:node:)?https?$|^(?:express|fastify|hono|koa)$|^@hono\/node-server$|^@effect\/platform\/HttpServer/u
 const pollingAllowComment = "durable-lint-allow-polling"
-const timerAllowComment = "durable-lint-allow-timer"
 const cacheAllowComment = "durable-lint-allow-cache"
-const controlPlaneAllowComment = "durable-lint-allow-control-plane"
-// firegrid-remediation-hardening.STATIC_QUALITY.10
-const extendsErrorAllowComment = "effect-quality-allow-extends-error"
-const processEnvAllowComment = "effect-quality-allow-process-env"
-// Pure value-builders / non-durable metadata / CLI filename stamps may default
-// to wall-clock at a documented boundary; durable Effect code must read Clock.
-const wallClockAllowComment = "effect-quality-allow-wall-clock"
 // C2 / WORKFLOW_ADMISSION: every production `Workflow.make` is an owned durable
 // workflow that must be SDD-justified in docs/workflow-make-admission-ledger.md.
 // The admission comment is the per-site gate (replaces the retired count ratchet).
@@ -119,18 +96,6 @@ const getCallMember = (node) => {
   const objectName = node.callee.object.type === "Identifier" ? node.callee.object.name : undefined
   const propertyName = getStaticPropertyName(node.callee)
   return objectName != null && propertyName != null ? { objectName, propertyName } : undefined
-}
-
-const getCallName = (node) => {
-  if (node?.type !== "CallExpression") {
-    return undefined
-  }
-
-  if (node.callee.type === "Identifier") {
-    return node.callee.name
-  }
-
-  return getStaticPropertyName(node.callee)
 }
 
 const isFixedDurationExpression = (node) => {
@@ -201,18 +166,6 @@ const hasLoopAncestor = (node) => {
   return false
 }
 
-// firegrid-remediation-hardening.STATIC_QUALITY.14 — relocated from the retired
-// ast-grep rule pack. OpenTelemetry hrtime tuples [seconds, nanos] need bigint
-// arithmetic to preserve precision; direct Number() math on index [0] loses
-// precision past ~2^53 ns (~26h). Flags any `<x>.{startTime,endTime,duration}[0]`
-// used as the left operand of a `*` (the reach-around the trace.ts helpers).
-// Ported Semgrep `pattern-regex` enforcement (Semgrep retirement, consolidation
-// phase 2). These rules scan source TEXT for banned shapes, mirroring Semgrep's
-// text-regex semantics exactly (the same regexes, applied to the same source),
-// with per-rule file scoping handled by ESLint's native `files`/`ignores` on the
-// enabling config block. One shared rule implementation is registered under
-// several distinct ids so overlapping scopes don't collide on ESLint's per-rule
-// config merge; each enabling block passes that scope's pattern list via options.
 const buildScanFlags = (flags) => Array.from(new Set(`${flags ?? ""}g`)).join("")
 const makeSourceRegexBanRule = () => ({
   meta: {
@@ -263,109 +216,7 @@ const makeSourceRegexBanRule = () => ({
     }
   },
 })
-// One shared implementation, registered under distinct ids (below) so that a
-// file matching several scope blocks gets each scope's full pattern list.
 const sourceRegexBanRule = makeSourceRegexBanRule()
-
-// tf-1kuk: AST upgrade of the pure import-path bans (previously source-text regex
-// via sourceRegexBanRule). Matches each `pattern` against the resolved module
-// specifier of import/export declarations only — so it can never false-positive
-// on a path that merely appears in a comment or string literal. Same options
-// shape (per-scope `{ pattern, flags?, message }[]`) and same distinct-id-per-
-// scope registration; the `pattern` is now the module-specifier regex (the
-// `from\s+"…"` wrapper is dropped).
-const makeBannedImportPathRule = () => ({
-  meta: {
-    type: "problem",
-    docs: {
-      description: "Disallow imports whose module specifier matches a banned path pattern (AST, import-source only).",
-    },
-    schema: [
-      {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            pattern: { type: "string" },
-            flags: { type: "string" },
-            message: { type: "string" },
-          },
-          required: ["pattern", "message"],
-          additionalProperties: false,
-        },
-      },
-    ],
-    messages: { banned: "{{message}}" },
-  },
-  create(context) {
-    const entries = (context.options[0] ?? []).map((e) => ({
-      re: new RegExp(e.pattern, e.flags ?? ""),
-      message: e.message,
-    }))
-    const check = (node) => {
-      const source = node?.source?.value
-      if (typeof source !== "string") return
-      for (const { re, message } of entries) {
-        if (re.test(source)) {
-          context.report({ node: node.source, messageId: "banned", data: { message } })
-        }
-      }
-    }
-    return {
-      ImportDeclaration: check,
-      ExportNamedDeclaration: check,
-      ExportAllDeclaration: check,
-    }
-  },
-})
-const bannedImportPathRule = makeBannedImportPathRule()
-
-// tf-0ska: AST upgrade for `sg-*` identifier-surface bans (previously source-text
-// regex via sourceRegexBanRule). Tests each `pattern` against the NAME of every
-// `Identifier` node — which the TS parser also emits for type references and
-// qualified-name parts — so a banned symbol is caught wherever it's used in code,
-// but never when it merely appears in a comment or string literal (those aren't
-// Identifier nodes). Same options shape + distinct-id-per-scope registration.
-const makeBannedIdentifierRule = () => ({
-  meta: {
-    type: "problem",
-    docs: {
-      description: "Disallow identifiers whose name matches a banned-surface pattern (AST, code references only).",
-    },
-    schema: [
-      {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            pattern: { type: "string" },
-            flags: { type: "string" },
-            message: { type: "string" },
-          },
-          required: ["pattern", "message"],
-          additionalProperties: false,
-        },
-      },
-    ],
-    messages: { banned: "{{message}}" },
-  },
-  create(context) {
-    const entries = (context.options[0] ?? []).map((e) => ({
-      re: new RegExp(e.pattern, e.flags ?? ""),
-      message: e.message,
-    }))
-    return {
-      Identifier(node) {
-        for (const { re, message } of entries) {
-          if (re.test(node.name)) {
-            context.report({ node, messageId: "banned", data: { message } })
-          }
-        }
-      },
-    }
-  },
-})
-const bannedIdentifierRule = makeBannedIdentifierRule()
 
 const hrtimeTupleProperties = new Set(["startTime", "endTime", "duration"])
 const isHrtimeTupleIndexZero = (node) =>
@@ -395,61 +246,6 @@ const hasNearbyAllowComment = (context, node, allowedTags) => {
 
 const local = {
   rules: {
-    "no-node-process-import": {
-      meta: {
-        type: "problem",
-        docs: {
-          description: "Disallow direct node:process imports from product source.",
-        },
-        schema: [],
-        messages: {
-          noNodeProcess: nodeProcessImportMessage,
-        },
-      },
-      create(context) {
-        const report = (node) => {
-          if (node?.source?.value === "node:process") {
-            context.report({ node, messageId: "noNodeProcess" })
-          }
-        }
-
-        return {
-          ImportDeclaration: report,
-          ExportAllDeclaration: report,
-          ExportNamedDeclaration: report,
-        }
-      },
-    },
-    "no-raw-node-io": {
-      meta: {
-        type: "problem",
-        docs: {
-          description: "Disallow Node builtins not covered by Effect LS nodeBuiltinImport.",
-        },
-        schema: [],
-        messages: { noRawNodeIo: "{{guidance}}" },
-      },
-      create(context) {
-        const report = (node) => {
-          const source = node?.source?.value
-          if (
-            typeof source === "string" &&
-            Object.prototype.hasOwnProperty.call(nodeBuiltinImportGapMessages, source)
-          ) {
-            context.report({
-              node,
-              messageId: "noRawNodeIo",
-              data: { guidance: nodeBuiltinImportGapMessages[source] },
-            })
-          }
-        }
-        return {
-          ImportDeclaration: report,
-          ExportAllDeclaration: report,
-          ExportNamedDeclaration: report,
-        }
-      },
-    },
     "relative-ts-extensions": {
       meta: {
         type: "problem",
@@ -495,32 +291,6 @@ const local = {
           },
           TSImportType(node) {
             report(node.argument)
-          },
-        }
-      },
-    },
-    "no-production-js-timers": {
-      meta: {
-        type: "problem",
-        docs: {
-          description: "Disallow production JS timers that can become fixed polling loops.",
-        },
-        schema: [],
-        messages: {
-          noTimer:
-            "Avoid JS timers in production runtime code; use durable subscriptions, deadline-derived Effects, or a reviewed escape comment.",
-        },
-      },
-      create(context) {
-        const timerNames = new Set(["setInterval", "setTimeout", "setImmediate"])
-
-        return {
-          CallExpression(node) {
-            if (!timerNames.has(getCallName(node)) || hasNearbyAllowComment(context, node, [timerAllowComment, pollingAllowComment])) {
-              return
-            }
-
-            context.report({ node, messageId: "noTimer" })
           },
         }
       },
@@ -668,215 +438,6 @@ const local = {
             reportName(node, node.id?.name)
           },
         }
-      },
-    },
-    "no-hidden-control-plane": {
-      meta: {
-        type: "problem",
-        docs: {
-          description: "Disallow hidden HTTP/control-plane imports in production packages.",
-        },
-        schema: [],
-        messages: {
-          noControlPlane:
-            "Avoid hidden HTTP/control-plane surfaces in production packages; add a reviewed escape comment if this is intentional.",
-        },
-      },
-      create(context) {
-        return {
-          ImportDeclaration(node) {
-            if (
-              typeof node.source.value === "string" &&
-              controlPlaneImportPattern.test(node.source.value) &&
-              !hasNearbyAllowComment(context, node, [controlPlaneAllowComment])
-            ) {
-              context.report({ node: node.source, messageId: "noControlPlane" })
-            }
-          },
-        }
-      },
-    },
-    // firegrid-remediation-hardening.STATIC_QUALITY.10
-    // firegrid-remediation-hardening.EFFECT_CONSISTENCY.2
-    "no-extends-error": {
-      meta: {
-        type: "problem",
-        docs: {
-          description:
-            "Disallow class extends Error declarations in package source; use Data.TaggedError.",
-        },
-        schema: [],
-        messages: {
-          noExtendsError:
-            "Use Data.TaggedError(\"...\")<...>{} instead of class extends Error. Domain errors must be tagged for catchTag/Match.tag/Schema.is to work. The repo policy keeps Data.TaggedError; growth of class extends Error is blocked here.",
-        },
-      },
-      create(context) {
-        const isErrorSuper = (node) =>
-          node?.type === "Identifier" && node.name === "Error"
-        const visit = (node) => {
-          if (
-            node?.superClass != null &&
-            isErrorSuper(node.superClass) &&
-            !hasNearbyAllowComment(context, node, [extendsErrorAllowComment])
-          ) {
-            context.report({ node, messageId: "noExtendsError" })
-          }
-        }
-        return {
-          ClassDeclaration: visit,
-          ClassExpression: visit,
-        }
-      },
-    },
-    // firegrid-remediation-hardening.STATIC_QUALITY.10
-    "no-process-env-outside-bin": {
-      meta: {
-        type: "problem",
-        docs: {
-          description:
-            "Disallow process.env reads outside bin/ and scripts/; use @effect/platform Config or boundary-injected configuration.",
-        },
-        schema: [],
-        messages: {
-          noProcessEnv:
-            "process.env reads belong at the binary entry boundary (bin/) or in tooling scripts (scripts/). In application code use Config.string / Config.option / Config.redacted, or accept config as an explicit parameter.",
-        },
-      },
-      create(context) {
-        const isGlobalThisProcess = (object) =>
-          object?.type === "MemberExpression" &&
-          !object.computed &&
-          object.object?.type === "Identifier" &&
-          object.object.name === "globalThis" &&
-          object.property?.type === "Identifier" &&
-          object.property.name === "process"
-        // Semgrep matched `globalThis.process.env.X` / `[X]` (a trailing access),
-        // not a bare `globalThis.process.env` value passed around; mirror that so
-        // the port neither weakens nor over-reaches. The direct `process.env`
-        // form keeps the existing any-access behavior.
-        const hasTrailingAccess = (node) =>
-          node.parent?.type === "MemberExpression" && node.parent.object === node
-
-        return {
-          MemberExpression(node) {
-            if (
-              node.property?.type !== "Identifier" ||
-              node.property.name !== "env" ||
-              hasNearbyAllowComment(context, node, [processEnvAllowComment])
-            ) {
-              return
-            }
-            if (node.object?.type === "Identifier" && node.object.name === "process") {
-              context.report({ node, messageId: "noProcessEnv" })
-            } else if (isGlobalThisProcess(node.object) && hasTrailingAccess(node)) {
-              context.report({ node, messageId: "noProcessEnv" })
-            }
-          },
-        }
-      },
-    },
-    // Ported Semgrep `firegrid-no-date-now` (ERROR): Date.now() is not
-    // replay-safe; use Clock.currentTimeMillis. AST-precise (no comment/string
-    // false positives), matching Semgrep's `pattern: Date.now()`.
-    "no-date-now": {
-      meta: {
-        type: "problem",
-        docs: {
-          description:
-            "Disallow Date.now() in library code; use Clock.currentTimeMillis or a caller-resolved timestamp.",
-        },
-        schema: [],
-        messages: {
-          noDateNow:
-            "Date.now() is not replay-safe. Use Clock.currentTimeMillis inside Effect code or accept a timestamp resolved by the caller's Effect scope.",
-        },
-      },
-      create(context) {
-        return {
-          CallExpression(node) {
-            const callee = node.callee
-            if (
-              callee.type === "MemberExpression" &&
-              !callee.computed &&
-              callee.object?.type === "Identifier" &&
-              callee.object.name === "Date" &&
-              callee.property?.type === "Identifier" &&
-              callee.property.name === "now" &&
-              node.arguments.length === 0
-            ) {
-              context.report({ node, messageId: "noDateNow" })
-            }
-          },
-        }
-      },
-    },
-    // Relocated from the effect-quality ts-morph ratchet (`newDateIsoCount`).
-    // `new Date().toISOString()` (no-arg) reads wall-clock outside Effect, so it
-    // is not replay-safe; durable code must read `Clock.currentTimeMillis` and
-    // format `new Date(millis).toISOString()`. Pure value-builders / non-durable
-    // metadata / CLI filename stamps escape-hatch with the documented allow
-    // comment (matches the ratchet's AST-precise detector — no string/comment FPs).
-    "no-new-date-iso": {
-      meta: {
-        type: "problem",
-        docs: {
-          description:
-            "Disallow `new Date().toISOString()` (no-arg) in library code; read Clock.currentTimeMillis and format `new Date(millis).toISOString()`.",
-        },
-        schema: [],
-        messages: {
-          noNewDateIso:
-            "`new Date().toISOString()` reads wall-clock and is not replay-safe. Read `yield* Clock.currentTimeMillis` (or `DateTime.now`) inside Effect code and format `new Date(millis).toISOString()`. Pure value-builders / CLI stamps may escape-hatch with `// effect-quality-allow-wall-clock`.",
-        },
-      },
-      create(context) {
-        return {
-          CallExpression(node) {
-            const callee = node.callee
-            if (
-              callee.type !== "MemberExpression" ||
-              callee.computed ||
-              callee.property?.type !== "Identifier" ||
-              callee.property.name !== "toISOString" ||
-              node.arguments.length !== 0
-            ) {
-              return
-            }
-            const receiver = callee.object
-            if (
-              receiver?.type === "NewExpression" &&
-              receiver.callee?.type === "Identifier" &&
-              receiver.callee.name === "Date" &&
-              receiver.arguments.length === 0 &&
-              !hasNearbyAllowComment(context, node, [wallClockAllowComment])
-            ) {
-              context.report({ node, messageId: "noNewDateIso" })
-            }
-          },
-        }
-      },
-    },
-    // Relocated from the effect-quality ratchet (`nodeCryptoImportCount`). Node's
-    // crypto RNG is not replay-safe; use a deterministic / Effect-resolved source.
-    "no-node-crypto-import": {
-      meta: {
-        type: "problem",
-        docs: { description: "Disallow node:crypto / crypto imports in library code (non-replay-safe RNG)." },
-        schema: [],
-        messages: {
-          noNodeCrypto:
-            "node:crypto / crypto is not replay-safe. Use a deterministic id/hash helper or an Effect-resolved randomness source instead.",
-        },
-      },
-      create(context) {
-        const report = (node) => {
-          const source = node?.source?.value
-          if (source === "node:crypto" || source === "crypto") {
-            context.report({ node, messageId: "noNodeCrypto" })
-          }
-        }
-        return { ImportDeclaration: report, ExportAllDeclaration: report, ExportNamedDeclaration: report }
       },
     },
     // Relocated from the effect-quality ratchet (`newDurableStreamSiteCount`).
@@ -1081,47 +642,10 @@ const local = {
         }
       },
     },
-    // Ported Semgrep source-regex rules (Semgrep retirement). Each id shares the
-    // one `sourceRegexBanRule` implementation; the enabling config block sets the
-    // file scope (matching the original Semgrep `paths`) and passes that rule's
-    // pattern list via options. One id per original Semgrep rule so each keeps its
-    // exact scope and distinct ids never collide on ESLint's per-rule config merge.
-    "sg-no-inline-stream-url-construction": sourceRegexBanRule,
-    "sg-no-filesystem-in-runtime-package": sourceRegexBanRule,
-    "sg-no-host-id-env-authority": sourceRegexBanRule,
-    "sg-runtime-context-workflow-requires-local-authority": sourceRegexBanRule,
-    "sg-no-replay-path-output-scan": sourceRegexBanRule,
-    "sg-runtime-owned-table-writes-use-authorities": sourceRegexBanRule,
-    "sg-runtime-subscribers-transforms-no-table-facades": sourceRegexBanRule,
-    "sg-runtime-no-exported-authority-singletons": sourceRegexBanRule,
-    "sg-runtime-no-custom-authority-wrapper-types": sourceRegexBanRule,
-    "sg-runtime-no-authority-static-helper-calls": sourceRegexBanRule,
-    "sg-runtime-no-singleton-authority-specifiers": sourceRegexBanRule,
-    "sg-runtime-no-second-durable-capability-provider": sourceRegexBanRule,
-    "sg-runtime-no-source-collection-handle-in-static-subscriber-contract": sourceRegexBanRule,
-    "sg-runtime-no-table-service-yield-outside-providers": sourceRegexBanRule,
-    "sg-runtime-no-authority-registry-surface": bannedIdentifierRule,
-    "sg-runtime-host-no-direct-source-collection-registration": sourceRegexBanRule,
-    "sg-runtime-no-host-internal-imports-outside-host": bannedImportPathRule,
-    "sg-runtime-no-runtime-errors-imports-outside-runtime": bannedImportPathRule,
-    "sg-runtime-no-old-singleton-authority-tag-keys": sourceRegexBanRule,
-    "sg-runtime-no-table-type-parameters-outside-authorities": sourceRegexBanRule,
-    "sg-runtime-no-exported-authority-registry-api": sourceRegexBanRule,
-    "sg-factory-exported-contracts-use-schema": sourceRegexBanRule,
     "sg-no-random-durable-identity": sourceRegexBanRule,
-    "sg-no-raw-stream-authority-string-schema": sourceRegexBanRule,
     "sg-no-inline-tagged-error-fail": sourceRegexBanRule,
     "sg-no-mutable-identity-let": sourceRegexBanRule,
     "sg-match-should-be-exhaustive": sourceRegexBanRule,
-    "sg-c4-no-new-durable-deferred-runtime-wait": sourceRegexBanRule,
-    "sg-c6-no-source-specific-cursor-event-taxonomy-in-agent-tools": sourceRegexBanRule,
-    "sg-c7-no-edge-local-terminal-synthesis": sourceRegexBanRule,
-    "sg-shape-c-no-workflow-engine-in-runtime-context-subscriber": sourceRegexBanRule,
-    "sg-transforms-purity-import-boundary": sourceRegexBanRule,
-    "sg-shape-c-runtime-context-no-workflow-machinery": sourceRegexBanRule,
-    "sg-composition-no-legacy-imports": sourceRegexBanRule,
-    "sg-host-sdk-imports": bannedImportPathRule,
-    "sg-no-numbered-runtime-subpath": bannedImportPathRule,
   },
 }
 
@@ -1211,7 +735,6 @@ export default tseslint.config(
       ],
       "@typescript-eslint/no-base-to-string": "error",
       "local/relative-ts-extensions": "error",
-      "local/no-node-process-import": "error",
       "local/hrtime-number-arithmetic": "error",
       "no-restricted-syntax": [
         "error",
@@ -1241,37 +764,10 @@ export default tseslint.config(
     rules: {
       "local/no-fixed-polling": "error",
       "local/no-module-durable-cache": "error",
-      "local/no-production-js-timers": "error",
       "no-restricted-syntax": [
         "error",
         ...effectDebtGuardrails,
       ],
-    },
-  },
-  {
-    files: testFiles,
-    rules: {
-      "@typescript-eslint/no-base-to-string": "off",
-      "@typescript-eslint/no-explicit-any": "off",
-      "@typescript-eslint/no-floating-promises": "off",
-      "@typescript-eslint/no-redundant-type-constituents": "off",
-      "@typescript-eslint/no-unsafe-argument": "off",
-      "@typescript-eslint/no-unsafe-assignment": "off",
-      "@typescript-eslint/no-unsafe-call": "off",
-      "@typescript-eslint/no-unsafe-member-access": "off",
-      "@typescript-eslint/prefer-promise-reject-errors": "off",
-      "@typescript-eslint/restrict-template-expressions": "off",
-      "local/no-date-now": "off",
-      "local/no-fixed-polling": "off",
-      "local/no-for-of-in-source": "off",
-      "local/no-module-durable-cache": "off",
-      "local/no-new-date-iso": "off",
-      "local/no-new-durable-stream": "off",
-      "local/no-node-crypto-import": "off",
-      "local/no-process-env-outside-bin": "off",
-      "local/no-production-js-timers": "off",
-      "local/no-raw-node-io": "off",
-      "no-restricted-syntax": "off",
     },
   },
   {
@@ -1293,58 +789,12 @@ export default tseslint.config(
       "packages/**/*.test.ts",
     ],
     rules: {
-      "local/no-extends-error": "error",
-      "local/no-process-env-outside-bin": "error",
-      "local/no-date-now": "error",
-      "local/no-new-date-iso": "error",
       "local/no-launder-cast": "error",
-      "local/no-node-crypto-import": "error",
       "local/no-new-durable-stream": "error",
       "local/no-for-of-in-source": "error",
       "local/no-any-no-context-cast": "error",
       "local/no-detached-promise-in-effect-sync": "error",
       "local/no-unclassified-workflow-make": "error",
-    },
-  },
-  {
-    // Effect LS owns fs/path/child_process/http/https via nodeBuiltinImport.
-    // This local rule only covers repo-specific gaps not modeled by LS.
-    files: ["packages/*/src/**/*.ts"],
-    ignores: [
-      "**/bin/**",
-      "**/*.test.ts",
-      "**/*.spec.ts",
-      "**/__tests__/**",
-    ],
-    plugins: { local },
-    rules: {
-      "local/no-raw-node-io": "error",
-    },
-  },
-  {
-    files: [
-      "packages/**/src/__tests__/**/*.ts",
-      "packages/**/*.test.ts",
-    ],
-    rules: {
-      "@typescript-eslint/no-unsafe-argument": "error",
-      "@typescript-eslint/no-unsafe-assignment": "error",
-      "@typescript-eslint/no-unsafe-member-access": "error",
-      "@typescript-eslint/no-non-null-assertion": "off",
-      "no-restricted-syntax": [
-        "error",
-        ...effectDebtGuardrails,
-      ],
-    },
-  },
-  {
-    // process.env belongs at the binary entry boundary: bin/ entry points
-    // (spawn targets, CLI mains) read boundary configuration from env.
-    files: ["packages/*/src/bin/**/*.ts"],
-    rules: {
-      "local/no-process-env-outside-bin": "off",
-      "local/no-date-now": "off",
-      "local/no-new-date-iso": "off",
     },
   },
   // ===========================================================================
@@ -1389,6 +839,7 @@ export default tseslint.config(
       "@typescript-eslint/no-empty-object-type": "off",
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-floating-promises": "off",
+      "@typescript-eslint/no-non-null-assertion": "off",
       "@typescript-eslint/no-redundant-type-constituents": "off",
       "@typescript-eslint/no-unsafe-argument": "off",
       "@typescript-eslint/no-unsafe-assignment": "off",
@@ -1397,17 +848,11 @@ export default tseslint.config(
       "@typescript-eslint/no-unsafe-return": "off",
       "@typescript-eslint/prefer-promise-reject-errors": "off",
       "@typescript-eslint/restrict-template-expressions": "off",
-      "local/no-date-now": "off",
       "local/no-fixed-polling": "off",
       "local/no-for-of-in-source": "off",
       "local/no-launder-cast": "off",
       "local/no-module-durable-cache": "off",
-      "local/no-new-date-iso": "off",
       "local/no-new-durable-stream": "off",
-      "local/no-node-crypto-import": "off",
-      "local/no-process-env-outside-bin": "off",
-      "local/no-production-js-timers": "off",
-      "local/no-raw-node-io": "off",
       "local/sg-match-should-be-exhaustive": "off",
       "local/sg-no-inline-tagged-error-fail": "off",
       "local/sg-no-mutable-identity-let": "off",
