@@ -28,9 +28,9 @@ class SqlProofError extends Data.TaggedError("SqlProofError")<{
 
 export type HarnessServices = S2Client | ChdbSession | ChdbClient | FileSystem.FileSystem | Path.Path
 
-// eslint-disable-next-line local/no-module-durable-cache -- Cucumber run-scoped harness runtime; product durability still lives in S2.
+// eslint-disable-next-line no-restricted-syntax -- Cucumber run-scoped harness runtime; product durability still lives in S2.
 let runtime: ManagedRuntime.ManagedRuntime<HarnessServices, unknown> | undefined
-// eslint-disable-next-line local/no-module-durable-cache -- Cucumber run-scoped trace exporter handle for per-scenario forceFlush.
+// eslint-disable-next-line no-restricted-syntax -- Cucumber run-scoped trace exporter handle for per-scenario forceFlush.
 let processor: BatchSpanProcessor | undefined
 const states = new WeakMap<IWorld, ScenarioState>()
 
