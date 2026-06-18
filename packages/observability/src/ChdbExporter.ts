@@ -151,8 +151,8 @@ export class ChdbSpanExporter implements SpanExporter {
   constructor(options: ChdbSpanExporterOptions) {
     this.session = options.session
     const table = options.table ?? "otel_traces"
-    const qualified = options.database ? `${options.database}.${table}` : table
-    if (options.database) {
+    const qualified = options.database !== undefined ? `${options.database}.${table}` : table
+    if (options.database !== undefined) {
       this.session.query(`CREATE DATABASE IF NOT EXISTS ${options.database}`)
     }
     this.session.query(createTableSql(qualified))

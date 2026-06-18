@@ -1,36 +1,17 @@
 {
   "$schema": "./node_modules/@effect/language-service/schema.json",
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "allowImportingTsExtensions": true,
-    "allowSyntheticDefaultImports": true,
     "allowUnreachableCode": false,
     "allowUnusedLabels": false,
     "declaration": true,
-    "esModuleInterop": true,
-    "exactOptionalPropertyTypes": true,
     "forceConsistentCasingInFileNames": true,
-    "isolatedModules": true,
-    "lib": ["DOM", "DOM.Iterable", "DOM.AsyncIterable", "ES2022"],
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
     "baseUrl": ".",
-    "noEmit": true,
     "noErrorTruncation": true,
     "noImplicitReturns": true,
-    "noUncheckedIndexedAccess": true,
     "noUnusedLocals": true,
     "noUnusedParameters": false,
-    "resolveJsonModule": true,
-    "skipLibCheck": true,
-    "strict": true,
-    "target": "ES2022",
-    "types": ["node"],
-    "plugins": [
-      {
-        "name": "@effect/language-service",
-        "namespaceImportPackages": ["effect", "@effect/platform"]
-      }
-    ]
+    "types": ["node"]
   },
   "include": ["packages/**/*.ts", "packages/**/*.tsx"],
   "exclude": ["node_modules", "**/node_modules", "**/dist/**", "**/build/**"]

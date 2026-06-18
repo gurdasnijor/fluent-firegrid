@@ -85,7 +85,7 @@ export const spawnAcpProcess = Effect.fn("fluent-acp-process.spawn")(
 export class AcpHarnessProcessOwner extends Context.Service<
   AcpHarnessProcessOwner,
   AcpHarnessProcessOwnerService
->()("@firegrid/fluent-acp-process/AcpHarnessProcessOwner") {
+>()("@firegrid/fluent-acp-process/process-owner/AcpHarnessProcessOwner") {
   static readonly Default: Layer.Layer<AcpHarnessProcessOwner> = Layer.succeed(
     this,
     { spawn: spawnAcpProcess },

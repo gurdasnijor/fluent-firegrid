@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices"
-import { Effect } from "effect"
+import { Clock, Effect } from "effect"
 import { describe, expect, it } from "vitest"
 import { spawnAcpProcess } from "../src/process-owner.ts"
 
@@ -37,12 +37,15 @@ maybe(`spawnAcpProcess (real ${AGENT})`, () => {
 
             const reader = handle.stream.readable.getReader()
             let response: { id?: number; result?: unknown } | undefined
-            const deadline = Date.now() + 60_000
-            while (Date.now() < deadline && response === undefined) {
+            const started = yield* Clock.currentTimeMillis
+            const deadline = started + 60_000
+            let now = started
+            while (now < deadline && response === undefined) {
               const next = yield* Effect.promise(() => reader.read())
               if (next.done) break
               const msg = next.value as { id?: number; result?: unknown }
               if (msg.id === 1 && msg.result !== undefined) response = msg
+              now = yield* Clock.currentTimeMillis
             }
 
             expect(response?.result).toBeDefined()
