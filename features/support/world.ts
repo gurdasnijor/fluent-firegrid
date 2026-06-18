@@ -2,7 +2,7 @@ import { setWorldConstructor } from "@cucumber/cucumber"
 import { Schema } from "effect"
 import { primaryKey, StreamDb, Table } from "effect-s2-stream-db"
 import type { StreamDbInstance } from "effect-s2-stream-db"
-import { FiregridWorld as HarnessWorld, runScenarioEffect } from "../../packages/spec-harness/src/world.ts"
+import { FiregridWorld as HarnessWorld } from "../../packages/spec-harness/src/world.ts"
 
 class Item extends Table<Item>("items")({
   id: Schema.String.pipe(primaryKey),
@@ -18,7 +18,7 @@ class StorageDb extends StreamDb<StorageDb>("cucumber-storage-primitives")({ ite
 
 type StorageDbInstance = StreamDbInstance<{ readonly items: typeof Item; readonly notes: typeof Note }>
 
-interface StoragePrimitivesWorld {
+export interface StoragePrimitivesWorld {
   readonly Item: typeof Item
   readonly Note: typeof Note
   readonly StorageDb: typeof StorageDb
@@ -35,5 +35,3 @@ export class FiregridWorld extends HarnessWorld {
 }
 
 setWorldConstructor(FiregridWorld)
-
-export { runScenarioEffect }

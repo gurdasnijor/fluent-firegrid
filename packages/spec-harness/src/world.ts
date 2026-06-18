@@ -1,4 +1,4 @@
-import { After, Before, World, type ITestCaseHookParameter, type IWorldOptions } from "@cucumber/cucumber"
+import { After, AfterAll, Before, BeforeAll, World, type ITestCaseHookParameter, type IWorldOptions } from "@cucumber/cucumber"
 import * as NodeSdk from "@effect/opentelemetry/NodeSdk"
 import { ChdbClient, ChdbSession, ChdbSpanExporter, layer as ChdbLayer } from "@firegrid/observability"
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base"
@@ -12,11 +12,16 @@ interface ProofBlock {
   readonly sql: string
 }
 
+export type HarnessServices = S2Client | ChdbSession | ChdbClient
+
+// eslint-disable-next-line local/no-module-durable-cache -- Cucumber run-scoped harness runtime; product durability still lives in S2.
+let runtime: ManagedRuntime.ManagedRuntime<HarnessServices, unknown> | undefined
+// eslint-disable-next-line local/no-module-durable-cache -- Cucumber run-scoped trace exporter handle for per-scenario forceFlush.
+let processor: BatchSpanProcessor | undefined
+
 export class FiregridWorld extends World {
   scenarioId = ""
   proofs: Array<ProofBlock> = []
-  processor?: BatchSpanProcessor
-  runtime?: ManagedRuntime.ManagedRuntime<S2Client | ChdbSession | ChdbClient, unknown>
 
   constructor(options: IWorldOptions) {
     super(options)
@@ -28,25 +33,6 @@ export class FiregridWorld extends World {
 
   scenarioKey(key: string): string {
     return `${this.scenarioId.replace(/[^A-Za-z0-9_.-]/g, "-")}-${key}`
-  }
-
-  run<A, E, R extends S2Client>(
-    step: string,
-    effect: Effect.Effect<A, E, R>,
-  ): Promise<A> {
-    if (this.runtime === undefined) {
-      throw new Error("scenario runtime is not initialized")
-    }
-    return this.runtime.runPromise(
-      effect.pipe(
-        Effect.withSpan("cucumber.step", {
-          attributes: {
-            "firegrid.scenario.id": this.scenarioId,
-            "cucumber.step": step,
-          },
-        }),
-      ),
-    )
   }
 }
 
@@ -67,21 +53,59 @@ const truthy = (value: unknown): boolean => {
   return value != null
 }
 
-const spanCounts = (scenarioId: string): Effect.Effect<ReadonlyArray<SpanCount>, unknown, ChdbClient> =>
-  Effect.gen(function*() {
-    const sql = yield* ChdbClient
-    const rows = yield* sql.unsafe<{ readonly name: string; readonly count: number }>(bindTraceSql(`
-SELECT SpanName AS name, count() AS count
-FROM otel_traces
-WHERE TraceId IN (
+const scenarioTraceWhere = `
+TraceId IN (
   SELECT TraceId
   FROM otel_traces
   WHERE SpanAttributes['firegrid.scenario.id'] = {scenario_id:String}
 )
+`
+
+const spanCounts = (scenarioId: string): Effect.Effect<ReadonlyArray<SpanCount>, unknown, ChdbClient> =>
+  Effect.gen(function*() {
+    const sql = yield* ChdbClient
+    const rows = yield* sql.unsafe<SpanCount>(bindTraceSql(`
+SELECT SpanName AS name, count() AS count
+FROM otel_traces
+WHERE ${scenarioTraceWhere}
 GROUP BY SpanName
-ORDER BY SpanName
+ORDER BY count DESC, SpanName
 `, scenarioId))
     return rows
+  })
+
+const traceCoverage = (scenarioId: string): Effect.Effect<{
+  readonly spans: number
+  readonly traces: number
+  readonly evidenceSpans: number
+  readonly totalDurationMs: number
+  readonly maxDurationMs: number
+}, unknown, ChdbClient> =>
+  Effect.gen(function*() {
+    const sql = yield* ChdbClient
+    const rows = yield* sql.unsafe<{
+      readonly spans: number
+      readonly traces: number
+      readonly evidenceSpans: number
+      readonly totalDurationMs: number
+      readonly maxDurationMs: number
+    }>(bindTraceSql(`
+SELECT
+  count() AS spans,
+  uniqExact(TraceId) AS traces,
+  countIf(SpanAttributes['firegrid.scenario.id'] = {scenario_id:String}) AS evidenceSpans,
+  toFloat64(sum(Duration)) / 1000000 AS totalDurationMs,
+  toFloat64(max(Duration)) / 1000000 AS maxDurationMs
+FROM otel_traces
+WHERE ${scenarioTraceWhere}
+`, scenarioId))
+    return rows[0] ?? {
+      spans: 0,
+      traces: 0,
+      evidenceSpans: 0,
+      totalDurationMs: 0,
+      maxDurationMs: 0,
+    }
   })
 
 const runTraceProofSql = (
@@ -113,59 +137,81 @@ const spanSummary = (scenarioId: string): Effect.Effect<string, unknown, ChdbCli
       : counts.map((span) => `${span.count} ${span.name}`).join("\n")
   })
 
-Before(async function(this: FiregridWorld, scenario) {
+Before(function(this: FiregridWorld, scenario) {
   this.scenarioId = scenarioIdFor(scenario)
   this.proofs = []
-  let processor: BatchSpanProcessor | undefined
+})
+
+BeforeAll(async function() {
+  let nextProcessor: BatchSpanProcessor | undefined
   const ChdbLive = ChdbLayer({})
   const OtelLive = Layer.unwrap(
     Effect.gen(function*() {
       const session = yield* ChdbSession
-      const nextProcessor = new BatchSpanProcessor(new ChdbSpanExporter({ session, table: "otel_traces" }))
-      processor = nextProcessor
+      const createdProcessor = new BatchSpanProcessor(new ChdbSpanExporter({ session, table: "otel_traces" }))
+      nextProcessor = createdProcessor
       return NodeSdk.layer(() => ({
         resource: { serviceName: "firegrid-cucumber" },
-        spanProcessor: [nextProcessor],
+        spanProcessor: [createdProcessor],
       }))
     }),
   )
-  this.runtime = ManagedRuntime.make(Layer.mergeAll(OtelLive, S2LiteLive).pipe(Layer.provideMerge(ChdbLive)))
-  await this.runtime.runPromise(Effect.void)
-  if (processor === undefined) {
+  runtime = ManagedRuntime.make(Layer.mergeAll(OtelLive, S2LiteLive).pipe(Layer.provideMerge(ChdbLive)))
+  await runtime.runPromise(Effect.void)
+  if (nextProcessor === undefined) {
     throw new Error("chDB span processor was not initialized")
   }
-  this.processor = processor
+  processor = nextProcessor
 })
 
 After(async function(this: FiregridWorld) {
-  const processor = this.processor
-  const runtime = this.runtime
+  const activeRuntime = runtime
+  if (activeRuntime === undefined) return
+  if (processor !== undefined) {
+    await processor.forceFlush()
+  }
+  const [spans, coverage] = await Promise.all([
+    activeRuntime.runPromise(spanCounts(this.scenarioId)),
+    activeRuntime.runPromise(traceCoverage(this.scenarioId)),
+  ])
+  recordScenarioReport({
+    scenarioId: this.scenarioId,
+    proofs: this.proofs.length,
+    spans,
+    coverage,
+  })
+  await Promise.all(this.proofs.map(async(proof) => {
+    const result = await activeRuntime.runPromise(runTraceProofSql(proof.sql, this.scenarioId))
+    if (result.ok === true) return
+    const observed = await activeRuntime.runPromise(spanSummary(this.scenarioId))
+    throw new Error(`trace proof failed: ${result.reason}\n\n${proof.sql}\n\nObserved spans:\n${observed}`)
+  }))
+})
+
+AfterAll(async function() {
   try {
-    if (processor !== undefined) {
-      await processor.forceFlush()
-    }
-    if (runtime !== undefined) {
-      const spans = await runtime.runPromise(spanCounts(this.scenarioId))
-      recordScenarioReport({
-        scenarioId: this.scenarioId,
-        proofs: this.proofs.length,
-        spans,
-      })
-      await Promise.all(this.proofs.map(async(proof) => {
-        const result = await runtime.runPromise(runTraceProofSql(proof.sql, this.scenarioId))
-        if (result.ok === true) return
-        const observed = await runtime.runPromise(spanSummary(this.scenarioId))
-        throw new Error(`trace proof failed: ${result.reason}\n\n${proof.sql}\n\nObserved spans:\n${observed}`)
-      }))
-    }
+    await runtime?.dispose()
   } finally {
-    await this.runtime?.dispose()
+    runtime = undefined
     await processor?.shutdown()
+    processor = undefined
   }
 })
 
-export const runScenarioEffect = <A, E, R extends S2Client>(
+export const runSpecEffect = <A, E, R extends HarnessServices>(
   world: FiregridWorld,
-  step: string,
   effect: Effect.Effect<A, E, R>,
-): Promise<A> => world.run(step, effect)
+): Promise<A> => {
+  if (runtime === undefined) {
+    throw new Error("spec runtime is not initialized")
+  }
+  return runtime.runPromise(
+    effect.pipe(
+      Effect.withSpan("firegrid.scenario", {
+        attributes: {
+          "firegrid.scenario.id": world.scenarioId,
+        },
+      }),
+    ),
+  )
+}
