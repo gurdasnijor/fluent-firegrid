@@ -1,13 +1,19 @@
-export default {
+const tagFilter = process.env.CUCUMBER_TAGS ?? "not @spec-only"
+
+const config = {
   paths: ["features/**/*.feature"],
   import: [
-    "packages/spec-harness/src/**/*.ts",
-    "features/support/**/*.ts",
-    "features/step_definitions/**/*.ts",
+    "./cucumber-tsx-register.mjs",
+    "features/**/*.ts",
   ],
   format: [
     "summary",
     "./packages/spec-harness/src/trace-formatter.ts",
   ],
-  tags: "not @spec-only",
 }
+
+if (tagFilter !== "") {
+  config.tags = tagFilter
+}
+
+export default config

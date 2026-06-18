@@ -5,7 +5,6 @@
   },
   "include": [
     "src/**/*.ts",
-    "../../features/support/**/*.ts",
-    "../../features/step_definitions/**/*.ts"
+    "../../features/**/*.ts"
   ]
 }

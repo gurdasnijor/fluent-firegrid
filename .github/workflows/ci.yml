@@ -28,7 +28,7 @@ env:
 #   lint               — eslint + dead-code (knip) + dup (jscpd) + dep boundaries
 #   typecheck          — turbo run typecheck
 #   effect-diagnostics — effect-language-service diagnostics
-#   tests              — turbo run test + Firelab executable validations
+#   tests              — turbo run test + Cucumber executable specs
 
 jobs:
   lint:
