@@ -3,7 +3,11 @@
   "ignoreDependencies": [
     "@typespec/http-server-js",
     "@typespec/rest",
-    "tslib"
+    "tslib",
+    "tsx"
+  ],
+  "ignoreUnresolved": [
+    "summary"
   ],
   "workspaces": {
     "packages/fluent-acp-process": {
@@ -45,9 +49,14 @@
         "src/**/*.ts",
         "test/**/*.ts"
       ]
+    },
+    "packages/spec-harness": {
+      "entry": [
+        "src/**/*.ts"
+      ],
+      "project": [
+        "src/**/*.ts"
+      ]
     }
-  },
-  "ignoreWorkspaces": [
-    "packages/firelab"
-  ]
+  }
 }

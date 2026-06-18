@@ -1,9 +1,33 @@
-import effect from "@effect/eslint-plugin"
 import js from "@eslint/js"
 import stylistic from "@stylistic/eslint-plugin"
 import globals from "globals"
 import tseslint from "typescript-eslint"
 import effectEslint from "@codeforbreakfast/eslint-effect"
+
+const sourceFiles = [
+  "src/**/*.ts",
+  "src/**/*.tsx",
+  "packages/**/*.ts",
+  "packages/**/*.tsx",
+  "apps/**/*.ts",
+  "apps/**/*.tsx",
+]
+
+const packageSourceFiles = [
+  "packages/**/src/**/*.ts",
+  "packages/**/src/**/*.tsx",
+]
+
+const testFiles = [
+  "packages/**/test/**/*.ts",
+  "packages/**/src/__tests__/**/*.ts",
+  "packages/**/*.test.ts",
+  "packages/**/*.test.tsx",
+  "apps/**/test/**/*.ts",
+  "apps/**/src/__tests__/**/*.ts",
+  "apps/**/*.test.ts",
+  "apps/**/*.test.tsx",
+]
 
 // @codeforbreakfast/eslint-effect rules that are clean (or auto-fixable to
 // clean) across packages/*/src today — enforced as errors. The opinionated /
@@ -102,13 +126,7 @@ const rawNodeIoImportMessages = {
 const tsOnly = (configs) =>
   configs.map((config) => ({
     ...config,
-    files: [
-      "src/**/*.ts",
-      "packages/**/*.ts",
-      "packages/**/*.tsx",
-      "apps/**/*.ts",
-      "apps/**/*.tsx",
-    ],
+    files: sourceFiles,
   }))
 const relativeJsSpecifierPattern = /^\.{1,2}\/.*\.js$/u
 const rewriteJsSpecifierToTs = (specifier) => specifier.replace(/\.js$/u, ".ts")
@@ -1158,14 +1176,7 @@ const local = {
 // Test-file ignores shared by the ported-Semgrep blocks (the original rules all
 // excluded `**/*.test.{ts,tsx}` and `**/__tests__/**`).
 const portedSemgrepTestIgnores = [
-  "packages/**/*.test.ts",
-  "packages/**/*.test.tsx",
-  "packages/**/src/__tests__/**/*.ts",
-  "packages/**/src/__tests__/**/*.tsx",
-  "apps/**/*.test.ts",
-  "apps/**/*.test.tsx",
-  "apps/**/src/__tests__/**/*.ts",
-  "apps/**/src/__tests__/**/*.tsx",
+  ...testFiles,
 ]
 
 
@@ -1185,6 +1196,12 @@ export default tseslint.config(
       "packages/firelab/**",
     ],
   },
+  {
+    linterOptions: {
+      reportUnusedDisableDirectives: "error",
+      reportUnusedInlineConfigs: "error",
+    },
+  },
   js.configs.recommended,
   ...tsOnly(tseslint.configs.recommendedTypeChecked),
   {
@@ -1194,11 +1211,7 @@ export default tseslint.config(
     },
   },
   {
-    files: [
-      "src/**/*.ts",
-      "packages/**/*.ts",
-      "packages/**/*.tsx",
-    ],
+    files: sourceFiles,
     languageOptions: {
       globals: { ...globals.node, ...globals.browser },
       parserOptions: {
@@ -1207,22 +1220,27 @@ export default tseslint.config(
       },
     },
     plugins: {
-      "@effect": effect,
       "@stylistic": stylistic,
       local,
     },
     rules: {
       "@typescript-eslint/consistent-type-imports": [
-        "warn",
+        "error",
         {
           fixStyle: "inline-type-imports",
         },
       ],
       "@typescript-eslint/no-floating-promises": "error",
-      "@typescript-eslint/no-misused-promises": "error",
-      "@typescript-eslint/no-unnecessary-type-assertion": "warn",
+      "@typescript-eslint/no-confusing-void-expression": "off",
+      "@typescript-eslint/no-misused-promises": [
+        "error",
+        {
+          checksVoidReturn: false,
+        },
+      ],
+      "@typescript-eslint/no-unnecessary-type-assertion": "error",
       "@typescript-eslint/no-unused-vars": [
-        "warn",
+        "error",
         {
           argsIgnorePattern: "^_",
           caughtErrorsIgnorePattern: "^_",
@@ -1231,7 +1249,7 @@ export default tseslint.config(
       ],
       "@typescript-eslint/require-await": "off",
       "@typescript-eslint/restrict-template-expressions": [
-        "warn",
+        "error",
         {
           allowBoolean: true,
           allowNever: true,
@@ -1239,17 +1257,22 @@ export default tseslint.config(
           allowNumber: true,
         },
       ],
-      "@typescript-eslint/no-base-to-string": "warn",
+      "@typescript-eslint/no-base-to-string": "error",
       "local/relative-ts-extensions": "error",
       "local/no-node-process-import": "error",
       "local/hrtime-number-arithmetic": "error",
       "no-restricted-syntax": [
-        "warn",
+        "error",
         ...riskyEffectRuntimeCalls,
         ...effectDebtGuardrails,
       ],
-      "no-unused-labels": "warn",
-      "no-useless-assignment": "warn",
+      "no-unused-labels": "error",
+      "no-useless-assignment": "error",
+      "no-undef": "off",
+      "no-var": "error",
+      "object-shorthand": "error",
+      "prefer-const": "error",
+      "prefer-template": "error",
       "require-yield": "off",
       "@stylistic/comma-dangle": ["error", "always-multiline"],
       "@stylistic/eol-last": ["error", "always"],
@@ -1258,25 +1281,23 @@ export default tseslint.config(
     },
   },
   {
-    files: ["packages/**/src/**/*.ts"],
+    files: packageSourceFiles,
     ignores: [
       "packages/**/src/__tests__/**/*.ts",
       "packages/**/*.test.ts",
     ],
     rules: {
-      "local/no-fixed-polling": "warn",
-      "local/no-module-durable-cache": "warn",
+      "local/no-fixed-polling": "error",
+      "local/no-module-durable-cache": "error",
       "local/no-production-js-timers": "error",
       "no-restricted-syntax": [
-        "warn",
+        "error",
         ...effectDebtGuardrails,
       ],
     },
   },
   {
-    files: [
-      "packages/**/test/**/*.ts",
-    ],
+    files: testFiles,
     rules: {
       "@typescript-eslint/no-base-to-string": "off",
       "@typescript-eslint/no-explicit-any": "off",
@@ -1314,10 +1335,7 @@ export default tseslint.config(
   },
   {
     // Production package-source quality rules (Effect-native invariants).
-    files: [
-      "packages/**/src/**/*.ts",
-      "packages/**/src/**/*.tsx",
-    ],
+    files: packageSourceFiles,
     ignores: [
       "packages/**/src/__tests__/**/*.ts",
       "packages/**/*.test.ts",
@@ -1358,12 +1376,12 @@ export default tseslint.config(
       "packages/**/*.test.ts",
     ],
     rules: {
-      "@typescript-eslint/no-unsafe-argument": "warn",
-      "@typescript-eslint/no-unsafe-assignment": "warn",
-      "@typescript-eslint/no-unsafe-member-access": "warn",
+      "@typescript-eslint/no-unsafe-argument": "error",
+      "@typescript-eslint/no-unsafe-assignment": "error",
+      "@typescript-eslint/no-unsafe-member-access": "error",
       "@typescript-eslint/no-non-null-assertion": "off",
       "no-restricted-syntax": [
-        "warn",
+        "error",
         ...effectDebtGuardrails,
       ],
     },
@@ -1414,9 +1432,7 @@ export default tseslint.config(
     },
   },
   {
-    files: [
-      "packages/**/test/**/*.ts",
-    ],
+    files: testFiles,
     rules: {
       "@typescript-eslint/no-base-to-string": "off",
       "@typescript-eslint/no-empty-object-type": "off",
@@ -1447,14 +1463,14 @@ export default tseslint.config(
       "local/sg-no-random-durable-identity": "off",
       "no-restricted-syntax": "off",
       "no-undef": "off",
-      "stylistic/quotes": "off",
+      "@stylistic/quotes": "off",
     },
   },
   {
     // @codeforbreakfast/eslint-effect — blocking subset (clean today). The
     // burn-down lane for the agreed opinionated rules lives in
     // eslint.config.effect-advisory.mjs (`pnpm run lint:effect`).
-    files: ["packages/**/src/**/*.ts"],
+    files: packageSourceFiles,
     ignores: [
       "packages/**/src/__tests__/**/*.ts",
       "packages/**/*.test.ts",

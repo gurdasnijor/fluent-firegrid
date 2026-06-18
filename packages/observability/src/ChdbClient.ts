@@ -19,7 +19,15 @@
  * options, and Statement.makeCompiler/custom config are taken from the official
  * driver source; generics may need minor tweaks against the actual type defs.
  */
-import { Session } from "chdb"
+import {
+  Session,
+  type ChdbQueryStream,
+  type ChdbResult,
+  type InsertParams,
+  type InsertSummary,
+  type QueryOptions,
+  type StreamOptions,
+} from "chdb"
 import { Schema } from "effect"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
@@ -28,7 +36,7 @@ import type * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
 import * as Reactivity from "effect/unstable/reactivity/Reactivity"
 import * as Client from "effect/unstable/sql/SqlClient"
-import type { Connection } from "effect/unstable/sql/SqlConnection"
+import type { Connection, Row } from "effect/unstable/sql/SqlConnection"
 import { ConnectionError, SqlError, SqlSyntaxError, StatementTimeoutError, UnknownError } from "effect/unstable/sql/SqlError"
 import * as Statement from "effect/unstable/sql/Statement"
 
@@ -89,35 +97,46 @@ export const Ch = {
       const entries = m instanceof Map ? [...m.entries()] : Object.entries(m as Record<string, V>)
       return `map(${entries.flatMap(([mk, mv]) => [k.lit(mk as K), v.lit(mv as V)]).join(", ")})`
     })
-  }
+  },
 } as const
 
 /** Default literal for untyped `sql` interpolation: dispatch on the JS runtime
  *  value (not on a parsed type string). For anything precise, use Ch + param. */
-const defaultCh = (value: unknown): Ch<any> => {
-  if (value === null || value === undefined) return leaf("Nullable(String)", () => "NULL")
-  if (Array.isArray(value)) return Ch.array(value.length ? defaultCh(value[0]) : Ch.String)
+const defaultLiteral = (value: unknown): string => {
+  if (value === null || value === undefined) return "NULL"
+  if (Array.isArray(value)) return `[${value.map(defaultLiteral).join(", ")}]`
   switch (typeof value) {
     case "number":
-      return Number.isInteger(value) ? Ch.Int64 : Ch.Float64
+      return (Number.isInteger(value) ? Ch.Int64 : Ch.Float64).lit(value)
     case "bigint":
-      return Ch.Int64
+      return Ch.Int64.lit(value)
     case "boolean":
-      return Ch.Bool
+      return Ch.Bool.lit(value)
+    case "string":
+      return Ch.String.lit(value)
+    case "symbol":
+      return Ch.String.lit(value.description ?? value.toString())
+    case "function":
+      return Ch.String.lit(value.name)
+    case "undefined":
+      return "NULL"
     case "object":
-      if (value instanceof Date) return leaf<Date>("DateTime64(3)", (d) => `fromUnixTimestamp64Milli(${d.getTime()})`)
-      if (value instanceof Map) return Ch.map(Ch.String, Ch.String)
-      return Ch.String
-    default:
-      return Ch.String
+      if (value instanceof Date) return `fromUnixTimestamp64Milli(${value.getTime()})`
+      if (value instanceof Map) {
+        return `map(${
+          Array.from(value.entries(), ([key, item]) => `${defaultLiteral(key)}, ${defaultLiteral(item)}`).join(", ")
+        })`
+      }
+      return Ch.String.lit(JSON.stringify(value) ?? Object.prototype.toString.call(value))
   }
+  return "NULL"
 }
 
 // ── compiler: the official ClickHouse one, but it emits final literals ───────
 // (chDB can't bind params, so there is nothing to substitute later)
 
+type ChdbLit = Statement.Custom<"ChdbLit", string, undefined> // paramA = pre-rendered literal
 export type ChdbCustom = ChdbLit
-interface ChdbLit extends Statement.Custom<"ChdbLit", string, undefined> {} // paramA = pre-rendered literal
 const chdbLit = Statement.custom<ChdbLit>("ChdbLit")
 
 const escape = Statement.defaultEscape("\"")
@@ -126,7 +145,7 @@ export const makeCompiler = (transform?: (_: string) => string) =>
   Statement.makeCompiler<ChdbCustom>({
     dialect: "sqlite",
     placeholder(_i, u) {
-      return defaultCh(u).lit(u) // render the literal in place; no {pN: Type}
+      return defaultLiteral(u) // render the literal in place; no {pN: Type}
     },
     onIdentifier: transform
       ? (value, withoutTransform) => (withoutTransform ? escape(value) : escape(transform(value)))
@@ -136,13 +155,13 @@ export const makeCompiler = (transform?: (_: string) => string) =>
     },
     onCustom(type) {
       return [type.paramA, []] // emit the pre-rendered literal, bind nothing
-    }
+    },
   })
 
 // ── fiber refs ────────────────────────────────────────────────────────────────
 
 export const ClientMethod = Context.Reference<"query" | "command">("@chdb/ChdbClient/ClientMethod", {
-  defaultValue: () => "query" as const
+  defaultValue: () => "query" as const,
 })
 
 // ── config / model ───────────────────────────────────────────────────────────
@@ -158,14 +177,27 @@ export interface ChdbClientConfig {
   readonly transformQueryNames?: (str: string) => string
 }
 
+export type ChdbSession = Session
+export const ChdbSession = Context.Service<ChdbSession>("@chdb/Session")
+
+export interface ChdbNative {
+  readonly query: (sql: string, format?: string) => Effect.Effect<string, SqlError>
+  readonly queryBind: (sql: string, args: object, format?: string) => Effect.Effect<string, SqlError>
+  readonly queryAsync: (sql: string, options?: QueryOptions) => Effect.Effect<ChdbResult, SqlError>
+  readonly queryBindAsync: (sql: string, params: object, options?: QueryOptions) => Effect.Effect<ChdbResult, SqlError>
+  readonly insert: (params: InsertParams) => Effect.Effect<InsertSummary, SqlError>
+  readonly queryStream: (sql: string, options?: StreamOptions) => Effect.Effect<ChdbQueryStream, SqlError>
+}
+
 export interface ChdbClient extends Client.SqlClient {
   readonly config: ChdbClientConfig
+  readonly native: ChdbNative
   /** Typed literal fragment for a query parameter, e.g. param(Ch.Int64, 5n). */
   readonly param: <A>(ch: Ch<A>, value: A) => Statement.Fragment
   /** Run a statement and decode each row through a Schema (the typed-result path). */
   readonly query: <A, I>(
     schema: Schema.Codec<A, I>,
-    statement: Effect.Effect<ReadonlyArray<unknown>, SqlError>
+    statement: Effect.Effect<ReadonlyArray<unknown>, SqlError>,
   ) => Effect.Effect<ReadonlyArray<A>, SqlError | Schema.SchemaError>
   /** INSERT row objects, encoded through a Schema to their JSONEachRow form. */
   readonly insertQuery: <A, I>(options: {
@@ -184,73 +216,132 @@ const renderSetting = (v: string | number | boolean): string =>
 
 // ── construction ─────────────────────────────────────────────────────────────
 
-export const make = (
-  options: ChdbClientConfig
-): Effect.Effect<ChdbClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
+const openSession = (options: ChdbClientConfig): Effect.Effect<Session, SqlError, Scope.Scope> =>
+  Effect.acquireRelease(
+    Effect.try({
+      // With no path, chdb-node opens its own temp directory and removes it on
+      // cleanup(); with a path, the on-disk session persists across opens.
+      try: () => (options.path === undefined ? new Session() : new Session(options.path)),
+      catch: (cause) => new SqlError({ reason: classifyError(cause, "ChdbClient: failed to open session", "connect", "connection") }),
+    }),
+    // cleanup() is idempotent, never throws, and drops the temp dir when ephemeral.
+    (s) => Effect.sync(() => s.cleanup()),
+  )
+
+const bootstrapSession = (session: Session, options: ChdbClientConfig): Effect.Effect<void, SqlError> =>
+  Effect.try({
+    try: () => {
+      if (options.database) session.query(`CREATE DATABASE IF NOT EXISTS ${options.database}; USE ${options.database}`)
+      if (options.settings) {
+        Object.entries(options.settings).forEach(([k, v]) => session.query(`SET ${k} = ${renderSetting(v)}`))
+      }
+      session.query("SELECT 1")
+    },
+    catch: (cause) => new SqlError({ reason: classifyError(cause, "ChdbClient: bootstrap failed", "connect", "connection") }),
+  })
+
+export const makeWithSession = (
+  session: Session,
+  options: ChdbClientConfig,
+): Effect.Effect<ChdbClient, SqlError, Reactivity.Reactivity> =>
   Effect.gen(function*() {
     const compiler = makeCompiler(options.transformQueryNames)
     const transformRows = options.transformResultNames
       ? Statement.defaultTransforms(options.transformResultNames).array
       : undefined
 
-    const session = yield* Effect.acquireRelease(
-      Effect.try({
-        // With no path, chdb-node opens its own temp directory and removes it on
-        // cleanup(); with a path, the on-disk session persists across opens.
-        try: () => (options.path === undefined ? new Session() : new Session(options.path)),
-        catch: (cause) => new SqlError({ reason: classifyError(cause, "ChdbClient: failed to open session", "connect", "connection") })
-      }),
-      // cleanup() is idempotent, never throws, and drops the temp dir when ephemeral.
-      (s) => Effect.sync(() => s.cleanup())
-    )
-
-    yield* Effect.try({
-      try: () => {
-        if (options.database) session.query(`CREATE DATABASE IF NOT EXISTS ${options.database}; USE ${options.database}`)
-        if (options.settings) {
-          for (const [k, v] of Object.entries(options.settings)) session.query(`SET ${k} = ${renderSetting(v)}`)
-        }
-        session.query("SELECT 1")
-      },
-      catch: (cause) => new SqlError({ reason: classifyError(cause, "ChdbClient: bootstrap failed", "connect", "connection") })
-    })
-
     const runString = (sql: string, format: string): Effect.Effect<string, SqlError> =>
       Effect.try({
         try: () => String(session.query(sql, format) ?? ""),
-        catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to execute statement", "execute") })
+        catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to execute statement", "execute") }),
       })
 
-    const parseEachRow = (s: string): ReadonlyArray<any> => (s.trim() ? s.trim().split("\n").map((line) => JSON.parse(line)) : [])
+    const native: ChdbNative = {
+      query(sql, format = "CSV") {
+        return Effect.try({
+          try: () => String(session.query(sql, format) ?? ""),
+          catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to execute native query", "execute") }),
+        })
+      },
+      queryBind(sql, args, format = "CSV") {
+        return Effect.try({
+          try: () => String(session.queryBind(sql, args, format) ?? ""),
+          catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to execute native bound query", "execute") }),
+        })
+      },
+      queryAsync(sql, queryOptions) {
+        return Effect.tryPromise({
+          try: () => session.queryAsync(sql, queryOptions),
+          catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to execute native async query", "execute") }),
+        })
+      },
+      queryBindAsync(sql, params, queryOptions) {
+        return Effect.tryPromise({
+          try: () => session.queryBindAsync(sql, params, queryOptions),
+          catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to execute native async bound query", "execute") }),
+        })
+      },
+      insert(params) {
+        return Effect.tryPromise({
+          try: () => session.insert(params),
+          catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to execute native insert", "insert") }),
+        })
+      },
+      queryStream(sql, streamOptions) {
+        return Effect.try({
+          try: () => session.queryStream(sql, streamOptions),
+          catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to open native query stream", "execute") }),
+        })
+      },
+    }
+
+    type TransformRows = NonNullable<Parameters<Connection["execute"]>[2]>
+
+    const parseJson = (s: string): unknown => JSON.parse(s) as unknown
+    const parseEachRow = (s: string): ReadonlyArray<Row> =>
+      s.trim()
+        ? s.trim().split("\n").map((line) => parseJson(line) as Row)
+        : []
+    const parseCompactEachRow = (s: string): ReadonlyArray<ReadonlyArray<unknown>> =>
+      s.trim()
+        ? s.trim().split("\n").map((line) => {
+          const row = parseJson(line)
+          return Array.isArray(row) ? row as ReadonlyArray<unknown> : [row]
+        })
+        : []
+    const applyTransformRows = (
+      rows: ReadonlyArray<Row>,
+      transformRows: TransformRows | undefined,
+    ): ReadonlyArray<Row> => transformRows ? transformRows(rows) : rows
 
     class ConnectionImpl implements Connection {
       // params are already inlined as literals by the compiler, so they're unused here
       private run(sql: string, _params: ReadonlyArray<unknown>, format = "JSONEachRow") {
-        return Effect.withFiber<ReadonlyArray<any>, SqlError>((fiber) => {
+        return Effect.withFiber<ReadonlyArray<Row>, SqlError>((fiber) => {
           if (fiber.getRef(ClientMethod) === "command") {
             return Effect.as(runString(sql, "Null"), [])
           }
           return Effect.map(runString(sql, format), parseEachRow)
         })
       }
-      execute(sql: string, params: ReadonlyArray<unknown>, transformRows: (<A extends object>(r: ReadonlyArray<A>) => ReadonlyArray<A>) | undefined) {
-        return transformRows ? Effect.map(this.run(sql, params), transformRows) : this.run(sql, params)
+      execute(sql: string, params: ReadonlyArray<unknown>, transformRows: TransformRows | undefined) {
+        return Effect.map(this.run(sql, params), (rows) => applyTransformRows(rows, transformRows))
       }
       executeRaw(sql: string, _params: ReadonlyArray<unknown>) {
-        return Effect.map(runString(sql, "JSON"), (s) => (s.trim() ? JSON.parse(s) : { data: [] }))
+        return Effect.map(runString(sql, "JSON"), (s) => (s.trim() ? parseJson(s) : { data: [] }))
       }
-      executeValues(sql: string, params: ReadonlyArray<unknown>) {
-        return this.run(sql, params, "JSONCompactEachRow")
+      executeValues(sql: string, _params: ReadonlyArray<unknown>) {
+        return Effect.map(runString(sql, "JSONCompactEachRow"), parseCompactEachRow)
       }
-      executeUnprepared(sql: string, params: ReadonlyArray<unknown>, transformRows?: any) {
+      executeUnprepared(sql: string, params: ReadonlyArray<unknown>, transformRows: TransformRows | undefined) {
         return this.execute(sql, params, transformRows)
       }
-      executeStream(sql: string, params: ReadonlyArray<unknown>, transformRows: (<A extends object>(r: ReadonlyArray<A>) => ReadonlyArray<A>) | undefined) {
+      executeStream(sql: string, params: ReadonlyArray<unknown>, transformRows: TransformRows | undefined) {
         // chdb-node's Session is buffered, so this materializes then chunks.
         return this.run(sql, params).pipe(
-          Effect.map((rows) => (transformRows ? transformRows(rows) : rows)),
+          Effect.map((rows) => applyTransformRows(rows, transformRows)),
           Effect.map(Stream.fromIterable),
-          Stream.unwrap
+          Stream.unwrap,
         )
       }
     }
@@ -264,12 +355,13 @@ export const make = (
         spanAttributes: [
           ...(options.spanAttributes ? Object.entries(options.spanAttributes) : []),
           [ATTR_DB_SYSTEM_NAME, "clickhouse"],
-          [ATTR_DB_NAMESPACE, options.database ?? "default"]
+          [ATTR_DB_NAMESPACE, options.database ?? "default"],
         ],
-        transformRows
+        transformRows,
       }),
       {
         config: options,
+        native,
         param<A>(ch: Ch<A>, value: A) {
           return Statement.fragment([chdbLit(ch.lit(value), undefined)])
         },
@@ -278,30 +370,56 @@ export const make = (
           return Effect.flatMap(statement, (rows) => decode(rows))
         },
         insertQuery<A, I>(opts: { readonly table: string; readonly values: ReadonlyArray<A>; readonly schema?: Schema.Codec<A, I>; readonly format?: string }) {
-          const encode = opts.schema
-            ? Schema.encodeUnknownEffect(Schema.Array(opts.schema))
-            : (xs: ReadonlyArray<A>) => Effect.succeed(xs as ReadonlyArray<unknown>)
-          return Effect.flatMap(encode(opts.values), (rows) =>
-            Effect.try({
+          return Effect.gen(function*() {
+            const rows: ReadonlyArray<unknown> = opts.schema !== undefined
+              ? yield* Schema.encodeUnknownEffect(Schema.Array(opts.schema))(opts.values)
+              : opts.values
+            return yield* Effect.try({
               try: () => {
                 const format = opts.format ?? "JSONEachRow"
-                const data = (rows as ReadonlyArray<unknown>).map((v) => JSON.stringify(v)).join("\n")
+                const data = rows.map((v) => JSON.stringify(v)).join("\n")
                 session.query(`INSERT INTO ${opts.table} FORMAT ${format}\n${data}`)
                 return { written: opts.values.length }
               },
-              catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to insert data", "insert") })
-            }))
+              catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to insert data", "insert") }),
+            })
+          })
         },
         asCommand<A, E, R>(effect: Effect.Effect<A, E, R>) {
           return Effect.provideService(effect, ClientMethod, "command")
-        }
-      }
+        },
+      },
     ) as ChdbClient
+  })
+
+export const make = (
+  options: ChdbClientConfig,
+): Effect.Effect<ChdbClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
+  Effect.gen(function*() {
+    const session = yield* openSession(options)
+    yield* bootstrapSession(session, options)
+    return yield* makeWithSession(session, options)
   })
 
 // ── layers ───────────────────────────────────────────────────────────────────
 
-export const layer = (config: ChdbClientConfig): Layer.Layer<ChdbClient | Client.SqlClient, SqlError> =>
+export const sessionLayer = (config: ChdbClientConfig): Layer.Layer<ChdbSession, SqlError> =>
   Layer.effectContext(
-    Effect.map(make(config), (client) => Context.make(ChdbClient, client).pipe(Context.add(Client.SqlClient, client)))
+    Effect.gen(function*() {
+      const session = yield* openSession(config)
+      yield* bootstrapSession(session, config)
+      return Context.make(ChdbSession, session)
+    }),
+  )
+
+export const layerFromSession = (config: ChdbClientConfig): Layer.Layer<ChdbClient | Client.SqlClient, SqlError, ChdbSession> =>
+  Layer.effectContext(
+    Effect.gen(function*() {
+      const session = yield* ChdbSession
+      const client = yield* makeWithSession(session, config)
+      return Context.make(ChdbClient, client).pipe(Context.add(Client.SqlClient, client))
+    }),
   ).pipe(Layer.provide(Reactivity.layer))
+
+export const layer = (config: ChdbClientConfig): Layer.Layer<ChdbSession | ChdbClient | Client.SqlClient, SqlError> =>
+  layerFromSession(config).pipe(Layer.provideMerge(sessionLayer(config)))

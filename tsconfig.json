@@ -1,5 +1,5 @@
 {
-  "$schema": "https://json.schemastore.org/tsconfig",
+  "$schema": "./node_modules/@effect/language-service/schema.json",
   "compilerOptions": {
     "allowImportingTsExtensions": true,
     "allowSyntheticDefaultImports": true,
@@ -24,7 +24,13 @@
     "skipLibCheck": true,
     "strict": true,
     "target": "ES2022",
-    "types": ["node"]
+    "types": ["node"],
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "namespaceImportPackages": ["effect", "@effect/platform"]
+      }
+    ]
   },
   "include": ["packages/**/*.ts", "packages/**/*.tsx"],
   "exclude": ["node_modules", "**/node_modules", "**/dist/**", "**/build/**"]
