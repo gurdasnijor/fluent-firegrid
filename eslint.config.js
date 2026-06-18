@@ -2,7 +2,6 @@ import js from "@eslint/js"
 import stylistic from "@stylistic/eslint-plugin"
 import globals from "globals"
 import tseslint from "typescript-eslint"
-import effectEslint from "@codeforbreakfast/eslint-effect"
 
 const sourceFiles = [
   "src/**/*.ts",
@@ -28,44 +27,6 @@ const testFiles = [
   "apps/**/*.test.ts",
   "apps/**/*.test.tsx",
 ]
-
-// @codeforbreakfast/eslint-effect rules that are clean (or auto-fixable to
-// clean) across packages/*/src today — enforced as errors. The opinionated /
-// high-blast-radius rules the team has agreed to adopt (functional immutability
-// suite + effect/prefer-effect-platform + moderate tier) run in the non-blocking
-// `lint:effect` burn-down lane (eslint.config.effect-advisory.mjs) until their
-// counts reach zero, then graduate here. no-gen / no-if-statement /
-// no-method-pipe are intentionally NOT adopted (they fight this repo's
-// Effect.gen-first / imperative-control-flow idioms).
-// NOTE: this plugin's autofixers are NOT reliable — `prefer-andThen` rewrites a
-// multi-statement `flatMap(() => { … })` block into an invalid object literal,
-// and `prefer-as-some` emits `Effect.asSome()` (called with no self). Do not run
-// `eslint --fix` for effect/* rules. Rules that currently report findings
-// (prefer-andThen, prefer-as-some) live in the advisory lane for MANUAL fixing,
-// not here — the blocking set is rules that are already clean at zero.
-const effectBlockingRules = {
-  "effect/no-runSync": "error",
-  "effect/no-runPromise": "error",
-  "effect/prefer-as": "error",
-  "effect/no-pipe-first-arg-call": "error",
-  "effect/no-unnecessary-pipe-wrapper": "error",
-  "effect/no-effect-if-option-check": "error",
-  "effect/prefer-match-tag": "error",
-  "effect/prefer-match-over-conditionals": "error",
-  "effect/prefer-effect-if-over-match-boolean": "error",
-  "effect/prefer-as-void": "error",
-  "effect/prefer-as-some-error": "error",
-  "effect/prefer-flatten": "error",
-  "effect/prefer-zip-left": "error",
-  "effect/prefer-zip-right": "error",
-  "effect/prefer-ignore": "error",
-  "effect/prefer-ignore-logged": "error",
-  "effect/prefer-from-nullable": "error",
-  "effect/prefer-get-or-else": "error",
-  "effect/prefer-get-or-null": "error",
-  "effect/prefer-get-or-undefined": "error",
-  "effect/prefer-succeed-none": "error",
-}
 
 const riskyEffectRuntimeCalls = [
   {
@@ -104,20 +65,11 @@ const effectDebtGuardrails = [
 const nodeProcessImportMessage =
   "Do not import node:process from product source; use @effect/platform / @effect/platform-node runtime boundaries instead."
 
-// Raw node: I/O builtins banned from product source — use the @effect/platform
-// services (provided by NodeContext.layer at the CLI/runtime boundary). Genuine
-// boundaries (bin entrypoints, the OTel-node integration) are scoped out / escape-
-// hatched with a documented reason. tf-636o.
-const rawNodeIoImportMessages = {
-  "node:fs": "Use @effect/platform FileSystem (`yield* FileSystem.FileSystem`) instead of node:fs.",
-  "node:fs/promises": "Use @effect/platform FileSystem (`yield* FileSystem.FileSystem`) instead of node:fs/promises.",
-  "node:path": "Use @effect/platform Path (`yield* Path.Path`) instead of node:path.",
+// Gaps not covered by Effect LS `nodeBuiltinImport`. LS owns fs/path/child_process/http/https.
+const nodeBuiltinImportGapMessages = {
   "node:url": "Use @effect/platform Path (`fromFileUrl` / `toFileUrl`) instead of node:url.",
-  "node:child_process": "Use @effect/platform Command (`Command.make` / `Command.string`) instead of node:child_process.",
   // tf-h1ld: node:net banned in product source — bind via @effect/platform-node
   // `NodeHttpServer.layer` and read the bound address with `HttpServer.addressWith`.
-  // (`node:http` is NOT banned: `createServer` is the documented NodeHttpServer.layer
-  // factory argument — a legit @effect/platform-node boundary, not raw I/O.)
   "node:net": "Use @effect/platform HttpServer (`NodeHttpServer.layer` + `HttpServer.addressWith`) instead of node:net.",
   // node:stream is banned in product source; bin/ stdio bridges (process.stdin/stdout
   // → WHATWG Web streams for the ACP edge) are scoped out as genuine boundaries.
@@ -472,7 +424,7 @@ const local = {
       meta: {
         type: "problem",
         docs: {
-          description: "Disallow raw node:fs/path/url/child_process in product source; use @effect/platform services.",
+          description: "Disallow Node builtins not covered by Effect LS nodeBuiltinImport.",
         },
         schema: [],
         messages: { noRawNodeIo: "{{guidance}}" },
@@ -482,12 +434,12 @@ const local = {
           const source = node?.source?.value
           if (
             typeof source === "string" &&
-            Object.prototype.hasOwnProperty.call(rawNodeIoImportMessages, source)
+            Object.prototype.hasOwnProperty.call(nodeBuiltinImportGapMessages, source)
           ) {
             context.report({
               node,
               messageId: "noRawNodeIo",
-              data: { guidance: rawNodeIoImportMessages[source] },
+              data: { guidance: nodeBuiltinImportGapMessages[source] },
             })
           }
         }
@@ -1355,9 +1307,8 @@ export default tseslint.config(
     },
   },
   {
-    // Ban raw node: I/O builtins in product source — use the @effect/platform
-    // services (FileSystem / Path / Command). Bin entrypoints and tests are
-    // scoped out (genuine node boundaries).
+    // Effect LS owns fs/path/child_process/http/https via nodeBuiltinImport.
+    // This local rule only covers repo-specific gaps not modeled by LS.
     files: ["packages/*/src/**/*.ts"],
     ignores: [
       "**/bin/**",
@@ -1465,17 +1416,5 @@ export default tseslint.config(
       "no-undef": "off",
       "@stylistic/quotes": "off",
     },
-  },
-  {
-    // @codeforbreakfast/eslint-effect — blocking subset (clean today). The
-    // burn-down lane for the agreed opinionated rules lives in
-    // eslint.config.effect-advisory.mjs (`pnpm run lint:effect`).
-    files: packageSourceFiles,
-    ignores: [
-      "packages/**/src/__tests__/**/*.ts",
-      "packages/**/*.test.ts",
-    ],
-    plugins: { effect: { rules: effectEslint.rules } },
-    rules: effectBlockingRules,
   },
 )

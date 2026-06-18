@@ -25,7 +25,7 @@
     },
     "lint": {
       "dependsOn": ["^lint", "//#lint:root", "//#lint:dead", "//#lint:dup", "//#lint:deps"],
-      "inputs": ["src/**", "test/**", "examples/**", "tsconfig.json", "../../eslint.config.js", "../../tsconfig.eslint.json"],
+      "inputs": ["src/**", "test/**", "examples/**", "tsconfig.json", "../../eslint.config.js", "../../tsconfig.eslint.json", "../../tsconfig.base.json"],
       "outputs": []
     },
     "test": {
@@ -52,8 +52,6 @@
     "//#lint:root": {
       "inputs": [
         "eslint.config.js",
-        "eslint.config.effect-advisory.mjs",
-        "scripts/**",
         "tsconfig.eslint.json",
         "tsconfig.base.json"
       ],

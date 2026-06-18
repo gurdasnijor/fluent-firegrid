@@ -4,18 +4,10 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-patchedDependencies:
-  '@codeforbreakfast/eslint-effect@0.8.5':
-    hash: 77e96af7a5c200cb3f1a8a383c392e4563cd987f97c4188696c7bcbce58cd8b8
-    path: patches/@codeforbreakfast__eslint-effect@0.8.5.patch
-
 importers:
 
   .:
     devDependencies:
-      '@codeforbreakfast/eslint-effect':
-        specifier: 0.8.5
-        version: 0.8.5(patch_hash=77e96af7a5c200cb3f1a8a383c392e4563cd987f97c4188696c7bcbce58cd8b8)(eslint@10.4.1(jiti@2.7.0))
       '@cucumber/cucumber':
         specifier: 12.9.0
         version: 12.9.0
@@ -310,11 +302,6 @@ packages:
     resolution: {integrity: sha512-YLtSPtsQYDNtgQlLasMGrrvAUOU+/TGC7aOZEAw6mjfwIDc13B6+HcVJUDQeg7v+BVmF1GwrMU92IvPlAG3J7g==}
     cpu: [x64]
     os: [linux]
-
-  '@codeforbreakfast/eslint-effect@0.8.5':
-    resolution: {integrity: sha512-kLPfNVgBMEXRR2lGtm4SwATNW6hVy2aU50cIk5CB1TuSR9bptXiILBnMRqNF1skBvztCdRKQl+2OaLD3/gtrjw==}
-    peerDependencies:
-      eslint: '>=8.0.0'
 
   '@colors/colors@1.5.0':
     resolution: {integrity: sha512-ooWCrlZP11i8GImSjTHYHLkvFDP48nS4+204nGb1RiX/WXYHmJA2III9/e2DWVabCESdW7hBAEzHRqUn9OUVvQ==}
@@ -3998,10 +3985,6 @@ snapshots:
 
   '@chdb/lib-linux-x64-gnu@26.5.0':
     optional: true
-
-  '@codeforbreakfast/eslint-effect@0.8.5(patch_hash=77e96af7a5c200cb3f1a8a383c392e4563cd987f97c4188696c7bcbce58cd8b8)(eslint@10.4.1(jiti@2.7.0))':
-    dependencies:
-      eslint: 10.4.1(jiti@2.7.0)
 
   '@colors/colors@1.5.0':
     optional: true

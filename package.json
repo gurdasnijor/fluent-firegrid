@@ -13,8 +13,7 @@
     "lint:dead": "knip --production --workspace './packages/*' --include files,exports,nsExports,types,nsTypes,enumMembers,namespaceMembers,duplicates --treat-config-hints-as-errors && knip --workspace './packages/*' --include dependencies,unlisted,unresolved,binaries,catalog --treat-config-hints-as-errors",
     "lint:deps": "depcruise --config .dependency-cruiser.cjs packages",
     "lint:dup": "jscpd packages/*/src",
-    "lint:effect": "eslint packages --config eslint.config.effect-advisory.mjs",
-    "lint:root": "eslint eslint.config.js eslint.config.effect-advisory.mjs scripts --max-warnings 0 --cache --cache-location .eslintcache",
+    "lint:root": "eslint eslint.config.js --max-warnings 0 --cache --cache-location .eslintcache",
     "preflight": "pnpm run check",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
@@ -28,7 +27,6 @@
     "verify": "pnpm run check"
   },
   "devDependencies": {
-    "@codeforbreakfast/eslint-effect": "0.8.5",
     "@cucumber/cucumber": "12.9.0",
     "@effect/language-service": "^0.86.2",
     "@eslint/js": "^10.0.1",

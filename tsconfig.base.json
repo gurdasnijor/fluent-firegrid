@@ -64,7 +64,7 @@
           "missingEffectServiceDependency": "error",
           "nestedEffectGenYield": "error",
           "newPromise": "suggestion",
-          "nodeBuiltinImport": "suggestion",
+          "nodeBuiltinImport": "error",
           "preferSchemaOverJson": "suggestion",
           "processEnv": "suggestion",
           "processEnvInEffect": "error",
