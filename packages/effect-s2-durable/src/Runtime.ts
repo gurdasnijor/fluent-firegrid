@@ -146,7 +146,9 @@ export interface DurableExecutionRuntimeApi {
 }
 
 export class DurableExecutionRuntime
-  extends Context.Service<DurableExecutionRuntime, DurableExecutionRuntimeApi>()("DurableExecutionRuntime")
+  extends Context.Service<DurableExecutionRuntime, DurableExecutionRuntimeApi>()(
+    "effect-s2-durable/Runtime/DurableExecutionRuntime",
+  )
 {
   /**
    * The S2-backed runtime layer. Requires an `S2Client`; owns its fiber scope.

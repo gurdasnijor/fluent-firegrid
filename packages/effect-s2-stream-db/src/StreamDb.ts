@@ -11,6 +11,10 @@ import * as ChangeMessage from "./ChangeMessage.ts"
 import { MaterializedState } from "./MaterializedState.ts"
 import { S2StreamDbError } from "./errors.ts"
 
+const isS2Conflict = Schema.is(S2Conflict)
+const isS2NotFound = Schema.is(S2NotFound)
+const isS2StreamDbError = Schema.is(S2StreamDbError)
+
 // ── primary key (encoded in the schema) ──────────────────────────────────────
 
 // Annotations are string-keyed in effect@4 (`Annotations.Annotations` is
@@ -240,7 +244,7 @@ export const StreamDb =
           Effect.flatMap((segment) => openStream(`${basePath}/${segment}`, tables, { create: false })),
           Effect.map(Option.some<StreamDbInstance<T>>),
           Effect.catch((error) =>
-            error instanceof S2StreamDbError && error.cause instanceof S2NotFound
+            isS2StreamDbError(error) && isS2NotFound(error.cause)
               ? Effect.succeedNone
               : Effect.fail(error)),
           withStreamDbSpan("openExisting", { basePath }),
@@ -298,6 +302,16 @@ class SnapshotBatchTooLarge extends Data.TaggedError("SnapshotBatchTooLarge")<{
   }
 }
 
+class StreamDbSchemaCodecError extends Data.TaggedError("StreamDbSchemaCodecError")<{
+  readonly cause: unknown
+}> {}
+
+const asServiceFreeEncoder = (schema: TableMeta["schema"]): Schema.Encoder<unknown, never> =>
+  schema as never
+
+const asServiceFreeDecoder = (schema: TableMeta["schema"]): Schema.Decoder<unknown, never> =>
+  schema as never
+
 type Intent =
   | { readonly _tag: "write"; readonly meta: TableMeta; readonly row: unknown }
   | { readonly _tag: "delete"; readonly meta: TableMeta; readonly key: string }
@@ -326,11 +340,16 @@ const openStream = <T extends Tables>(
     const tailRef = yield* Ref.make(0)
     const lock = yield* Semaphore.make(1)
 
-    // Concrete schemas carry no encode/decode services; pin the generic to `never`.
     const encodeSchema = (schema: TableMeta["schema"], row: unknown) =>
-      Schema.encodeUnknownEffect(schema)(row) as Effect.Effect<unknown, Schema.SchemaError>
+      Effect.try({
+        try: () => Schema.encodeUnknownSync(asServiceFreeEncoder(schema))(row),
+        catch: (cause) => new StreamDbSchemaCodecError({ cause }),
+      })
     const decodeSchema = (schema: TableMeta["schema"], encoded: unknown) =>
-      Schema.decodeUnknownEffect(schema)(encoded) as Effect.Effect<unknown, Schema.SchemaError>
+      Effect.try({
+        try: () => Schema.decodeUnknownSync(asServiceFreeDecoder(schema))(encoded),
+        catch: (cause) => new StreamDbSchemaCodecError({ cause }),
+      })
 
     const encodeRow = (meta: TableMeta, row: unknown) =>
       encodeSchema(meta.schema, row).pipe(
@@ -370,7 +389,7 @@ const openStream = <T extends Tables>(
     // applying `config` when given (basin defaults otherwise).
     if (options?.create !== false) {
       yield* client.createStream({ stream, ...(options?.config === undefined ? {} : { config: options.config }) }).pipe(
-        Effect.catch((cause) => (cause instanceof S2Conflict ? Effect.void : Effect.fail(cause))),
+        Effect.catch((cause) => (isS2Conflict(cause) ? Effect.void : Effect.fail(cause))),
         Effect.mapError(toError("createStream")),
       )
     }
@@ -383,7 +402,7 @@ const openStream = <T extends Tables>(
     yield* client.checkTail(stream).pipe(
       Effect.flatMap((tail) => (tail.tail.seqNum === 0 ? Ref.set(tailRef, 0) : preloadFrom(0))),
       Effect.catch((cause) =>
-        cause instanceof S2NotFound && swallowMissing ? Ref.set(tailRef, 0) : Effect.fail(cause)),
+        isS2NotFound(cause) && swallowMissing ? Ref.set(tailRef, 0) : Effect.fail(cause)),
       Effect.mapError(toError("preload")),
     )
 

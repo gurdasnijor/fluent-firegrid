@@ -67,13 +67,11 @@ const make: Effect.Effect<CompletionReaderApi, never, RuntimeState | RuntimeStor
       if (Option.isSome(entry)) {
         const exit = yield* Deferred.await(entry.value.deferred)
         if (Exit.isFailure(exit)) {
-          return yield* Effect.fail(
-            new DurableExecutionError({
-              operation: "attach",
-              message: `execution failed: ${Cause.pretty(exit.cause)}`,
-              cause: exit.cause,
-            }),
-          )
+          return yield* new DurableExecutionError({
+            operation: "attach",
+            message: `execution failed: ${Cause.pretty(exit.cause)}`,
+            cause: exit.cause,
+          })
         }
       }
       const row = yield* roster.get(executionId).pipe(Effect.mapError(toError("attach")))
@@ -104,7 +102,7 @@ const make: Effect.Effect<CompletionReaderApi, never, RuntimeState | RuntimeStor
 })
 
 export class CompletionReader extends Context.Service<CompletionReader, CompletionReaderApi>()(
-  "effect-s2-durable/runtime/CompletionReader",
+  "effect-s2-durable/runtime/completion/CompletionReader",
 ) {
   static readonly layer: Layer.Layer<CompletionReader, never, RuntimeState | RuntimeStores> = Layer.effect(CompletionReader, make)
 }

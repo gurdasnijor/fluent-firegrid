@@ -46,7 +46,7 @@ const make: Effect.Effect<IngressRouterApi, never, RuntimeState | RuntimeStores>
 })
 
 export class IngressRouter extends Context.Service<IngressRouter, IngressRouterApi>()(
-  "effect-s2-durable/runtime/IngressRouter",
+  "effect-s2-durable/runtime/ingress/IngressRouter",
 ) {
   static readonly layer: Layer.Layer<IngressRouter, never, RuntimeState | RuntimeStores> = Layer.effect(IngressRouter, make)
 }

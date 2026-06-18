@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- handler input/output are existential at the definition boundary; `any` is required for inference across the handler record (mirrors restate-sdk-gen's define/free). Concrete types are recovered on the client surface via HandlerInput/HandlerOutput. */
-import { Effect, type Layer, Schema } from "effect"
+import { Effect, Random, type Layer, Schema } from "effect"
 import type { S2Client } from "effect-s2"
 import { encodeObjectCallId, OBJECT_ID_PREFIX } from "./actor/core.ts"
 import { type DurableExecutionError, durableError } from "./errors.ts"
@@ -234,7 +234,10 @@ interface ObjectIdentity {
   readonly key: string
 }
 
-const freshNonce = Effect.sync(() => globalThis.crypto.randomUUID())
+const freshNonce = Effect.map(
+  Effect.all([Random.nextInt, Random.nextInt, Random.nextInt]),
+  (parts) => parts.map((part) => Math.abs(part).toString(36)).join("-"),
+)
 const nonceFor = (options: InvokeOptions | undefined) =>
   options?.idempotencyKey === undefined ? freshNonce : Effect.succeed(options.idempotencyKey)
 

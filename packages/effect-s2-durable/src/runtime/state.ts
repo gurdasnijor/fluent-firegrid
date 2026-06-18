@@ -27,7 +27,7 @@ const make = (
   })
 
 export class RuntimeState extends Context.Service<RuntimeState, RuntimeStateApi>()(
-  "effect-s2-durable/runtime/RuntimeState",
+  "effect-s2-durable/runtime/state/RuntimeState",
 ) {
   static layer(
     handlers: ReadonlyArray<RegisteredHandler>,

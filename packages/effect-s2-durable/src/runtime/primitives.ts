@@ -8,6 +8,8 @@ import {
   decodeRowFor,
   encode,
   encodeRowFor,
+  asServiceFreeDecoder,
+  asServiceFreeEncoder,
   fail,
   pkOf,
   resolvedValue,
@@ -93,24 +95,24 @@ const make: Effect.Effect<PrimitiveInterpreterApi, never, RuntimeState | Runtime
         const existing = yield* journal.get(stepName)
         if (Option.isSome(existing)) {
           const row = existing.value
-          if (row.success) return options?.output ? yield* decode(options.output, row.value) : (row.value as A)
-          const error = options?.error ? yield* decode(options.error, row.error) : (row.error as E)
+          if (row.success) return options?.output !== undefined ? yield* decode(options.output, row.value) : (row.value as A)
+          const error = options?.error !== undefined ? yield* decode(options.error, row.error) : (row.error as E)
           return yield* Effect.fail(error)
         }
 
-        const attempted = options?.retry
+        const attempted = options?.retry !== undefined
           ? action.pipe(
             Effect.retry({ schedule: scheduleOf(options.retry), times: Math.max(0, options.retry.maxAttempts - 1) }),
           )
           : action
         const outcome = yield* Effect.exit(attempted)
         if (Exit.isSuccess(outcome)) {
-          const value = options?.output ? yield* encode(options.output, outcome.value) : outcome.value
+          const value = options?.output !== undefined ? yield* encode(options.output, outcome.value) : outcome.value
           yield* journal.put(stepName, { success: true, value })
           return outcome.value
         }
         const failure = Cause.findErrorOption(outcome.cause)
-        if (options?.error && Option.isSome(failure)) {
+        if (options?.error !== undefined && Option.isSome(failure)) {
           const error = yield* encode(options.error, failure.value)
           yield* journal.put(stepName, { success: false, error })
         }
@@ -187,11 +189,15 @@ const make: Effect.Effect<PrimitiveInterpreterApi, never, RuntimeState | Runtime
           const readKey = `${active.executionId}/read/${ordinal}`
           const readCodec = Schema.NullOr(table.schema)
           const decodeRead = (encoded: unknown) =>
-            (Schema.decodeUnknownEffect(readCodec)(encoded) as Effect.Effect<RowOf<Tbl> | null, Schema.SchemaError>)
-              .pipe(Effect.mapError(toError("state.get")))
+            Effect.try({
+              try: () => Schema.decodeUnknownSync(asServiceFreeDecoder(readCodec))(encoded),
+              catch: toError("state.get"),
+            })
           const encodeRead = (value: RowOf<Tbl> | null) =>
-            (Schema.encodeUnknownEffect(readCodec)(value) as Effect.Effect<unknown, Schema.SchemaError>)
-              .pipe(Effect.mapError(toError("state.get")))
+            Effect.try({
+              try: () => Schema.encodeUnknownSync(asServiceFreeEncoder(readCodec))(value),
+              catch: toError("state.get"),
+            })
 
           const recorded = yield* active.db.stateReads.get(readKey).pipe(Effect.mapError(toError("state.get")))
           if (Option.isSome(recorded)) {
@@ -328,7 +334,7 @@ const make: Effect.Effect<PrimitiveInterpreterApi, never, RuntimeState | Runtime
 })
 
 export class PrimitiveInterpreter extends Context.Service<PrimitiveInterpreter, PrimitiveInterpreterApi>()(
-  "effect-s2-durable/runtime/PrimitiveInterpreter",
+  "effect-s2-durable/runtime/primitives/PrimitiveInterpreter",
 ) {
   static readonly layer: Layer.Layer<PrimitiveInterpreter, never, RuntimeState | RuntimeStores> = Layer.effect(
     PrimitiveInterpreter,

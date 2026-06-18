@@ -6,6 +6,12 @@ import type { RetryPolicy } from "../types.ts"
 
 export const toError = durableError
 
+export const asServiceFreeEncoder = (schema: Schema.Top): Schema.Encoder<unknown, never> =>
+  schema as never
+
+export const asServiceFreeDecoder = (schema: Schema.Top): Schema.Decoder<unknown, never> =>
+  schema as never
+
 export const fail = (operation: string, message: string): Effect.Effect<never, DurableExecutionError> =>
   Effect.fail(new DurableExecutionError({ operation, message, cause: undefined }))
 
@@ -28,14 +34,16 @@ export const scheduleOf = (policy: RetryPolicy): Schedule.Schedule<Duration.Dura
   Schedule.exponential(policy.initialInterval ?? Duration.millis(100), policy.intervalFactor ?? 2)
 
 export const encodeRowFor = (table: AnyTable, row: unknown): Effect.Effect<unknown, DurableExecutionError> =>
-  (Schema.encodeUnknownEffect(table.schema)(row) as Effect.Effect<unknown, Schema.SchemaError>).pipe(
-    Effect.mapError(durableError("state.set")),
-  )
+  Effect.try({
+    try: () => Schema.encodeUnknownSync(asServiceFreeEncoder(table.schema))(row),
+    catch: durableError("state.set"),
+  })
 
 export const decodeRowFor = (table: AnyTable, encoded: unknown): Effect.Effect<unknown, DurableExecutionError> =>
-  (Schema.decodeUnknownEffect(table.schema)(encoded) as Effect.Effect<unknown, Schema.SchemaError>).pipe(
-    Effect.mapError(durableError("state.get")),
-  )
+  Effect.try({
+    try: () => Schema.decodeUnknownSync(asServiceFreeDecoder(table.schema))(encoded),
+    catch: durableError("state.get"),
+  })
 
 export const pkOf = (table: AnyTable, row: unknown): string => String((row as Record<string, unknown>)[table.pkField])
 

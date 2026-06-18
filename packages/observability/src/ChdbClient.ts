@@ -50,7 +50,7 @@ const escapeString = (s: string): string => s.replace(/\\/g, "\\\\").replace(/'/
 const codeFromMessage = (cause: unknown): number | undefined => {
   const msg = cause instanceof Error ? cause.message : String(cause)
   const m = /Code:\s*(\d+)/.exec(msg)
-  return m ? Number(m[1]) : undefined
+  return m !== null ? Number(m[1]) : undefined
 }
 
 const SYNTAX_CODES = new Set([36, 47, 60, 62, 81, 242])
@@ -147,7 +147,7 @@ export const makeCompiler = (transform?: (_: string) => string) =>
     placeholder(_i, u) {
       return defaultLiteral(u) // render the literal in place; no {pN: Type}
     },
-    onIdentifier: transform
+    onIdentifier: transform !== undefined
       ? (value, withoutTransform) => (withoutTransform ? escape(value) : escape(transform(value)))
       : escape,
     onRecordUpdate() {
@@ -177,8 +177,9 @@ export interface ChdbClientConfig {
   readonly transformQueryNames?: (str: string) => string
 }
 
-export type ChdbSession = Session
-export const ChdbSession = Context.Service<ChdbSession>("@chdb/Session")
+export class ChdbSession extends Context.Service<ChdbSession, Session>()(
+  "@firegrid/observability/ChdbClient/ChdbSession",
+) {}
 
 export interface ChdbNative {
   readonly query: (sql: string, format?: string) => Effect.Effect<string, SqlError>
@@ -189,7 +190,7 @@ export interface ChdbNative {
   readonly queryStream: (sql: string, options?: StreamOptions) => Effect.Effect<ChdbQueryStream, SqlError>
 }
 
-export interface ChdbClient extends Client.SqlClient {
+export interface ChdbClientApi extends Client.SqlClient {
   readonly config: ChdbClientConfig
   readonly native: ChdbNative
   /** Typed literal fragment for a query parameter, e.g. param(Ch.Int64, 5n). */
@@ -209,7 +210,9 @@ export interface ChdbClient extends Client.SqlClient {
   readonly asCommand: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
 }
 
-export const ChdbClient = Context.Service<ChdbClient>("@chdb/ChdbClient")
+export class ChdbClient extends Context.Service<ChdbClient, ChdbClientApi>()(
+  "@firegrid/observability/ChdbClient",
+) {}
 
 const renderSetting = (v: string | number | boolean): string =>
   typeof v === "string" ? `'${escapeString(v)}'` : typeof v === "boolean" ? (v ? "1" : "0") : String(v)
@@ -231,8 +234,8 @@ const openSession = (options: ChdbClientConfig): Effect.Effect<Session, SqlError
 const bootstrapSession = (session: Session, options: ChdbClientConfig): Effect.Effect<void, SqlError> =>
   Effect.try({
     try: () => {
-      if (options.database) session.query(`CREATE DATABASE IF NOT EXISTS ${options.database}; USE ${options.database}`)
-      if (options.settings) {
+      if (options.database !== undefined) session.query(`CREATE DATABASE IF NOT EXISTS ${options.database}; USE ${options.database}`)
+      if (options.settings !== undefined) {
         Object.entries(options.settings).forEach(([k, v]) => session.query(`SET ${k} = ${renderSetting(v)}`))
       }
       session.query("SELECT 1")
@@ -243,10 +246,10 @@ const bootstrapSession = (session: Session, options: ChdbClientConfig): Effect.E
 export const makeWithSession = (
   session: Session,
   options: ChdbClientConfig,
-): Effect.Effect<ChdbClient, SqlError, Reactivity.Reactivity> =>
+): Effect.Effect<ChdbClientApi, SqlError, Reactivity.Reactivity> =>
   Effect.gen(function*() {
     const compiler = makeCompiler(options.transformQueryNames)
-    const transformRows = options.transformResultNames
+    const transformRows = options.transformResultNames !== undefined
       ? Statement.defaultTransforms(options.transformResultNames).array
       : undefined
 
@@ -299,11 +302,11 @@ export const makeWithSession = (
 
     const parseJson = (s: string): unknown => JSON.parse(s) as unknown
     const parseEachRow = (s: string): ReadonlyArray<Row> =>
-      s.trim()
+      s.trim() !== ""
         ? s.trim().split("\n").map((line) => parseJson(line) as Row)
         : []
     const parseCompactEachRow = (s: string): ReadonlyArray<ReadonlyArray<unknown>> =>
-      s.trim()
+      s.trim() !== ""
         ? s.trim().split("\n").map((line) => {
           const row = parseJson(line)
           return Array.isArray(row) ? row as ReadonlyArray<unknown> : [row]
@@ -312,7 +315,7 @@ export const makeWithSession = (
     const applyTransformRows = (
       rows: ReadonlyArray<Row>,
       transformRows: TransformRows | undefined,
-    ): ReadonlyArray<Row> => transformRows ? transformRows(rows) : rows
+    ): ReadonlyArray<Row> => transformRows !== undefined ? transformRows(rows) : rows
 
     class ConnectionImpl implements Connection {
       // params are already inlined as literals by the compiler, so they're unused here
@@ -328,7 +331,7 @@ export const makeWithSession = (
         return Effect.map(this.run(sql, params), (rows) => applyTransformRows(rows, transformRows))
       }
       executeRaw(sql: string, _params: ReadonlyArray<unknown>) {
-        return Effect.map(runString(sql, "JSON"), (s) => (s.trim() ? parseJson(s) : { data: [] }))
+        return Effect.map(runString(sql, "JSON"), (s) => (s.trim() !== "" ? parseJson(s) : { data: [] }))
       }
       executeValues(sql: string, _params: ReadonlyArray<unknown>) {
         return Effect.map(runString(sql, "JSONCompactEachRow"), parseCompactEachRow)
@@ -353,7 +356,7 @@ export const makeWithSession = (
         acquirer: Effect.succeed(connection),
         compiler,
         spanAttributes: [
-          ...(options.spanAttributes ? Object.entries(options.spanAttributes) : []),
+          ...(options.spanAttributes !== undefined ? Object.entries(options.spanAttributes) : []),
           [ATTR_DB_SYSTEM_NAME, "clickhouse"],
           [ATTR_DB_NAMESPACE, options.database ?? "default"],
         ],
@@ -389,12 +392,12 @@ export const makeWithSession = (
           return Effect.provideService(effect, ClientMethod, "command")
         },
       },
-    ) as ChdbClient
+    ) as ChdbClientApi
   })
 
 export const make = (
   options: ChdbClientConfig,
-): Effect.Effect<ChdbClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
+): Effect.Effect<ChdbClientApi, SqlError, Scope.Scope | Reactivity.Reactivity> =>
   Effect.gen(function*() {
     const session = yield* openSession(options)
     yield* bootstrapSession(session, options)

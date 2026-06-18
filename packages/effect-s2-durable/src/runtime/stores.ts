@@ -27,7 +27,7 @@ const make = (): Effect.Effect<RuntimeStoresApi, DurableExecutionError, S2Client
   })
 
 export class RuntimeStores extends Context.Service<RuntimeStores, RuntimeStoresApi>()(
-  "effect-s2-durable/runtime/RuntimeStores",
+  "effect-s2-durable/runtime/stores/RuntimeStores",
 ) {
   static readonly layer: Layer.Layer<RuntimeStores, DurableExecutionError, S2Client> = Layer.effect(
     RuntimeStores,

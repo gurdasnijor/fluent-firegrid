@@ -226,7 +226,7 @@ export interface S2ClientApi {
   ) => Effect.Effect<S2Producer, S2ClientError, Scope.Scope>
 }
 
-export class S2Client extends Context.Service<S2Client, S2ClientApi>()("S2Client") {
+export class S2Client extends Context.Service<S2Client, S2ClientApi>()("effect-s2/S2Client") {
   static readonly listBasins = (
     args?: ListBasinsInput,
     options?: S2RequestOptions,

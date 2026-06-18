@@ -12,6 +12,10 @@ import {
 import { DurableExecutionError, durableError as toError } from "../errors.ts"
 import { ActorEvent, type LogEntry } from "./core.ts"
 
+const isS2Conflict = Schema.is(S2Conflict)
+const isS2NotFound = Schema.is(S2NotFound)
+const isS2RangeNotSatisfiable = Schema.is(S2RangeNotSatisfiable)
+
 /**
  * The effectful read/write surface of one owner stream as an ordered `ActorEvent`
  * log. Reads via `effect-s2.readDecoded`, writes via `publish`/`conditionalAppend`
@@ -35,14 +39,14 @@ export interface ActorLog {
 // An absent stream surfaces as 404 and an empty one as 416; the streaming read can
 // carry the base S2Error rather than the subtype, so match on status too.
 const isMissing = (cause: unknown): boolean => {
-  if (cause instanceof S2NotFound || cause instanceof S2RangeNotSatisfiable) {
+  if (isS2NotFound(cause) || isS2RangeNotSatisfiable(cause)) {
     return true
   }
   const status = (cause as { readonly status?: unknown }).status
   return status === 404 || status === 416
 }
 
-const isCasLoss = (cause: unknown): boolean => cause instanceof S2Conflict || cause instanceof SeqNumMismatchError
+const isCasLoss = (cause: unknown): boolean => isS2Conflict(cause) || cause instanceof SeqNumMismatchError
 
 /** Open the actor log over an already-derived stream path. */
 export const openLog = (streamName: string): ActorLog => {

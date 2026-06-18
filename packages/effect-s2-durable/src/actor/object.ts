@@ -19,6 +19,8 @@ import {
 } from "./core.ts"
 import { type ActorLog, openLog } from "./log.ts"
 
+const isS2Conflict = Schema.is(S2Conflict)
+
 /**
  * `InvocationStore` — the object-backed durable store the runtime's object call
  * path uses (consolidation SDD). It owns owner-stream access, admission, the
@@ -143,7 +145,7 @@ const ownerStream = (object: string, key: string): Effect.Effect<string, Durable
 const ensureStream = (stream: string): Effect.Effect<void, DurableExecutionError, S2Client> =>
   S2Client.createStream({ stream }).pipe(
     Effect.asVoid,
-    Effect.catch((cause) => (cause instanceof S2Conflict ? Effect.void : Effect.fail(cause))),
+    Effect.catch((cause) => (isS2Conflict(cause) ? Effect.void : Effect.fail(cause))),
     Effect.mapError(toError("object.ensure")),
   )
 
@@ -327,9 +329,11 @@ const make = (): Effect.Effect<InvocationStoreApi> =>
               return { _tag: "Admitted" as const }
             }
             if (remaining <= 0) {
-              return yield* Effect.fail(
-                new DurableExecutionError({ operation: "object.admit", message: "admission CAS exhausted", cause: undefined }),
-              )
+              return yield* new DurableExecutionError({
+                operation: "object.admit",
+                message: "admission CAS exhausted",
+                cause: undefined,
+              })
             }
             return yield* attempt(remaining - 1) // a concurrent writer won; re-read and retry
           })
@@ -461,7 +465,7 @@ const make = (): Effect.Effect<InvocationStoreApi> =>
   })
 
 export class InvocationStore extends Context.Service<InvocationStore, InvocationStoreApi>()(
-  "effect-s2-durable/InvocationStore",
+  "effect-s2-durable/actor/object/InvocationStore",
 ) {
   static readonly layer = Layer.effect(InvocationStore, make())
 }
