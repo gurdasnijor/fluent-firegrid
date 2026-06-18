@@ -1,4 +1,4 @@
-const tagFilter = process.env.CUCUMBER_TAGS ?? "not @spec-only"
+const tagFilter = process.env.CUCUMBER_TAGS
 
 const config = {
   paths: ["features/**/*.feature"],
