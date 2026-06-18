@@ -1,5 +1,8 @@
 packages:
   - packages/*
 
+onlyBuiltDependencies:
+  - chdb
+
 patchedDependencies:
   '@codeforbreakfast/eslint-effect@0.8.5': patches/@codeforbreakfast__eslint-effect@0.8.5.patch

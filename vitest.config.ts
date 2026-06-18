@@ -14,6 +14,13 @@ export default defineConfig({
       }),
       defineProject({
         test: {
+          name: "observability",
+          include: ["packages/observability/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"],
+        },
+      }),
+      defineProject({
+        test: {
           name: "effect-s2",
           include: ["packages/effect-s2/test/**/*.test.ts"],
           exclude: ["**/node_modules/**"],
