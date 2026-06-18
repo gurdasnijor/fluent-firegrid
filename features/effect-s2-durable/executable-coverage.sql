@@ -36,6 +36,32 @@ SELECT
   ) AS ok
 FROM ordered
 
+-- name: object_recovery_trace
+WITH
+  ordered AS (
+    SELECT
+      toUInt64(toUnixTimestamp64Nano(Timestamp)) AS ts,
+      SpanName
+    FROM scenario_spans
+  ),
+  signal_resolutions AS (
+    SELECT count() AS n
+    FROM scenario_spans
+    WHERE SpanName = 'effect-s2-durable.resolveSignal'
+  )
+SELECT
+  countIf(SpanName = 'effect-s2-durable.object.admit') = 1
+  AND countIf(SpanName = 'effect-s2-durable.object.drain') >= 2
+  AND countIf(SpanName = 'effect-s2-durable.object.ownerKeys') >= 4
+  AND countIf(SpanName = 'effect-s2-durable.object.boot-recover') >= 2
+  AND sequenceMatch('(?1).*(?2)')(
+    ts,
+    SpanName = 'effect-s2-durable.object.admit',
+    SpanName = 'effect-s2-durable.resolveSignal'
+  )
+  AND (SELECT n FROM signal_resolutions) = 1 AS ok
+FROM ordered
+
 -- name: signal_trace
 WITH ordered AS (
   SELECT

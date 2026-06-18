@@ -21,8 +21,17 @@ Feature: effect-s2-durable executable coverage
   @sql:signal_trace
   Scenario: externally resolved signals resume a waiting durable service execution
     When I send a Waiter execution waiting on signal "ready"
+    Then polling the Waiter execution is pending
     And I resolve signal "ready" with "ok" for the Waiter execution
     Then attaching the Waiter execution returns "resolved:ok"
+
+  @sql:object_recovery_trace
+  Scenario: object boot recovery resumes a parked pending head after a fresh runtime boundary
+    Given a durable Gate owner
+    When I send Gate.wait for signal "open" and value "object"
+    Then polling the Gate execution is pending
+    When I resolve signal "open" with "ok" for the Gate execution after a fresh runtime boundary
+    Then attaching the Gate execution returns "object:ok"
 
   @sql:workflow_trace
   Scenario: workflows are run-once objects with shared promise resolution

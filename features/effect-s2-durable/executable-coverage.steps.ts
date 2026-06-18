@@ -8,6 +8,7 @@ import {
   object,
   objectClient,
   objectSendClient,
+  poll,
   resolvePromise,
   resolveSignal,
   run,
@@ -118,6 +119,22 @@ const Router = object({
   },
 })
 
+const Gate = object({
+  name: "cucumber-gate",
+  handlers: {
+    *wait(input: { readonly signalName: string; readonly value: string }) {
+      const opened = yield* signal(input.signalName, Schema.String)
+      return `${input.value}:${opened}`
+    },
+  },
+  schemas: {
+    wait: {
+      input: Schema.Struct({ signalName: Schema.String, value: Schema.String }),
+      output: Schema.String,
+    },
+  },
+})
+
 const ApprovalWorkflow = workflow({
   name: "cucumber-approval-workflow",
   *run(input: number) {
@@ -146,6 +163,9 @@ interface DurableProofState {
   object: {
     counterKey?: string
     routerKey?: string
+    gateKey?: string
+    gateId?: string
+    gateResult?: string
     first?: number
     second?: number
     shared?: number
@@ -203,7 +223,7 @@ const withCalculator = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.provide(serviceLayer(Calculator)))
 
 const withObjects = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(Effect.provide(serviceLayer(Counter, Router)))
+  effect.pipe(Effect.provide(serviceLayer(Counter, Router, Gate)))
 
 const withWaiter = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.provide(serviceLayer(Waiter)))
@@ -315,6 +335,41 @@ const sendCounterThroughRouter = (world: IWorld, amount: number) =>
     stateFor(world).object.sent = sent
   })
 
+const initializeGateOwner = (world: IWorld): void => {
+  stateFor(world).object.gateKey = scenarioKey(world, "gate")
+}
+
+const sendGateWait = (world: IWorld, signalName: string, value: string) =>
+  Effect.gen(function*() {
+    const gateKey = requireValue(stateFor(world).object.gateKey, "Gate owner key")
+    const gateId = yield* sendClient(Gate, gateKey).wait(
+      { signalName, value },
+      { idempotencyKey: scenarioKey(world, `gate-wait-${signalName}`) },
+    )
+    stateFor(world).object.gateId = gateId
+  })
+
+const pollGateExecution = (world: IWorld) =>
+  Effect.gen(function*() {
+    const gateId = requireValue(stateFor(world).object.gateId, "Gate execution id")
+    const result = yield* poll(gateId, Schema.String)
+    assert.equal(Option.isNone(result), true)
+  })
+
+const resolveGateSignal = (world: IWorld, signalName: string, value: string) =>
+  Effect.gen(function*() {
+    const gateId = requireValue(stateFor(world).object.gateId, "Gate execution id")
+    yield* resolveSignal(gateId, signalName, Schema.String, value)
+  })
+
+const attachGateExecution = (world: IWorld, expected: string) =>
+  Effect.gen(function*() {
+    const gateId = requireValue(stateFor(world).object.gateId, "Gate execution id")
+    const result = yield* attach(gateId, Schema.String)
+    stateFor(world).object.gateResult = result
+    assert.equal(result, expected)
+  })
+
 Given("a durable Counter owner and Router owner", function(this: IWorld) {
   initializeCounterOwners(this)
 })
@@ -351,10 +406,45 @@ Then("the Counter object observed first {int}, second {int}, shared {int}, and s
   assert.equal(actual.sent, sent)
 })
 
+Given("a durable Gate owner", function(this: IWorld) {
+  initializeGateOwner(this)
+})
+
+When("I send Gate.wait for signal {string} and value {string}", function(
+  this: IWorld,
+  signalName: string,
+  value: string,
+) {
+  return withObjects(sendGateWait(this, signalName, value))
+})
+
+Then("polling the Gate execution is pending", function(this: IWorld) {
+  return withObjects(pollGateExecution(this))
+})
+
+When("I resolve signal {string} with {string} for the Gate execution after a fresh runtime boundary", function(
+  this: IWorld,
+  signalName: string,
+  value: string,
+) {
+  return withObjects(resolveGateSignal(this, signalName, value))
+})
+
+Then("attaching the Gate execution returns {string}", function(this: IWorld, expected: string) {
+  return withObjects(attachGateExecution(this, expected))
+})
+
 const sendWaitingExecution = (world: IWorld, name: string) =>
   Effect.gen(function*() {
     const id = yield* sendClient(Waiter).wait(name, { idempotencyKey: scenarioKey(world, `waiter-${name}`) })
     stateFor(world).signal.id = id
+  })
+
+const pollWaiterExecution = (world: IWorld) =>
+  Effect.gen(function*() {
+    const id = requireValue(stateFor(world).signal.id, "Waiter execution id")
+    const result = yield* poll(id, Schema.String)
+    assert.equal(Option.isNone(result), true)
   })
 
 const resolveWaiterSignal = (world: IWorld, name: string, value: string) =>
@@ -373,6 +463,10 @@ const attachWaiterExecution = (world: IWorld, expected: string) =>
 
 When("I send a Waiter execution waiting on signal {string}", function(this: IWorld, name: string) {
   return withWaiter(sendWaitingExecution(this, name))
+})
+
+Then("polling the Waiter execution is pending", function(this: IWorld) {
+  return withWaiter(pollWaiterExecution(this))
 })
 
 When("I resolve signal {string} with {string} for the Waiter execution", function(
