@@ -1,4 +1,4 @@
-import { After, AfterAll, Before, BeforeAll, World, type ITestCaseHookParameter, type IWorldOptions } from "@cucumber/cucumber"
+import { After, AfterAll, Before, BeforeAll, type ITestCaseHookParameter, type IWorld } from "@cucumber/cucumber"
 import * as NodeSdk from "@effect/opentelemetry/NodeSdk"
 import { ChdbClient, ChdbSession, ChdbSpanExporter, layer as ChdbLayer } from "@firegrid/observability"
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base"
@@ -12,29 +12,33 @@ interface ProofBlock {
   readonly sql: string
 }
 
+interface ScenarioState {
+  readonly scenarioId: string
+  readonly proofs: Array<ProofBlock>
+}
+
 export type HarnessServices = S2Client | ChdbSession | ChdbClient
 
 // eslint-disable-next-line local/no-module-durable-cache -- Cucumber run-scoped harness runtime; product durability still lives in S2.
 let runtime: ManagedRuntime.ManagedRuntime<HarnessServices, unknown> | undefined
 // eslint-disable-next-line local/no-module-durable-cache -- Cucumber run-scoped trace exporter handle for per-scenario forceFlush.
 let processor: BatchSpanProcessor | undefined
+const states = new WeakMap<IWorld, ScenarioState>()
 
-export class FiregridWorld extends World {
-  scenarioId = ""
-  proofs: Array<ProofBlock> = []
-
-  constructor(options: IWorldOptions) {
-    super(options)
+const stateFor = (world: IWorld): ScenarioState => {
+  const state = states.get(world)
+  if (state === undefined) {
+    throw new Error("scenario state is not initialized")
   }
-
-  addTraceProof(sql: string): void {
-    this.proofs.push({ sql })
-  }
-
-  scenarioKey(key: string): string {
-    return `${this.scenarioId.replace(/[^A-Za-z0-9_.-]/g, "-")}-${key}`
-  }
+  return state
 }
+
+export const addTraceProof = (world: IWorld, sql: string): void => {
+  stateFor(world).proofs.push({ sql })
+}
+
+export const scenarioKey = (world: IWorld, key: string): string =>
+  `${stateFor(world).scenarioId.replace(/[^A-Za-z0-9_.-]/g, "-")}-${key}`
 
 const scenarioIdFor = (scenario: ITestCaseHookParameter): string =>
   scenario.pickle.id
@@ -137,9 +141,11 @@ const spanSummary = (scenarioId: string): Effect.Effect<string, unknown, ChdbCli
       : counts.map((span) => `${span.count} ${span.name}`).join("\n")
   })
 
-Before(function(this: FiregridWorld, scenario) {
-  this.scenarioId = scenarioIdFor(scenario)
-  this.proofs = []
+Before(function(this: IWorld, scenario) {
+  states.set(this, {
+    scenarioId: scenarioIdFor(scenario),
+    proofs: [],
+  })
 })
 
 BeforeAll(async function() {
@@ -164,28 +170,33 @@ BeforeAll(async function() {
   processor = nextProcessor
 })
 
-After(async function(this: FiregridWorld) {
+After(async function(this: IWorld) {
   const activeRuntime = runtime
-  if (activeRuntime === undefined) return
-  if (processor !== undefined) {
-    await processor.forceFlush()
+  const state = stateFor(this)
+  try {
+    if (activeRuntime === undefined) return
+    if (processor !== undefined) {
+      await processor.forceFlush()
+    }
+    const [spans, coverage] = await Promise.all([
+      activeRuntime.runPromise(spanCounts(state.scenarioId)),
+      activeRuntime.runPromise(traceCoverage(state.scenarioId)),
+    ])
+    recordScenarioReport({
+      scenarioId: state.scenarioId,
+      proofs: state.proofs.length,
+      spans,
+      coverage,
+    })
+    await Promise.all(state.proofs.map(async(proof) => {
+      const result = await activeRuntime.runPromise(runTraceProofSql(proof.sql, state.scenarioId))
+      if (result.ok === true) return
+      const observed = await activeRuntime.runPromise(spanSummary(state.scenarioId))
+      throw new Error(`trace proof failed: ${result.reason}\n\n${proof.sql}\n\nObserved spans:\n${observed}`)
+    }))
+  } finally {
+    states.delete(this)
   }
-  const [spans, coverage] = await Promise.all([
-    activeRuntime.runPromise(spanCounts(this.scenarioId)),
-    activeRuntime.runPromise(traceCoverage(this.scenarioId)),
-  ])
-  recordScenarioReport({
-    scenarioId: this.scenarioId,
-    proofs: this.proofs.length,
-    spans,
-    coverage,
-  })
-  await Promise.all(this.proofs.map(async(proof) => {
-    const result = await activeRuntime.runPromise(runTraceProofSql(proof.sql, this.scenarioId))
-    if (result.ok === true) return
-    const observed = await activeRuntime.runPromise(spanSummary(this.scenarioId))
-    throw new Error(`trace proof failed: ${result.reason}\n\n${proof.sql}\n\nObserved spans:\n${observed}`)
-  }))
 })
 
 AfterAll(async function() {
@@ -199,17 +210,18 @@ AfterAll(async function() {
 })
 
 export const runSpecEffect = <A, E, R extends HarnessServices>(
-  world: FiregridWorld,
+  world: IWorld,
   effect: Effect.Effect<A, E, R>,
 ): Promise<A> => {
   if (runtime === undefined) {
     throw new Error("spec runtime is not initialized")
   }
+  const state = stateFor(world)
   return runtime.runPromise(
     effect.pipe(
       Effect.withSpan("firegrid.scenario", {
         attributes: {
-          "firegrid.scenario.id": world.scenarioId,
+          "firegrid.scenario.id": state.scenarioId,
         },
       }),
     ),

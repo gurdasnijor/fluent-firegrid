@@ -1,45 +1,76 @@
-import { Then } from "@cucumber/cucumber"
+import { Given, Then, When, type IWorld } from "@cucumber/cucumber"
 import { strict as assert } from "node:assert"
-import { Effect, Option } from "effect"
-import { GivenEffect, ThenEffect, WhenEffect } from "../support/effect_steps.ts"
-import type { FiregridWorld } from "../support/world.ts"
+import { Effect, Option, Schema } from "effect"
+import { primaryKey, StreamDb, Table } from "effect-s2-stream-db"
+import type { StreamDbInstance } from "effect-s2-stream-db"
+import { addTraceProof, scenarioKey } from "../../packages/spec-harness/src/runtime.ts"
 
-GivenEffect("an open storage db with infinite retention at key {string}", function(
-  this: FiregridWorld,
+class Item extends Table<Item>("items")({
+  id: Schema.String.pipe(primaryKey),
+  value: Schema.Number,
+}) {}
+
+class Note extends Table<Note>("notes")({
+  key: Schema.String.pipe(primaryKey),
+  text: Schema.String,
+}) {}
+
+class StorageDb extends StreamDb<StorageDb>("cucumber-storage-primitives")({ items: Item, notes: Note }) {}
+
+type StorageDbInstance = StreamDbInstance<{ readonly items: typeof Item; readonly notes: typeof Note }>
+
+interface StorageState {
+  db?: StorageDbInstance
+  key?: string
+}
+
+const storageStates = new WeakMap<IWorld, StorageState>()
+
+const storageStateFor = (world: IWorld): StorageState => {
+  let state = storageStates.get(world)
+  if (state === undefined) {
+    state = {}
+    storageStates.set(world, state)
+  }
+  return state
+}
+
+Given("an open storage db with infinite retention at key {string}", function(
+  this: IWorld,
   key: string,
 ) {
-  const actualKey = this.scenarioKey(key)
-  this.storagePrimitives.key = actualKey
-  return this.storagePrimitives.StorageDb.open(
+  const state = storageStateFor(this)
+  const actualKey = scenarioKey(this, key)
+  state.key = actualKey
+  return StorageDb.open(
     actualKey,
     { config: { retentionPolicy: { infinite: {} } } },
   ).pipe(
     Effect.tap((db) =>
       Effect.sync(() => {
-        this.storagePrimitives.db = db
+        state.db = db
       })),
   )
 })
 
-WhenEffect("I insert item {string} value {int}", function(this: FiregridWorld, id: string, value: number) {
+When("I insert item {string} value {int}", function(this: IWorld, id: string, value: number) {
   return storageDbFor(this).items.insert({ id, value })
 })
 
-WhenEffect("I upsert item {string} value {int}", function(this: FiregridWorld, id: string, value: number) {
+When("I upsert item {string} value {int}", function(this: IWorld, id: string, value: number) {
   return storageDbFor(this).items.upsert({ id, value })
 })
 
-WhenEffect("I delete item {string}", function(this: FiregridWorld, id: string) {
+When("I delete item {string}", function(this: IWorld, id: string) {
   return storageDbFor(this).items.delete(id)
 })
 
-WhenEffect("I checkpoint", function(this: FiregridWorld) {
+When("I checkpoint", function(this: IWorld) {
   return storageDbFor(this).checkpoint
 })
 
-ThenEffect("reopening, item {string} is {int}", function(this: FiregridWorld, id: string, expected: number) {
+Then("reopening, item {string} is {int}", function(this: IWorld, id: string, expected: number) {
   const key = storageKeyFor(this)
-  const { StorageDb } = this.storagePrimitives
   return Effect.gen(function*() {
     const db = yield* StorageDb.open(key)
     const actual = yield* db.items.get(id)
@@ -47,9 +78,8 @@ ThenEffect("reopening, item {string} is {int}", function(this: FiregridWorld, id
   })
 })
 
-ThenEffect("reopening, item {string} is absent", function(this: FiregridWorld, id: string) {
+Then("reopening, item {string} is absent", function(this: IWorld, id: string) {
   const key = storageKeyFor(this)
-  const { StorageDb } = this.storagePrimitives
   return Effect.gen(function*() {
     const db = yield* StorageDb.open(key)
     const actual = yield* db.items.get(id)
@@ -57,20 +87,20 @@ ThenEffect("reopening, item {string} is absent", function(this: FiregridWorld, i
   })
 })
 
-Then("the trace should satisfy:", function(this: FiregridWorld, sql: string) {
-  this.addTraceProof(sql)
+Then("the trace should satisfy:", function(this: IWorld, sql: string) {
+  addTraceProof(this, sql)
 })
 
-const storageDbFor = (world: FiregridWorld) => {
-  const db = world.storagePrimitives.db
+const storageDbFor = (world: IWorld) => {
+  const db = storageStateFor(world).db
   if (db === undefined) {
     throw new Error("storage db is not open")
   }
   return db
 }
 
-const storageKeyFor = (world: FiregridWorld): string => {
-  const key = world.storagePrimitives.key
+const storageKeyFor = (world: IWorld): string => {
+  const key = storageStateFor(world).key
   if (key === undefined) {
     throw new Error("storage db key is not set")
   }
