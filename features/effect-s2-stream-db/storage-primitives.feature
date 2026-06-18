@@ -2,7 +2,7 @@
 Feature: Storage primitives
 
   Scenario: checkpoint snapshots the live set and reopens from the compacted stream
-    Given an open stream-db:retained at key "cart"
+    Given an open storage db with infinite retention at key "cart"
     When I insert item "a" value 1
     And I upsert item "a" value 2
     And I insert item "b" value 3

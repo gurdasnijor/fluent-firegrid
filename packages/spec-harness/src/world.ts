@@ -1,4 +1,4 @@
-import { After, Before, setWorldConstructor, World, type ITestCaseHookParameter, type IWorldOptions } from "@cucumber/cucumber"
+import { After, Before, World, type ITestCaseHookParameter, type IWorldOptions } from "@cucumber/cucumber"
 import * as NodeSdk from "@effect/opentelemetry/NodeSdk"
 import { ChdbClient, ChdbSession, ChdbSpanExporter, layer as ChdbLayer } from "@firegrid/observability"
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base"
@@ -17,15 +17,47 @@ export class FiregridWorld extends World {
   proofs: Array<ProofBlock> = []
   processor?: BatchSpanProcessor
   runtime?: ManagedRuntime.ManagedRuntime<S2Client | ChdbSession | ChdbClient, unknown>
-  streamDb?: unknown
-  streamDbKey?: string
+  private readonly state = new Map<string, unknown>()
 
   constructor(options: IWorldOptions) {
     super(options)
   }
-}
 
-setWorldConstructor(FiregridWorld)
+  addTraceProof(sql: string): void {
+    this.proofs.push({ sql })
+  }
+
+  scenarioKey(key: string): string {
+    return `${this.scenarioId.replace(/[^A-Za-z0-9_.-]/g, "-")}-${key}`
+  }
+
+  getState<A>(key: string): A | undefined {
+    return this.state.get(key) as A | undefined
+  }
+
+  setState<A>(key: string, value: A): void {
+    this.state.set(key, value)
+  }
+
+  run<A, E, R extends S2Client>(
+    step: string,
+    effect: Effect.Effect<A, E, R>,
+  ): Promise<A> {
+    if (this.runtime === undefined) {
+      throw new Error("scenario runtime is not initialized")
+    }
+    return this.runtime.runPromise(
+      effect.pipe(
+        Effect.withSpan("cucumber.step", {
+          attributes: {
+            "firegrid.scenario.id": this.scenarioId,
+            "cucumber.step": step,
+          },
+        }),
+      ),
+    )
+  }
+}
 
 const scenarioIdFor = (scenario: ITestCaseHookParameter): string =>
   scenario.pickle.id
@@ -145,18 +177,4 @@ export const runScenarioEffect = <A, E, R extends S2Client>(
   world: FiregridWorld,
   step: string,
   effect: Effect.Effect<A, E, R>,
-): Promise<A> => {
-  if (world.runtime === undefined) {
-    throw new Error("scenario runtime is not initialized")
-  }
-  return world.runtime.runPromise(
-    effect.pipe(
-      Effect.withSpan("cucumber.step", {
-        attributes: {
-          "firegrid.scenario.id": world.scenarioId,
-          "cucumber.step": step,
-        },
-      }),
-    ),
-  )
-}
+): Promise<A> => world.run(step, effect)
