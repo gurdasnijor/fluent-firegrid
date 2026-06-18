@@ -41,3 +41,10 @@ export const proofs = {
   ...common,
   tags: sqlProofTagExpression(),
 }
+
+// Alignment lint: emit step-definition usage as pure JSON (overriding the
+// default formatters) so a dry run can be diffed for orphaned step definitions.
+export const align = {
+  ...common,
+  format: ["usage-json"],
+}

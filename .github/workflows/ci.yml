@@ -67,6 +67,9 @@ jobs:
       - name: Duplication (jscpd, strict-0)
         run: pnpm run lint:dup
 
+      - name: Step/scenario alignment (no orphaned step defs)
+        run: pnpm run lint:steps
+
   typecheck:
     name: Typecheck
     runs-on: ubuntu-latest
