@@ -76,8 +76,8 @@ export const S2LiteLive: Layer.Layer<S2Client> = Layer.unwrap(
     yield* ChildProcess.make("s2", ["lite", "--port", String(port)], {
       env: { S2LITE_INIT_FILE: initFile },
       extendEnv: true,
-      stdout: debug ? "inherit" : "ignore",
-      stderr: debug ? "inherit" : "ignore",
+      stdout: debug === true ? "inherit" : "ignore",
+      stderr: debug === true ? "inherit" : "ignore",
     }).pipe(
       Effect.withSpan("spec.s2lite.spawn", {
         attributes: {

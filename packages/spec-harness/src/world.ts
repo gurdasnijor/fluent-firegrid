@@ -130,7 +130,7 @@ After(async function(this: FiregridWorld) {
       })
       await Promise.all(this.proofs.map(async(proof) => {
         const result = await runtime.runPromise(runTraceProofSql(proof.sql, this.scenarioId))
-        if (result.ok) return
+        if (result.ok === true) return
         const observed = await runtime.runPromise(spanSummary(this.scenarioId))
         throw new Error(`trace proof failed: ${result.reason}\n\n${proof.sql}\n\nObserved spans:\n${observed}`)
       }))
