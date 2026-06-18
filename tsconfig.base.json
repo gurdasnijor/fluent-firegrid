@@ -39,7 +39,7 @@
           "anyUnknownInErrorContext": "suggestion",
           "catchAllToMapError": "error",
           "catchUnfailableEffect": "error",
-          "cryptoRandomUUID": "suggestion",
+          "cryptoRandomUUID": "error",
           "cryptoRandomUUIDInEffect": "error",
           "deterministicKeys": "error",
           "effectDoNotation": "error",

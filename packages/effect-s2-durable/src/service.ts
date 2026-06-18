@@ -322,7 +322,7 @@ export function client<Name extends string, H extends Handlers>(
   def: ServiceDefinition<Name, H> | ObjectDefinition<Name, H>,
   key?: string,
 ): ServiceClient<H> {
-  // eslint-disable-next-line local/no-launder-cast -- dynamic proxy; each Effect<unknown> is the typed Effect<HandlerOutput> recovered structurally by ServiceClient<H>
+  // Intentional dynamic proxy cast: each Effect<unknown> is recovered structurally by ServiceClient<H>.
   return makeProxy(def, (compiled, { id, rt }) =>
     rt.attach(id, compiled.handler.output as Schema.Codec<unknown, unknown, never, never>), objectIdentity(def, key)) as unknown as ServiceClient<H>
 }
@@ -337,7 +337,7 @@ export function sendClient<Name extends string, H extends Handlers>(
   def: ServiceDefinition<Name, H> | ObjectDefinition<Name, H>,
   key?: string,
 ): SendClient<H> {
-  // eslint-disable-next-line local/no-launder-cast -- dynamic proxy (see client)
+  // Intentional dynamic proxy cast; see client.
   return makeProxy(def, (_compiled, { id }) => Effect.succeed(id), objectIdentity(def, key)) as unknown as SendClient<H>
 }
 
@@ -381,7 +381,7 @@ export const objectClient = <Name extends string, H extends Handlers>(
   def: ObjectDefinition<Name, H>,
   key: string,
 ): ServiceClient<H> =>
-  // eslint-disable-next-line local/no-launder-cast -- dynamic proxy; each Effect<unknown> is the typed Effect<HandlerOutput> recovered structurally by ServiceClient<H>
+  // Intentional dynamic proxy cast: each Effect<unknown> is recovered structurally by ServiceClient<H>.
   makeObjectStepProxy(def, key, (rt, target, input, inputCodec, outputCodec) =>
     rt.callStep(target, input, inputCodec, outputCodec)) as unknown as ServiceClient<H>
 
@@ -393,7 +393,7 @@ export const objectSendClient = <Name extends string, H extends Handlers>(
   def: ObjectDefinition<Name, H>,
   key: string,
 ): SendClient<H> =>
-  // eslint-disable-next-line local/no-launder-cast -- dynamic proxy (see objectClient)
+  // Intentional dynamic proxy cast; see objectClient.
   makeObjectStepProxy(def, key, (rt, target, input, inputCodec) =>
     rt.sendStep(target, input, inputCodec)) as unknown as SendClient<H>
 

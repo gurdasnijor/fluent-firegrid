@@ -77,7 +77,7 @@ export const Table =
       static readonly schema = schema
       static readonly pkField = pkField
     }
-    // eslint-disable-next-line local/no-launder-cast -- class-factory: the static shape (typed `tableName`/`schema`/`pkField` + phantom `Row`) can't be expressed structurally on a class declaration
+    // Intentional class-factory cast: the static shape plus phantom Row cannot be expressed structurally on a class declaration.
     return TableImpl as unknown as TableClass<Fields>
   }
 
@@ -250,7 +250,7 @@ export const StreamDb =
           withStreamDbSpan("openExisting", { basePath }),
         )
     }
-    // eslint-disable-next-line local/no-launder-cast -- class-factory: the static shape (typed `open`/`tables`/`key` + `new()`) can't be expressed structurally on a class declaration
+    // Intentional class-factory cast: the static shape plus constructor surface cannot be expressed structurally on a class declaration.
     return StreamDbImpl as unknown as StreamDbClass<T, Key>
   }
 
@@ -577,6 +577,6 @@ const openStream = <T extends Tables>(
       Effect.mapError(toError("drop")),
     )
 
-    // eslint-disable-next-line local/no-launder-cast -- the dynamic `facades` record (typed per-table at the type level) can't be proven to match the mapped `StreamDbInstance<T>` shape structurally
+    // Intentional dynamic facade cast: the per-table mapped type cannot be proven structurally here.
     return { ...facades, table, transact, checkpoint, trim, compact, drop } as unknown as StreamDbInstance<T>
   }).pipe(withStreamDbSpan("open", { stream }))

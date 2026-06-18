@@ -99,7 +99,7 @@ export const S2LiteLive: Layer.Layer<S2Client> = Layer.unwrap(
 
     yield* S2Client.checkTail("readyprobe").pipe(
       Effect.catch((cause) => isNotFound(cause) ? Effect.void : Effect.fail(cause)),
-      // eslint-disable-next-line local/no-fixed-polling -- test harness readiness probe for an external s2lite process
+      // eslint-disable-next-line no-restricted-syntax -- test harness readiness probe for an external s2lite process
       Effect.retry(Schedule.spaced(Duration.millis(150))),
       Effect.timeout(Duration.seconds(20)),
       Effect.provide(clientLayer),

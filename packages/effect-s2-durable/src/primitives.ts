@@ -19,7 +19,7 @@ import type { AwakeableHandle, DeferredHandle, IngressResolve, Run, RunOptions, 
  */
 type RunImplOptions = RunOptions<unknown, unknown, unknown, unknown>
 
-// eslint-disable-next-line local/no-launder-cast -- public Run carries a conditional violation brand the impl can't produce; runtime always returns the Effect branch
+// Intentional public-surface cast: Run carries a conditional violation brand the impl cannot produce; runtime always returns the Effect branch.
 export const run: Run = ((
   actionOrName: Effect.Effect<unknown, unknown, never> | string,
   actionOrOptions?: Effect.Effect<unknown, unknown, never> | RunImplOptions,

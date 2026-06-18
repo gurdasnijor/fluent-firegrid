@@ -421,7 +421,7 @@ const makeRuntime = Effect.gen(function*() {
         if (address._tag !== "object") {
           return yield* fail("workflowStart", `workflow run id is not an object call id: ${runCallId}`)
         }
-        // eslint-disable-next-line local/no-launder-cast -- a compiled workflow `run` handler is Handler<unknown,unknown,never,never>; the generics are existential here
+        // Intentional existential handler cast: compiled workflow generics are recovered at the runtime boundary.
         const outcome = yield* admitObject(handler as unknown as RegisteredHandler, runCallId, address.parts, inputEncoded)
         // a fresh `Admitted` is the only "started"; an existing pending/completed run is
         // already-started (run-once: the body is never executed a second time).
@@ -435,7 +435,7 @@ const makeRuntime = Effect.gen(function*() {
         // a stateless service execution on the WorkflowDb/roster path.
         const address = yield* decodeExecutionAddress(executionId)
         if (address._tag === "object") {
-          // eslint-disable-next-line local/no-launder-cast -- a compiled object handler is Handler<unknown,unknown,never,never>; submit's generics are existential here
+          // Intentional existential handler cast: compiled object generics are recovered at the runtime boundary.
           yield* admitObject(handler as unknown as RegisteredHandler, executionId, address.parts, inputEncoded)
           return
         }
