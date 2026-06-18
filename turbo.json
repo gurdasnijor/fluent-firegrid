@@ -3,27 +3,42 @@
   "cacheDir": ".turbo/cache",
   "tasks": {
     "build": {
-      "dependsOn": ["^build"],
-      "outputs": ["dist/**"]
+      "dependsOn": ["^build", "typecheck"],
+      "outputs": []
     },
     "typecheck": {
+      "dependsOn": ["^typecheck"],
+      "inputs": ["src/**", "test/**", "examples/**", "tsconfig.json", "../../tsconfig.base.json"],
       "outputs": []
     },
     "diagnostics": {
-      "inputs": ["src/**", "test/**", "tsconfig.json"],
+      "dependsOn": ["^diagnostics"],
+      "inputs": [
+        "src/**",
+        "test/**",
+        "examples/**",
+        "tsconfig.json",
+        "../../tsconfig.base.json",
+        "../../features/**/*.ts"
+      ],
+      "outputs": []
+    },
+    "lint": {
+      "dependsOn": ["^lint", "//#lint:root", "//#lint:dead", "//#lint:dup", "//#lint:deps"],
+      "inputs": ["src/**", "test/**", "examples/**", "tsconfig.json", "../../eslint.config.js", "../../tsconfig.eslint.json"],
       "outputs": []
     },
     "test": {
+      "dependsOn": ["^build"],
+      "inputs": ["src/**", "test/**", "examples/**", "tsconfig.json", "../../vitest.config.ts"],
       "outputs": []
     },
     "check": {
-      "dependsOn": ["build"],
+      "dependsOn": ["lint", "typecheck", "diagnostics", "test"],
       "outputs": []
     },
-    "//#lint": {
-      "cache": false
-    },
     "//#lint:dead": {
+      "inputs": ["knip.json", "package.json", "packages/**/package.json", "packages/**/src/**", "packages/**/test/**"],
       "cache": false
     },
     "//#lint:dup": {
@@ -32,6 +47,16 @@
     },
     "//#lint:deps": {
       "inputs": ["packages/**", ".dependency-cruiser.cjs", "tsconfig.json", "tsconfig.eslint.json"],
+      "outputs": []
+    },
+    "//#lint:root": {
+      "inputs": [
+        "eslint.config.js",
+        "eslint.config.effect-advisory.mjs",
+        "scripts/**",
+        "tsconfig.eslint.json",
+        "tsconfig.base.json"
+      ],
       "outputs": []
     }
   }

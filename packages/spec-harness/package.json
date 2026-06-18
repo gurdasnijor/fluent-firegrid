@@ -8,7 +8,7 @@
   "scripts": {
     "build": "tsc",
     "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
-    "lint": "pnpm run diagnostics",
+    "lint": "eslint . --max-warnings 0",
     "spec": "cd ../.. && NODE_OPTIONS='--import tsx' cucumber-js --config cucumber.mjs",
     "typecheck": "tsc --noEmit"
   },

@@ -12,47 +12,41 @@
   "workspaces": {
     "packages/fluent-acp-process": {
       "entry": [
-        "test/**/*.test.ts"
+        "src/index.ts"
       ],
       "project": [
-        "src/**/*.ts",
-        "test/**/*.ts"
+        "src/**/*.ts"
       ]
     },
     "packages/effect-s2": {
       "entry": [
-        "test/**/*.test.ts",
+        "src/index.ts",
         "examples/**/*.ts"
       ],
       "project": [
         "src/**/*.ts",
-        "test/**/*.ts",
         "examples/**/*.ts"
       ]
     },
     "packages/effect-s2-stream-db": {
       "entry": [
-        "test/**/*.test.ts",
-        "test/usage.ts"
+        "src/index.ts"
       ],
       "project": [
-        "src/**/*.ts",
-        "test/**/*.ts"
+        "src/**/*.ts"
       ]
     },
     "packages/effect-s2-durable": {
       "entry": [
-        "test/**/*.test.ts",
-        "test/types.ts"
+        "src/index.ts"
       ],
       "project": [
-        "src/**/*.ts",
-        "test/**/*.ts"
+        "src/**/*.ts"
       ]
     },
     "packages/spec-harness": {
       "entry": [
-        "src/**/*.ts"
+        "src/index.ts"
       ],
       "project": [
         "src/**/*.ts"

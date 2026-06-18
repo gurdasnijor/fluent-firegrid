@@ -23,7 +23,7 @@
   "scripts": {
     "build": "tsc",
     "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
-    "lint": "eslint . --max-warnings 0 && pnpm run diagnostics",
+    "lint": "eslint . --max-warnings 0",
     "test": "vitest run --root ../.. --project effect-s2",
     "typecheck": "tsc --noEmit"
   },
