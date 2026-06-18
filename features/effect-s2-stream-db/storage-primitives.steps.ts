@@ -3,7 +3,7 @@ import { strict as assert } from "node:assert"
 import { Effect, Option, Schema } from "effect"
 import { primaryKey, StreamDb, Table } from "effect-s2-stream-db"
 import type { StreamDbInstance } from "effect-s2-stream-db"
-import { addTraceProof, scenarioKey } from "../../packages/spec-harness/src/runtime.ts"
+import { scenarioKey } from "../../packages/spec-harness/src/runtime.ts"
 
 class Item extends Table<Item>("items")({
   id: Schema.String.pipe(primaryKey),
@@ -85,10 +85,6 @@ Then("reopening, item {string} is absent", function(this: IWorld, id: string) {
     const actual = yield* db.items.get(id)
     assert.equal(Option.isNone(actual), true)
   })
-})
-
-Then("the trace should satisfy:", function(this: IWorld, sql: string) {
-  addTraceProof(this, sql)
 })
 
 const storageDbFor = (world: IWorld) => {
