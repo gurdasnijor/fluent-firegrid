@@ -14,7 +14,7 @@
     "lint:deps": "depcruise --config .dependency-cruiser.cjs packages",
     "lint:dup": "jscpd packages/*/src",
     "lint:root": "eslint eslint.config.js --max-warnings 0 --cache --cache-location .eslintcache",
-    "lint:steps": "cucumber-js --config cucumber.mjs --profile align --dry-run | jq -r '.[]|select((.matches|length)==0)|\"orphaned step (no scenario uses it): \\(.pattern)  \\(.uri):\\(.line)\"' | (grep . && echo 'every step definition must back a scenario; see features/Readme.md' && exit 1 || exit 0)",
+    "lint:steps": "cucumber-js --config cucumber.mjs --dry-run --format usage-json:.cucumber-usage.json && jq -e 'map(select((.matches|length)==0)) as $o | ($o|length)==0 or ($o|map(\"orphaned step (no scenario uses it): \\(.pattern)  \\(.uri):\\(.line)\")|join(\"\\n\")|halt_error(1))' .cucumber-usage.json",
     "preflight": "pnpm run check",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",

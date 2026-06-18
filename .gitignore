@@ -4,6 +4,7 @@ coverage/
 .jscpd-report/
 .turbo/
 .eslintcache
+.cucumber-usage.json
 .env
 .env.*
 !.env.example
