@@ -3,7 +3,8 @@
   "ignoreDependencies": [
     "@typespec/http-server-js",
     "@typespec/rest",
-    "tslib"
+    "tslib",
+    "tsx"
   ],
   "ignoreUnresolved": [
     "summary"
