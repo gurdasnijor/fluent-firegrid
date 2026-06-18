@@ -17,7 +17,6 @@ export class FiregridWorld extends World {
   proofs: Array<ProofBlock> = []
   processor?: BatchSpanProcessor
   runtime?: ManagedRuntime.ManagedRuntime<S2Client | ChdbSession | ChdbClient, unknown>
-  private readonly state = new Map<string, unknown>()
 
   constructor(options: IWorldOptions) {
     super(options)
@@ -29,14 +28,6 @@ export class FiregridWorld extends World {
 
   scenarioKey(key: string): string {
     return `${this.scenarioId.replace(/[^A-Za-z0-9_.-]/g, "-")}-${key}`
-  }
-
-  getState<A>(key: string): A | undefined {
-    return this.state.get(key) as A | undefined
-  }
-
-  setState<A>(key: string, value: A): void {
-    this.state.set(key, value)
   }
 
   run<A, E, R extends S2Client>(
