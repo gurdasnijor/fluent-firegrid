@@ -38,13 +38,13 @@ const SPAN_KIND: Record<number, string> = {
   [SpanKind.SERVER]: "Server",
   [SpanKind.CLIENT]: "Client",
   [SpanKind.PRODUCER]: "Producer",
-  [SpanKind.CONSUMER]: "Consumer"
+  [SpanKind.CONSUMER]: "Consumer",
 }
 
 const STATUS_CODE: Record<number, string> = {
   [SpanStatusCode.UNSET]: "Unset",
   [SpanStatusCode.OK]: "Ok",
-  [SpanStatusCode.ERROR]: "Error"
+  [SpanStatusCode.ERROR]: "Error",
 }
 
 // ── value coercion ───────────────────────────────────────────────────────────
@@ -63,20 +63,30 @@ const attrValueToString = (v: AttributeValue | undefined): string =>
     : String(v)
 
 const attrsToObject = (attrs?: Attributes): Record<string, string> => {
-  const out: Record<string, string> = {}
-  if (attrs) {
-    for (const k of Object.keys(attrs)) out[k] = attrValueToString(attrs[k])
-  }
-  return out
+  if (attrs === undefined) return {}
+  return Object.fromEntries(Object.entries(attrs).map(([key, value]) => [key, attrValueToString(value)]))
 }
 
 // version-drift tolerant accessors (SDK renamed these across releases)
+interface InstrumentationScopeLike {
+  readonly name?: unknown
+  readonly version?: unknown
+}
+
+interface LegacyReadableSpan {
+  readonly instrumentationLibrary?: InstrumentationScopeLike
+  readonly parentSpanId?: unknown
+}
+
+const stringOrEmpty = (value: unknown): string =>
+  typeof value === "string" ? value : ""
+
 const scopeOf = (span: ReadableSpan): { name: string; version: string } => {
-  const s = (span as any).instrumentationScope ?? (span as any).instrumentationLibrary ?? {}
-  return { name: s.name ?? "", version: s.version ?? "" }
+  const scope = span.instrumentationScope ?? (span as LegacyReadableSpan).instrumentationLibrary
+  return { name: stringOrEmpty(scope?.name), version: stringOrEmpty(scope?.version) }
 }
 const parentIdOf = (span: ReadableSpan): string =>
-  (span as any).parentSpanContext?.spanId ?? (span as any).parentSpanId ?? ""
+  span.parentSpanContext?.spanId ?? stringOrEmpty((span as LegacyReadableSpan).parentSpanId)
 
 // ── SQL ──────────────────────────────────────────────────────────────────────
 
@@ -129,8 +139,7 @@ const nanosToDateTime64 = (value: bigint): string => {
   const nanos = value % 1_000_000_000n
   const date = new Date(Number(millis))
   return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1, 2)}-${pad(date.getUTCDate(), 2)} `
-    + `${pad(date.getUTCHours(), 2)}:${pad(date.getUTCMinutes(), 2)}:${pad(date.getUTCSeconds(), 2)}.`
-    + pad(Number(nanos), 9)
+    + `${pad(date.getUTCHours(), 2)}:${pad(date.getUTCMinutes(), 2)}:${pad(date.getUTCSeconds(), 2)}.${pad(Number(nanos), 9)}`
 }
 
 // ── exporter ─────────────────────────────────────────────────────────────────
@@ -197,7 +206,7 @@ export class ChdbSpanExporter implements SpanExporter {
       "Links.TraceId": links.map((l) => l.context.traceId),
       "Links.SpanId": links.map((l) => l.context.spanId),
       "Links.TraceState": links.map((l) => l.context.traceState?.serialize() ?? ""),
-      "Links.Attributes": links.map((l) => attrsToObject(l.attributes))
+      "Links.Attributes": links.map((l) => attrsToObject(l.attributes)),
     }
   }
 }

@@ -27,7 +27,7 @@ describe("Ch literal builders", () => {
     expect(Ch.Bool.lit(false)).toBe("false")
     expect(Ch.UUID.lit("0000-0000")).toBe("'0000-0000'")
     expect(Ch.DateTime64Nanos.lit(1_700_000_000_000_000_000n)).toBe(
-      "fromUnixTimestamp64Nano(1700000000000000000)"
+      "fromUnixTimestamp64Nano(1700000000000000000)",
     )
   })
 
@@ -59,7 +59,7 @@ describe("Ch literal builders", () => {
 class Event extends Schema.Class<Event>("Event")({
   id: Schema.String,
   n: Schema.Number,
-  tags: Schema.Array(Schema.String)
+  tags: Schema.Array(Schema.String),
 }) {}
 
 const provide = <A, E, R>(effect: Effect.Effect<A, E, R | ChdbClient>) =>
@@ -90,15 +90,15 @@ describe("ChdbClient", () => {
         schema: Event,
         values: [
           new Event({ id: "a", n: 1, tags: ["x"] }),
-          new Event({ id: "b", n: 2, tags: ["y", "z"] })
-        ]
+          new Event({ id: "b", n: 2, tags: ["y", "z"] }),
+        ],
       })
       expect(written).toEqual({ written: 2 })
 
       const events = yield* sql.query(Event, sql`SELECT id, n, tags FROM events ORDER BY id`)
       expect(events).toEqual([
         new Event({ id: "a", n: 1, tags: ["x"] }),
-        new Event({ id: "b", n: 2, tags: ["y", "z"] })
+        new Event({ id: "b", n: 2, tags: ["y", "z"] }),
       ])
     })))
 

@@ -155,4 +155,11 @@ jobs:
         run: pnpm run test
 
       - name: Run executable specs
-        run: pnpm --filter @firegrid/spec-harness spec
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          chdb_lib_dirs=(node_modules/.pnpm/@chdb+lib-linux-x64-gnu@*/node_modules/@chdb/lib-linux-x64-gnu)
+          if [ ${#chdb_lib_dirs[@]} -gt 0 ]; then
+            export LD_LIBRARY_PATH="$PWD/${chdb_lib_dirs[0]}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          fi
+          pnpm --filter @firegrid/spec-harness spec
