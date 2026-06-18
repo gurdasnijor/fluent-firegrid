@@ -21,6 +21,18 @@ export default defineConfig({
       }),
       defineProject({
         test: {
+          name: "spec-harness",
+          include: ["packages/spec-harness/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"],
+        },
+        resolve: {
+          alias: {
+            "@firegrid/spec-harness": path.resolve(__dirname, "./packages/spec-harness/src/index.ts"),
+          },
+        },
+      }),
+      defineProject({
+        test: {
           name: "effect-s2",
           include: ["packages/effect-s2/test/**/*.test.ts"],
           exclude: ["**/node_modules/**"],

@@ -1,6 +1,6 @@
 import { setDefinitionFunctionWrapper, type IWorld } from "@cucumber/cucumber"
 import { Effect } from "effect"
-import { runSpecEffect } from "../../packages/spec-harness/src/runtime.ts"
+import { runSpecEffect } from "@firegrid/spec-harness"
 
 type Definition = (this: IWorld, ...args: Array<unknown>) => unknown
 

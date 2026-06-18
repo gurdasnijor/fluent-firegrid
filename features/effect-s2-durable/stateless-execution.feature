@@ -1,3 +1,4 @@
+@unverified
 Feature: Stateless Execution
   Stateless durable service executions: public service/client/sendClient APIs,
   one execution stream per call, durable primitives, attach/poll, idempotency,
@@ -134,4 +135,3 @@ Feature: Stateless Execution
 
     Scenario: S2-backed service behavior is proven by executable Cucumber specs; package-local tests remain pure/type-level
       Then S2-backed service behavior is proven by executable Cucumber specs; package-local tests remain pure/type-level.
-

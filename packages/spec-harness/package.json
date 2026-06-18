@@ -5,12 +5,19 @@
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
     "lint": "eslint . --max-warnings 0",
-    "spec": "cd ../.. && cucumber-js --config cucumber.mjs --profile proofs",
-    "spec:inventory": "cd ../.. && cucumber-js --config cucumber.mjs --dry-run --format summary",
+    "spec": "cd ../.. && cucumber-js --config cucumber.yaml --profile proofs",
+    "spec:inventory": "cd ../.. && cucumber-js --config cucumber.yaml --dry-run --format summary",
+    "test": "vitest run --root ../.. --project spec-harness",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -26,6 +33,7 @@
   },
   "devDependencies": {
     "@effect/language-service": "^0.86.2",
+    "@effect/vitest": "4.0.0-beta.78",
     "@types/node": "^22.10.0",
     "tsx": "^4.22.4",
     "typescript": "^5.9.3"

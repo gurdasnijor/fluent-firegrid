@@ -25,7 +25,7 @@ import {
   workflowSubmit,
 } from "effect-s2-durable"
 import { primaryKey, Table } from "effect-s2-stream-db"
-import { scenarioKey } from "../../packages/spec-harness/src/runtime.ts"
+import { scenarioKey } from "@firegrid/spec-harness"
 
 class CounterRow extends Table<CounterRow>("counter")({
   id: Schema.String.pipe(primaryKey),

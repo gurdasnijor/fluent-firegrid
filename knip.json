@@ -46,7 +46,8 @@
     },
     "packages/spec-harness": {
       "entry": [
-        "src/index.ts"
+        "src/index.ts",
+        "src/trace-formatter.ts"
       ],
       "project": [
         "src/**/*.ts"

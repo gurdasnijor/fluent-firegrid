@@ -1,3 +1,4 @@
+@unverified
 Feature: Public API
   The ergonomic public authoring and invocation surface exposed by
   effect-s2-durable. Persistence semantics live in stateless-execution,
@@ -112,4 +113,3 @@ Feature: Public API
 
     Scenario: Callers must not hand-build stream paths, delimiter-encoded owner strings, or raw method target strings
       Then Callers must not hand-build stream paths, delimiter-encoded owner strings, or raw method target strings.
-

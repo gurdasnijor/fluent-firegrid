@@ -3,7 +3,7 @@ import { strict as assert } from "node:assert"
 import { Effect, Option, Schema } from "effect"
 import { primaryKey, StreamDb, Table } from "effect-s2-stream-db"
 import type { StreamDbInstance } from "effect-s2-stream-db"
-import { addTraceProof, scenarioKey } from "../../packages/spec-harness/src/runtime.ts"
+import { addTraceProof, scenarioKey } from "@firegrid/spec-harness"
 
 class Item extends Table<Item>("items")({
   id: Schema.String.pipe(primaryKey),

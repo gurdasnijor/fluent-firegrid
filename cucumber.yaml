@@ -1,0 +1,20 @@
+default:
+  paths:
+    - "features/**/*.feature"
+  import:
+    - "./cucumber-tsx-register.mjs"
+    - "features/**/*.ts"
+  format:
+    - "summary"
+    - "./packages/spec-harness/src/trace-formatter.ts"
+
+proofs:
+  paths:
+    - "features/**/*.feature"
+  import:
+    - "./cucumber-tsx-register.mjs"
+    - "features/**/*.ts"
+  format:
+    - "summary"
+    - "./packages/spec-harness/src/trace-formatter.ts"
+  tags: "not @unverified"

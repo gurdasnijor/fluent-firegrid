@@ -1,3 +1,4 @@
+@unverified
 Feature: Production Readiness
   Net-new production requirements needed to consider the durable workstream
   feature-complete beyond the currently proven single-process public API:
@@ -120,4 +121,3 @@ Feature: Production Readiness
 
     Scenario: Residency-retry signal behavior is superseded by durable ingress append plus best-effort waiter pokes
       Then Residency-retry signal behavior is superseded by durable ingress append plus best-effort waiter pokes.
-

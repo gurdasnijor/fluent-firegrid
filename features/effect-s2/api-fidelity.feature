@@ -1,3 +1,4 @@
+@unverified
 Feature: API fidelity
   Effect-native facade for the upstream @s2-dev/streamstore SDK. The package
   preserves SDK request/response/config type fidelity while exposing S2
@@ -197,4 +198,3 @@ Feature: API fidelity
 
     Scenario: CI must fail when wrapper types drift from upstream SDK types in a way that breaks public effect-s2 consumers
       Then CI must fail when wrapper types drift from upstream SDK types in a way that breaks public effect-s2 consumers.
-

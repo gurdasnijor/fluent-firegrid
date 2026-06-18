@@ -1,3 +1,4 @@
+@unverified
 Feature: Stateful Execution
   Keyed stateful executions (public object(...) semantics): one authoritative
   durable log per object key holding state, the exclusive-call accept-log,
@@ -340,4 +341,3 @@ Feature: Stateful Execution
 
     Scenario: Runtime/control-plane basins are provisioned before recovery with createStreamOnAppend false, using existing effect-s2 control-plane operations or external S2 tooling, so stream enumeration is trustworthy
       Then Runtime/control-plane basins are provisioned before recovery with createStreamOnAppend false, using existing effect-s2 control-plane operations or external S2 tooling, so stream enumeration is trustworthy.
-
