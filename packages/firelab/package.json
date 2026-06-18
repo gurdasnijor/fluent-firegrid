@@ -15,6 +15,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
+    "lint": "pnpm run diagnostics",
     "validate": "tsx src/index.ts",
     "validate:list": "tsx src/index.ts list",
     "validate:run": "tsx src/index.ts run",

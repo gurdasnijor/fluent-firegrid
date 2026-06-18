@@ -18,6 +18,7 @@
   },
   "scripts": {
     "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
+    "lint": "eslint . --max-warnings 0 && pnpm run diagnostics",
     "build": "tsc",
     "test": "vitest run --root ../.. --project fluent-acp-process",
     "typecheck": "tsc --noEmit"
