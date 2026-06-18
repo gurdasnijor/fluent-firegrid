@@ -1,6 +1,4 @@
-const tagFilter = process.env.CUCUMBER_TAGS
-
-const config = {
+const common = {
   paths: ["features/**/*.feature"],
   import: [
     "./cucumber-tsx-register.mjs",
@@ -12,8 +10,9 @@ const config = {
   ],
 }
 
-if (tagFilter !== "") {
-  config.tags = tagFilter
-}
+export default common
 
-export default config
+export const proofs = {
+  ...common,
+  tags: "@proof",
+}

@@ -1,6 +1,6 @@
 Feature: Storage primitives
 
-  @sql:checkpoint_trace_shape
+  @proof @sql:checkpoint_trace_shape
   Scenario: checkpoint snapshots the live set and reopens from the compacted stream
     Given an open storage db with infinite retention at key "cart"
     When I insert item "a" value 1
