@@ -1,14 +1,18 @@
 import { After, AfterAll, Before, BeforeAll, type ITestCaseHookParameter, type IWorld } from "@cucumber/cucumber"
 import * as NodeSdk from "@effect/opentelemetry/NodeSdk"
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem"
+import * as NodePath from "@effect/platform-node/NodePath"
 import { ChdbClient, ChdbSession, ChdbSpanExporter, layer as ChdbLayer } from "@firegrid/observability"
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base"
-import { Effect, Layer } from "effect"
+import { Effect, FileSystem, Layer, Path } from "effect"
 import * as ManagedRuntime from "effect/ManagedRuntime"
 import type { S2Client } from "effect-s2"
 import { recordScenarioReport, type SpanCount } from "./report-state.ts"
 import { S2LiteLive } from "./s2lite.ts"
 
 interface ProofBlock {
+  readonly name?: string
+  readonly source?: string
   readonly sql: string
 }
 
@@ -17,7 +21,7 @@ interface ScenarioState {
   readonly proofs: Array<ProofBlock>
 }
 
-export type HarnessServices = S2Client | ChdbSession | ChdbClient
+export type HarnessServices = S2Client | ChdbSession | ChdbClient | FileSystem.FileSystem | Path.Path
 
 // eslint-disable-next-line local/no-module-durable-cache -- Cucumber run-scoped harness runtime; product durability still lives in S2.
 let runtime: ManagedRuntime.ManagedRuntime<HarnessServices, unknown> | undefined
@@ -34,7 +38,7 @@ const stateFor = (world: IWorld): ScenarioState => {
 }
 
 export const addTraceProof = (world: IWorld, sql: string): void => {
-  stateFor(world).proofs.push({ sql })
+  stateFor(world).proofs.push({ sql: normalizeProofSql(sql) })
 }
 
 export const scenarioKey = (world: IWorld, key: string): string =>
@@ -64,6 +68,86 @@ TraceId IN (
   WHERE SpanAttributes['firegrid.scenario.id'] = {scenario_id:String}
 )
 `
+
+const scenarioSpans = `
+(
+  SELECT *
+  FROM otel_traces
+  WHERE ${scenarioTraceWhere}
+)
+`
+
+const normalizeProofSql = (sql: string): string => {
+  const trimmed = sql.trim().replace(/;+\s*$/, "")
+  if (!/^(select|with)\b/i.test(trimmed)) {
+    throw new Error("trace proof SQL must be a SELECT or WITH query")
+  }
+  if (trimmed.includes(";")) {
+    throw new Error("trace proof SQL must contain a single read-only query")
+  }
+  return trimmed.replace(/\bscenario_spans\b/g, scenarioSpans)
+}
+
+const proofFileFor = (featureUri: string): Effect.Effect<string, never, Path.Path> =>
+  Effect.gen(function*() {
+    const path = yield* Path.Path
+    return path.resolve(process.cwd(), featureUri.replace(/\.feature$/u, ".sql"))
+  })
+
+const parseNamedProofs = (file: string, content: string): Map<string, string> => {
+  const blocks = new Map<string, string>()
+  let name: string | undefined
+  let lines: Array<string> = []
+  const flush = (): void => {
+    if (name === undefined) return
+    blocks.set(name, normalizeProofSql(lines.join("\n")))
+  }
+  content.split(/\r?\n/u).forEach((line) => {
+    const match = /^--\s*name:\s*([A-Za-z0-9_.:-]+)\s*$/u.exec(line)
+    if (match === null) {
+      lines.push(line)
+      return
+    }
+    flush()
+    name = match[1]
+    lines = []
+  })
+  flush()
+  return blocks
+}
+
+const sqlProofTagsFor = (scenario: ITestCaseHookParameter): ReadonlyArray<string> =>
+  scenario.pickle.tags
+    .map((tag) => tag.name)
+    .filter((tag) => tag.startsWith("@sql:"))
+    .map((tag) => tag.slice("@sql:".length))
+
+const proofsFor = (scenario: ITestCaseHookParameter): Effect.Effect<Array<ProofBlock>, Error, FileSystem.FileSystem | Path.Path> => {
+  const names = sqlProofTagsFor(scenario)
+  if (names.length === 0) return Effect.succeed([])
+  return Effect.gen(function*() {
+    const fs = yield* FileSystem.FileSystem
+    const featureUri = scenario.pickle.uri
+    const file = yield* proofFileFor(featureUri)
+    const exists = yield* fs.exists(file).pipe(Effect.mapError((cause) => new Error(String(cause))))
+    if (exists === false) {
+      return yield* Effect.fail(new Error(`SQL proof file not found for ${featureUri}: ${file}`))
+    }
+    const content = yield* fs.readFileString(file).pipe(Effect.mapError((cause) => new Error(String(cause))))
+    const proofs = parseNamedProofs(file, content)
+    return names.map((name) => {
+      const sql = proofs.get(name)
+      if (sql === undefined) {
+        throw new Error(`SQL proof ${name} not found in ${file}`)
+      }
+      return {
+        name,
+        source: `${file}#${name}`,
+        sql,
+      }
+    })
+  })
+}
 
 const spanCounts = (scenarioId: string): Effect.Effect<ReadonlyArray<SpanCount>, unknown, ChdbClient> =>
   Effect.gen(function*() {
@@ -141,10 +225,14 @@ const spanSummary = (scenarioId: string): Effect.Effect<string, unknown, ChdbCli
       : counts.map((span) => `${span.count} ${span.name}`).join("\n")
   })
 
-Before(function(this: IWorld, scenario) {
+Before(async function(this: IWorld, scenario) {
+  const activeRuntime = runtime
+  if (activeRuntime === undefined) {
+    throw new Error("spec runtime is not initialized")
+  }
   states.set(this, {
     scenarioId: scenarioIdFor(scenario),
-    proofs: [],
+    proofs: await activeRuntime.runPromise(proofsFor(scenario)),
   })
 })
 
@@ -162,7 +250,9 @@ BeforeAll(async function() {
       }))
     }),
   )
-  runtime = ManagedRuntime.make(Layer.mergeAll(OtelLive, S2LiteLive).pipe(Layer.provideMerge(ChdbLive)))
+  runtime = ManagedRuntime.make(
+    Layer.mergeAll(OtelLive, S2LiteLive, NodeFileSystem.layer, NodePath.layer).pipe(Layer.provideMerge(ChdbLive)),
+  )
   await runtime.runPromise(Effect.void)
   if (nextProcessor === undefined) {
     throw new Error("chDB span processor was not initialized")
@@ -192,7 +282,9 @@ After(async function(this: IWorld) {
       const result = await activeRuntime.runPromise(runTraceProofSql(proof.sql, state.scenarioId))
       if (result.ok === true) return
       const observed = await activeRuntime.runPromise(spanSummary(state.scenarioId))
-      throw new Error(`trace proof failed: ${result.reason}\n\n${proof.sql}\n\nObserved spans:\n${observed}`)
+      const label = proof.name === undefined ? "inline trace proof" : `trace proof ${proof.name}`
+      const source = proof.source === undefined ? "" : `\nSource: ${proof.source}`
+      throw new Error(`${label} failed: ${result.reason}${source}\n\n${proof.sql}\n\nObserved spans:\n${observed}`)
     }))
   } finally {
     states.delete(this)

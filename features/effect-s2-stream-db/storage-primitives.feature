@@ -1,6 +1,7 @@
 @product:effect-s2-stream-db @feature:storage-primitives
 Feature: Storage primitives
 
+  @sql:checkpoint_trace_shape
   Scenario: checkpoint snapshots the live set and reopens from the compacted stream
     Given an open storage db with infinite retention at key "cart"
     When I insert item "a" value 1
@@ -10,19 +11,6 @@ Feature: Storage primitives
     And I checkpoint
     Then reopening, item "a" is absent
     And reopening, item "b" is 3
-    And the trace should satisfy:
-      """
-      SELECT
-        countIf(SpanName = 'effect-s2-stream-db.checkpoint') > 0
-        AND countIf(SpanName = 'S2.append') > 0
-        AND countIf(SpanName = 'S2.readBatch') > 0 AS ok
-      FROM otel_traces
-      WHERE TraceId IN (
-        SELECT TraceId
-        FROM otel_traces
-        WHERE SpanAttributes['firegrid.scenario.id'] = {scenario_id:String}
-      )
-      """
 
   # Non-executable requirement inventory.
   # Scenarios stay @spec-only until step definitions make them executable.
