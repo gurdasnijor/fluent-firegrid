@@ -10,10 +10,10 @@
  *  - Map variant (not JSON variant): your oracles do `SpanAttributes['k']`
  *    lookups, which the mapKeys/mapValues bloom indices serve. JSON variant is a
  *    drop-in if you set enable_json_type and switch the attr columns to JSON.
- *  - DateTime64(9) is fed as integer epoch-nanoseconds through `input()` +
- *    `fromUnixTimestamp64Nano`, NOT as a JSON datetime string. This is lossless
- *    and timezone-independent; JSONEachRow's own DateTime64 string parsing is
- *    neither under default settings.
+ *  - chDB's synchronous `Session.query` accepts `INSERT ... FORMAT JSONEachRow`
+ *    directly. It does not accept the streaming `input(...)` form used by the
+ *    network ClickHouse exporter, so timestamps are rendered as DateTime64(9)
+ *    strings before insert.
  *
  * chDB `session.query` is synchronous and blocking — fine at oracle/test scale.
  * BatchSpanProcessor coalesces spans so each `export` is one multi-row INSERT.
@@ -21,14 +21,10 @@
 import { type Attributes, type AttributeValue, type HrTime, SpanKind, SpanStatusCode } from "@opentelemetry/api"
 import { type ExportResult, ExportResultCode } from "@opentelemetry/core"
 import type { ReadableSpan, SpanExporter } from "@opentelemetry/sdk-trace-base"
-
-/** Minimal structural type for the chdb-node Session (`new Session(path)`). */
-export interface ChdbSession {
-  query(sql: string, format?: string): unknown
-}
+import type { Session } from "chdb"
 
 export interface ChdbSpanExporterOptions {
-  readonly session: ChdbSession
+  readonly session: Session
   /** Defaults to "otel_traces". */
   readonly table?: string
   /** Optional database; created with CREATE DATABASE IF NOT EXISTS when set. */
@@ -123,44 +119,24 @@ PARTITION BY toDate(Timestamp)
 ORDER BY (ServiceName, SpanName, toDateTime(Timestamp))
 SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1`
 
-/**
- * INSERT ... SELECT ... FROM input(...) FORMAT JSONEachRow
- * Rows (NDJSON) are appended after this header. `input()` receives Timestamps as
- * Int64 nanos and they're converted to DateTime64(9) in the SELECT; Map and
- * Array(Map) columns are read directly from JSON objects/arrays.
- */
 const insertHeader = (qualified: string): string =>
-  [
-    `INSERT INTO ${qualified} (`,
-    "  Timestamp, TraceId, SpanId, ParentSpanId, TraceState,",
-    "  SpanName, SpanKind, ServiceName, ResourceAttributes, ScopeName, ScopeVersion, SpanAttributes,",
-    "  Duration, StatusCode, StatusMessage,",
-    "  `Events.Timestamp`, `Events.Name`, `Events.Attributes`,",
-    "  `Links.TraceId`, `Links.SpanId`, `Links.TraceState`, `Links.Attributes`",
-    ")",
-    "SELECT",
-    "  fromUnixTimestamp64Nano(Timestamp) AS Timestamp,",
-    "  TraceId, SpanId, ParentSpanId, TraceState,",
-    "  SpanName, SpanKind, ServiceName, ResourceAttributes, ScopeName, ScopeVersion, SpanAttributes,",
-    "  Duration, StatusCode, StatusMessage,",
-    "  arrayMap(x -> fromUnixTimestamp64Nano(x), `Events.Timestamp`) AS `Events.Timestamp`,",
-    "  `Events.Name`, `Events.Attributes`,",
-    "  `Links.TraceId`, `Links.SpanId`, `Links.TraceState`, `Links.Attributes`",
-    "FROM input(",
-    "  'Timestamp Int64, TraceId String, SpanId String, ParentSpanId String, TraceState String,",
-    "   SpanName String, SpanKind String, ServiceName String,",
-    "   ResourceAttributes Map(String, String), ScopeName String, ScopeVersion String, SpanAttributes Map(String, String),",
-    "   Duration UInt64, StatusCode String, StatusMessage String,",
-    "   `Events.Timestamp` Array(Int64), `Events.Name` Array(String), `Events.Attributes` Array(Map(String, String)),",
-    "   `Links.TraceId` Array(String), `Links.SpanId` Array(String), `Links.TraceState` Array(String), `Links.Attributes` Array(Map(String, String))'",
-    ")",
-    "FORMAT JSONEachRow"
-  ].join("\n")
+  `INSERT INTO ${qualified} FORMAT JSONEachRow`
+
+const pad = (value: number, length: number): string => String(value).padStart(length, "0")
+
+const nanosToDateTime64 = (value: bigint): string => {
+  const millis = value / 1_000_000n
+  const nanos = value % 1_000_000_000n
+  const date = new Date(Number(millis))
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1, 2)}-${pad(date.getUTCDate(), 2)} `
+    + `${pad(date.getUTCHours(), 2)}:${pad(date.getUTCMinutes(), 2)}:${pad(date.getUTCSeconds(), 2)}.`
+    + pad(Number(nanos), 9)
+}
 
 // ── exporter ─────────────────────────────────────────────────────────────────
 
 export class ChdbSpanExporter implements SpanExporter {
-  private readonly session: ChdbSession
+  private readonly session: Session
   private readonly insertHeader: string
 
   constructor(options: ChdbSpanExporterOptions) {
@@ -199,8 +175,7 @@ export class ChdbSpanExporter implements SpanExporter {
     const events = span.events ?? []
     const links = span.links ?? []
     return {
-      // Int64 epoch ns as a string (exceeds Number.MAX_SAFE_INTEGER); SELECT converts it.
-      Timestamp: hrNanos(span.startTime).toString(),
+      Timestamp: nanosToDateTime64(hrNanos(span.startTime)),
       TraceId: ctx.traceId,
       SpanId: ctx.spanId,
       ParentSpanId: parentIdOf(span),
@@ -216,7 +191,7 @@ export class ChdbSpanExporter implements SpanExporter {
       Duration: Number(hrNanos(span.endTime) - hrNanos(span.startTime)),
       StatusCode: STATUS_CODE[span.status.code] ?? "Unset",
       StatusMessage: span.status.message ?? "",
-      "Events.Timestamp": events.map((e) => hrNanos(e.time).toString()),
+      "Events.Timestamp": events.map((e) => nanosToDateTime64(hrNanos(e.time))),
       "Events.Name": events.map((e) => e.name),
       "Events.Attributes": events.map((e) => attrsToObject(e.attributes)),
       "Links.TraceId": links.map((l) => l.context.traceId),

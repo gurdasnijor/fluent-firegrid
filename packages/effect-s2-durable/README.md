@@ -213,15 +213,15 @@ Built and validated through Firelab against `s2 lite` for the existing service/r
   `run` short-circuits from its `steps` fact, journaled `state.get` replays, `sleep`
   recomputes its remaining delay, and a `signal`/`awakeable` reads its resolved row or
   re-parks. A recovered execution is resident again, so `attach` / ingress resolution work
-  across a restart (proven end-to-end over s2 lite by the Firelab validation
-  `effect-s2-durable-service-recovery`, feature `stateless-execution`). An execution whose
+  across a restart (proven end-to-end over s2 lite by executable specs in
+  the spec harness, feature `stateless-execution`). An execution whose
   `handlerName` isn't in the registry is skipped (so a partial registry never crashes boot).
 
 Use **`serviceLayer(...services)`** (not the bare `DurableExecutionRuntime.layer()`)
 whenever an execution can outlive the process, so its handlers are registered for recovery.
 
 The object actor runtime is tracked by the top-level SDD and feature spec linked above.
-Package-local tests are kept pure; S2-backed behavioral proofs belong in Firelab validations.
+Package-local tests are kept pure; S2-backed behavioral proofs belong in executable specs.
 
 **Not yet:** `resultAcked` is written but not yet consumed (no post-completion reclaim
 sweep). Durable timers (`sleep`) recover their *remaining* delay on boot, but there is no

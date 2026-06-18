@@ -19,7 +19,15 @@
  * options, and Statement.makeCompiler/custom config are taken from the official
  * driver source; generics may need minor tweaks against the actual type defs.
  */
-import { Session } from "chdb"
+import {
+  Session,
+  type ChdbQueryStream,
+  type ChdbResult,
+  type InsertParams,
+  type InsertSummary,
+  type QueryOptions,
+  type StreamOptions
+} from "chdb"
 import { Schema } from "effect"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
@@ -158,8 +166,21 @@ export interface ChdbClientConfig {
   readonly transformQueryNames?: (str: string) => string
 }
 
+export type ChdbSession = Session
+export const ChdbSession = Context.Service<ChdbSession>("@chdb/Session")
+
+export interface ChdbNative {
+  readonly query: (sql: string, format?: string) => Effect.Effect<string, SqlError>
+  readonly queryBind: (sql: string, args: object, format?: string) => Effect.Effect<string, SqlError>
+  readonly queryAsync: (sql: string, options?: QueryOptions) => Effect.Effect<ChdbResult, SqlError>
+  readonly queryBindAsync: (sql: string, params: object, options?: QueryOptions) => Effect.Effect<ChdbResult, SqlError>
+  readonly insert: (params: InsertParams) => Effect.Effect<InsertSummary, SqlError>
+  readonly queryStream: (sql: string, options?: StreamOptions) => Effect.Effect<ChdbQueryStream, SqlError>
+}
+
 export interface ChdbClient extends Client.SqlClient {
   readonly config: ChdbClientConfig
+  readonly native: ChdbNative
   /** Typed literal fragment for a query parameter, e.g. param(Ch.Int64, 5n). */
   readonly param: <A>(ch: Ch<A>, value: A) => Statement.Fragment
   /** Run a statement and decode each row through a Schema (the typed-result path). */
@@ -184,42 +205,84 @@ const renderSetting = (v: string | number | boolean): string =>
 
 // ── construction ─────────────────────────────────────────────────────────────
 
-export const make = (
+const openSession = (options: ChdbClientConfig): Effect.Effect<Session, SqlError, Scope.Scope> =>
+  Effect.acquireRelease(
+    Effect.try({
+      // With no path, chdb-node opens its own temp directory and removes it on
+      // cleanup(); with a path, the on-disk session persists across opens.
+      try: () => (options.path === undefined ? new Session() : new Session(options.path)),
+      catch: (cause) => new SqlError({ reason: classifyError(cause, "ChdbClient: failed to open session", "connect", "connection") })
+    }),
+    // cleanup() is idempotent, never throws, and drops the temp dir when ephemeral.
+    (s) => Effect.sync(() => s.cleanup())
+  )
+
+const bootstrapSession = (session: Session, options: ChdbClientConfig): Effect.Effect<void, SqlError> =>
+  Effect.try({
+    try: () => {
+      if (options.database) session.query(`CREATE DATABASE IF NOT EXISTS ${options.database}; USE ${options.database}`)
+      if (options.settings) {
+        for (const [k, v] of Object.entries(options.settings)) session.query(`SET ${k} = ${renderSetting(v)}`)
+      }
+      session.query("SELECT 1")
+    },
+    catch: (cause) => new SqlError({ reason: classifyError(cause, "ChdbClient: bootstrap failed", "connect", "connection") })
+  })
+
+export const makeWithSession = (
+  session: Session,
   options: ChdbClientConfig
-): Effect.Effect<ChdbClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
+): Effect.Effect<ChdbClient, SqlError, Reactivity.Reactivity> =>
   Effect.gen(function*() {
     const compiler = makeCompiler(options.transformQueryNames)
     const transformRows = options.transformResultNames
       ? Statement.defaultTransforms(options.transformResultNames).array
       : undefined
 
-    const session = yield* Effect.acquireRelease(
-      Effect.try({
-        // With no path, chdb-node opens its own temp directory and removes it on
-        // cleanup(); with a path, the on-disk session persists across opens.
-        try: () => (options.path === undefined ? new Session() : new Session(options.path)),
-        catch: (cause) => new SqlError({ reason: classifyError(cause, "ChdbClient: failed to open session", "connect", "connection") })
-      }),
-      // cleanup() is idempotent, never throws, and drops the temp dir when ephemeral.
-      (s) => Effect.sync(() => s.cleanup())
-    )
-
-    yield* Effect.try({
-      try: () => {
-        if (options.database) session.query(`CREATE DATABASE IF NOT EXISTS ${options.database}; USE ${options.database}`)
-        if (options.settings) {
-          for (const [k, v] of Object.entries(options.settings)) session.query(`SET ${k} = ${renderSetting(v)}`)
-        }
-        session.query("SELECT 1")
-      },
-      catch: (cause) => new SqlError({ reason: classifyError(cause, "ChdbClient: bootstrap failed", "connect", "connection") })
-    })
-
     const runString = (sql: string, format: string): Effect.Effect<string, SqlError> =>
       Effect.try({
         try: () => String(session.query(sql, format) ?? ""),
         catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to execute statement", "execute") })
       })
+
+    const native: ChdbNative = {
+      query(sql, format = "CSV") {
+        return Effect.try({
+          try: () => String(session.query(sql, format) ?? ""),
+          catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to execute native query", "execute") })
+        })
+      },
+      queryBind(sql, args, format = "CSV") {
+        return Effect.try({
+          try: () => String(session.queryBind(sql, args, format) ?? ""),
+          catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to execute native bound query", "execute") })
+        })
+      },
+      queryAsync(sql, queryOptions) {
+        return Effect.tryPromise({
+          try: () => session.queryAsync(sql, queryOptions),
+          catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to execute native async query", "execute") })
+        })
+      },
+      queryBindAsync(sql, params, queryOptions) {
+        return Effect.tryPromise({
+          try: () => session.queryBindAsync(sql, params, queryOptions),
+          catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to execute native async bound query", "execute") })
+        })
+      },
+      insert(params) {
+        return Effect.tryPromise({
+          try: () => session.insert(params),
+          catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to execute native insert", "insert") })
+        })
+      },
+      queryStream(sql, streamOptions) {
+        return Effect.try({
+          try: () => session.queryStream(sql, streamOptions),
+          catch: (cause) => new SqlError({ reason: classifyError(cause, "Failed to open native query stream", "execute") })
+        })
+      }
+    }
 
     const parseEachRow = (s: string): ReadonlyArray<any> => (s.trim() ? s.trim().split("\n").map((line) => JSON.parse(line)) : [])
 
@@ -270,6 +333,7 @@ export const make = (
       }),
       {
         config: options,
+        native,
         param<A>(ch: Ch<A>, value: A) {
           return Statement.fragment([chdbLit(ch.lit(value), undefined)])
         },
@@ -299,9 +363,34 @@ export const make = (
     ) as ChdbClient
   })
 
+export const make = (
+  options: ChdbClientConfig
+): Effect.Effect<ChdbClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
+  Effect.gen(function*() {
+    const session = yield* openSession(options)
+    yield* bootstrapSession(session, options)
+    return yield* makeWithSession(session, options)
+  })
+
 // ── layers ───────────────────────────────────────────────────────────────────
 
-export const layer = (config: ChdbClientConfig): Layer.Layer<ChdbClient | Client.SqlClient, SqlError> =>
+export const sessionLayer = (config: ChdbClientConfig): Layer.Layer<ChdbSession, SqlError> =>
   Layer.effectContext(
-    Effect.map(make(config), (client) => Context.make(ChdbClient, client).pipe(Context.add(Client.SqlClient, client)))
+    Effect.gen(function*() {
+      const session = yield* openSession(config)
+      yield* bootstrapSession(session, config)
+      return Context.make(ChdbSession, session)
+    })
+  )
+
+export const layerFromSession = (config: ChdbClientConfig): Layer.Layer<ChdbClient | Client.SqlClient, SqlError, ChdbSession> =>
+  Layer.effectContext(
+    Effect.gen(function*() {
+      const session = yield* ChdbSession
+      const client = yield* makeWithSession(session, config)
+      return Context.make(ChdbClient, client).pipe(Context.add(Client.SqlClient, client))
+    })
   ).pipe(Layer.provide(Reactivity.layer))
+
+export const layer = (config: ChdbClientConfig): Layer.Layer<ChdbSession | ChdbClient | Client.SqlClient, SqlError> =>
+  layerFromSession(config).pipe(Layer.provideMerge(sessionLayer(config)))

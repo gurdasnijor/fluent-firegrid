@@ -1,0 +1,34 @@
+{
+  "name": "@firegrid/spec-harness",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
+    "lint": "pnpm run diagnostics",
+    "spec": "cd ../.. && NODE_OPTIONS='--import tsx' cucumber-js --config cucumber.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cucumber/cucumber": "^12.9.0",
+    "@cucumber/messages": "32.3.1",
+    "@cucumber/query": "^13.6.0",
+    "@effect/opentelemetry": "4.0.0-beta.78",
+    "@effect/platform-node": "4.0.0-beta.78",
+    "@firegrid/observability": "workspace:*",
+    "@opentelemetry/sdk-trace-base": "^2.7.1",
+    "chdb": "^3.0.1",
+    "effect": "4.0.0-beta.78",
+    "effect-s2": "workspace:*",
+    "effect-s2-stream-db": "workspace:*"
+  },
+  "devDependencies": {
+    "@effect/language-service": "^0.86.2",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.22.4",
+    "typescript": "^5.9.3"
+  }
+}

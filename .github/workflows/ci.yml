@@ -154,5 +154,5 @@ jobs:
       - name: Test
         run: pnpm run test
 
-      - name: Run Firelab validations
-        run: pnpm --filter firelab validate:all --timeout-ms 120000
+      - name: Run executable specs
+        run: pnpm --filter @firegrid/spec-harness spec

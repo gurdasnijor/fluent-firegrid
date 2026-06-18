@@ -84,4 +84,4 @@ constraints:
   BOUNDARIES:
     requirements:
       1: Stateless execution behavior is driven through the public service/client/sendClient/attach/poll/resolveSignal/resolveAwakeable APIs, not by calling WorkflowDb or RosterDb directly from validation code.
-      2: S2-backed service behavior is proven by Firelab validations; package-local tests remain pure/type-level.
+      2: S2-backed service behavior is proven by executable Cucumber specs; package-local tests remain pure/type-level.

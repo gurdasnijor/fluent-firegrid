@@ -110,7 +110,7 @@ constraints:
     name: Production tracing
     requirements:
       1: Public operations emit effect-s2-stream-db spans with enough attributes to identify the operation, stream, and table where applicable.
-      2: S2-backed behavior is proven by Firelab validations over production spans; package-local tests remain pure and type-level.
+      2: S2-backed behavior is proven by executable Cucumber specs over production spans; package-local tests remain pure and type-level.
 
   COMPAT:
     requirements:

@@ -35,7 +35,7 @@ components:
     name: Multi-worker safety
     requirements:
       1: Multi-worker execution remains disabled or explicitly unsupported until log-backed lease renewal and S2 fencing are implemented and proven.
-      2: Lease renewal, campaign, self-demotion, and token-protected writes are covered by Firelab scenarios with two competing workers over one S2 backend.
+      2: Lease renewal, campaign, self-demotion, and token-protected writes are covered by executable specs with two competing workers over one S2 backend.
       3: A stale worker must be unable to append protected owner/checkpoint writes after a newer owner has fenced the stream.
 
   VERSION_COMPATIBILITY:

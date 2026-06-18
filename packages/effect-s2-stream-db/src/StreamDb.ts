@@ -1,4 +1,4 @@
-import { Effect, Option, Ref, Schema, SchemaAST, Semaphore, Stream } from "effect"
+import { Data, Effect, Option, Ref, Schema, SchemaAST, Semaphore, Stream } from "effect"
 import {
   AppendInput,
   AppendRecord,
@@ -289,6 +289,15 @@ const control = (signal: "snapshot-start" | "snapshot-end", offset: number): Cha
 /** Max records in one S2 append batch (the snapshot must fit one atomic batch). */
 const MAX_BATCH_RECORDS = 1000
 
+class SnapshotBatchTooLarge extends Data.TaggedError("SnapshotBatchTooLarge")<{
+  readonly entries: number
+  readonly maxRecords: number
+}> {
+  get message(): string {
+    return `snapshot of ${this.entries} live keys exceeds one atomic batch (${this.maxRecords})`
+  }
+}
+
 type Intent =
   | { readonly _tag: "write"; readonly meta: TableMeta; readonly row: unknown }
   | { readonly _tag: "delete"; readonly meta: TableMeta; readonly key: string }
@@ -502,9 +511,7 @@ const openStream = <T extends Tables>(
         const entries = state.entries()
         yield* Effect.annotateCurrentSpan({ stream, cursor, liveEntries: entries.length })
         if (entries.length + 3 > MAX_BATCH_RECORDS) {
-          return yield* Effect.fail(
-            new Error(`snapshot of ${entries.length} live keys exceeds one atomic batch (${MAX_BATCH_RECORDS})`),
-          )
+          return yield* new SnapshotBatchTooLarge({ entries: entries.length, maxRecords: MAX_BATCH_RECORDS })
         }
         const startBody = yield* ChangeMessage.encode(control("snapshot-start", cursor))
         const endBody = yield* ChangeMessage.encode(control("snapshot-end", cursor))

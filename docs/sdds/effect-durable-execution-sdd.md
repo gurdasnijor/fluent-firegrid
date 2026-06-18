@@ -32,10 +32,9 @@ Narrative sub-SDDs:
 
 Supporting executable validation:
 
-- [`packages/firelab`](../../packages/firelab) validates feature requirements against real
-  system behavior and OpenTelemetry evidence.
-- `pnpm --filter firelab validate:proofs check effect-s2-durable/stateful-execution --allow-missing`
-  reports which actor-model requirements still need proofs.
+- [`packages/spec-harness`](../../packages/spec-harness) validates feature behavior against real
+  system behavior and OpenTelemetry evidence through Cucumber and chDB.
+- `pnpm --filter @firegrid/spec-harness spec` runs executable specs.
 
 ## Purpose
 
