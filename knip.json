@@ -5,6 +5,9 @@
     "@typespec/rest",
     "tslib"
   ],
+  "ignoreUnresolved": [
+    "summary"
+  ],
   "workspaces": {
     "packages/fluent-acp-process": {
       "entry": [
@@ -45,9 +48,14 @@
         "src/**/*.ts",
         "test/**/*.ts"
       ]
+    },
+    "packages/spec-harness": {
+      "entry": [
+        "src/**/*.ts"
+      ],
+      "project": [
+        "src/**/*.ts"
+      ]
     }
-  },
-  "ignoreWorkspaces": [
-    "packages/firelab"
-  ]
+  }
 }

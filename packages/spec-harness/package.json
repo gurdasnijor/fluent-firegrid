@@ -20,10 +20,8 @@
     "@effect/platform-node": "4.0.0-beta.78",
     "@firegrid/observability": "workspace:*",
     "@opentelemetry/sdk-trace-base": "^2.7.1",
-    "chdb": "^3.0.1",
     "effect": "4.0.0-beta.78",
-    "effect-s2": "workspace:*",
-    "effect-s2-stream-db": "workspace:*"
+    "effect-s2": "workspace:*"
   },
   "devDependencies": {
     "@effect/language-service": "^0.86.2",
