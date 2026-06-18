@@ -2,10 +2,7 @@ import { Then } from "@cucumber/cucumber"
 import { strict as assert } from "node:assert"
 import { Effect, Option } from "effect"
 import { GivenEffect, ThenEffect, WhenEffect } from "../support/effect_steps.ts"
-import { defineInventoryStep } from "../support/spec_inventory.ts"
 import type { FiregridWorld } from "../support/world.ts"
-
-defineInventoryStep("the storage-primitives contract includes:")
 
 GivenEffect("an open storage db with infinite retention at key {string}", function(
   this: FiregridWorld,
