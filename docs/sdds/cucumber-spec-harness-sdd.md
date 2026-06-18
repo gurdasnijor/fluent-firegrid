@@ -291,10 +291,12 @@ chDB. Do not reintroduce Firelab JSONL as the primary execution model.
    - no fake session interface and no client/exporter import cycle.
 2. Get one executable `effect-s2-stream-db` feature green end-to-end.
 3. Add Cucumber formatter/reporting using `@cucumber/query`.
-4. Convert remaining stream-db validations.
-5. Convert durable validations.
-6. Remove Firelab only once CI has equivalent executable Cucumber coverage.
-7. Keep feature-YAML semantic specs only where still useful as non-executable
+4. Convert feature-YAML inventories to Gherkin `.feature` files.
+5. Keep unimplemented requirement inventory scenarios tagged `@spec-only` until
+   step definitions make them executable.
+6. Convert remaining stream-db and durable scenarios from requirement inventory
+   to executable Cucumber proofs incrementally.
+7. Keep semantic inventory in Gherkin only where still useful as non-executable
    design/spec inventory; do not make the harness depend on Firelab proof joins.
 
 ## Risks
