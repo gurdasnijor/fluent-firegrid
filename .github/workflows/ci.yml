@@ -28,7 +28,7 @@ env:
 #   lint               — eslint + dead-code (knip) + dup (jscpd) + dep boundaries
 #   typecheck          — turbo run typecheck
 #   effect-diagnostics — effect-language-service diagnostics
-#   tests              — turbo run test + Firelab executable validations
+#   tests              — turbo run test + Cucumber executable specs
 
 jobs:
   lint:
@@ -151,17 +151,22 @@ jobs:
           sudo install -m 0755 /tmp/s2/s2 /usr/local/bin/s2
           s2 --version
 
-      - name: Test
-        run: pnpm run test
-
-      - name: Run executable specs
+      - name: Prepare chDB native binding
         run: |
           set -euo pipefail
           shopt -s nullglob
           chdb_lib_dirs=(node_modules/.pnpm/@chdb+lib-linux-x64-gnu@*/node_modules/@chdb/lib-linux-x64-gnu)
-          if [ ${#chdb_lib_dirs[@]} -gt 0 ]; then
-            export LD_LIBRARY_PATH="$PWD/${chdb_lib_dirs[0]}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-            mkdir -p /home/runner/work/chdb-node/chdb-node
-            ln -sf "$PWD/${chdb_lib_dirs[0]}/libchdb.so" /home/runner/work/chdb-node/chdb-node/libchdb.so
+          if [ ${#chdb_lib_dirs[@]} -eq 0 ]; then
+            echo "Unable to locate @chdb/lib-linux-x64-gnu under node_modules/.pnpm" >&2
+            exit 1
           fi
-          pnpm --filter @firegrid/spec-harness spec
+          chdb_lib_dir="$PWD/${chdb_lib_dirs[0]}"
+          echo "LD_LIBRARY_PATH=$chdb_lib_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          mkdir -p /home/runner/work/chdb-node/chdb-node
+          ln -sf "$chdb_lib_dir/libchdb.so" /home/runner/work/chdb-node/chdb-node/libchdb.so
+
+      - name: Test
+        run: pnpm run test
+
+      - name: Run executable specs
+        run: pnpm --filter @firegrid/spec-harness spec

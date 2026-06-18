@@ -1,13 +1,43 @@
-export default {
+import { readdirSync, readFileSync, statSync } from "node:fs"
+import { join } from "node:path"
+
+const featureFiles = (dir) =>
+  readdirSync(dir).flatMap((entry) => {
+    const file = join(dir, entry)
+    const stat = statSync(file)
+    if (stat.isDirectory()) return featureFiles(file)
+    return file.endsWith(".feature") ? [file] : []
+  })
+
+const sqlProofTags = () =>
+  Array.from(
+    new Set(
+      featureFiles("features").flatMap((file) =>
+        Array.from(readFileSync(file, "utf8").matchAll(/@sql:[^\s]+/g), ([tag]) => tag),
+      ),
+    ),
+  ).sort()
+
+const sqlProofTagExpression = () => {
+  const tags = sqlProofTags()
+  return tags.length === 0 ? "@__missing_sql_proofs__" : tags.join(" or ")
+}
+
+const common = {
   paths: ["features/**/*.feature"],
   import: [
-    "packages/spec-harness/src/**/*.ts",
-    "features/support/**/*.ts",
-    "features/step_definitions/**/*.ts",
+    "./cucumber-tsx-register.mjs",
+    "features/**/*.ts",
   ],
   format: [
     "summary",
     "./packages/spec-harness/src/trace-formatter.ts",
   ],
-  tags: "not @spec-only",
+}
+
+export default common
+
+export const proofs = {
+  ...common,
+  tags: sqlProofTagExpression(),
 }
