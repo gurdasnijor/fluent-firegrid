@@ -4,7 +4,7 @@ import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem"
 import * as NodePath from "@effect/platform-node/NodePath"
 import { ChdbClient, ChdbSession, ChdbSpanExporter, layer as ChdbLayer } from "@firegrid/observability"
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base"
-import { Effect, FileSystem, Layer, Path } from "effect"
+import { Data, Effect, FileSystem, Layer, Path } from "effect"
 import * as ManagedRuntime from "effect/ManagedRuntime"
 import type { S2Client } from "effect-s2"
 import { recordScenarioReport, type SpanCount } from "./report-state.ts"
@@ -20,6 +20,11 @@ interface ScenarioState {
   readonly scenarioId: string
   readonly proofs: Array<ProofBlock>
 }
+
+class SqlProofError extends Data.TaggedError("SqlProofError")<{
+  readonly message: string
+  readonly cause?: unknown
+}> {}
 
 export type HarnessServices = S2Client | ChdbSession | ChdbClient | FileSystem.FileSystem | Path.Path
 
@@ -80,10 +85,10 @@ const scenarioSpans = `
 const normalizeProofSql = (sql: string): string => {
   const trimmed = sql.trim().replace(/;+\s*$/, "")
   if (!/^(select|with)\b/i.test(trimmed)) {
-    throw new Error("trace proof SQL must be a SELECT or WITH query")
+    throw new SqlProofError({ message: "trace proof SQL must be a SELECT or WITH query" })
   }
   if (trimmed.includes(";")) {
-    throw new Error("trace proof SQL must contain a single read-only query")
+    throw new SqlProofError({ message: "trace proof SQL must contain a single read-only query" })
   }
   return trimmed.replace(/\bscenario_spans\b/g, scenarioSpans)
 }
@@ -122,29 +127,41 @@ const sqlProofTagsFor = (scenario: ITestCaseHookParameter): ReadonlyArray<string
     .filter((tag) => tag.startsWith("@sql:"))
     .map((tag) => tag.slice("@sql:".length))
 
-const proofsFor = (scenario: ITestCaseHookParameter): Effect.Effect<Array<ProofBlock>, Error, FileSystem.FileSystem | Path.Path> => {
+const proofsFor = (
+  scenario: ITestCaseHookParameter,
+): Effect.Effect<Array<ProofBlock>, SqlProofError, FileSystem.FileSystem | Path.Path> => {
   const names = sqlProofTagsFor(scenario)
   if (names.length === 0) return Effect.succeed([])
   return Effect.gen(function*() {
     const fs = yield* FileSystem.FileSystem
     const featureUri = scenario.pickle.uri
     const file = yield* proofFileFor(featureUri)
-    const exists = yield* fs.exists(file).pipe(Effect.mapError((cause) => new Error(String(cause))))
+    const exists = yield* fs.exists(file).pipe(
+      Effect.mapError((cause) => new SqlProofError({ message: `Unable to check SQL proof file for ${featureUri}: ${file}`, cause })),
+    )
     if (exists === false) {
-      return yield* Effect.fail(new Error(`SQL proof file not found for ${featureUri}: ${file}`))
+      return yield* new SqlProofError({ message: `SQL proof file not found for ${featureUri}: ${file}` })
     }
-    const content = yield* fs.readFileString(file).pipe(Effect.mapError((cause) => new Error(String(cause))))
-    const proofs = parseNamedProofs(file, content)
-    return names.map((name) => {
+    const content = yield* fs.readFileString(file).pipe(
+      Effect.mapError((cause) => new SqlProofError({ message: `Unable to read SQL proof file for ${featureUri}: ${file}`, cause })),
+    )
+    const proofs = yield* Effect.try({
+      try: () => parseNamedProofs(file, content),
+      catch: (cause) =>
+        cause instanceof SqlProofError
+          ? cause
+          : new SqlProofError({ message: `Unable to parse SQL proof file for ${featureUri}: ${file}`, cause }),
+    })
+    return yield* Effect.forEach(names, (name) => {
       const sql = proofs.get(name)
       if (sql === undefined) {
-        throw new Error(`SQL proof ${name} not found in ${file}`)
+        return Effect.fail(new SqlProofError({ message: `SQL proof ${name} not found in ${file}` }))
       }
-      return {
+      return Effect.succeed({
         name,
         source: `${file}#${name}`,
         sql,
-      }
+      })
     })
   })
 }
