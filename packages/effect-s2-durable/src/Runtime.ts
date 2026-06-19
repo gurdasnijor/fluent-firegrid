@@ -89,6 +89,7 @@ export interface DurableExecutionRuntimeApi {
   readonly sleepStep: PrimitiveInterpreterApi["sleepStep"]
   /** State ops (delegated to by the `state(Table)` binding's methods). */
   readonly stateGet: PrimitiveInterpreterApi["stateGet"]
+  readonly stateQuery: PrimitiveInterpreterApi["stateQuery"]
   readonly stateSet: PrimitiveInterpreterApi["stateSet"]
   readonly stateDelete: PrimitiveInterpreterApi["stateDelete"]
   /** Park until a named durable promise (signal/deferred/awakeable) is resolved. */
@@ -523,6 +524,7 @@ const makeRuntime = Effect.gen(function*() {
       handlerRequest: primitives.handlerRequest,
       sleepStep: primitives.sleepStep,
       stateGet: primitives.stateGet,
+      stateQuery: primitives.stateQuery,
       stateSet: primitives.stateSet,
       stateDelete: primitives.stateDelete,
       awaitDeferred: primitives.awaitDeferred,

@@ -14,6 +14,7 @@ import {
   replay,
   signalValue,
   stateValue,
+  stateValues,
   transition,
   unPathSegment,
 } from "./core.ts"
@@ -41,6 +42,8 @@ export type AdmitResult =
 /** The durable surfaces a running object method writes through (state + run journal). */
 export interface ObjectStateBackend {
   readonly get: (table: string, key: string) => Effect.Effect<Option.Option<unknown>, DurableExecutionError, S2Client>
+  /** All live (encoded) values of `table`, in append order — a projection read of the owner stream. */
+  readonly values: (table: string) => Effect.Effect<ReadonlyArray<unknown>, DurableExecutionError, S2Client>
   readonly set: (table: string, key: string, value: unknown) => Effect.Effect<void, DurableExecutionError, S2Client>
   readonly delete: (table: string, key: string) => Effect.Effect<void, DurableExecutionError, S2Client>
   /**
@@ -188,6 +191,10 @@ const makeBackend = (
         yield* Ref.update(snapshotRef, (s) => transition(s, { seqNum, event }))
         return live
       }),
+    // A projection read of the current materialized rows — not journaled (unlike
+    // the point `get`, whose RMW must replay verbatim). Use it for derivations /
+    // output, not for replay-sensitive control flow.
+    values: (table) => Ref.get(snapshotRef).pipe(Effect.map((snapshot) => stateValues(snapshot, table))),
     set: (table, key, value) => write("set", table, key, value),
     delete: (table, key) => write("delete", table, key, undefined),
     // the durable-primitive journal, namespaced by `kind` (`run`, `sleep`, …) so a

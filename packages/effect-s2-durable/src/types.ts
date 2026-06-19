@@ -144,6 +144,17 @@ export interface IngressResolve {
  */
 export interface StateBinding<Row> {
   readonly get: (key: string) => Effect.Effect<Option.Option<Row>, DurableExecutionError, DurableExecutionRuntime>
+  /**
+   * Project all live rows of the table (insertion/append order). The durable
+   * stream-table fold surfaced to the handler — produce rows by `set`ting them,
+   * then read them back with `query` instead of re-accumulating in memory. A
+   * current-state projection, not a journaled point read: use it for derivations
+   * and output, not replay-sensitive control flow (same caveat as a read-modify-
+   * write — prefer a shared handler for projection).
+   */
+  readonly query: <A>(
+    build: (rows: ReadonlyArray<Row>) => A,
+  ) => Effect.Effect<A, DurableExecutionError, DurableExecutionRuntime>
   readonly set: (row: Row) => Effect.Effect<void, DurableExecutionError, DurableExecutionRuntime>
   readonly delete: (key: string) => Effect.Effect<void, DurableExecutionError, DurableExecutionRuntime>
 }

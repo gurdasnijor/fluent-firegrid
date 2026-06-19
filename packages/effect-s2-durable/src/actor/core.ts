@@ -233,6 +233,12 @@ export const stateValue = (snapshot: ActorSnapshot, table: string, key: string):
     Option.flatMap((sub) => (sub.has(key) ? Option.some(sub.get(key)) : Option.none())),
   )
 
+/** All live values of `table`, in insertion (append) order — the projection a query folds over. */
+export const stateValues = (snapshot: ActorSnapshot, table: string): ReadonlyArray<unknown> => {
+  const sub = snapshot.state.get(table)
+  return sub === undefined ? [] : Array.from(sub.values())
+}
+
 /** A resolved signal's value for `callId`/`name`, if resolved (the value may be `undefined`). */
 export const signalValue = (snapshot: ActorSnapshot, callId: string, name: string): Option.Option<unknown> =>
   Option.fromNullishOr(snapshot.signals.get(callId)).pipe(

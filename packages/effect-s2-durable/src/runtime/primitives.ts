@@ -1,6 +1,6 @@
 import { Cause, Clock, Context, Deferred, Duration, Effect, Exit, HashMap, Layer, Option, Ref, Schema } from "effect"
 import type { AnyTable, RowOf } from "effect-s2-stream-db"
-import { encodeObjectCallId, stateValue, type ObjectCallIdParts } from "../actor/core.ts"
+import { encodeObjectCallId, stateValue, stateValues, type ObjectCallIdParts } from "../actor/core.ts"
 import type { DurableExecutionError } from "../errors.ts"
 import type { RunOptions } from "../types.ts"
 import {
@@ -41,6 +41,10 @@ export interface PrimitiveInterpreterApi {
     table: Tbl,
     key: string,
   ) => Effect.Effect<Option.Option<RowOf<Tbl>>, DurableExecutionError>
+  readonly stateQuery: <Tbl extends AnyTable, A>(
+    table: Tbl,
+    build: (rows: ReadonlyArray<RowOf<Tbl>>) => A,
+  ) => Effect.Effect<A, DurableExecutionError>
   readonly stateSet: <Tbl extends AnyTable>(table: Tbl, row: RowOf<Tbl>) => Effect.Effect<void, DurableExecutionError>
   readonly stateDelete: <Tbl extends AnyTable>(table: Tbl, key: string) => Effect.Effect<void, DurableExecutionError>
   readonly awaitDeferred: <A, I>(
@@ -210,6 +214,31 @@ const make: Effect.Effect<PrimitiveInterpreterApi, never, RuntimeState | Runtime
         }),
     ))
 
+  // A projection over all live rows of a table — the durable-stream fold surfaced
+  // to the handler, so callers don't re-accumulate. Shared/object kinds read the
+  // materialized snapshot; the service kind queries its stream db. It is a
+  // current-state projection (not a journaled point read), intended for
+  // derivations and output rather than replay-sensitive branching.
+  const decodeAll = <Tbl extends AnyTable>(table: Tbl, encoded: ReadonlyArray<unknown>) =>
+    Effect.forEach(encoded, (value) => decodeRowFor(table, value)).pipe(
+      Effect.map((rows) => rows as ReadonlyArray<RowOf<Tbl>>),
+    )
+
+  const stateQuery = <Tbl extends AnyTable, A>(
+    table: Tbl,
+    build: (rows: ReadonlyArray<RowOf<Tbl>>) => A,
+  ): Effect.Effect<A, DurableExecutionError> =>
+    withActive("state.query").pipe(Effect.flatMap((active) =>
+      active.kind === "shared"
+        ? decodeAll(table, stateValues(active.snapshot, table.tableName)).pipe(Effect.map(build))
+        : active.kind === "object"
+        ? provideClient(active.state.values(table.tableName)).pipe(
+          Effect.flatMap((values) => decodeAll(table, values)),
+          Effect.map(build),
+        )
+        : active.stateDb.table(table).query(build).pipe(Effect.mapError(toError("state.query"))),
+    ))
+
   const stateSet = <Tbl extends AnyTable>(table: Tbl, row: RowOf<Tbl>): Effect.Effect<void, DurableExecutionError> =>
     withActive("state.set").pipe(Effect.flatMap((active) =>
       active.kind === "shared"
@@ -324,6 +353,7 @@ const make: Effect.Effect<PrimitiveInterpreterApi, never, RuntimeState | Runtime
     handlerRequest,
     sleepStep,
     stateGet,
+    stateQuery,
     stateSet,
     stateDelete,
     awaitDeferred,

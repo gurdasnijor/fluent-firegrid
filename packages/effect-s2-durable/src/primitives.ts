@@ -53,6 +53,7 @@ export const sleep = (
  */
 export const state = <Tbl extends AnyTable>(table: Tbl): StateBinding<RowOf<Tbl>> => ({
   get: (key) => Effect.flatMap(DurableExecutionRuntime, (rt) => rt.stateGet(table, key)),
+  query: (build) => Effect.flatMap(DurableExecutionRuntime, (rt) => rt.stateQuery(table, build)),
   set: (row) => Effect.flatMap(DurableExecutionRuntime, (rt) => rt.stateSet(table, row)),
   delete: (key) => Effect.flatMap(DurableExecutionRuntime, (rt) => rt.stateDelete(table, key)),
 })

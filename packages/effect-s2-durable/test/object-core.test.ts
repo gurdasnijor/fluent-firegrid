@@ -10,6 +10,7 @@ import {
   pathSegment,
   replay,
   signalValue,
+  stateValues,
   unPathSegment,
 } from "../src/actor/core.ts"
 import { workflow, workflowRunId } from "../src/service.ts"
@@ -80,6 +81,31 @@ describe("journal identity is kind-aware (run vs read cannot collide)", () => {
   it("a cross-kind lookup misses (no collision)", () => {
     expect(Option.isNone(journalValue(snap, "c1", "run", "0"))).toBe(true)
     expect(Option.isNone(journalValue(snap, "c1", "read", "read/0"))).toBe(true)
+  })
+})
+
+describe("state projection (query reads the materialized fold, not a hand-rolled accumulator)", () => {
+  const set = (seqNum: number, table: string, key: string, value: unknown): LogEntry => ({
+    seqNum,
+    event: { _tag: "StateChanged", op: "set", table, key, value },
+  })
+  const del = (seqNum: number, table: string, key: string): LogEntry => ({
+    seqNum,
+    event: { _tag: "StateChanged", op: "delete", table, key },
+  })
+
+  it("returns all live values of a table in append order", () => {
+    const snap = replay([set(1, "messages", "0", "a"), set(2, "messages", "1", "b"), set(3, "messages", "2", "c")])
+    expect(stateValues(snap, "messages")).toEqual(["a", "b", "c"])
+  })
+
+  it("reflects an upsert in place and drops a deleted key", () => {
+    const snap = replay([set(1, "messages", "0", "a"), set(2, "messages", "1", "b"), set(3, "messages", "0", "a2"), del(4, "messages", "1")])
+    expect(stateValues(snap, "messages")).toEqual(["a2"])
+  })
+
+  it("an unknown table projects to empty (no fold to maintain)", () => {
+    expect(stateValues(replay([]), "messages")).toEqual([])
   })
 })
 
