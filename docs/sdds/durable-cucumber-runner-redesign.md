@@ -1,7 +1,16 @@
 # Redesign: Durable Cucumber Runner (corrected)
 
 This supersedes the first attempt (PR #42). It records what was wrong with that
-attempt and the corrected design, for agreement **before** any further code.
+attempt and the corrected design.
+
+**Status:** the wire-shaped topology (final section) is now drafted in
+`packages/spec-harness/src/durable/` — `runner` (service), `world` (object),
+support bundles by name. Verified locally by typecheck, lint, Effect diagnostics
+(0 errors), and an engine-free gate over the static message layer
+(`minimal`/`attachments`). The full S2-backed durable gate is wired but skipped
+where the `s2` binary is absent (this environment), so the runner↔world durable
+path is **CI-verified only** for now. The "Concrete code (earlier)" section below
+predates the wire reframing and is kept only for history.
 
 ## What the first attempt got wrong
 
