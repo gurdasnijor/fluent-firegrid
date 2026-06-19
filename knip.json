@@ -50,6 +50,9 @@
       ],
       "project": [
         "src/**/*.ts"
+      ],
+      "ignoreDependencies": [
+        "@cucumber/compatibility-kit"
       ]
     }
   }

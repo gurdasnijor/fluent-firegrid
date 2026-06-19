@@ -217,15 +217,27 @@ importers:
 
   packages/spec-harness:
     dependencies:
+      '@cucumber/core':
+        specifier: 0.9.0
+        version: 0.9.0(@cucumber/cucumber-expressions@20.0.0)(@cucumber/messages@32.3.1)(@cucumber/query@13.6.0(@cucumber/messages@32.3.1))(@cucumber/tag-expressions@10.0.0)
       '@cucumber/cucumber':
         specifier: ^12.9.0
         version: 12.9.0
+      '@cucumber/cucumber-expressions':
+        specifier: ^20.0.0
+        version: 20.0.0
+      '@cucumber/gherkin':
+        specifier: ^40.0.0
+        version: 40.0.0
       '@cucumber/messages':
         specifier: 32.3.1
         version: 32.3.1
       '@cucumber/query':
         specifier: ^13.6.0
         version: 13.6.0(@cucumber/messages@32.3.1)
+      '@cucumber/tag-expressions':
+        specifier: ^10.0.0
+        version: 10.0.0
       '@effect/opentelemetry':
         specifier: 4.0.0-beta.78
         version: 4.0.0-beta.78(@opentelemetry/api-logs@0.208.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.8.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.208.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.8.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.8.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.8.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.8.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.41.1)(effect@4.0.0-beta.78)
@@ -245,6 +257,12 @@ importers:
         specifier: workspace:*
         version: link:../effect-s2
     devDependencies:
+      '@cucumber/compatibility-kit':
+        specifier: 29.2.2
+        version: 29.2.2
+      '@cucumber/message-streams':
+        specifier: ^5.0.0
+        version: 5.0.0(@cucumber/messages@32.3.1)
       '@effect/language-service':
         specifier: ^0.86.2
         version: 0.86.2
@@ -313,8 +331,22 @@ packages:
   '@cucumber/ci-environment@13.0.0':
     resolution: {integrity: sha512-cs+3NzfNkGbcmHPddjEv4TKFiBpZRQ6WJEEufB9mw+ExS22V/4R/zpDSEG+fsJ/iSNCd6A2sATdY8PFOyY3YnA==}
 
+  '@cucumber/compatibility-kit@29.2.2':
+    resolution: {integrity: sha512-KkUaXLJBhXKXmo7hAWC9BMwGcyx7z1Tn6GirJeIZIoDTTRrm24fQaiw0he/FJUP8TQApiJkJtu40EMckY9X8vg==}
+
+  '@cucumber/core@0.9.0':
+    resolution: {integrity: sha512-nKhl1Qou9nbc42B1y0F0F0DnjlForEPxM+8efbmk1SQE7FZP4u+LWng9rzi5OHjLyHfGE3GSbLV4xjau4pDQzQ==}
+    peerDependencies:
+      '@cucumber/cucumber-expressions': '*'
+      '@cucumber/messages': '>=31.0.0'
+      '@cucumber/query': '*'
+      '@cucumber/tag-expressions': '*'
+
   '@cucumber/cucumber-expressions@19.0.0':
     resolution: {integrity: sha512-4FKoOQh2Uf6F6/Ln+1OxuK8LkTg6PyAqekhf2Ix8zqV2M54sH+m7XNJNLhOFOAW/t9nxzRbw2CcvXbCLjcvHZg==}
+
+  '@cucumber/cucumber-expressions@20.0.0':
+    resolution: {integrity: sha512-t2FBLKuU0U1nP5FM8pHiVonYcXVm07fvXr/H9osdvrjcLXSWc5OCbOOqV/k5S56w/YndPv1Sv2/m/x1KBYvIlA==}
 
   '@cucumber/cucumber@12.9.0':
     resolution: {integrity: sha512-QbgEo/DcKFMRGL+yULh8Kw6peEfdPJjhYjpKp0dYc+6Dv1Bmp6hvxIdTi2CIinYBCXhvCZzNO1Ct/n6Dk1yAtA==}
@@ -336,6 +368,9 @@ packages:
   '@cucumber/gherkin@38.0.0':
     resolution: {integrity: sha512-duEXK+KDfQUzu3vsSzXjkxQ2tirF5PRsc1Xrts6THKHJO6mjw4RjM8RV+vliuDasmhhrmdLcOcM7d9nurNTJKw==}
 
+  '@cucumber/gherkin@40.0.0':
+    resolution: {integrity: sha512-wMbF0TtNy2ELBJ8nls29eZQWL4XKfuWtMwqDaylUEAiv3qC0/ZAVU0LS2viQ6ZfXe5ROAC38penTOAdrjwYC9Q==}
+
   '@cucumber/html-formatter@23.1.0':
     resolution: {integrity: sha512-DcCSFoGs6jbwzXPgX1CwgJKEE+ZMcIEzq/0Memg0o24maNn9NJizBFHmoFWG4iv/OxHza+mvc+56cTHetfHndw==}
     peerDependencies:
@@ -348,6 +383,11 @@ packages:
 
   '@cucumber/message-streams@4.1.1':
     resolution: {integrity: sha512-QCAntLajesWMyX+mZKrj63YghVAts7yKFlZe46XprLbdJZN0ddB+f/Mr9OnyWKC2DHhJ18jzCfKIFCaqpAmUxg==}
+    peerDependencies:
+      '@cucumber/messages': '>=17.1.1'
+
+  '@cucumber/message-streams@5.0.0':
+    resolution: {integrity: sha512-71LP6XHverU4UaKdSkq+YEholikOxg2xptRfJBM8ReL5hc2ZcG6JnBsWAvUCnlPjWR6ofN5I8d2hgI3lJq4CSA==}
     peerDependencies:
       '@cucumber/messages': '>=17.1.1'
 
@@ -369,6 +409,9 @@ packages:
     resolution: {integrity: sha512-FMfT3orJblRsOxvU2doECBvQmauizYlj+5JsM8atAKKPbnQTj7v2/OrnuykvQpfZNBf19DYbRq1e832vllRP/g==}
     peerDependencies:
       '@cucumber/messages': '*'
+
+  '@cucumber/tag-expressions@10.0.0':
+    resolution: {integrity: sha512-uap3XSQFxj5HYAHQIShGeS2zotMEnUmnEVjyuhp39j7tDUvaU64ArHzRkLPSWRavEI8ycdeNdwef1pcM/n6pSQ==}
 
   '@cucumber/tag-expressions@9.1.0':
     resolution: {integrity: sha512-bvHjcRFZ+J1TqIa9eFNO1wGHqwx4V9ZKV3hYgkuK/VahHx73uiP4rKV3JVrvWSMrwrFvJG6C8aEwnCWSvbyFdQ==}
@@ -3994,7 +4037,20 @@ snapshots:
 
   '@cucumber/ci-environment@13.0.0': {}
 
+  '@cucumber/compatibility-kit@29.2.2': {}
+
+  '@cucumber/core@0.9.0(@cucumber/cucumber-expressions@20.0.0)(@cucumber/messages@32.3.1)(@cucumber/query@13.6.0(@cucumber/messages@32.3.1))(@cucumber/tag-expressions@10.0.0)':
+    dependencies:
+      '@cucumber/cucumber-expressions': 20.0.0
+      '@cucumber/messages': 32.3.1
+      '@cucumber/query': 13.6.0(@cucumber/messages@32.3.1)
+      '@cucumber/tag-expressions': 10.0.0
+
   '@cucumber/cucumber-expressions@19.0.0':
+    dependencies:
+      regexp-match-indices: 1.0.2
+
+  '@cucumber/cucumber-expressions@20.0.0':
     dependencies:
       regexp-match-indices: 1.0.2
 
@@ -4060,6 +4116,10 @@ snapshots:
     dependencies:
       '@cucumber/messages': 32.3.1
 
+  '@cucumber/gherkin@40.0.0':
+    dependencies:
+      '@cucumber/messages': 32.3.1
+
   '@cucumber/html-formatter@23.1.0(@cucumber/messages@32.3.1)':
     dependencies:
       '@cucumber/messages': 32.3.1
@@ -4076,6 +4136,11 @@ snapshots:
     dependencies:
       '@cucumber/messages': 32.3.1
       mime: 3.0.0
+
+  '@cucumber/message-streams@5.0.0(@cucumber/messages@32.3.1)':
+    dependencies:
+      '@cucumber/messages': 32.3.1
+      mime: 4.1.0
 
   '@cucumber/messages@32.3.1':
     dependencies:
@@ -4102,6 +4167,8 @@ snapshots:
       '@cucumber/messages': 32.3.1
       '@teppeis/multimaps': 3.0.0
       lodash.sortby: 4.7.0
+
+  '@cucumber/tag-expressions@10.0.0': {}
 
   '@cucumber/tag-expressions@9.1.0': {}
 
