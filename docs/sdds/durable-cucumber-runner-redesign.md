@@ -129,3 +129,196 @@ becomes ordinary durable steps:
    yet), or is the durable runner exercised only in CI with the `s2` binary?
 4. **Scope of this branch** — land step 1 here and do 2–3 as follow-ups, or
    bigger?
+
+---
+
+## Concrete code
+
+All examples use the verified primitive signatures
+(`run(name, action, { output })`, `state(Table)`, `objectClient(def, key)`,
+`service`/`object`). They are illustrative, not final.
+
+### The load-bearing question: how services reach a handler
+
+`service()`/`object()` compile a handler body to `Handler<…, never, never>` (the
+`R` is erased by a cast). The engine only injects `ActiveInvocation` +
+`DurableExecutionRuntime` into the body (`runExecution`/`runObjectBody` in
+`Runtime.ts`). So a step body that reads `ChdbClient` (proofs) or a
+`SupportLibrary` service must get them **some other way**. Two options — I need
+your call on which matches the engine's real behavior:
+
+**Option A — provide world + support to the runtime layer; bodies inherit it.**
+The engine forks handler bodies with `Effect.forkIn(body, engineScope)`, which
+inherits the *fiber context* in which `DurableExecutionRuntime.layer` was built.
+If the entry provides those services to that layer, bodies can read them
+ambiently:
+
+```ts
+// entry (composition root) — built once, not per run
+const DurableCucumberLive = serviceLayer(coordinator, scenario).pipe(
+  Layer.provide(Layer.mergeAll(SupportLibrary.Live, WorldServices.Live, S2LiteLive)),
+)
+```
+
+This is the clean authoring story (proof steps just `yield* run(query…)`), but it
+leans on context inheritance through `forkIn` + the `R`-erasure cast. **Does the
+engine guarantee bodies see services provided to its layer?**
+
+**Option B — no inheritance; provide explicitly per step.** Each external effect
+in a step body carries its own `Effect.provide(WorldServices.Live)` (memoized).
+Safe regardless of engine internals, noisier for authors. Falls back to a
+module-level pre-built `Context` if per-call layer build is too costly.
+
+Everything below assumes **A**; if it's **B** the only change is where
+`Effect.provide` sits.
+
+### Support code as a service (no module-scope registry)
+
+`defineSupport` stays a pure description; the entry folds the imported modules
+into a `SupportLibrary` **service**, so handlers read it from context rather than
+a mutable global:
+
+```ts
+// support.ts
+export type SupportModule = (api: SupportApi) => void
+export const defineSupport = (register: SupportModule): SupportModule => register
+
+export class SupportLibrary extends Context.Service<SupportLibrary, {
+  readonly forText: (text: string) => ReadonlyArray<MatchedStep>   // @cucumber/core matching
+  readonly beforeHooks: (tags: ReadonlyArray<string>) => ReadonlyArray<DefinedTestCaseHook>
+  readonly afterHooks: (tags: ReadonlyArray<string>) => ReadonlyArray<DefinedTestCaseHook>
+  readonly toEnvelopes: () => ReadonlyArray<Envelope>
+}>()("cucumber-effect/SupportLibrary") {
+  static fromModules = (modules: ReadonlyArray<SupportModule>, newId: IdGenerator.NewId) =>
+    Layer.sync(SupportLibrary, () => {
+      const lib = buildSupportLibrary(modules, newId)   // wraps @cucumber/core buildSupportCode
+      return SupportLibrary.of({ /* … delegate to lib … */ })
+    })
+}
+```
+
+### Scenario object — per-step journaling
+
+The worker is a **stable, module-level** `object`. One call runs one attempt;
+scenario-local state is `state(Table)`; effectful work inside step bodies is
+journaled by `run(...)`. It returns positional outcomes and mints no ids.
+
+```ts
+// scenario.ts
+class ScenarioFacts extends Table<ScenarioFacts>("scenarioFacts")({
+  id: Schema.String.pipe(primaryKey),
+  json: Schema.String,
+}) {}
+
+export const scenario = object({
+  name: "cucumber-effect/scenario",
+  handlers: {
+    // input.pickle is a serializable @cucumber/messages Pickle
+    *runScenario(input: { readonly pickle: Pickle; readonly attempt: number }) {
+      const support = yield* SupportLibrary
+      const steps = planSteps(input.pickle, support)   // deterministic: (pickle, support)
+      const facts = state(ScenarioFacts)
+
+      // Sequential fold; the loop is *derived* — on replay it recomputes from the
+      // journaled run/state facts. No Effect.reduce in lib code → manual chain.
+      let mode: "run" | "skip" = "run"
+      const outcomes: Array<StepOutcome> = []
+      for (const step of steps) {            // (lib guardrail: replace with a fold helper)
+        const outcome = mode === "skip" && !step.always
+          ? skipped()
+          : yield* runOneStep(step, facts)   // step body uses run(...)/state(...) inside
+        outcomes.push(outcome)
+        mode = outcome.status === "PASSED" ? mode : "skip"
+      }
+      return { steps: outcomes }
+    },
+  },
+  schemas: { runScenario: { input: Schema.Unknown, output: Schema.Unknown } },
+})
+```
+
+### A proof step body — the durable boundary in practice
+
+Proof reads (the whole point of fluent-firegrid) run **inside `run(...)`** so a
+read that decides pass/fail is journaled and replayed, never re-issued:
+
+```ts
+// authored support code (a feature's *.ts), via the DSL
+defineSupport(({ Then }) => {
+  Then("the trace should satisfy:", function* (sql: string) {
+    const scenarioId = yield* ScenarioId            // from WorldServices (Option A)
+    const rows = yield* run(
+      `proof:${hashSql(sql)}`,
+      queryProofRows(sql, scenarioId),               // requires ChdbClient (ambient)
+      { output: ProofRows },
+    )
+    if (!proofRowsPass(rows)) {
+      return yield* Effect.fail(new TraceProofFailed({ sql }))
+    }
+  })
+})
+```
+
+This replaces `runtime.ts`'s `After`-hook proof loop: a proof is now an ordinary
+step whose result is journaled.
+
+### Coordinator service — message/id authority
+
+```ts
+// coordinator.ts
+export const coordinator = service({
+  name: "cucumber-effect/coordinator",
+  handlers: {
+    *run(input: { readonly sources: ReadonlyArray<SourceInput>; readonly options: RunOptions }) {
+      const support = yield* SupportLibrary
+      const assembled = assembleRun(input.sources, support)   // owns all ids/envelopes
+
+      const scenarioOutcomes = yield* Effect.forEach(
+        assembled.testCases,
+        (tc) =>
+          objectClient(scenario, `${tc.id}:0`).runScenario({   // deterministic child id → dedups on replay
+            pickle: assembled.pickleFor(tc),
+            attempt: 0,
+          }),
+        { concurrency: input.options.scenarioConcurrency ?? 1 },
+      )
+
+      // map positional outcomes → envelopes using the coordinator's own ids
+      const envelopes = buildEnvelopes(assembled, scenarioOutcomes)
+      return { envelopes, success: foldSuccess(scenarioOutcomes) }
+    },
+  },
+  schemas: { run: { input: Schema.Unknown, output: Schema.Unknown } },
+})
+```
+
+### Public entry + CCK gate through the real engine
+
+```ts
+// runtime.ts
+export const DurableCucumberLive = (modules: ReadonlyArray<SupportModule>) =>
+  serviceLayer(coordinator, scenario).pipe(
+    Layer.provide(Layer.mergeAll(SupportLibrary.fromModules(modules, IdGenerator.incrementing()), WorldServices.Live)),
+  )
+
+export const runFeaturesDurable = (paths, options) =>
+  Stream.unwrap(
+    readSources(paths).pipe(
+      Effect.flatMap((sources) => client(coordinator).run({ sources, options })),
+      Effect.map((r) => Stream.fromIterable(r.envelopes)),
+      Effect.provide(DurableCucumberLive(options.support)),
+    ),
+  )
+```
+
+```ts
+// cck.test.ts — gates the REAL durable path (no local shortcut), S2-backed
+it("minimal", () =>
+  runFeaturesDurable([cckFeature("minimal")], { support: [minimalSupport] }).pipe(
+    Stream.runCollect,
+    Effect.map((envs) => expect(normalize(envs)).toEqual(normalize(expected("minimal")))),
+    Effect.provide(S2LiteLive),   // CI (s2 binary); or a TestS2 layer if one exists
+    Effect.runPromise,
+  ))
+```
+
