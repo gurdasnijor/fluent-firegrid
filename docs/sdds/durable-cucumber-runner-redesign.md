@@ -322,3 +322,113 @@ it("minimal", () =>
   ))
 ```
 
+---
+
+## Revision: wire-protocol-shaped topology (supersedes the split above)
+
+Reading `cucumber-ruby-wire` reframes this. The Wire protocol decouples the
+**runner** from a **step-definition host** over a connection; the runner never
+imports step code, it drives the host with a tiny message set and builds Cucumber
+messages from the host's responses:
+
+| Wire message | Request | Response |
+|---|---|---|
+| `step_matches` | `{ name_to_match }` | `["success", [{ id, args:[{val,pos}], source }]]`; `[]`=undefined, >1=ambiguous |
+| `begin_scenario` | `{ tags? }` | `["success"]` (Before hooks / world setup) |
+| `invoke` | `{ id, args, table? }` | `["success"]` / `["fail", {message,exception,backtrace}]` / `["pending", msg]` |
+| `end_scenario` | `{ tags? }` | `["success"]` (After hooks / teardown) |
+| `snippet_text` | `{ step_keyword, step_name, multiline_arg_class }` | `["success", snippet]` |
+
+### Why this is the right shape here
+
+The "wire" is **durable RPC**. The step host is a **durable endpoint that owns
+its own support code + WorldServices** (it provides its own layer). That collapses
+the problems above:
+
+- **The services question disappears.** The coordinator (runner) needs no
+  `ChdbClient`, no `SupportLibrary`, no inheritance hack — step code and proof
+  reads live in the host, which provides its own layer like any normal durable
+  service. Option A vs B is moot.
+- **`invoke` *is* the per-step durable boundary.** Each step invocation is a
+  durable call into the host; its result is journaled, so on replay a completed
+  step returns its recorded outcome and the chDB proof read never re-runs. That
+  is exactly the per-step journaling you chose, with no bespoke wrapping.
+- **The World is a keyed object.** A virtual object keyed by scenario-attempt id
+  holds per-scenario `state(...)` between `begin_scenario` and `end_scenario` —
+  the durable analogue of the wire connection's per-scenario world.
+
+### Topology
+
+- **`runner` (service)** — parses gherkin, owns ordering and *all* Cucumber
+  ids/envelopes. For each scenario: `objectClient(world, attemptId).beginScenario`,
+  then per step `stepMatches` → `invoke`, then `endScenario`; it maps each
+  response onto `testStep*`/`testCase*` envelopes. No step code, no world services.
+- **`world` (object, key = `${testCaseId}:${attempt}`)** — the step-definition
+  host + World. Owns support code + WorldServices; runs Before/After hooks and
+  step bodies; holds scenario state in `state(...)`.
+- **`support` (service or shared handlers)** — `stepMatches` / `supportEnvelopes`
+  / `snippetText`: support-library queries the runner needs for matching and for
+  `stepDefinition`/`testCase` envelopes.
+
+### Concrete shape
+
+```ts
+// world.ts — the step-definition host (owns support code + WorldServices)
+export const world = object({
+  name: "cucumber-effect/world",
+  handlers: {
+    *beginScenario(input: { readonly scenarioId: string; readonly tags: ReadonlyArray<string> }) {
+      // Before hooks; open the firegrid.scenario span / seed scenario state
+    },
+    *invoke(input: {
+      readonly stepDefinitionId: string
+      readonly args: ReadonlyArray<unknown>
+      readonly docString?: string
+      readonly dataTable?: PickleTable
+    }) {
+      const fn = yield* SupportLibrary.pipe(Effect.map((l) => l.fnFor(input.stepDefinitionId)))
+      // step body runs here; proof reads use run(...) INSIDE it (journaled).
+      // returns the wire-shaped outcome the runner maps to a TestStepResult:
+      return yield* invokeStep(fn, input)   // { status } | { status:"FAILED", error } | { status:"PENDING" }
+    },
+    *endScenario(input: { readonly tags: ReadonlyArray<string> }) {
+      // After hooks; teardown
+    },
+  },
+  schemas: { /* opaque JSON in/out */ },
+})
+
+// runner.ts — pure orchestration + Cucumber message authority (no step code)
+export const runner = service({
+  name: "cucumber-effect/runner",
+  handlers: {
+    *run(input: { readonly sources: ReadonlyArray<SourceInput> }) {
+      const support = yield* objectClient(world, "support").supportEnvelopes() // or a support service
+      const assembled = assembleRun(input.sources, support)   // gherkin parse + ids/envelopes
+      // for each scenario: beginScenario → (stepMatches → invoke)* → endScenario,
+      // mapping each durable response onto testStep*/testCase* envelopes.
+      ...
+    },
+  },
+})
+```
+
+### Open questions (revised)
+
+1. **Granularity** — drive the wire conversation as separate durable calls
+   (`beginScenario`, one `invoke` per step, `endScenario`) so every step is its
+   own journaled boundary (closest to the wire, maximal recovery)? Or one
+   `runScenario` call that loops internally and journals each step with `run(...)`?
+   (Per-step calls match your "per-step journaling" most literally.)
+2. **World-as-keyed-object** — agree the World/step-host is a virtual object keyed
+   by scenario-attempt id, with `runner` as a `service` driving it? Or a different
+   split (e.g. host as a `service`, world state passed explicitly)?
+3. **`stepMatches` location** — matching lives in the host (it owns
+   `@cucumber/core` support); the runner builds `stepDefinition`/`testCase`
+   envelopes from `step_matches`/`supportEnvelopes` responses. Agree, or should
+   the runner own a copy of the support library for assembly?
+4. **Literal wire vs. internal protocol** — model the *architecture* on the wire
+   protocol (durable RPC, our own message shapes), or actually speak the Cucumber
+   wire JSON so non-Effect step hosts could connect too?
+
+
