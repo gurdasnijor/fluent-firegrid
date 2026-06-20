@@ -2,7 +2,7 @@ import { execSync } from "node:child_process"
 import { createReadStream } from "node:fs"
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem"
 import type { Envelope } from "@cucumber/messages"
-import { Chunk, Effect, Layer, Stream } from "effect"
+import { Effect, Layer, Stream } from "effect"
 import { describe, expect, it } from "vitest"
 import { assembleRun } from "../src/durable/assembly.ts"
 import { normalizeEnvelopes } from "../src/durable/cck.ts"
@@ -101,7 +101,7 @@ const hasS2 = (): boolean => {
 const runDurable = (sample: string): Promise<ReadonlyArray<Envelope>> =>
   runFeaturesDurable([cckSamplePath(sample, `${sample}.feature`)], { supportName: sample }).pipe(
     Stream.runCollect,
-    Effect.map((chunk) => Chunk.toReadonlyArray(chunk)),
+    Effect.map((chunk) => Array.from(chunk) as ReadonlyArray<Envelope>),
     Effect.provide(Layer.mergeAll(S2LiteLive, NodeFileSystem.layer)),
     Effect.scoped,
     Effect.runPromise,
@@ -110,5 +110,8 @@ const runDurable = (sample: string): Promise<ReadonlyArray<Envelope>> =>
 describe.skipIf(!hasS2())("CCK — durable engine path (S2-backed)", () => {
   it("minimal", async () => {
     expect(normalizeEnvelopes(await runDurable("minimal"))).toEqual(normalizeEnvelopes(cckExpectedEnvelopes("minimal")))
+  })
+  it("attachments", async () => {
+    expect(normalizeEnvelopes(await runDurable("attachments"))).toEqual(normalizeEnvelopes(cckExpectedEnvelopes("attachments")))
   })
 })
