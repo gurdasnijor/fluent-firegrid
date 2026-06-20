@@ -1,9 +1,9 @@
-import { Given, Then, When, type IWorld } from "@cucumber/cucumber"
 import { strict as assert } from "node:assert"
 import { Effect, Option, Schema } from "effect"
 import { primaryKey, StreamDb, Table } from "effect-s2-stream-db"
 import type { StreamDbInstance } from "effect-s2-stream-db"
-import { scenarioKey } from "../../packages/spec-harness/src/runtime.ts"
+import { defineSteps } from "../../packages/spec-harness/src/durable/support.ts"
+import { scenarioKey, type SpecWorld } from "../../packages/spec-harness/src/firegrid/proofs.ts"
 
 class Item extends Table<Item>("items")({
   id: Schema.String.pipe(primaryKey),
@@ -24,9 +24,9 @@ interface StorageState {
   key?: string
 }
 
-const storageStates = new WeakMap<IWorld, StorageState>()
+const storageStates = new WeakMap<SpecWorld, StorageState>()
 
-const storageStateFor = (world: IWorld): StorageState => {
+const storageStateFor = (world: SpecWorld): StorageState => {
   let state = storageStates.get(world)
   if (state === undefined) {
     state = {}
@@ -35,59 +35,7 @@ const storageStateFor = (world: IWorld): StorageState => {
   return state
 }
 
-Given("an open storage db with infinite retention at key {string}", function(
-  this: IWorld,
-  key: string,
-) {
-  const state = storageStateFor(this)
-  const actualKey = scenarioKey(this, key)
-  state.key = actualKey
-  return StorageDb.open(
-    actualKey,
-    { config: { retentionPolicy: { infinite: {} } } },
-  ).pipe(
-    Effect.tap((db) =>
-      Effect.sync(() => {
-        state.db = db
-      })),
-  )
-})
-
-When("I insert item {string} value {int}", function(this: IWorld, id: string, value: number) {
-  return storageDbFor(this).items.insert({ id, value })
-})
-
-When("I upsert item {string} value {int}", function(this: IWorld, id: string, value: number) {
-  return storageDbFor(this).items.upsert({ id, value })
-})
-
-When("I delete item {string}", function(this: IWorld, id: string) {
-  return storageDbFor(this).items.delete(id)
-})
-
-When("I checkpoint", function(this: IWorld) {
-  return storageDbFor(this).checkpoint
-})
-
-Then("reopening, item {string} is {int}", function(this: IWorld, id: string, expected: number) {
-  const key = storageKeyFor(this)
-  return Effect.gen(function*() {
-    const db = yield* StorageDb.open(key)
-    const actual = yield* db.items.get(id)
-    assert.deepEqual(Option.getOrThrow(actual), { id, value: expected })
-  })
-})
-
-Then("reopening, item {string} is absent", function(this: IWorld, id: string) {
-  const key = storageKeyFor(this)
-  return Effect.gen(function*() {
-    const db = yield* StorageDb.open(key)
-    const actual = yield* db.items.get(id)
-    assert.equal(Option.isNone(actual), true)
-  })
-})
-
-const storageDbFor = (world: IWorld) => {
+const storageDbFor = (world: SpecWorld) => {
   const db = storageStateFor(world).db
   if (db === undefined) {
     throw new Error("storage db is not open")
@@ -95,10 +43,64 @@ const storageDbFor = (world: IWorld) => {
   return db
 }
 
-const storageKeyFor = (world: IWorld): string => {
+const storageKeyFor = (world: SpecWorld): string => {
   const key = storageStateFor(world).key
   if (key === undefined) {
     throw new Error("storage db key is not set")
   }
   return key
 }
+
+export const storagePrimitivesSteps = defineSteps(({ Given, When, Then }) => {
+  Given("an open storage db with infinite retention at key {string}", function(
+    this: SpecWorld,
+    key: string,
+  ) {
+    const state = storageStateFor(this)
+    const actualKey = scenarioKey(this, key)
+    state.key = actualKey
+    return StorageDb.open(
+      actualKey,
+      { config: { retentionPolicy: { infinite: {} } } },
+    ).pipe(
+      Effect.tap((db) =>
+        Effect.sync(() => {
+          state.db = db
+        })),
+    )
+  })
+
+  When("I insert item {string} value {int}", function(this: SpecWorld, id: string, value: number) {
+    return storageDbFor(this).items.insert({ id, value })
+  })
+
+  When("I upsert item {string} value {int}", function(this: SpecWorld, id: string, value: number) {
+    return storageDbFor(this).items.upsert({ id, value })
+  })
+
+  When("I delete item {string}", function(this: SpecWorld, id: string) {
+    return storageDbFor(this).items.delete(id)
+  })
+
+  When("I checkpoint", function(this: SpecWorld) {
+    return storageDbFor(this).checkpoint
+  })
+
+  Then("reopening, item {string} is {int}", function(this: SpecWorld, id: string, expected: number) {
+    const key = storageKeyFor(this)
+    return Effect.gen(function*() {
+      const db = yield* StorageDb.open(key)
+      const actual = yield* db.items.get(id)
+      assert.deepEqual(Option.getOrThrow(actual), { id, value: expected })
+    })
+  })
+
+  Then("reopening, item {string} is absent", function(this: SpecWorld, id: string) {
+    const key = storageKeyFor(this)
+    return Effect.gen(function*() {
+      const db = yield* StorageDb.open(key)
+      const actual = yield* db.items.get(id)
+      assert.equal(Option.isNone(actual), true)
+    })
+  })
+})

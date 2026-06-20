@@ -116,6 +116,7 @@ export const assemble = (sources: ReadonlyArray<SourceInput>, host: StepHost): A
     testCaseId,
     testCaseStartedId: newId(),
     scenarioId: pickle.id,
+    uri: pickle.uri,
     tags: pickle.tags.map((tag) => tag.name),
     steps: steps.map(({ match, pickleStep, testStepId }) => preparedStepFrom(testStepId, pickleStep, match)),
   }))

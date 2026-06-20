@@ -51,6 +51,8 @@ export interface PreparedScenario {
   readonly testCaseId: string
   readonly testCaseStartedId: string
   readonly scenarioId: string
+  /** The feature file uri this scenario came from (used to locate sibling `.sql` proofs). */
+  readonly uri: string
   readonly tags: ReadonlyArray<string>
   readonly steps: ReadonlyArray<PreparedStep>
 }

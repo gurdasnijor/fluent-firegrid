@@ -134,23 +134,34 @@ const scenarioEvents = <E, R>(
     return head.pipe(Stream.concat(body), Stream.concat(tail))
   }))
 
+export interface RunFeaturesOptions {
+  /** Execute only scenarios matching this predicate (e.g. `@sql:`-tagged). Default: all. */
+  readonly selectScenario?: (scenario: PreparedScenario) => boolean
+}
+
 /** Emit the canonical cucumber `Envelope` stream for a run. The data plane. */
 export const runFeatures = <E, R>(
   sources: Parameters<typeof assemble>[0],
   host: StepHost,
   exec: Executor<E, R>,
+  options?: RunFeaturesOptions,
 ): Stream.Stream<Envelope, E, R> =>
   Stream.unwrap(Effect.gen(function*() {
     const assembled = assemble(sources, host)
+    const selected = options?.selectScenario === undefined
+      ? assembled.scenarios
+      : assembled.scenarios.filter(options.selectScenario)
+    const selectedIds = new Set(selected.map((scenario) => scenario.testCaseId))
     const statuses = yield* Ref.make<ReadonlyArray<TestStepResultStatus>>([])
     const framing = Stream.fromIterable([
       metaEnvelope(),
       ...assembled.discoveryEnvelopes,
       ...assembled.supportEnvelopes,
       testRunStarted(assembled.testRunStartedId),
-      ...assembled.testCaseEnvelopes,
+      ...assembled.testCaseEnvelopes.filter((envelope) =>
+        envelope.testCase === undefined || selectedIds.has(envelope.testCase.id)),
     ])
-    const scenarios = Stream.flatMap(Stream.fromIterable(assembled.scenarios), (scenario) =>
+    const scenarios = Stream.flatMap(Stream.fromIterable(selected), (scenario) =>
       scenarioEvents(scenario, exec, statuses))
     // testRunFinished is a projection over the emitted step statuses — evaluated
     // after the scenario stream drains (concat is sequential), so it sees them all.

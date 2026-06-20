@@ -27,7 +27,7 @@ const streamToBuffer = (stream: NodeJS.ReadableStream): Promise<Buffer> =>
     stream.on("error", reject)
   })
 
-const makeWorld = (): { readonly world: World; readonly captured: ReadonlyArray<CapturedAttachment> } => {
+export const makeWorld = (): { readonly world: World; readonly captured: ReadonlyArray<CapturedAttachment> } => {
   const captured: Array<CapturedAttachment> = []
   const attach = async (data: unknown, options?: string | { mediaType: string; fileName?: string }): Promise<void> => {
     const resolved = typeof options === "string" ? { mediaType: options, fileName: undefined } : options
@@ -101,10 +101,18 @@ export const failOutcome = (message: string): StepOutcome => ({
   error: { type: "Error", message },
 })
 
-/** Run one matched step body against a fresh World, capturing attachments. */
-export const executeStep = (step: CompiledStep, request: InvokeRequest): Effect.Effect<StepOutcome> =>
+/**
+ * Run one matched step body against a given World, capturing attachments. The
+ * World is supplied by the caller so a scenario can share one `this` across all
+ * its steps (the firegrid step bodies key per-scenario state on it).
+ */
+export const runStepBody = (
+  step: CompiledStep,
+  request: InvokeRequest,
+  world: World,
+  captured: ReadonlyArray<CapturedAttachment>,
+): Effect.Effect<StepOutcome> =>
   Effect.suspend(() => {
-    const { captured, world } = makeWorld()
     const args = [...bindArguments(step, request.text, world), ...trailingArg(request)]
     return Effect.try({ try: () => step.fn.apply(world, args), catch: (cause) => new StepThrew({ cause }) }).pipe(
       Effect.flatMap(interpretReturn),
@@ -112,3 +120,9 @@ export const executeStep = (step: CompiledStep, request: InvokeRequest): Effect.
       Effect.catch((error) => Effect.succeed<StepOutcome>({ status: Status.FAILED, attachments: [...captured], error: toFailure(error.cause) })),
     )
   })
+
+/** Run one matched step body against a fresh World (the standalone, non-shared case). */
+export const executeStep = (step: CompiledStep, request: InvokeRequest): Effect.Effect<StepOutcome> => {
+  const { captured, world } = makeWorld()
+  return runStepBody(step, request, world, captured)
+}

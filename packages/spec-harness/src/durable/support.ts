@@ -23,8 +23,8 @@ import { StepDefinitionPatternType } from "@cucumber/messages"
  * closures exactly like the handler code itself.
  */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- step bodies are classic Cucumber callbacks: variadic args + a `this` World, existential at the DSL boundary.
-export type StepBody = (this: World, ...args: ReadonlyArray<any>) => unknown
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- step bodies are classic Cucumber callbacks: variadic args + an existential `this` (base World, or a harness-specific extension like SpecWorld).
+export type StepBody = (this: any, ...args: ReadonlyArray<any>) => unknown
 
 /** The scenario World handed to a step/hook body as `this` (attach/log/link). */
 export interface World {
