@@ -1,5 +1,13 @@
 # SDD: Cucumber Messages as Durable Tables
 
+> Superseded by
+> [`effect-s2-stream-db-stream-table-sdd.md`](./effect-s2-stream-db-stream-table-sdd.md).
+>
+> This document captured an intermediate design where the ordered Cucumber
+> message log was represented as an `EnvelopeEvent` table. The current design is
+> ksqlDB-style: the canonical Cucumber output is an append-only S2 event stream,
+> and tables are materialized projections over that stream.
+
 ## 1. Status
 
 Proposed.
