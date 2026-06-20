@@ -94,8 +94,19 @@ export type DbChange =
   | { readonly _tag: "Delete"; readonly seq: number; readonly type: string; readonly key: string }
 
 export interface ChangesOptions {
-  /** Resume from this S2 `seqNum` (inclusive-ish; clamped to head). Default 0. */
+  /** Resume from this S2 `seqNum` (clamped to head). Default 0. Ignored when `includeSnapshot`. */
   readonly fromSeq?: number
+  /**
+   * Emit the current rows as a snapshot of `Insert` changes (at the current
+   * tail cursor) before any live changes. The live portion then continues from
+   * that cursor — snapshot-plus-live with no gap or overlap.
+   */
+  readonly includeSnapshot?: boolean
+  /**
+   * Follow the tail after catching up (default `true`). When `false`, complete
+   * once caught up to the current tail — a finite changelog / snapshot read.
+   */
+  readonly live?: boolean
 }
 
 // ── facade types ─────────────────────────────────────────────────────────────
@@ -375,6 +386,12 @@ export const tableChangeOf = (
       row,
     })))
 
+/** Build a snapshot of `Insert` changes (at `atSeq`) from the current decoded rows. */
+export const snapshotChangesFrom = <Row>(
+  rows: ReadonlyArray<{ readonly key: string; readonly row: Row }>,
+  atSeq: number,
+): ReadonlyArray<TableChange<Row>> => rows.map(({ key, row }) => ({ _tag: "Insert", seq: atSeq, key, row }))
+
 /** Project a decoded data-change into an untyped `DbChange` (no row decode). */
 export const dbChangeOf = (seqNum: number, message: ChangeMessage.ChangeMessage): DbChange =>
   message.headers.operation === "delete"
@@ -487,8 +504,11 @@ const openStream = <T extends Tables>(
     // S2 read session is live). Command records (trim/fence) and control
     // messages (snapshot boundaries) are filtered out — only `(type,key)` data
     // changes survive. Shared by the per-table and db-wide change streams.
-    const dataChanges = (fromSeq: number | undefined) =>
-      client.read(stream, { start: { from: { seqNum: fromSeq ?? 0 }, clamp: true } }).pipe(
+    const dataChanges = (fromSeq: number | undefined, finite: boolean) =>
+      client.read(stream, {
+        start: { from: { seqNum: fromSeq ?? 0 }, clamp: true },
+        ...(finite ? { stop: { waitSecs: 0 } } : {}),
+      }).pipe(
         Stream.mapError(toError("changes")),
         Stream.filter((record) => !isCommandRecord(record.headers)),
         Stream.mapEffect((record) =>
@@ -563,13 +583,28 @@ const openStream = <T extends Tables>(
           Effect.map(build),
           Effect.mapError(toError("query")),
         ),
-      changes: (options) =>
-        dataChanges(options?.fromSeq).pipe(
-          Stream.filter((entry) => entry.message.type === meta.type),
-          Stream.mapEffect((entry) =>
-            tableChangeOf(meta.schema, entry.seqNum, entry.message).pipe(Effect.mapError(toError("changes"))),
-          ),
-        ),
+      changes: (options) => {
+        const live = options?.live !== false
+        const liveFrom = (seq: number | undefined) =>
+          dataChanges(seq, !live).pipe(
+            Stream.filter((entry) => entry.message.type === meta.type),
+            Stream.mapEffect((entry) =>
+              tableChangeOf(meta.schema, entry.seqNum, entry.message).pipe(Effect.mapError(toError("changes"))),
+            ),
+          )
+        if (options?.includeSnapshot !== true) return liveFrom(options?.fromSeq)
+        return Stream.unwrap(
+          // snapshot the current rows + cursor, then continue changes from that cursor
+          Effect.gen(function*() {
+            const atSeq = yield* Ref.get(tailRef)
+            const rows = yield* Effect.forEach(
+              state.entries().filter((entry) => entry.type === meta.type),
+              (entry) => decodeRow(meta, entry.value).pipe(Effect.map((row) => ({ key: entry.key, row }))),
+            ).pipe(Effect.mapError(toError("changes")))
+            return Stream.concat(Stream.fromIterable(snapshotChangesFrom(rows, atSeq)), liveFrom(atSeq))
+          }),
+        )
+      },
     })
 
     const facades = Object.fromEntries(
@@ -660,8 +695,25 @@ const openStream = <T extends Tables>(
       Effect.mapError(toError("drop")),
     )
 
-    const changes = (options?: ChangesOptions): Stream.Stream<DbChange, S2StreamDbError> =>
-      dataChanges(options?.fromSeq).pipe(Stream.map((entry) => dbChangeOf(entry.seqNum, entry.message)))
+    const changes = (options?: ChangesOptions): Stream.Stream<DbChange, S2StreamDbError> => {
+      const live = options?.live !== false
+      const liveFrom = (seq: number | undefined) =>
+        dataChanges(seq, !live).pipe(Stream.map((entry) => dbChangeOf(entry.seqNum, entry.message)))
+      if (options?.includeSnapshot !== true) return liveFrom(options?.fromSeq)
+      return Stream.unwrap(
+        Effect.gen(function*() {
+          const atSeq = yield* Ref.get(tailRef)
+          const snapshot: ReadonlyArray<DbChange> = state.entries().map((entry) => ({
+            _tag: "Insert",
+            seq: atSeq,
+            type: entry.type,
+            key: entry.key,
+            value: entry.value,
+          }))
+          return Stream.concat(Stream.fromIterable(snapshot), liveFrom(atSeq))
+        }),
+      )
+    }
 
     // Intentional dynamic facade cast: the per-table mapped type cannot be proven structurally here.
     return { ...facades, table, transact, checkpoint, trim, compact, drop, changes } as unknown as StreamDbInstance<T>
