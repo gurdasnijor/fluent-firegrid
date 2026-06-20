@@ -81,6 +81,23 @@ export const Table =
     return TableImpl as unknown as TableClass<Fields>
   }
 
+// ── change streams (live tailing) ─────────────────────────────────────────────
+
+/** A decoded change to one table row, carrying the S2 `seqNum` as its cursor. */
+export type TableChange<Row> =
+  | { readonly _tag: "Insert" | "Update"; readonly seq: number; readonly key: string; readonly row: Row }
+  | { readonly _tag: "Delete"; readonly seq: number; readonly key: string }
+
+/** A decoded change across the db's tables (untyped row value), for tooling/replication. */
+export type DbChange =
+  | { readonly _tag: "Insert" | "Update"; readonly seq: number; readonly type: string; readonly key: string; readonly value: unknown }
+  | { readonly _tag: "Delete"; readonly seq: number; readonly type: string; readonly key: string }
+
+export interface ChangesOptions {
+  /** Resume from this S2 `seqNum` (inclusive-ish; clamped to head). Default 0. */
+  readonly fromSeq?: number
+}
+
 // ── facade types ─────────────────────────────────────────────────────────────
 
 export interface TableFacade<Row, Key extends string = string> {
@@ -99,6 +116,13 @@ export interface TableFacade<Row, Key extends string = string> {
   readonly get: (key: Key) => Effect.Effect<Option.Option<Row>, S2StreamDbError>
   /** Run a read-only query over all live rows. */
   readonly query: <A>(build: (rows: ReadonlyArray<Row>) => A) => Effect.Effect<A, S2StreamDbError>
+  /**
+   * Live, ordered change stream for this table — tail the durable log, decode
+   * each row, and emit `TableChange`s in S2 order. The streaming counterpart to
+   * `query`: consumers tail durable state instead of subscribing to an in-memory
+   * bus. Follows the tail; resume with `fromSeq`.
+   */
+  readonly changes: (options?: ChangesOptions) => Stream.Stream<TableChange<Row>, S2StreamDbError>
 }
 
 export type InsertOrGetResult<Row> =
@@ -143,6 +167,8 @@ export type StreamDbInstance<T extends Tables> =
     readonly compact: Effect.Effect<void, S2StreamDbError>
     /** Drop the stream entirely. */
     readonly drop: Effect.Effect<void, S2StreamDbError>
+    /** Live, ordered change stream across all of the db's tables (untyped values). */
+    readonly changes: (options?: ChangesOptions) => Stream.Stream<DbChange, S2StreamDbError>
   }
 
 /** Options for `StreamDb.open` — an optional per-stream config for create-if-absent. */
@@ -329,6 +355,38 @@ const metaOf = (table: AnyTable): TableMeta => ({
   pkField: table.pkField,
 })
 
+// ── change projection (pure; shared by table + db change streams) ──────────────
+
+/** Project a decoded data-change into a typed `TableChange`, decoding the row. */
+export const tableChangeOf = (
+  schema: TableMeta["schema"],
+  seqNum: number,
+  message: ChangeMessage.ChangeMessage,
+): Effect.Effect<TableChange<unknown>, StreamDbSchemaCodecError> =>
+  message.headers.operation === "delete"
+    ? Effect.succeed({ _tag: "Delete", seq: seqNum, key: message.key })
+    : Effect.try({
+      try: () => Schema.decodeUnknownSync(asServiceFreeDecoder(schema))(message.value),
+      catch: (cause) => new StreamDbSchemaCodecError({ cause }),
+    }).pipe(Effect.map((row) => ({
+      _tag: message.headers.operation === "insert" ? "Insert" : "Update",
+      seq: seqNum,
+      key: message.key,
+      row,
+    })))
+
+/** Project a decoded data-change into an untyped `DbChange` (no row decode). */
+export const dbChangeOf = (seqNum: number, message: ChangeMessage.ChangeMessage): DbChange =>
+  message.headers.operation === "delete"
+    ? { _tag: "Delete", seq: seqNum, type: message.type, key: message.key }
+    : {
+      _tag: message.headers.operation === "insert" ? "Insert" : "Update",
+      seq: seqNum,
+      type: message.type,
+      key: message.key,
+      value: message.value,
+    }
+
 const openStream = <T extends Tables>(
   stream: string,
   tables: T,
@@ -425,6 +483,24 @@ const openStream = <T extends Tables>(
         messages.forEach((message) => state.apply(message))
       }).pipe(withStreamDbSpan("commit", { stream }))
 
+    // Live tail of decoded DATA changes from `fromSeq`, following the tail (the
+    // S2 read session is live). Command records (trim/fence) and control
+    // messages (snapshot boundaries) are filtered out — only `(type,key)` data
+    // changes survive. Shared by the per-table and db-wide change streams.
+    const dataChanges = (fromSeq: number | undefined) =>
+      client.read(stream, { start: { from: { seqNum: fromSeq ?? 0 }, clamp: true } }).pipe(
+        Stream.mapError(toError("changes")),
+        Stream.filter((record) => !isCommandRecord(record.headers)),
+        Stream.mapEffect((record) =>
+          ChangeMessage.decode(record.body).pipe(
+            Effect.mapError(toError("changes")),
+            Effect.map((message) => ({ seqNum: record.seqNum, message }) as const),
+          ),
+        ),
+        Stream.filter((entry): entry is { readonly seqNum: number; readonly message: ChangeMessage.ChangeMessage } =>
+          ChangeMessage.isChange(entry.message)),
+      )
+
     const makeFacade = (meta: TableMeta): TableFacade<unknown> => ({
       insert: (row) =>
         lock.withPermits(1)(
@@ -486,6 +562,13 @@ const openStream = <T extends Tables>(
           withStreamDbSpan("table.query", { stream, table: meta.type }),
           Effect.map(build),
           Effect.mapError(toError("query")),
+        ),
+      changes: (options) =>
+        dataChanges(options?.fromSeq).pipe(
+          Stream.filter((entry) => entry.message.type === meta.type),
+          Stream.mapEffect((entry) =>
+            tableChangeOf(meta.schema, entry.seqNum, entry.message).pipe(Effect.mapError(toError("changes"))),
+          ),
         ),
     })
 
@@ -577,6 +660,9 @@ const openStream = <T extends Tables>(
       Effect.mapError(toError("drop")),
     )
 
+    const changes = (options?: ChangesOptions): Stream.Stream<DbChange, S2StreamDbError> =>
+      dataChanges(options?.fromSeq).pipe(Stream.map((entry) => dbChangeOf(entry.seqNum, entry.message)))
+
     // Intentional dynamic facade cast: the per-table mapped type cannot be proven structurally here.
-    return { ...facades, table, transact, checkpoint, trim, compact, drop } as unknown as StreamDbInstance<T>
+    return { ...facades, table, transact, checkpoint, trim, compact, drop, changes } as unknown as StreamDbInstance<T>
   }).pipe(withStreamDbSpan("open", { stream }))
