@@ -1,10 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- handler input/output are existential at the definition boundary; `any` is required for inference across the handler record (mirrors restate-sdk-gen's define/free). Concrete types are recovered on the client surface via HandlerInput/HandlerOutput. */
-import { Effect, Random, type Layer, Schema } from "effect"
+import { Effect, Option, Random, type Layer, Schema } from "effect"
 import type { S2Client } from "effect-s2"
 import { encodeObjectCallId, OBJECT_ID_PREFIX } from "./actor/core.ts"
 import { type DurableExecutionError, durableError } from "./errors.ts"
 import { handler } from "./handler.ts"
 import { handlerRequest } from "./primitives.ts"
+import { ActiveInvocation } from "./runtime/invocation.ts"
 import { DurableExecutionRuntime } from "./Runtime.ts"
 import type { DurableExecutionRuntimeApi, ObjectHandlerSeed, RegisteredHandler, WorkflowStartStatus } from "./Runtime.ts"
 import type { Handler } from "./types.ts"
@@ -280,6 +281,18 @@ const beginInvoke = (
   object: ObjectIdentity | undefined,
 ): Effect.Effect<{ readonly id: string; readonly rt: DurableExecutionRuntimeApi }, DurableExecutionError, DurableExecutionRuntime> =>
   Effect.gen(function*() {
+    // Footgun guard (Restate keeps these surfaces physically separate): `client`/
+    // `sendClient` are the TOP-LEVEL / ingress path. Inside a handler they would
+    // mint a fresh random id on every replay (not deterministic) — so reject that
+    // and direct callers to the in-handler `objectClient`/`objectSendClient`,
+    // whose child ids are replay-stable.
+    if (Option.isSome(yield* ActiveInvocation)) {
+      return yield* durableError("submit")(
+        new Error(
+          "client(...)/sendClient(...) is the top-level invocation path and is not replay-safe inside a handler; use objectClient(def, key)/objectSendClient(def, key) for in-handler durable calls",
+        ),
+      )
+    }
     const id = yield* mintId(method, options, object)
     const rt = yield* DurableExecutionRuntime
     yield* rt.submit(compiled.handler, id, input)
