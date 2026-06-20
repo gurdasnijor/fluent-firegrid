@@ -99,7 +99,7 @@ const hasS2 = (): boolean => {
 }
 
 const runDurable = (sample: string): Promise<ReadonlyArray<Envelope>> =>
-  runFeaturesDurable([cckSamplePath(sample, `${sample}.feature`)], { supportName: sample }).pipe(
+  runFeaturesDurable([cckSamplePath(sample, `${sample}.feature`)], { runId: `${sample}-${Date.now()}`, supportName: sample }).pipe(
     Stream.runCollect,
     Effect.map((chunk) => Array.from(chunk) as ReadonlyArray<Envelope>),
     Effect.provide(Layer.mergeAll(S2LiteLive, NodeFileSystem.layer)),

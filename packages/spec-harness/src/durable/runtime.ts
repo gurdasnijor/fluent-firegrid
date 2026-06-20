@@ -3,7 +3,9 @@ import { SourceMediaType } from "@cucumber/messages"
 import { Data, Effect, FileSystem, Stream } from "effect"
 import { client, type DurableExecutionError, serviceLayer } from "effect-s2-durable"
 import type { S2Client } from "effect-s2"
+import type { S2StreamDbError } from "effect-s2-stream-db"
 import { runner } from "./runner.ts"
+import { asEnvelope, RunEnvelopes } from "./streams.ts"
 import type { RunOptions, SourceInput } from "./types.ts"
 import { world } from "./world.ts"
 
@@ -20,6 +22,8 @@ export class RunnerError extends Data.TaggedError("RunnerError")<{
 }> {}
 
 export interface RunFeaturesOptions extends RunOptions {
+  /** Stable id for this run; keys the durable envelope stream and dedups re-runs. */
+  readonly runId: string
   /** Name of the support bundle registered via `defineSupport`. */
   readonly supportName: string
 }
@@ -42,7 +46,7 @@ const readSources = (
       ))
   })
 
-const toRunnerError = (error: RunnerError | DurableExecutionError): RunnerError =>
+const toRunnerError = (error: RunnerError | DurableExecutionError | S2StreamDbError): RunnerError =>
   error._tag === "RunnerError" ? error : new RunnerError({ message: error.message, cause: error })
 
 export const runFeaturesDurable = (
@@ -51,14 +55,21 @@ export const runFeaturesDurable = (
 ): Stream.Stream<Envelope, RunnerError, S2Client | FileSystem.FileSystem> =>
   Stream.unwrap(
     readSources(paths).pipe(
+      // Run the durable runner to completion (idempotent by runId), then read the
+      // envelopes back from the run's durable stream — the stream is the source of
+      // truth, not a returned array.
       Effect.flatMap((sources) =>
         client(runner).run({
+          runId: options.runId,
           supportName: options.supportName,
           sources,
           options: { scenarioConcurrency: options.scenarioConcurrency ?? 1 },
-        }),
+        }, { idempotencyKey: options.runId }),
       ),
-      Effect.map((result) => Stream.fromIterable(result.envelopes)),
+      Effect.flatMap(() => RunEnvelopes.open(options.runId)),
+      Effect.map((stream) =>
+        stream.read().pipe(Stream.map((record) => asEnvelope(record.value)), Stream.mapError(toRunnerError)),
+      ),
       Effect.provide(DurableCucumberLive),
       Effect.mapError(toRunnerError),
     ),

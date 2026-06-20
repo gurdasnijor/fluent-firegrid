@@ -1,7 +1,8 @@
 import type { AttachmentContentEncoding, Envelope, TestStepResult, TestStepResultStatus } from "@cucumber/messages"
 import { TestStepResultStatus as Status } from "@cucumber/messages"
 import { Effect } from "effect"
-import { type DurableExecutionError, type DurableExecutionRuntime, objectClient, service } from "effect-s2-durable"
+import { type DurableExecutionError, type DurableExecutionRuntime, objectClient, run, service } from "effect-s2-durable"
+import { RunEnvelopes } from "./streams.ts"
 import { assembleRun } from "./assembly.ts"
 import {
   ambiguousResult,
@@ -150,7 +151,18 @@ export const runner = service({
         testRunFinished({ testRunStartedId: assembled.testRunStartedId, success }),
       ]
 
-      return { envelopes, success } satisfies RunResult
+      // Publish the ordered envelopes as facts on the run's durable stream — the
+      // canonical output consumers read/tail. Journaled via `run(...)` so a
+      // handler replay re-reads the ack instead of re-appending (no duplicates).
+      yield* run(
+        "publish-envelopes",
+        RunEnvelopes.open(input.runId).pipe(
+          Effect.flatMap((stream) => stream.appendBatch(envelopes)),
+          Effect.asVoid,
+        ),
+      )
+
+      return { success } satisfies RunResult
     },
   },
 })

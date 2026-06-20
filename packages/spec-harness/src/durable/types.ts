@@ -1,4 +1,4 @@
-import type { Envelope, Pickle, PickleDocString, PickleTable, TestStepResultStatus } from "@cucumber/messages"
+import type { Pickle, PickleDocString, PickleTable, TestStepResultStatus } from "@cucumber/messages"
 
 /**
  * Serializable types that cross the durable boundary between the `runner`
@@ -23,6 +23,8 @@ export interface RunOptions {
 }
 
 export interface RunInput {
+  /** Stable id for this run; keys the durable envelope stream + dedups re-runs. */
+  readonly runId: string
   /** Name of the support bundle registered with `defineSupport`. */
   readonly supportName: string
   readonly sources: ReadonlyArray<SourceInput>
@@ -75,8 +77,8 @@ export interface StepOutcome {
   readonly error?: { readonly type: string; readonly message: string; readonly stackTrace?: string }
 }
 
+/** The run's envelopes are published to the durable envelope stream, not returned. */
 export interface RunResult {
-  readonly envelopes: ReadonlyArray<Envelope>
   readonly success: boolean
 }
 
