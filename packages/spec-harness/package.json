@@ -9,8 +9,8 @@
     "build": "tsc",
     "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
     "lint": "eslint . --max-warnings 0",
-    "spec": "cd ../.. && cucumber-js --config cucumber.mjs --profile proofs",
-    "spec:inventory": "cd ../.. && cucumber-js --config cucumber.mjs --dry-run --format summary",
+    "spec": "vitest run --root ../.. --project spec-harness test/firegrid.test.ts",
+    "spec:legacy": "cd ../.. && cucumber-js --config cucumber.mjs --profile proofs",
     "test": "vitest run --root ../.. --project spec-harness",
     "typecheck": "tsc --noEmit"
   },
