@@ -5,10 +5,10 @@ import { client, type DurableExecutionError, serviceLayer } from "effect-s2-dura
 import type { S2Client } from "effect-s2"
 import type { S2StreamDbError } from "effect-s2-stream-db"
 import { makeRunner } from "./runner.ts"
+import { makeScenario } from "./scenario.ts"
 import { asEnvelope, RunEnvelopes } from "./streams.ts"
 import type { SupportBundle } from "./support.ts"
 import type { RunOptions, SourceInput } from "./types.ts"
-import { makeWorldObject } from "./world.ts"
 
 /**
  * Public entry. Builds the durable Cucumber definitions (`runner` + `world`)
@@ -40,11 +40,11 @@ export interface RunFeaturesOptions extends RunOptions {
   readonly durableDefs?: ReadonlyArray<DurableDefinition>
 }
 
-/** Build the runner + world for a support bundle and the engine layer that registers them. */
+/** Build the runner + scenario object for a support bundle and the engine layer that registers them. */
 const makeCucumberRun = (support: SupportBundle, defs: ReadonlyArray<DurableDefinition>) => {
-  const world = makeWorldObject(support)
-  const runner = makeRunner(support, world)
-  return { runner, layer: serviceLayer(runner, world, ...defs) }
+  const scenario = makeScenario(support)
+  const runner = makeRunner(support, scenario)
+  return { runner, layer: serviceLayer(runner, scenario, ...defs) }
 }
 
 /** The handler layer for a support bundle (+ any product defs); seeds boot recovery. */

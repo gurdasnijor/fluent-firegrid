@@ -1,21 +1,16 @@
 import { generateMessages } from "@cucumber/gherkin"
 import type { Envelope, GherkinDocument, Pickle, PickleStep, SourceMediaType, TestStep } from "@cucumber/messages"
 import { IdGenerator } from "@cucumber/messages"
-import { matchStep } from "./matcher.ts"
 import { hookEnvelope, parameterTypeEnvelope, pickleTestStep, stepDefinitionEnvelope, testCaseEnvelope } from "./messages.ts"
-import type { SupportBundle } from "./support.ts"
-import type { PlannedScenario, PlannedStep, SourceInput, StepKind } from "./types.ts"
+import type { HostMatch, StepHost } from "./step-host.ts"
+import type { InvokeRequest, PreparedScenario, PreparedStep, SourceInput } from "./types.ts"
 
 /**
- * Deterministic, runner-side assembly: parse features, emit support-code
- * envelopes, match each pickle step against the support bundle, and mint the
- * test-case/test-step ids — cucumber-js's `assembleTestCases`, reimplemented on
- * `@cucumber/cucumber-expressions` instead of `@cucumber/core`'s test plan.
- *
- * Pure given `(sources, support)` and owns **all** Cucumber ids/envelopes; the
- * resulting `PlannedScenario[]` is fully serializable (steps carry the matched
- * definition index, not a closure), so the runner drives the `world` host over
- * the durable boundary without ever holding step code.
+ * Deterministic assembly: parse features, emit the support-code discovery
+ * envelopes the host describes, ask the host to match each pickle step, and mint
+ * the test-case/test-step ids — cucumber-js's `assembleTestCases`. The runner
+ * holds no matching logic; it delegates to the `StepHost`. Pure given
+ * `(sources, host)`; the resulting `PreparedScenario[]` is fully serializable.
  */
 
 export interface AssembledRun {
@@ -23,7 +18,7 @@ export interface AssembledRun {
   readonly supportEnvelopes: ReadonlyArray<Envelope>
   readonly testCaseEnvelopes: ReadonlyArray<Envelope>
   readonly testRunStartedId: string
-  readonly scenarios: ReadonlyArray<PlannedScenario>
+  readonly scenarios: ReadonlyArray<PreparedScenario>
 }
 
 interface ParsedSource {
@@ -46,99 +41,84 @@ const parseSource = (source: SourceInput, newId: IdGenerator.NewId): ParsedSourc
   }
 }
 
-const stepKind = (bundle: SupportBundle, pickleStep: PickleStep): StepKind => {
-  const match = matchStep(bundle, pickleStep.text)
-  switch (match._tag) {
-    case "undefined":
-      return { _tag: "undefined" }
-    case "ambiguous":
-      return { _tag: "ambiguous", message: `Multiple step definitions match: ${match.expressions.join(", ")}` }
-    case "defined":
-      return {
-        _tag: "prepared",
-        invocation: {
-          stepIndex: match.index,
-          text: pickleStep.text,
-          ...(pickleStep.argument?.docString === undefined ? {} : { docString: pickleStep.argument.docString.content }),
-          ...(pickleStep.argument?.dataTable === undefined ? {} : { dataTable: pickleStep.argument.dataTable }),
-        },
-      }
-  }
-}
+const invokeRequest = (stepDefId: string, pickleStep: PickleStep): InvokeRequest => ({
+  stepDefId,
+  text: pickleStep.text,
+  ...(pickleStep.argument?.docString === undefined ? {} : { docString: pickleStep.argument.docString.content }),
+  ...(pickleStep.argument?.dataTable === undefined ? {} : { dataTable: pickleStep.argument.dataTable }),
+})
 
-/** Build the test step (envelope shape) for one pickle step from its match. */
-const testStepFor = (bundle: SupportBundle, pickleStep: PickleStep, stepDefIds: ReadonlyArray<string>, testStepId: string): TestStep => {
-  const match = matchStep(bundle, pickleStep.text)
+const testStepFrom = (testStepId: string, pickleStep: PickleStep, match: HostMatch): TestStep => {
   switch (match._tag) {
     case "undefined":
       return pickleTestStep({ id: testStepId, pickleStepId: pickleStep.id, stepDefinitionIds: [], stepMatchArgumentsLists: [] })
     case "ambiguous":
-      return pickleTestStep({
-        id: testStepId,
-        pickleStepId: pickleStep.id,
-        stepDefinitionIds: match.indices.map((index) => stepDefIds[index]!),
-        stepMatchArgumentsLists: [],
-      })
+      return pickleTestStep({ id: testStepId, pickleStepId: pickleStep.id, stepDefinitionIds: match.stepDefIds, stepMatchArgumentsLists: [] })
     case "defined":
       return pickleTestStep({
         id: testStepId,
         pickleStepId: pickleStep.id,
-        stepDefinitionIds: [stepDefIds[match.index]!],
+        stepDefinitionIds: [match.stepDefId],
         stepMatchArgumentsLists: [{ stepMatchArguments: match.arguments }],
       })
   }
 }
 
-export const assembleRun = (input: {
-  readonly sources: ReadonlyArray<SourceInput>
-  readonly support: SupportBundle
-}): AssembledRun => {
-  const newId = IdGenerator.incrementing()
-  const { support } = input
+const preparedStepFrom = (testStepId: string, pickleStep: PickleStep, match: HostMatch): PreparedStep => {
+  switch (match._tag) {
+    case "undefined":
+      return { _tag: "undefined", testStepId }
+    case "ambiguous":
+      return { _tag: "ambiguous", testStepId, message: `Multiple step definitions match: ${match.stepDefIds.join(", ")}` }
+    case "defined":
+      return { _tag: "invoke", testStepId, request: invokeRequest(match.stepDefId, pickleStep) }
+  }
+}
 
-  const parsed = input.sources.map((source) => parseSource(source, newId))
+export const assemble = (sources: ReadonlyArray<SourceInput>, host: StepHost): AssembledRun => {
+  const newId = IdGenerator.incrementing()
+
+  const parsed = sources.map((source) => parseSource(source, newId))
   const discoveryEnvelopes = parsed.flatMap((source) => [...source.envelopes])
 
-  // Support-code ids/envelopes, in registration order (step definitions first,
-  // matching cucumber's discovery order before `testRunStarted`).
-  const stepDefIds = support.steps.map(() => newId())
+  const descriptor = host.describe()
   const supportEnvelopes: ReadonlyArray<Envelope> = [
-    ...support.steps.map((step, index) =>
-      stepDefinitionEnvelope({ id: stepDefIds[index]!, source: step.expression.source, type: step.patternType }),
-    ),
-    ...support.beforeHooks.map((hook) => hookEnvelope({ id: newId(), ...(hook.name === undefined ? {} : { name: hook.name }), ...(hook.tags === undefined ? {} : { tagExpression: hook.tags }) })),
-    ...support.afterHooks.map((hook) => hookEnvelope({ id: newId(), ...(hook.name === undefined ? {} : { name: hook.name }), ...(hook.tags === undefined ? {} : { tagExpression: hook.tags }) })),
-    ...support.parameterTypes.map((parameterType) => parameterTypeEnvelope({ id: newId(), ...parameterType })),
+    ...descriptor.stepDefinitions.map(stepDefinitionEnvelope),
+    ...descriptor.beforeHooks.map(hookEnvelope),
+    ...descriptor.afterHooks.map(hookEnvelope),
+    ...descriptor.parameterTypes.map(parameterTypeEnvelope),
   ]
 
   const testRunStartedId = newId()
 
+  // Match each pickle step once; derive both the test-step envelope and the prepared step.
   const assembledCases = parsed.flatMap((source) =>
     source.pickles.map((pickle) => {
-      const testSteps = pickle.steps.map((pickleStep) => testStepFor(support, pickleStep, stepDefIds, newId()))
+      const steps = pickle.steps.map((pickleStep) => {
+        const match = host.match(pickleStep.text)
+        return { pickleStep, testStepId: newId(), match }
+      })
       const testCaseId = newId()
-      return { pickle, testCaseId, testSteps }
+      return { pickle, testCaseId, steps }
     }),
   )
 
-  const testCaseEnvelopes = assembledCases.map(({ pickle, testCaseId, testSteps }) =>
-    testCaseEnvelope({ id: testCaseId, pickleId: pickle.id, testRunStartedId, testSteps }),
+  const testCaseEnvelopes = assembledCases.map(({ pickle, steps, testCaseId }) =>
+    testCaseEnvelope({
+      id: testCaseId,
+      pickleId: pickle.id,
+      testRunStartedId,
+      testSteps: steps.map(({ match, pickleStep, testStepId }) => testStepFrom(testStepId, pickleStep, match)),
+    }),
   )
 
-  const scenarios = assembledCases.map(({ pickle, testCaseId, testSteps }): PlannedScenario => {
-    const steps: ReadonlyArray<PlannedStep> = pickle.steps.map((pickleStep, index) => ({
-      testStepId: testSteps[index]!.id,
-      always: false,
-      kind: stepKind(support, pickleStep),
-    }))
-    return {
-      testCaseId,
-      testCaseStartedId: newId(),
-      scenarioId: pickle.id,
-      tags: pickle.tags.map((tag) => tag.name),
-      steps,
-    }
-  })
+  const scenarios = assembledCases.map(({ pickle, steps, testCaseId }): PreparedScenario => ({
+    testCaseId,
+    testCaseStartedId: newId(),
+    scenarioId: pickle.id,
+    tags: pickle.tags.map((tag) => tag.name),
+    steps: steps.map(({ match, pickleStep, testStepId }) => preparedStepFrom(testStepId, pickleStep, match)),
+  }))
 
   return { discoveryEnvelopes, supportEnvelopes, testCaseEnvelopes, testRunStartedId, scenarios }
 }

@@ -1,14 +1,13 @@
-import type { Pickle, PickleDocString, PickleTable, TestStepResultStatus } from "@cucumber/messages"
+import type { PickleTable, TestStepResultStatus } from "@cucumber/messages"
 
 /**
- * Serializable types that cross the durable boundary between the `runner`
- * (service, message authority) and the `world` (object, step-definition host).
+ * Serializable types shared across the cucumber runner.
  *
- * The "wire" is durable RPC modelled on cucumber-js's coordinator → worker split
- * (`beginScenario` / per-step `invoke` / `endScenario`). Step-body closures never
- * cross it — they live in the support bundle captured in the `world` handler
- * closures (a deployment dependency), addressed across the wire only by the
- * matched step **index**. Everything here is plain JSON.
+ * The runtime is a command/event system: the **data plane** is the cucumber
+ * `Envelope` stream (facts), and the **control plane** is the wire requests —
+ * `begin` / `invoke` / `end` — as durable commands to the per-scenario object.
+ * Step-definition identity (`StepDefId`) is owned by the step host, exactly as
+ * the cucumber-wire protocol's `step_matches` returns ids and `invoke` takes one.
  */
 
 /** A parsed feature file's raw content, ready for `generateMessages`. */
@@ -24,44 +23,39 @@ export interface RunOptions {
 }
 
 export interface RunInput {
-  /** Stable id for this run; keys the durable envelope stream + dedups re-runs. */
+  /** Stable id for this run; keys the durable event stream + dedups re-runs. */
   readonly runId: string
   readonly sources: ReadonlyArray<SourceInput>
   readonly options: RunOptions
 }
 
-/** What the `world` host needs to execute one matched pickle step (the wire `invoke`). */
-export interface StepInvocation {
-  /** Index of the matched step definition in the support bundle. */
-  readonly stepIndex: number
-  /** The pickle step text — the host re-matches it to bind args to the World. */
+/** Host-owned step-definition identity (the wire protocol's step id). */
+export type StepDefId = string
+
+/** The wire `invoke` command: which step to run + the pickle step's text/argument. */
+export interface InvokeRequest {
+  readonly stepDefId: StepDefId
   readonly text: string
-  readonly docString?: PickleDocString["content"]
+  readonly docString?: string
   readonly dataTable?: PickleTable
 }
 
-export type StepKind =
-  | { readonly _tag: "prepared"; readonly invocation: StepInvocation }
-  | { readonly _tag: "undefined" }
-  | { readonly _tag: "ambiguous"; readonly message: string }
+/** One step in the prepared plan: a runnable invoke, or a static undefined/ambiguous outcome. */
+export type PreparedStep =
+  | { readonly _tag: "invoke"; readonly testStepId: string; readonly request: InvokeRequest }
+  | { readonly _tag: "undefined"; readonly testStepId: string }
+  | { readonly _tag: "ambiguous"; readonly testStepId: string; readonly message: string }
 
-/** One step the runner will drive: its envelope id plus how to execute it. */
-export interface PlannedStep {
-  readonly testStepId: string
-  readonly always: boolean
-  readonly kind: StepKind
-}
-
-/** One scenario the runner will drive, with all ids resolved up front. */
-export interface PlannedScenario {
+/** One scenario the core will drive, with all ids resolved up front. */
+export interface PreparedScenario {
   readonly testCaseId: string
   readonly testCaseStartedId: string
   readonly scenarioId: string
   readonly tags: ReadonlyArray<string>
-  readonly steps: ReadonlyArray<PlannedStep>
+  readonly steps: ReadonlyArray<PreparedStep>
 }
 
-/** A captured attachment, returned from `world.invoke` and mapped to an envelope by the runner. */
+/** A captured attachment, part of a step's outcome, mapped to an envelope by the core. */
 export interface CapturedAttachment {
   readonly body: string
   readonly mediaType: string
@@ -69,14 +63,14 @@ export interface CapturedAttachment {
   readonly fileName?: string
 }
 
-/** The outcome of one `world.invoke` (the wire `success`/`fail`/`pending`). */
+/** The outcome of one `invoke` (the wire `success`/`fail`/`pending`). */
 export interface StepOutcome {
   readonly status: TestStepResultStatus
   readonly attachments: ReadonlyArray<CapturedAttachment>
   readonly error?: { readonly type: string; readonly message: string; readonly stackTrace?: string }
 }
 
-/** The run's envelopes are published to the durable envelope stream, not returned. */
+/** The run's envelopes are published to the durable event stream, not returned. */
 export interface RunResult {
   readonly success: boolean
 }
@@ -85,5 +79,3 @@ export interface BeginScenarioInput {
   readonly scenarioId: string
   readonly tags: ReadonlyArray<string>
 }
-
-export type { Pickle }

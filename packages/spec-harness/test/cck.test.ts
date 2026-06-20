@@ -4,10 +4,10 @@ import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem"
 import type { Envelope } from "@cucumber/messages"
 import { Effect, Layer, Stream } from "effect"
 import { describe, expect, it } from "vitest"
-import { assembleRun } from "../src/durable/assembly.ts"
 import { normalizeEnvelopes } from "../src/durable/cck.ts"
-import { metaEnvelope, testRunStarted } from "../src/durable/messages.ts"
+import { directExec, runFeatures } from "../src/durable/runner-core.ts"
 import { runFeaturesDurable } from "../src/durable/runtime.ts"
+import { stepHost } from "../src/durable/step-host.ts"
 import { defineSteps, type SupportBundle } from "../src/durable/support.ts"
 import { S2LiteLive } from "../src/s2lite.ts"
 import { cckExpectedEnvelopes, cckSamplePath, loadCckSources } from "./cck-support.ts"
@@ -58,40 +58,30 @@ const attachments = defineSteps(({ When }) => {
 
 const bundles: Record<string, SupportBundle> = { minimal, attachments }
 
-// Envelopes the runner produces from assembly alone (before execution). The pure,
-// engine-free gate on the message layer.
-const STATIC_KEYS: ReadonlySet<string> = new Set([
-  "meta",
-  "source",
-  "gherkinDocument",
-  "pickle",
-  "stepDefinition",
-  "hook",
-  "parameterType",
-  "testRunStarted",
-  "testCase",
-])
-
-const assembledStaticEnvelopes = (sample: string): ReadonlyArray<Envelope> => {
-  const a = assembleRun({ sources: loadCckSources(sample), support: bundles[sample]! })
-  return [metaEnvelope(), ...a.discoveryEnvelopes, ...a.supportEnvelopes, testRunStarted(a.testRunStartedId), ...a.testCaseEnvelopes]
+// Pure gate: run the cucumber core in-process (directExec) and compare the FULL
+// envelope stream — discovery, execution, attachments, results — to the kit's
+// expected ndjson. No durable engine, no S2; the same core the durable path runs.
+const runPure = (sample: string): Promise<ReadonlyArray<Envelope>> => {
+  const host = stepHost(bundles[sample]!)
+  return runFeatures(loadCckSources(sample), host, directExec(host)).pipe(
+    Stream.runCollect,
+    Effect.map((chunk) => Array.from(chunk) as ReadonlyArray<Envelope>),
+    Effect.runPromise,
+  )
 }
 
-const expectedStatic = (sample: string): ReadonlyArray<Envelope> =>
-  cckExpectedEnvelopes(sample).filter((envelope) => STATIC_KEYS.has(Object.keys(envelope)[0] ?? ""))
-
-describe("CCK — static message layer (engine-free)", () => {
-  it("minimal", () => {
-    expect(normalizeEnvelopes(assembledStaticEnvelopes("minimal"))).toEqual(normalizeEnvelopes(expectedStatic("minimal")))
+describe("CCK — pure runner core (in-process, engine-free)", () => {
+  it("minimal", async () => {
+    expect(normalizeEnvelopes(await runPure("minimal"))).toEqual(normalizeEnvelopes(cckExpectedEnvelopes("minimal")))
   })
-  it("attachments", () => {
-    expect(normalizeEnvelopes(assembledStaticEnvelopes("attachments"))).toEqual(normalizeEnvelopes(expectedStatic("attachments")))
+  it("attachments", async () => {
+    expect(normalizeEnvelopes(await runPure("attachments"))).toEqual(normalizeEnvelopes(cckExpectedEnvelopes("attachments")))
   })
 })
 
-// Full durable gate: drives the REAL runner -> world path over S2. Runs only
-// where the `s2` binary is available (CI); skipped otherwise. This is the gate
-// that proves the durable engine path, not just message shaping.
+// Full durable gate: drives the REAL runner -> scenario path over S2. Runs only
+// where the `s2` binary is available (CI); skipped otherwise. Proves the durable
+// engine path produces the identical stream the pure core does.
 const hasS2 = (): boolean => {
   try {
     execSync("command -v s2", { stdio: "ignore" })

@@ -45,18 +45,3 @@ export const matchStep = (bundle: SupportBundle, text: string): StepMatch => {
   const only = matches[0]!
   return { _tag: "defined", index: only.index, arguments: only.args.map(toStepMatchArgument) }
 }
-
-/**
- * Extract the invocation argument values for a matched step, binding parameter
- * type transformers to the World (`this`) — the worker-side re-match cucumber-js
- * performs in `getInvocationParameters`, so transforms that need the world work.
- */
-export const invocationArguments = (
-  bundle: SupportBundle,
-  index: number,
-  text: string,
-  world: unknown,
-): ReadonlyArray<unknown> => {
-  const args = bundle.steps[index]!.expression.match(text)
-  return args === null ? [] : args.map((arg) => arg.getValue(world))
-}
