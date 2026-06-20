@@ -11,32 +11,41 @@ README documents the **mechanism**.
 
 ## The pieces
 
+The runner is built from scratch on `@cucumber/{gherkin,messages,cucumber-expressions}`
+(no `@cucumber/cucumber`): a pure protocol core that emits a cucumber-messages
+`Envelope` stream, with step execution injected as an `Executor`.
+
 | Piece | Where | Role |
 | --- | --- | --- |
-| `src/runtime.ts` | here | Cucumber `Before`/`After`/`BeforeAll` hooks: builds the Effect runtime, flushes spans, runs the SQL proofs. |
+| `src/durable/runner-core.ts` | here | The cucumber protocol: parse → assemble → emit the `Envelope` stream in order; step execution is the injected `Executor`. |
+| `src/durable/step-host.ts` | here | Owns step-definition identity + matching (cucumber-wire `step_matches`), over `@cucumber/cucumber-expressions`. |
+| `src/durable/{scenario,runner,runtime}.ts` | here | The durable path: per-scenario virtual object (`begin`/`invoke`/`end` commands) + the run coordinator. |
+| `src/firegrid/runtime.ts` | here | The `WorldServices` layer: OTel → chDB span export, s2-lite S2, chDB, FS/Path, and a span-flush handle. |
+| `src/firegrid/proofs.ts` | here | Loads `@sql:` proofs from the sibling `.sql`, evaluates them against chDB; `SpecWorld` + `scenarioKey`. |
+| `src/firegrid/run.ts` | here | `firegridExec` (shares one World across a scenario's steps, wraps each in the `firegrid.scenario` span, runs proofs at scenario end) + `runFiregrid`. |
 | `src/s2lite.ts` | here | In-process S2 implementation so scenarios get real append/read semantics without a server. |
-| `src/trace-formatter.ts` | here | Cucumber formatter that prints per-scenario span/trace coverage. |
-| `src/report-state.ts` | here | Accumulates per-scenario proof/span/coverage counts for the report. |
-| `cucumber.mjs` (repo root) | root | Config + the `proofs` profile, which tags-filters to `@sql:*` scenarios. |
-| `<feature>.steps.ts` | `features/**` | Step definitions; drive the **public** API and run effects through `runSpecEffect`. |
+| `<feature>.steps.ts` | `features/**` | A `defineSteps(...)` bundle; drives the **public** API and returns effects (run with `WorldServices` ambient). |
 | `<feature>.sql` | `features/**` | Named trace-proof queries, one per `@sql:` tag. |
 
 ## How a proof runs (end to end)
 
-1. A scenario is tagged `@sql:service_trace`.
-2. `Before` reads the sibling `<feature>.sql`, parses `-- name:` blocks, and
-   loads the block(s) named by the scenario's `@sql:` tags into scenario state.
-3. Step definitions run effects via `runSpecEffect(world, effect)`, which wraps
-   them in a `firegrid.scenario` span carrying
-   `firegrid.scenario.id = <pickle id>`. Every product span emitted underneath
-   (e.g. `S2.append`, `effect-s2-durable.object.admit`) inherits that trace.
+1. A scenario is tagged `@sql:service_trace`. `runFiregrid` runs only
+   `@sql:`-tagged scenarios (the old `proofs` profile).
+2. At `beginScenario`, `firegridExec` reads the sibling `<feature>.sql`, parses
+   `-- name:` blocks, and loads the block(s) named by the scenario's `@sql:`
+   tags. It also creates one `SpecWorld` shared across the scenario's steps.
+3. Each step's returned effect is run wrapped in a `firegrid.scenario` span
+   carrying `firegrid.scenario.id = <pickle id>`. Every product span emitted
+   underneath (e.g. `S2.append`, `effect-s2-durable.object.admit`) inherits that
+   trace.
 4. Spans flow OTel → `BatchSpanProcessor` → `ChdbSpanExporter` → the
    `otel_traces` table in chDB.
-5. `After` calls `processor.forceFlush()`, then runs each loaded proof query
-   against `otel_traces`, scoped to this scenario's spans.
+5. At `endScenario`, `firegridExec` flushes the span processor (`SpecTracing`),
+   then runs each loaded proof query against `otel_traces`, scoped to this
+   scenario's spans.
 6. The proof **passes** iff the first row's `ok` column (or its first column, if
-   there is no `ok`) is truthy. Otherwise the scenario fails with the query, the
-   reason, and an observed-span summary.
+   there is no `ok`) is truthy; a failing proof is reported as a failed result
+   for the scenario.
 
 ## Writing a proof query
 
@@ -97,29 +106,30 @@ spans from other scenarios.
 
 1. Tag the scenario `@sql:<name>` in the `.feature` (one behavior, one `When` —
    see `features/Readme.md`).
-2. Add step definitions in `<feature>.steps.ts`. Drive the **public** API only;
-   run effects through `runSpecEffect`. Use `scenarioKey(world, key)` for
-   idempotency keys so reruns are deterministic.
+2. Add step definitions to the feature's `defineSteps(...)` bundle in
+   `<feature>.steps.ts`. Drive the **public** API only; return effects (they run
+   with `WorldServices` ambient). Use `scenarioKey(this, key)` for idempotency
+   keys so reruns are deterministic.
 3. Add a `-- name: <name>` block to `<feature>.sql`.
 4. Run `pnpm --filter @firegrid/spec-harness spec`.
 
-`cucumber.mjs` discovers `@sql:*` tags automatically, so no profile edit is
-needed; a scenario tagged `@sql:foo` with no `-- name: foo` block fails with a
-clear "SQL proof foo not found" error.
+`runFiregrid` selects `@sql:*` scenarios automatically; a scenario tagged
+`@sql:foo` with no `-- name: foo` block fails with a clear "SQL proof foo not
+found" error.
 
 ## Commands
 
 ```bash
-pnpm --filter @firegrid/spec-harness spec            # run the proofs profile (@sql:* only)
-pnpm --filter @firegrid/spec-harness spec:inventory  # dry-run: list steps, execute nothing
+pnpm --filter @firegrid/spec-harness spec   # run the @sql:* specs + their trace proofs
+pnpm --filter @firegrid/spec-harness test   # the full vitest suite (CCK + durable + firegrid)
 ```
 
 ## Design notes
 
-- The run-scoped `runtime` and `processor` are deliberately module-level
-  singletons (one chDB + Effect runtime per Cucumber run); per-scenario state is
-  isolated in a `WeakMap<IWorld, …>`, and trace isolation is by
-  `firegrid.scenario.id`, not by tearing down the runtime.
+- There are no module-level runtime singletons: `WorldServicesLive` is an Effect
+  layer (one chDB + OTel + s2-lite per run), per-scenario state lives on the
+  `SpecWorld` shared across a scenario's steps, and trace isolation is by
+  `firegrid.scenario.id`.
 - Evidence spans must come from **production** code paths. A proof that passes
   against validation-only instrumentation is proving the test, not the system —
   see the `production-readiness` requirement of the same name.

@@ -10,12 +10,10 @@
     "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
     "lint": "eslint . --max-warnings 0",
     "spec": "vitest run --root ../.. --project spec-harness test/firegrid.test.ts",
-    "spec:legacy": "cd ../.. && cucumber-js --config cucumber.mjs --profile proofs",
     "test": "vitest run --root ../.. --project spec-harness",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cucumber/cucumber": "^12.9.0",
     "@cucumber/cucumber-expressions": "^20.0.0",
     "@cucumber/gherkin": "^40.0.0",
     "@cucumber/messages": "32.3.1",

@@ -497,7 +497,11 @@ export const durableExecutionsSteps = defineSteps(({ Given, When, Then }) => {
 
   Then("the submitted object result is {int}", function(this: SpecWorld, expected: number) {
     return withObjects(attachSubmittedObjectCall(this)).pipe(
-      Effect.tap(() => Effect.sync(() => assert.equal(stateFor(this).object.submittedResult, expected))),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          assert.equal(stateFor(this).object.submittedResult, expected)
+        })
+      ),
     )
   })
 

@@ -165,12 +165,6 @@ jobs:
           mkdir -p /home/runner/work/chdb-node/chdb-node
           ln -sf "$chdb_lib_dir/libchdb.so" /home/runner/work/chdb-node/chdb-node/libchdb.so
 
-      # Loading the Cucumber step files imports the harness (and chDB), so this
-      # alignment lint runs here, after the chDB binding is prepared, rather than
-      # in the Lint job. It is a --dry-run: no scenarios or hooks execute.
-      - name: Step/scenario alignment (no orphaned step defs)
-        run: pnpm run lint:steps
-
       - name: Test
         run: pnpm run test
 
