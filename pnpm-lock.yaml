@@ -260,9 +260,6 @@ importers:
       '@cucumber/compatibility-kit':
         specifier: 29.2.2
         version: 29.2.2
-      '@cucumber/message-streams':
-        specifier: ^5.0.0
-        version: 5.0.0(@cucumber/messages@32.3.1)
       '@effect/language-service':
         specifier: ^0.86.2
         version: 0.86.2
@@ -383,11 +380,6 @@ packages:
 
   '@cucumber/message-streams@4.1.1':
     resolution: {integrity: sha512-QCAntLajesWMyX+mZKrj63YghVAts7yKFlZe46XprLbdJZN0ddB+f/Mr9OnyWKC2DHhJ18jzCfKIFCaqpAmUxg==}
-    peerDependencies:
-      '@cucumber/messages': '>=17.1.1'
-
-  '@cucumber/message-streams@5.0.0':
-    resolution: {integrity: sha512-71LP6XHverU4UaKdSkq+YEholikOxg2xptRfJBM8ReL5hc2ZcG6JnBsWAvUCnlPjWR6ofN5I8d2hgI3lJq4CSA==}
     peerDependencies:
       '@cucumber/messages': '>=17.1.1'
 
@@ -4136,11 +4128,6 @@ snapshots:
     dependencies:
       '@cucumber/messages': 32.3.1
       mime: 3.0.0
-
-  '@cucumber/message-streams@5.0.0(@cucumber/messages@32.3.1)':
-    dependencies:
-      '@cucumber/messages': 32.3.1
-      mime: 4.1.0
 
   '@cucumber/messages@32.3.1':
     dependencies:
