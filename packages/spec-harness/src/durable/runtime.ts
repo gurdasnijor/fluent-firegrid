@@ -3,6 +3,9 @@ import { SourceMediaType } from "@cucumber/messages"
 import { Data, Effect, FileSystem, Stream } from "effect"
 import { client, type DurableExecutionError, serviceLayer } from "effect-s2-durable"
 import type { S2Client } from "effect-s2"
+
+/** A durable service/object/workflow definition that can be registered in the run's layer. */
+export type DurableDefinition = Parameters<typeof serviceLayer>[number]
 import type { S2StreamDbError } from "effect-s2-stream-db"
 import { runner } from "./runner.ts"
 import { asEnvelope, RunEnvelopes } from "./streams.ts"
@@ -26,10 +29,18 @@ export interface RunFeaturesOptions extends RunOptions {
   readonly runId: string
   /** Name of the support bundle registered via `defineSupport`. */
   readonly supportName: string
+  /**
+   * Product durable definitions the support code drives (e.g. the services /
+   * objects / workflows a firegrid spec exercises). They are registered in the
+   * run's handler layer so step bodies can `client(...)` / `objectClient(...)`
+   * them and so boot recovery can re-drive them.
+   */
+  readonly durableDefs?: ReadonlyArray<DurableDefinition>
 }
 
-/** The handler layer for the durable Cucumber runner; seeds boot recovery. */
-export const DurableCucumberLive = serviceLayer(runner, world)
+/** The handler layer for the durable Cucumber runner (+ any product defs); seeds boot recovery. */
+export const durableCucumberLayer = (defs: ReadonlyArray<DurableDefinition> = []) =>
+  serviceLayer(runner, world, ...defs)
 
 const mediaTypeFor = (file: string): SourceMediaType =>
   file.endsWith(".md") ? SourceMediaType.TEXT_X_CUCUMBER_GHERKIN_MARKDOWN : SourceMediaType.TEXT_X_CUCUMBER_GHERKIN_PLAIN
@@ -70,7 +81,7 @@ export const runFeaturesDurable = (
       Effect.map((stream) =>
         stream.read().pipe(Stream.map((record) => asEnvelope(record.value)), Stream.mapError(toRunnerError)),
       ),
-      Effect.provide(DurableCucumberLive),
+      Effect.provide(durableCucumberLayer(options.durableDefs ?? [])),
       Effect.mapError(toRunnerError),
     ),
   )
