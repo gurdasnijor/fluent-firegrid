@@ -17,8 +17,6 @@
     "@cucumber/cucumber-expressions": "^20.0.0",
     "@cucumber/gherkin": "^40.0.0",
     "@cucumber/messages": "32.3.1",
-    "@cucumber/query": "^13.6.0",
-    "@cucumber/tag-expressions": "^10.0.0",
     "@effect/opentelemetry": "4.0.0-beta.78",
     "@effect/platform-node": "4.0.0-beta.78",
     "@firegrid/observability": "workspace:*",

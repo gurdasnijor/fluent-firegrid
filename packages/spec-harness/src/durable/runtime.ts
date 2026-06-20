@@ -1,14 +1,14 @@
 import type { Envelope } from "@cucumber/messages"
-import { SourceMediaType } from "@cucumber/messages"
-import { Data, Effect, FileSystem, Stream } from "effect"
+import { Data, Effect, type FileSystem, Stream } from "effect"
 import { client, type DurableExecutionError, serviceLayer } from "effect-s2-durable"
 import type { S2Client } from "effect-s2"
 import type { S2StreamDbError } from "effect-s2-stream-db"
 import { makeRunner } from "./runner.ts"
 import { makeScenario } from "./scenario.ts"
+import { readSources } from "./sources.ts"
 import { asEnvelope, RunEnvelopes } from "./streams.ts"
 import type { SupportBundle } from "./support.ts"
-import type { RunOptions, SourceInput } from "./types.ts"
+import type { RunOptions } from "./types.ts"
 
 /**
  * Public entry. Builds the durable Cucumber definitions (`runner` + `world`)
@@ -51,21 +51,6 @@ const makeCucumberRun = (support: SupportBundle, defs: ReadonlyArray<DurableDefi
 export const durableCucumberLayer = (support: SupportBundle, defs: ReadonlyArray<DurableDefinition> = []) =>
   makeCucumberRun(support, defs).layer
 
-const mediaTypeFor = (file: string): SourceMediaType =>
-  file.endsWith(".md") ? SourceMediaType.TEXT_X_CUCUMBER_GHERKIN_MARKDOWN : SourceMediaType.TEXT_X_CUCUMBER_GHERKIN_PLAIN
-
-const readSources = (
-  paths: ReadonlyArray<string>,
-): Effect.Effect<ReadonlyArray<SourceInput>, RunnerError, FileSystem.FileSystem> =>
-  Effect.gen(function*() {
-    const fs = yield* FileSystem.FileSystem
-    return yield* Effect.forEach(paths, (file) =>
-      fs.readFileString(file).pipe(
-        Effect.map((data): SourceInput => ({ uri: file, data, mediaType: mediaTypeFor(file) })),
-        Effect.mapError((cause) => new RunnerError({ message: `failed to read feature file ${file}`, cause })),
-      ))
-  })
-
 const toRunnerError = (error: RunnerError | DurableExecutionError | S2StreamDbError): RunnerError =>
   error._tag === "RunnerError" ? error : new RunnerError({ message: error.message, cause: error })
 
@@ -75,6 +60,7 @@ export const runFeaturesDurable = (
 ): Stream.Stream<Envelope, RunnerError, S2Client | FileSystem.FileSystem> =>
   Stream.unwrap(
     readSources(paths).pipe(
+      Effect.mapError((cause) => new RunnerError({ message: "failed to read feature files", cause })),
       Effect.flatMap((sources) => {
         const { layer, runner } = makeCucumberRun(options.support, options.durableDefs ?? [])
         // Run the durable runner to completion (idempotent by runId), then read the

@@ -1,14 +1,13 @@
 import type { Envelope } from "@cucumber/messages"
-import { SourceMediaType, TestStepResultStatus as Status } from "@cucumber/messages"
-import { Effect, FileSystem, Stream } from "effect"
+import { TestStepResultStatus as Status } from "@cucumber/messages"
+import { Effect, Stream } from "effect"
 import type { Executor } from "../durable/runner-core.ts"
 import { runFeatures } from "../durable/runner-core.ts"
-import { runStepBody } from "../durable/step-exec.ts"
+import { failOutcome, runStepBody } from "../durable/step-exec.ts"
 import { stepHost } from "../durable/step-host.ts"
 import type { StepHost } from "../durable/step-host.ts"
+import { readSources } from "../durable/sources.ts"
 import type { SupportBundle } from "../durable/support.ts"
-import type { SourceInput } from "../durable/types.ts"
-import { failOutcome } from "../durable/step-exec.ts"
 import { loadProofs, type ProofBlock, type ProofResult, runProof, type SpecWorld, type SqlProofError } from "./proofs.ts"
 import { SpecTracing, type WorldServices } from "./runtime.ts"
 
@@ -64,19 +63,6 @@ const firegridExec = (
     }),
 })
 
-const mediaTypeFor = (file: string): SourceMediaType =>
-  file.endsWith(".md") ? SourceMediaType.TEXT_X_CUCUMBER_GHERKIN_MARKDOWN : SourceMediaType.TEXT_X_CUCUMBER_GHERKIN_PLAIN
-
-const readSources = (paths: ReadonlyArray<string>): Effect.Effect<ReadonlyArray<SourceInput>, never, FileSystem.FileSystem> =>
-  Effect.gen(function*() {
-    const fs = yield* FileSystem.FileSystem
-    return yield* Effect.forEach(paths, (file) =>
-      fs.readFileString(file).pipe(
-        Effect.map((data): SourceInput => ({ uri: file, data, mediaType: mediaTypeFor(file) })),
-        Effect.orDie,
-      ))
-  })
-
 export interface FiregridResult {
   readonly envelopes: ReadonlyArray<Envelope>
   readonly proofs: ReadonlyArray<ProofResult>
@@ -88,7 +74,7 @@ export const runFiregrid = (
   support: SupportBundle,
 ): Effect.Effect<FiregridResult, SqlProofError, WorldServices> =>
   Effect.gen(function*() {
-    const sources = yield* readSources(paths)
+    const sources = yield* readSources(paths).pipe(Effect.orDie)
     const host = stepHost(support)
     const contexts = new Map<string, ScenarioContext>()
     const results: Array<ProofResult> = []
