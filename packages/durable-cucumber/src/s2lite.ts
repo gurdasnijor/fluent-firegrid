@@ -6,7 +6,7 @@ import { Config, Duration, Effect, FileSystem, Layer, Path, Redacted, Schedule, 
 import { ChildProcess } from "effect/unstable/process"
 import { S2Client, type BasinConfig as SdkBasinConfig, type S2ClientError } from "effect-s2"
 
-const BASIN = "spec-harness-s2"
+const BASIN = "durable-cucumber-s2"
 const debugConfig = Config.boolean("S2LITE_DEBUG").pipe(Config.withDefault(false))
 
 const BasinConfig = Schema.Struct({
@@ -89,7 +89,7 @@ export const S2LiteLive: Layer.Layer<S2Client> = Layer.unwrap(
 
     const endpoint = `http://127.0.0.1:${port}`
     const clientLayer = S2Client.layer({
-      accessToken: Redacted.make("s2lite-spec-harness"),
+      accessToken: Redacted.make("s2lite-durable-cucumber"),
       basinName: BASIN,
       endpoints: {
         account: endpoint,

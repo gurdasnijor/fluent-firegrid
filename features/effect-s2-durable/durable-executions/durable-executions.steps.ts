@@ -24,8 +24,8 @@ import {
   workflowSubmit,
 } from "effect-s2-durable"
 import { primaryKey, Table } from "effect-s2-stream-db"
-import { defineSteps } from "../../../packages/spec-harness/src/durable/support.ts"
-import { scenarioKey, type SpecWorld } from "../../../packages/spec-harness/src/firegrid/proofs.ts"
+import { defineSteps } from "../../../packages/durable-cucumber/src/durable/support.ts"
+import { scenarioKey, type SpecWorld } from "../../../packages/durable-cucumber/src/firegrid/proofs.ts"
 
 class CounterRow extends Table<CounterRow>("counter")({
   id: Schema.String.pipe(primaryKey),

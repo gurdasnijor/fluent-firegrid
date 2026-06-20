@@ -44,7 +44,7 @@
         "src/**/*.ts"
       ]
     },
-    "packages/spec-harness": {
+    "packages/durable-cucumber": {
       "entry": [
         "src/index.ts"
       ],

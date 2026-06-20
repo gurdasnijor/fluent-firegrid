@@ -22,7 +22,7 @@ export type WorldServices = S2Client | ChdbSession | ChdbClient | FileSystem.Fil
 
 /** A handle to force-flush the batch span processor before querying proofs. */
 export class SpecTracing extends Context.Service<SpecTracing, { readonly flush: Effect.Effect<void> }>()(
-  "@firegrid/spec-harness/firegrid/runtime/SpecTracing",
+  "@firegrid/durable-cucumber/firegrid/runtime/SpecTracing",
 ) {}
 
 const ChdbLive = ChdbLayer({})

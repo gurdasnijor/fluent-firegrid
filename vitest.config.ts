@@ -70,8 +70,8 @@ export default defineConfig({
       }),
       defineProject({
         test: {
-          name: "spec-harness",
-          include: ["packages/spec-harness/test/**/*.test.ts"],
+          name: "durable-cucumber",
+          include: ["packages/durable-cucumber/test/**/*.test.ts"],
           exclude: ["**/node_modules/**"],
         },
         resolve: {

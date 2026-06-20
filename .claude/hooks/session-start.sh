@@ -16,7 +16,7 @@ cd "${CLAUDE_PROJECT_DIR:-$(pwd)}"
 pnpm install --frozen-lockfile
 
 # 2. S2 CLI — `s2 lite` is the local S2 emulator the durable tests spawn
-#    (packages/spec-harness/src/s2lite.ts). Pinned + checksum-verified to match CI.
+#    (packages/durable-cucumber/src/s2lite.ts). Pinned + checksum-verified to match CI.
 S2_VERSION="s2-cli-v0.36.6"
 S2_SHA256="ea181584c8568a8fc607da894f5299225345268cb7419dfd488baef251eea04e"
 if ! command -v s2 >/dev/null 2>&1; then

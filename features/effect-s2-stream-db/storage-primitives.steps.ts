@@ -2,8 +2,8 @@ import { strict as assert } from "node:assert"
 import { Effect, Option, Schema } from "effect"
 import { primaryKey, StreamDb, Table } from "effect-s2-stream-db"
 import type { StreamDbInstance } from "effect-s2-stream-db"
-import { defineSteps } from "../../packages/spec-harness/src/durable/support.ts"
-import { scenarioKey, type SpecWorld } from "../../packages/spec-harness/src/firegrid/proofs.ts"
+import { defineSteps } from "../../packages/durable-cucumber/src/durable/support.ts"
+import { scenarioKey, type SpecWorld } from "../../packages/durable-cucumber/src/firegrid/proofs.ts"
 
 class Item extends Table<Item>("items")({
   id: Schema.String.pipe(primaryKey),

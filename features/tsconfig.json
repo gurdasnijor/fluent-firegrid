@@ -1,5 +1,5 @@
 {
-  "extends": "../packages/spec-harness/tsconfig.json",
+  "extends": "../packages/durable-cucumber/tsconfig.json",
   "include": [
     "**/*.ts"
   ]

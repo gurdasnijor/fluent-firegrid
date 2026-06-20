@@ -1,4 +1,4 @@
-# @firegrid/spec-harness
+# @firegrid/durable-cucumber
 
 The Cucumber runtime + **trace-proof** engine behind the executable specs in
 `features/`. It runs a scenario, lets the real product code emit OpenTelemetry
@@ -111,7 +111,7 @@ spans from other scenarios.
    with `WorldServices` ambient). Use `scenarioKey(this, key)` for idempotency
    keys so reruns are deterministic.
 3. Add a `-- name: <name>` block to `<feature>.sql`.
-4. Run `pnpm --filter @firegrid/spec-harness spec`.
+4. Run `pnpm --filter @firegrid/durable-cucumber spec`.
 
 `runFiregrid` selects `@sql:*` scenarios automatically; a scenario tagged
 `@sql:foo` with no `-- name: foo` block fails with a clear "SQL proof foo not
@@ -120,8 +120,8 @@ found" error.
 ## Commands
 
 ```bash
-pnpm --filter @firegrid/spec-harness spec   # run the @sql:* specs + their trace proofs
-pnpm --filter @firegrid/spec-harness test   # the full vitest suite (CCK + durable + firegrid)
+pnpm --filter @firegrid/durable-cucumber spec   # run the @sql:* specs + their trace proofs
+pnpm --filter @firegrid/durable-cucumber test   # the full vitest suite (CCK + durable + firegrid)
 ```
 
 ## Design notes

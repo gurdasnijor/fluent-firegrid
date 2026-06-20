@@ -169,4 +169,4 @@ jobs:
         run: pnpm run test
 
       - name: Run executable specs
-        run: pnpm --filter @firegrid/spec-harness spec
+        run: pnpm --filter @firegrid/durable-cucumber spec
