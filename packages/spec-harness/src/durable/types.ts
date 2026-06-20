@@ -4,10 +4,11 @@ import type { Pickle, PickleDocString, PickleTable, TestStepResultStatus } from 
  * Serializable types that cross the durable boundary between the `runner`
  * (service, message authority) and the `world` (object, step-definition host).
  *
- * The "wire" here is durable RPC modelled on the Cucumber wire protocol
- * (`begin_scenario` / `step_matches` / `invoke` / `end_scenario`). Step-body
- * closures never cross it — they live in the `world` host's support library,
- * addressed by a registered bundle name. Everything here is plain JSON.
+ * The "wire" is durable RPC modelled on cucumber-js's coordinator → worker split
+ * (`beginScenario` / per-step `invoke` / `endScenario`). Step-body closures never
+ * cross it — they live in the support bundle captured in the `world` handler
+ * closures (a deployment dependency), addressed across the wire only by the
+ * matched step **index**. Everything here is plain JSON.
  */
 
 /** A parsed feature file's raw content, ready for `generateMessages`. */
@@ -25,18 +26,16 @@ export interface RunOptions {
 export interface RunInput {
   /** Stable id for this run; keys the durable envelope stream + dedups re-runs. */
   readonly runId: string
-  /** Name of the support bundle registered with `defineSupport`. */
-  readonly supportName: string
   readonly sources: ReadonlyArray<SourceInput>
   readonly options: RunOptions
 }
 
 /** What the `world` host needs to execute one matched pickle step (the wire `invoke`). */
 export interface StepInvocation {
-  /** The pickle step text — the host re-matches it against its support library. */
+  /** Index of the matched step definition in the support bundle. */
+  readonly stepIndex: number
+  /** The pickle step text — the host re-matches it to bind args to the World. */
   readonly text: string
-  /** Argument values from the Cucumber-expression match (built-ins are JSON-safe). */
-  readonly argValues: ReadonlyArray<unknown>
   readonly docString?: PickleDocString["content"]
   readonly dataTable?: PickleTable
 }
@@ -83,7 +82,6 @@ export interface RunResult {
 }
 
 export interface BeginScenarioInput {
-  readonly supportName: string
   readonly scenarioId: string
   readonly tags: ReadonlyArray<string>
 }

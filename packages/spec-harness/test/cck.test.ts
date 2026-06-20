@@ -8,20 +8,21 @@ import { assembleRun } from "../src/durable/assembly.ts"
 import { normalizeEnvelopes } from "../src/durable/cck.ts"
 import { metaEnvelope, testRunStarted } from "../src/durable/messages.ts"
 import { runFeaturesDurable } from "../src/durable/runtime.ts"
-import { defineSupport } from "../src/durable/support.ts"
+import { defineSteps, type SupportBundle } from "../src/durable/support.ts"
 import { S2LiteLive } from "../src/s2lite.ts"
 import { cckExpectedEnvelopes, cckSamplePath, loadCckSources } from "./cck-support.ts"
 
-// Support bundles for the targeted CCK samples, registered by name (the wire
-// step-host model). These mirror the kit's reference step definitions.
+// Support bundles for the targeted CCK samples, as plain values (the bundle is a
+// deployment dependency, not a global registry). These mirror the kit's
+// reference step definitions.
 
-defineSupport("minimal", ({ Given }) => {
+const minimal = defineSteps(({ Given }) => {
   Given("I have {int} cukes in my belly", (_cukeCount: number) => {
     // no-op
   })
 })
 
-defineSupport("attachments", ({ When }) => {
+const attachments = defineSteps(({ When }) => {
   type Attacher = { attach: (data: unknown, options: unknown) => Promise<void>; log: (t: string) => Promise<void>; link: (u: string) => Promise<void> }
   When("the string {string} is attached as {string}", async function(text: string, mediaType: string) {
     await (this as Attacher).attach(text, mediaType)
@@ -55,6 +56,8 @@ defineSupport("attachments", ({ When }) => {
   })
 })
 
+const bundles: Record<string, SupportBundle> = { minimal, attachments }
+
 // Envelopes the runner produces from assembly alone (before execution). The pure,
 // engine-free gate on the message layer.
 const STATIC_KEYS: ReadonlySet<string> = new Set([
@@ -70,7 +73,7 @@ const STATIC_KEYS: ReadonlySet<string> = new Set([
 ])
 
 const assembledStaticEnvelopes = (sample: string): ReadonlyArray<Envelope> => {
-  const a = assembleRun({ sources: loadCckSources(sample), supportName: sample })
+  const a = assembleRun({ sources: loadCckSources(sample), support: bundles[sample]! })
   return [metaEnvelope(), ...a.discoveryEnvelopes, ...a.supportEnvelopes, testRunStarted(a.testRunStartedId), ...a.testCaseEnvelopes]
 }
 
@@ -99,7 +102,7 @@ const hasS2 = (): boolean => {
 }
 
 const runDurable = (sample: string): Promise<ReadonlyArray<Envelope>> =>
-  runFeaturesDurable([cckSamplePath(sample, `${sample}.feature`)], { runId: `${sample}-${Date.now()}`, supportName: sample }).pipe(
+  runFeaturesDurable([cckSamplePath(sample, `${sample}.feature`)], { runId: `${sample}-${Date.now()}`, support: bundles[sample]! }).pipe(
     Stream.runCollect,
     Effect.map((chunk) => Array.from(chunk) as ReadonlyArray<Envelope>),
     Effect.provide(Layer.mergeAll(S2LiteLive, NodeFileSystem.layer)),

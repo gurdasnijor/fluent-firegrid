@@ -3,6 +3,10 @@ import type {
   Duration,
   Envelope,
   Exception,
+  SourceReference,
+  StepDefinitionPatternType,
+  StepMatchArgumentsList,
+  TestStep,
   TestStepResult,
   TestStepResultStatus,
   Timestamp,
@@ -35,6 +39,82 @@ export const metaEnvelope = (): Envelope => ({
 
 export const testRunStarted = (id: string): Envelope => ({
   testRunStarted: { id, timestamp: ZERO_TIMESTAMP },
+})
+
+// ── discovery / support code envelopes ─────────────────────────────────────
+
+/** Support code is authored in-process; there is no source file to point at. */
+const SUPPORT_SOURCE_REFERENCE: SourceReference = { uri: "cucumber-effect/support", location: { line: 0 } }
+
+export const stepDefinitionEnvelope = (input: {
+  readonly id: string
+  readonly source: string
+  readonly type: StepDefinitionPatternType
+}): Envelope => ({
+  stepDefinition: {
+    id: input.id,
+    pattern: { source: input.source, type: input.type },
+    sourceReference: SUPPORT_SOURCE_REFERENCE,
+  },
+})
+
+export const hookEnvelope = (input: {
+  readonly id: string
+  readonly name?: string
+  readonly tagExpression?: string
+}): Envelope => ({
+  hook: {
+    id: input.id,
+    sourceReference: SUPPORT_SOURCE_REFERENCE,
+    ...(input.name === undefined ? {} : { name: input.name }),
+    ...(input.tagExpression === undefined ? {} : { tagExpression: input.tagExpression }),
+  },
+})
+
+export const parameterTypeEnvelope = (input: {
+  readonly id: string
+  readonly name: string
+  readonly regularExpressions: ReadonlyArray<string>
+  readonly preferForRegexpMatch: boolean
+  readonly useForSnippets: boolean
+}): Envelope => ({
+  parameterType: {
+    id: input.id,
+    name: input.name,
+    regularExpressions: [...input.regularExpressions],
+    preferForRegularExpressionMatch: input.preferForRegexpMatch,
+    useForSnippets: input.useForSnippets,
+    sourceReference: SUPPORT_SOURCE_REFERENCE,
+  },
+})
+
+export const testCaseEnvelope = (input: {
+  readonly id: string
+  readonly pickleId: string
+  readonly testRunStartedId: string
+  readonly testSteps: ReadonlyArray<TestStep>
+}): Envelope => ({
+  testCase: {
+    id: input.id,
+    pickleId: input.pickleId,
+    testRunStartedId: input.testRunStartedId,
+    testSteps: [...input.testSteps],
+  },
+})
+
+/** A test step that runs a matched pickle step (omit empty match lists for an undefined step). */
+export const pickleTestStep = (input: {
+  readonly id: string
+  readonly pickleStepId: string
+  readonly stepDefinitionIds: ReadonlyArray<string>
+  readonly stepMatchArgumentsLists: ReadonlyArray<StepMatchArgumentsList>
+}): TestStep => ({
+  id: input.id,
+  pickleStepId: input.pickleStepId,
+  stepDefinitionIds: [...input.stepDefinitionIds],
+  stepMatchArgumentsLists: input.stepMatchArgumentsLists.map((list) => ({
+    stepMatchArguments: [...list.stepMatchArguments],
+  })),
 })
 
 export const testRunFinished = (input: {

@@ -1,36 +1,25 @@
-import { DataTable } from "@cucumber/core"
-import type { TestStepResult, TestStepResultStatus } from "@cucumber/messages"
-import { AttachmentContentEncoding, IdGenerator, TestStepResultStatus as Status } from "@cucumber/messages"
-import { Data, Effect, Schema } from "effect"
-import { object, state } from "effect-s2-durable"
-import { primaryKey, Table } from "effect-s2-stream-db"
-import { buildSupportLibrary } from "./support.ts"
+import type { TestStepResultStatus } from "@cucumber/messages"
+import { AttachmentContentEncoding, TestStepResultStatus as Status } from "@cucumber/messages"
+import { Data, Effect } from "effect"
+import { object } from "effect-s2-durable"
+import { DataTable } from "./data-table.ts"
+import { invocationArguments } from "./matcher.ts"
+import type { SupportBundle, World } from "./support.ts"
 import type { BeginScenarioInput, CapturedAttachment, StepInvocation, StepOutcome } from "./types.ts"
 
 /**
- * The step-definition host — the Cucumber wire "step host" + the scenario World,
- * as a durable virtual object keyed by scenario-attempt id. It owns the support
- * code (looked up from the registered bundle) and per-scenario `state(...)`. Each
- * `invoke` is the per-step durable boundary: its result is journaled on the
- * owner stream, so on replay a completed step returns its recorded outcome and
- * its side effects (incl. proof reads) are not re-run.
+ * The step-definition host + scenario World, as a durable virtual object keyed
+ * by scenario-attempt id (cucumber-js's parallel worker, made durable). The
+ * support bundle is **captured in this object's handler closures** at definition
+ * time via `makeWorldObject(support)` — a deployment dependency, not a global
+ * lookup — so on recovery the rebuilt layer re-establishes the same closures.
  *
- * It mints no Cucumber ids; the runner owns those and maps these outcomes onto
- * envelopes.
+ * Each `invoke` is the per-step durable boundary: its `StepOutcome` (status +
+ * captured attachments) is journaled on the owner stream, so a replay returns
+ * the recorded outcome without re-running the body or its side effects. Per-
+ * scenario `state(...)` written by step bodies is isolated by the object key.
+ * It mints no Cucumber ids; the runner owns those and maps outcomes to envelopes.
  */
-
-class WorldCtx extends Table<WorldCtx>("worldCtx")({
-  id: Schema.String.pipe(primaryKey),
-  supportName: Schema.String,
-}) {}
-
-// ── in-process World handed to a step body as `this` (attach/log/link) ────────
-
-interface World {
-  attach(data: unknown, options: string | { mediaType: string; fileName?: string }): Promise<void>
-  log(text: string): Promise<void>
-  link(uri: string): Promise<void>
-}
 
 const LOG_MEDIA_TYPE = "text/x.cucumber.log+plain"
 const URI_LIST_MEDIA_TYPE = "text/uri-list"
@@ -46,10 +35,15 @@ const streamToBuffer = (stream: NodeJS.ReadableStream): Promise<Buffer> =>
     stream.on("error", reject)
   })
 
+// The in-process World handed to a step body as `this`. Attachments are captured
+// into a transient buffer for the duration of one (journaled) `invoke`, then
+// serialized into the StepOutcome — they never live as durable object state.
 const makeWorld = (): { readonly world: World; readonly captured: ReadonlyArray<CapturedAttachment> } => {
   const captured: Array<CapturedAttachment> = []
-  const attach = async (data: unknown, options: string | { mediaType: string; fileName?: string }): Promise<void> => {
-    const { mediaType, fileName } = typeof options === "string" ? { mediaType: options, fileName: undefined } : options
+  const attach = async (data: unknown, options?: string | { mediaType: string; fileName?: string }): Promise<void> => {
+    const resolved = typeof options === "string" ? { mediaType: options, fileName: undefined } : options
+    const mediaType = resolved?.mediaType ?? "application/octet-stream"
+    const fileName = resolved?.fileName
     const base = typeof data === "string"
       ? { body: data, contentEncoding: AttachmentContentEncoding.IDENTITY as string }
       : {
@@ -78,8 +72,6 @@ const isGeneratorObject = (value: unknown): boolean =>
   typeof (value as { next?: unknown }).next === "function" &&
   typeof (value as { throw?: unknown }).throw === "function"
 
-const okResult = (status: TestStepResultStatus): TestStepResult => ({ status, duration: { seconds: 0, nanos: 0 } })
-
 const interpretReturn = (value: unknown): Effect.Effect<TestStepResultStatus, StepThrew> => {
   if (Effect.isEffect(value)) {
     return Effect.as((value as Effect.Effect<unknown, unknown>).pipe(Effect.mapError((cause) => new StepThrew({ cause }))), Status.PASSED)
@@ -103,26 +95,25 @@ const toFailure = (error: unknown): { readonly type: string; readonly message: s
   return stackTrace === undefined ? { type, message } : { type, message, stackTrace }
 }
 
-const callArgsFor = (invocation: StepInvocation): ReadonlyArray<unknown> => {
-  if (invocation.dataTable !== undefined) return [...invocation.argValues, DataTable.from(invocation.dataTable)]
-  if (invocation.docString !== undefined) return [...invocation.argValues, invocation.docString]
-  return invocation.argValues
+const trailingArg = (invocation: StepInvocation): ReadonlyArray<unknown> => {
+  if (invocation.dataTable !== undefined) return [DataTable.from(invocation.dataTable)]
+  if (invocation.docString !== undefined) return [invocation.docString]
+  return []
 }
 
-const executeStep = (supportName: string, invocation: StepInvocation): Effect.Effect<StepOutcome> =>
+const executeStep = (support: SupportBundle, invocation: StepInvocation): Effect.Effect<StepOutcome> =>
   Effect.suspend(() => {
-    const library = buildSupportLibrary(supportName, IdGenerator.incrementing())
-    const matches = library.findAllStepsBy(invocation.text)
-    if (matches.length !== 1) {
+    const step = support.steps[invocation.stepIndex]
+    if (step === undefined) {
       return Effect.succeed<StepOutcome>({
         status: Status.FAILED,
         attachments: [],
-        error: { type: "Error", message: `expected exactly one step match for ${JSON.stringify(invocation.text)}, found ${matches.length}` },
+        error: { type: "Error", message: `no step definition at index ${invocation.stepIndex}` },
       })
     }
-    const { world, captured } = makeWorld()
-    const fn = matches[0]!.def.fn
-    return Effect.try({ try: () => fn.apply(world, [...callArgsFor(invocation)]) as unknown, catch: (cause) => new StepThrew({ cause }) }).pipe(
+    const { captured, world } = makeWorld()
+    const args = [...invocationArguments(support, invocation.stepIndex, invocation.text, world), ...trailingArg(invocation)]
+    return Effect.try({ try: () => step.fn.apply(world, args), catch: (cause) => new StepThrew({ cause }) }).pipe(
       Effect.flatMap(interpretReturn),
       Effect.map((status): StepOutcome => ({ status, attachments: [...captured] })),
       Effect.catch((error) => Effect.succeed<StepOutcome>({ status: Status.FAILED, attachments: [...captured], error: toFailure(error.cause) })),
@@ -131,34 +122,25 @@ const executeStep = (supportName: string, invocation: StepInvocation): Effect.Ef
 
 // ── the durable object ──────────────────────────────────────────────────────
 
-export const world = object({
-  name: "cucumber-effect/world",
-  handlers: {
-    // wire `begin_scenario`: establish the scenario context (and, later, run
-    // Before hooks / open the firegrid.scenario span).
-    *beginScenario(input: BeginScenarioInput) {
-      yield* state(WorldCtx).set({ id: "ctx", supportName: input.supportName })
-      return { ok: true as const }
+/** Build the `world` step-host object bound to a specific support bundle. */
+export const makeWorldObject = (support: SupportBundle) =>
+  object({
+    name: "cucumber-effect/world",
+    handlers: {
+      // wire `begin_scenario`: scenario lifecycle anchor (Before hooks / the
+      // firegrid.scenario span attach here next).
+      *beginScenario(_input: BeginScenarioInput) {
+        return { ok: true as const }
+      },
+      // wire `invoke`: run one matched step body, journaled per step.
+      *invoke(input: { readonly invocation: StepInvocation }) {
+        return yield* executeStep(support, input.invocation)
+      },
+      // wire `end_scenario`: teardown (After hooks land here next).
+      *endScenario(_input: { readonly tags: ReadonlyArray<string> }) {
+        return { ok: true as const }
+      },
     },
-    // wire `invoke`: run one matched step body, journaled per step.
-    *invoke(input: { readonly invocation: StepInvocation }) {
-      const ctx = yield* state(WorldCtx).get("ctx")
-      if (ctx._tag === "None") {
-        return {
-          status: Status.FAILED,
-          attachments: [],
-          error: { type: "Error", message: "invoke before beginScenario" },
-        } satisfies StepOutcome
-      }
-      return yield* executeStep(ctx.value.supportName, input.invocation)
-    },
-    // wire `end_scenario`: teardown (and, later, After hooks).
-    *endScenario(_input: { readonly tags: ReadonlyArray<string> }) {
-      yield* state(WorldCtx).delete("ctx")
-      return { ok: true as const }
-    },
-  },
-})
+  })
 
-export type WorldDefinition = typeof world
-export { okResult }
+export type WorldDefinition = ReturnType<typeof makeWorldObject>

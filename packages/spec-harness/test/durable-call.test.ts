@@ -7,7 +7,7 @@ import { object, objectClient, state } from "effect-s2-durable"
 import { primaryKey, Table } from "effect-s2-stream-db"
 import { describe, expect, it } from "vitest"
 import { runFeaturesDurable } from "../src/durable/runtime.ts"
-import { defineSupport } from "../src/durable/support.ts"
+import { defineSteps } from "../src/durable/support.ts"
 import { S2LiteLive } from "../src/s2lite.ts"
 
 // Proves the next firegrid-durable requirement: a step body drives a *product*
@@ -49,7 +49,7 @@ const Counter = object({
 
 const COUNTER_KEY = "probe"
 
-defineSupport("obj-call", ({ Given, Then, When }) => {
+const objCall = defineSteps(({ Given, Then, When }) => {
   Given("a fresh durable counter", () => objectClient(Counter, COUNTER_KEY).set(0))
   When("the step adds {int} via the durable counter", (n: number) =>
     Effect.gen(function*() {
@@ -77,7 +77,7 @@ const hasS2 = (): boolean => {
 const run = (): Promise<ReadonlyArray<Envelope>> =>
   runFeaturesDurable([featurePath], {
     runId: `durable-call-${Date.now()}`,
-    supportName: "obj-call",
+    support: objCall,
     durableDefs: [Counter],
   }).pipe(
     Stream.runCollect,

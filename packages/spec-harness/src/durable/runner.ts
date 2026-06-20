@@ -2,7 +2,6 @@ import type { AttachmentContentEncoding, Envelope, TestStepResult, TestStepResul
 import { TestStepResultStatus as Status } from "@cucumber/messages"
 import { Effect } from "effect"
 import { type DurableExecutionError, type DurableExecutionRuntime, objectClient, run, service } from "effect-s2-durable"
-import { RunEnvelopes } from "./streams.ts"
 import { assembleRun } from "./assembly.ts"
 import {
   ambiguousResult,
@@ -21,15 +20,18 @@ import {
   testStepStarted,
   undefinedResult,
 } from "./messages.ts"
+import { RunEnvelopes } from "./streams.ts"
+import type { SupportBundle } from "./support.ts"
 import type { CapturedAttachment, PlannedScenario, PlannedStep, RunInput, RunResult, StepOutcome } from "./types.ts"
-import { world } from "./world.ts"
+import type { WorldDefinition } from "./world.ts"
 
 /**
- * The Cucumber runner, as a stateless durable service. Modelled on the wire
- * protocol's runner: it parses + orders, owns **all** Cucumber ids/envelopes,
- * and drives the `world` step-host over durable RPC
- * (`beginScenario` -> per-step `invoke` -> `endScenario`), mapping each response
- * onto envelopes. It holds no step code and no world services.
+ * The Cucumber runner, as a stateless durable service — cucumber-js's
+ * coordinator, made durable. It parses + orders, owns **all** Cucumber
+ * ids/envelopes, and drives the `world` step-host over durable RPC
+ * (`beginScenario` → per-step `invoke` → `endScenario`), mapping each response
+ * onto envelopes. The support bundle is captured in its closure (for assembly);
+ * it holds no step code itself. Built per support bundle via `makeRunner`.
  */
 
 const resultFor = (outcome: StepOutcome): TestStepResult => {
@@ -84,87 +86,91 @@ const emitStep = (
   statuses: [...acc.statuses, result.status],
 })
 
-export const runner = service({
-  name: "cucumber-effect/runner",
-  handlers: {
-    *run(input: RunInput) {
-      const assembled = assembleRun({ sources: input.sources, supportName: input.supportName })
+/** Build the runner service bound to a support bundle and its `world` step-host. */
+export const makeRunner = (support: SupportBundle, world: WorldDefinition) =>
+  service({
+    name: "cucumber-effect/runner",
+    handlers: {
+      *run(input: RunInput) {
+        const assembled = assembleRun({ sources: input.sources, support })
 
-      type StepEffect = Effect.Effect<StepFold, DurableExecutionError, DurableExecutionRuntime>
+        type StepEffect = Effect.Effect<StepFold, DurableExecutionError, DurableExecutionRuntime>
 
-      const foldStep = (testCaseStartedId: string, attemptKey: string) =>
-      (acc: StepFold, step: PlannedStep): StepEffect => {
-        if (acc.mode === "skip" && !step.always) {
-          return Effect.succeed(emitStep(testCaseStartedId, step.testStepId, acc, skippedResult(), []))
-        }
-        switch (step.kind._tag) {
-          case "undefined":
-            return Effect.succeed(emitStep(testCaseStartedId, step.testStepId, acc, undefinedResult(), []))
-          case "ambiguous":
-            return Effect.succeed(emitStep(testCaseStartedId, step.testStepId, acc, ambiguousResult(step.kind.message), []))
-          case "prepared": {
-            const invocation = step.kind.invocation
-            return objectClient(world, attemptKey).invoke({ invocation }).pipe(
-              Effect.map((outcome) => emitStep(testCaseStartedId, step.testStepId, acc, resultFor(outcome), outcome.attachments)),
-            )
+        const foldStep = (testCaseStartedId: string, attemptKey: string) =>
+        (acc: StepFold, step: PlannedStep): StepEffect => {
+          if (acc.mode === "skip" && !step.always) {
+            return Effect.succeed(emitStep(testCaseStartedId, step.testStepId, acc, skippedResult(), []))
+          }
+          switch (step.kind._tag) {
+            case "undefined":
+              return Effect.succeed(emitStep(testCaseStartedId, step.testStepId, acc, undefinedResult(), []))
+            case "ambiguous":
+              return Effect.succeed(emitStep(testCaseStartedId, step.testStepId, acc, ambiguousResult(step.kind.message), []))
+            case "prepared": {
+              const invocation = step.kind.invocation
+              return objectClient(world, attemptKey).invoke({ invocation }).pipe(
+                Effect.map((outcome) =>
+                  emitStep(testCaseStartedId, step.testStepId, acc, resultFor(outcome), outcome.attachments),
+                ),
+              )
+            }
           }
         }
-      }
 
-      const runScenario = (scenario: PlannedScenario): StepEffect => {
-        const attemptKey = `${scenario.testCaseId}:0`
-        const fold = scenario.steps.reduce<StepEffect>(
-          (accEffect, step) => accEffect.pipe(Effect.flatMap((acc) => foldStep(scenario.testCaseStartedId, attemptKey)(acc, step))),
-          Effect.succeed({
-            mode: "run",
-            envelopes: [testCaseStarted({ id: scenario.testCaseStartedId, testCaseId: scenario.testCaseId, attempt: 0 })],
-            statuses: [],
-          }),
-        )
-        return objectClient(world, attemptKey)
-          .beginScenario({ supportName: input.supportName, scenarioId: scenario.scenarioId, tags: scenario.tags })
-          .pipe(
-            Effect.flatMap(() => fold),
-            Effect.flatMap((acc) =>
-              objectClient(world, attemptKey).endScenario({ tags: scenario.tags }).pipe(Effect.as({
-                mode: acc.mode,
-                envelopes: [...acc.envelopes, testCaseFinished({ testCaseStartedId: scenario.testCaseStartedId, willBeRetried: false })],
-                statuses: acc.statuses,
-              })),
-            ),
+        const runScenario = (scenario: PlannedScenario): StepEffect => {
+          const attemptKey = `${scenario.testCaseId}:0`
+          const fold = scenario.steps.reduce<StepEffect>(
+            (accEffect, step) => accEffect.pipe(Effect.flatMap((acc) => foldStep(scenario.testCaseStartedId, attemptKey)(acc, step))),
+            Effect.succeed({
+              mode: "run",
+              envelopes: [testCaseStarted({ id: scenario.testCaseStartedId, testCaseId: scenario.testCaseId, attempt: 0 })],
+              statuses: [],
+            }),
           )
-      }
+          return objectClient(world, attemptKey)
+            .beginScenario({ scenarioId: scenario.scenarioId, tags: scenario.tags })
+            .pipe(
+              Effect.flatMap(() => fold),
+              Effect.flatMap((acc) =>
+                objectClient(world, attemptKey).endScenario({ tags: scenario.tags }).pipe(Effect.as({
+                  mode: acc.mode,
+                  envelopes: [...acc.envelopes, testCaseFinished({ testCaseStartedId: scenario.testCaseStartedId, willBeRetried: false })],
+                  statuses: acc.statuses,
+                })),
+              ),
+            )
+        }
 
-      const scenarioFolds = yield* Effect.forEach(assembled.scenarios, runScenario, {
-        concurrency: input.options.scenarioConcurrency ?? 1,
-      })
+        const scenarioFolds = yield* Effect.forEach(assembled.scenarios, runScenario, {
+          concurrency: input.options.scenarioConcurrency ?? 1,
+        })
 
-      const statuses = scenarioFolds.flatMap((fold) => [...fold.statuses])
-      const success = testRunSuccess(statuses)
-      const envelopes: ReadonlyArray<Envelope> = [
-        metaEnvelope(),
-        ...assembled.discoveryEnvelopes,
-        ...assembled.supportEnvelopes,
-        testRunStarted(assembled.testRunStartedId),
-        ...assembled.testCaseEnvelopes,
-        ...scenarioFolds.flatMap((fold) => [...fold.envelopes]),
-        testRunFinished({ testRunStartedId: assembled.testRunStartedId, success }),
-      ]
+        const statuses = scenarioFolds.flatMap((fold) => [...fold.statuses])
+        const success = testRunSuccess(statuses)
+        const envelopes: ReadonlyArray<Envelope> = [
+          metaEnvelope(),
+          ...assembled.discoveryEnvelopes,
+          ...assembled.supportEnvelopes,
+          testRunStarted(assembled.testRunStartedId),
+          ...assembled.testCaseEnvelopes,
+          ...scenarioFolds.flatMap((fold) => [...fold.envelopes]),
+          testRunFinished({ testRunStartedId: assembled.testRunStartedId, success }),
+        ]
 
-      // Publish the ordered envelopes as facts on the run's durable stream — the
-      // canonical output consumers read/tail. Journaled via `run(...)` so a
-      // handler replay re-reads the ack instead of re-appending (no duplicates).
-      yield* run(
-        "publish-envelopes",
-        RunEnvelopes.open(input.runId).pipe(
-          Effect.flatMap((stream) => stream.appendBatch(envelopes)),
-          Effect.asVoid,
-        ),
-      )
+        // Publish the ordered envelopes as facts on the run's durable stream — the
+        // canonical output consumers read/tail. Journaled via `run(...)` so a
+        // handler replay re-reads the ack instead of re-appending (no duplicates).
+        yield* run(
+          "publish-envelopes",
+          RunEnvelopes.open(input.runId).pipe(
+            Effect.flatMap((stream) => stream.appendBatch(envelopes)),
+            Effect.asVoid,
+          ),
+        )
 
-      return { success } satisfies RunResult
+        return { success } satisfies RunResult
+      },
     },
-  },
-})
+  })
 
-export type RunnerDefinition = typeof runner
+export type RunnerDefinition = ReturnType<typeof makeRunner>

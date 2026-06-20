@@ -217,9 +217,6 @@ importers:
 
   packages/spec-harness:
     dependencies:
-      '@cucumber/core':
-        specifier: 0.9.0
-        version: 0.9.0(@cucumber/cucumber-expressions@20.0.0)(@cucumber/messages@32.3.1)(@cucumber/query@13.6.0(@cucumber/messages@32.3.1))(@cucumber/tag-expressions@10.0.0)
       '@cucumber/cucumber':
         specifier: ^12.9.0
         version: 12.9.0
@@ -330,14 +327,6 @@ packages:
 
   '@cucumber/compatibility-kit@29.2.2':
     resolution: {integrity: sha512-KkUaXLJBhXKXmo7hAWC9BMwGcyx7z1Tn6GirJeIZIoDTTRrm24fQaiw0he/FJUP8TQApiJkJtu40EMckY9X8vg==}
-
-  '@cucumber/core@0.9.0':
-    resolution: {integrity: sha512-nKhl1Qou9nbc42B1y0F0F0DnjlForEPxM+8efbmk1SQE7FZP4u+LWng9rzi5OHjLyHfGE3GSbLV4xjau4pDQzQ==}
-    peerDependencies:
-      '@cucumber/cucumber-expressions': '*'
-      '@cucumber/messages': '>=31.0.0'
-      '@cucumber/query': '*'
-      '@cucumber/tag-expressions': '*'
 
   '@cucumber/cucumber-expressions@19.0.0':
     resolution: {integrity: sha512-4FKoOQh2Uf6F6/Ln+1OxuK8LkTg6PyAqekhf2Ix8zqV2M54sH+m7XNJNLhOFOAW/t9nxzRbw2CcvXbCLjcvHZg==}
@@ -4030,13 +4019,6 @@ snapshots:
   '@cucumber/ci-environment@13.0.0': {}
 
   '@cucumber/compatibility-kit@29.2.2': {}
-
-  '@cucumber/core@0.9.0(@cucumber/cucumber-expressions@20.0.0)(@cucumber/messages@32.3.1)(@cucumber/query@13.6.0(@cucumber/messages@32.3.1))(@cucumber/tag-expressions@10.0.0)':
-    dependencies:
-      '@cucumber/cucumber-expressions': 20.0.0
-      '@cucumber/messages': 32.3.1
-      '@cucumber/query': 13.6.0(@cucumber/messages@32.3.1)
-      '@cucumber/tag-expressions': 10.0.0
 
   '@cucumber/cucumber-expressions@19.0.0':
     dependencies:

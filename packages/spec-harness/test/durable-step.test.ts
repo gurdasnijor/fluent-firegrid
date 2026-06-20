@@ -6,7 +6,7 @@ import { Effect, Layer, Option, Schema, Stream } from "effect"
 import { state } from "effect-s2-durable"
 import { primaryKey, Table } from "effect-s2-stream-db"
 import { describe, expect, it } from "vitest"
-import { defineSupport } from "../src/durable/support.ts"
+import { defineSteps } from "../src/durable/support.ts"
 import { runFeaturesDurable } from "../src/durable/runtime.ts"
 import { S2LiteLive } from "../src/s2lite.ts"
 
@@ -23,7 +23,7 @@ class CounterRow extends Table<CounterRow>("durable-step-counter")({
 const valueOf = (row: Option.Option<CounterRow>): number =>
   Option.match(row, { onNone: () => 0, onSome: (r) => r.value })
 
-defineSupport("durable-state", ({ Given, Then, When }) => {
+const durableState = defineSteps(({ Given, Then, When }) => {
   Given("the counter starts at {int}", (n: number) =>
     Effect.gen(function*() {
       yield* state(CounterRow).set({ id: "v", value: n })
@@ -54,7 +54,7 @@ const hasS2 = (): boolean => {
 }
 
 const run = (): Promise<ReadonlyArray<Envelope>> =>
-  runFeaturesDurable([featurePath], { runId: `durable-state-${Date.now()}`, supportName: "durable-state" }).pipe(
+  runFeaturesDurable([featurePath], { runId: `durable-state-${Date.now()}`, support: durableState }).pipe(
     Stream.runCollect,
     Effect.map((chunk) => Array.from(chunk) as ReadonlyArray<Envelope>),
     Effect.provide(Layer.mergeAll(S2LiteLive, NodeFileSystem.layer)),

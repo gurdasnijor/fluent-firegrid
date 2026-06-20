@@ -1,26 +1,52 @@
-import { buildSupportCode, type SupportCodeLibrary } from "@cucumber/core"
-import type { NewParameterType, SupportCodeFunction } from "@cucumber/core"
-import type { IdGenerator, SourceReference } from "@cucumber/messages"
+import {
+  CucumberExpression,
+  type Expression,
+  ParameterType,
+  ParameterTypeRegistry,
+  RegularExpression,
+} from "@cucumber/cucumber-expressions"
+import { StepDefinitionPatternType } from "@cucumber/messages"
 
 /**
- * Cucumber-shaped support DSL lowered onto `@cucumber/core`'s `buildSupportCode`.
+ * The step-definition DSL — the glue binding Gherkin step text to executable
+ * bodies, plus hooks and parameter types. This is the only Cucumber-specific
+ * authoring surface, modelled on cucumber-js's `Given/When/Then` methods but
+ * **without** its global singleton builder.
  *
- * Following the Cucumber wire-protocol model, step/hook bodies live in the
- * step-definition **host** (the `world` object), not in the runner and not in
- * the durable call payloads. A bundle is registered **once at module load**
- * under a name; the durable handlers select it by that serializable name. On a
- * fresh process the bundle re-registers at import, so recovery re-establishes it
- * before any handler is re-driven — the closures themselves never need to be
- * serialized or captured per run.
+ * `defineSteps(register)` returns a plain `SupportBundle` **value**: the
+ * compiled step expressions (via `@cucumber/cucumber-expressions`, the same lib
+ * cucumber-js uses) + hooks + parameter types. That value is captured in the
+ * durable `runner`/`world` handler closures at definition time and registered
+ * in the run's layer — a dependency of the deployment, the way Restate handlers
+ * carry their dependencies, not a module-global mutated by import side effects.
+ * On recovery the layer is rebuilt from the same bundle, re-establishing the
+ * closures exactly like the handler code itself.
  */
 
-export type StepBody = SupportCodeFunction
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- step bodies are classic Cucumber callbacks: variadic args + a `this` World, existential at the DSL boundary.
+export type StepBody = (this: World, ...args: ReadonlyArray<any>) => unknown
+
+/** The scenario World handed to a step/hook body as `this` (attach/log/link). */
+export interface World {
+  attach(data: unknown, options?: string | { mediaType: string; fileName?: string }): Promise<void>
+  log(text: string): Promise<void>
+  link(uri: string): Promise<void>
+}
 
 export interface HookOptions {
   readonly name?: string
   readonly tags?: string
 }
 
+export interface ParameterTypeOptions {
+  readonly name: string
+  readonly regexp: string | RegExp | ReadonlyArray<string | RegExp>
+  readonly transformer?: (...match: ReadonlyArray<string>) => unknown
+  readonly useForSnippets?: boolean
+  readonly preferForRegexpMatch?: boolean
+}
+
+/** The authoring surface passed to a `defineSteps` callback. */
 export interface SupportApi {
   readonly Given: (pattern: string | RegExp, body: StepBody) => void
   readonly When: (pattern: string | RegExp, body: StepBody) => void
@@ -29,59 +55,111 @@ export interface SupportApi {
   readonly After: (optionsOrBody: HookOptions | StepBody, body?: StepBody) => void
   readonly BeforeAll: (body: StepBody) => void
   readonly AfterAll: (body: StepBody) => void
-  readonly ParameterType: (options: Omit<NewParameterType, "sourceReference">) => void
+  readonly ParameterType: (options: ParameterTypeOptions) => void
 }
 
-export type SupportModule = (api: SupportApi) => void
-
-// Bundles registered at module load, addressed by name across the durable
-// boundary. Not durable-authority state (it is code, re-derived from imports on
-// every boot), so it is exempt from the durable-runtime registry guardrail.
-const supportBundles = new Map<string, SupportModule>()
-
-/** Register a named support bundle and return its name (for `runFeatures`). */
-export const defineSupport = (name: string, register: SupportModule): string => {
-  supportBundles.set(name, register)
-  return name
+/** A compiled step definition: its matchable expression + body + pattern kind (for the envelope). */
+export interface CompiledStep {
+  readonly expression: Expression
+  readonly patternType: StepDefinitionPatternType
+  readonly fn: StepBody
 }
 
-const sourceRef = (): SourceReference => ({ uri: "cucumber-effect/support", location: { line: 0 } })
+/** A compiled scenario hook (Before/After), with an optional tag filter. */
+export interface CompiledHook {
+  readonly name?: string
+  readonly tags?: string
+  readonly fn: StepBody
+}
+
+/** A user-defined parameter type, retained for `parameterType` envelope emission. */
+export interface CompiledParameterType {
+  readonly name: string
+  readonly regularExpressions: ReadonlyArray<string>
+  readonly preferForRegexpMatch: boolean
+  readonly useForSnippets: boolean
+}
+
+/**
+ * The finalized support code as a serializable-shaped value (closures aside).
+ * Captured in the durable handler closures; never looked up from a global.
+ */
+export interface SupportBundle {
+  readonly steps: ReadonlyArray<CompiledStep>
+  readonly beforeHooks: ReadonlyArray<CompiledHook>
+  readonly afterHooks: ReadonlyArray<CompiledHook>
+  readonly beforeAll: ReadonlyArray<StepBody>
+  readonly afterAll: ReadonlyArray<StepBody>
+  readonly parameterTypes: ReadonlyArray<CompiledParameterType>
+  readonly registry: ParameterTypeRegistry
+}
 
 const normalizeHook = (
   optionsOrBody: HookOptions | StepBody,
   body: StepBody | undefined,
-): { readonly options: HookOptions; readonly fn: StepBody } =>
+): CompiledHook =>
   typeof optionsOrBody === "function"
-    ? { options: {}, fn: optionsOrBody }
-    : { options: optionsOrBody, fn: body as StepBody }
+    ? { fn: optionsOrBody }
+    : { ...optionsOrBody, fn: body as StepBody }
 
-/** Build the `@cucumber/core` support library for a registered bundle. */
-export const buildSupportLibrary = (bundleName: string, newId: IdGenerator.NewId): SupportCodeLibrary => {
-  const module = supportBundles.get(bundleName)
-  // A missing bundle is a wiring/programmer error (the host process must register
-  // its support at module load) — surface it as a defect.
-  if (module === undefined) throw new Error(`no support bundle registered under ${JSON.stringify(bundleName)}`)
+/**
+ * Build a support bundle from a registration callback. Pure and deterministic:
+ * parameter types are collected first and registered into the expression
+ * registry, then step patterns are compiled against it — so a step may use a
+ * parameter type declared anywhere in the callback (cucumber-js's collect-then-
+ * finalize order).
+ */
+export const defineSteps = (register: (api: SupportApi) => void): SupportBundle => {
+  const rawSteps: Array<{ readonly pattern: string | RegExp; readonly fn: StepBody }> = []
+  const beforeHooks: Array<CompiledHook> = []
+  const afterHooks: Array<CompiledHook> = []
+  const beforeAll: Array<StepBody> = []
+  const afterAll: Array<StepBody> = []
+  const rawParameterTypes: Array<ParameterTypeOptions> = []
 
-  const builder = buildSupportCode({ newId })
   const step = (pattern: string | RegExp, fn: StepBody): void => {
-    builder.step({ pattern, fn, sourceReference: sourceRef() })
+    rawSteps.push({ pattern, fn })
   }
-  const api: SupportApi = {
+  register({
     Given: step,
     When: step,
     Then: step,
-    Before: (optionsOrBody, body) => {
-      const { options, fn } = normalizeHook(optionsOrBody, body)
-      builder.beforeHook({ ...options, fn, sourceReference: sourceRef() })
-    },
-    After: (optionsOrBody, body) => {
-      const { options, fn } = normalizeHook(optionsOrBody, body)
-      builder.afterHook({ ...options, fn, sourceReference: sourceRef() })
-    },
-    BeforeAll: (fn) => builder.beforeAllHook({ fn, sourceReference: sourceRef() }),
-    AfterAll: (fn) => builder.afterAllHook({ fn, sourceReference: sourceRef() }),
-    ParameterType: (options) => builder.parameterType({ ...options, sourceReference: sourceRef() }),
-  }
-  module(api)
-  return builder.build()
+    Before: (optionsOrBody, body) => beforeHooks.push(normalizeHook(optionsOrBody, body)),
+    After: (optionsOrBody, body) => afterHooks.push(normalizeHook(optionsOrBody, body)),
+    BeforeAll: (fn) => beforeAll.push(fn),
+    AfterAll: (fn) => afterAll.push(fn),
+    ParameterType: (options) => rawParameterTypes.push(options),
+  })
+
+  const registry = new ParameterTypeRegistry()
+  const parameterTypes = rawParameterTypes.map((options): CompiledParameterType => {
+    const useForSnippets = options.useForSnippets !== false
+    const preferForRegexpMatch = options.preferForRegexpMatch === true
+    const parameterType = new ParameterType(
+      options.name,
+      options.regexp,
+      null,
+      options.transformer ?? ((value: string) => value),
+      useForSnippets,
+      preferForRegexpMatch,
+    )
+    registry.defineParameterType(parameterType)
+    return { name: options.name, regularExpressions: parameterType.regexpStrings, preferForRegexpMatch, useForSnippets }
+  })
+
+  const steps = rawSteps.map((raw): CompiledStep =>
+    typeof raw.pattern === "string"
+      ? {
+        expression: new CucumberExpression(raw.pattern, registry),
+        patternType: StepDefinitionPatternType.CUCUMBER_EXPRESSION,
+        fn: raw.fn,
+      }
+      : {
+        expression: new RegularExpression(raw.pattern, registry),
+        patternType: StepDefinitionPatternType.REGULAR_EXPRESSION,
+        fn: raw.fn,
+      },
+  )
+
+  return { steps, beforeHooks, afterHooks, beforeAll, afterAll, parameterTypes, registry }
 }
