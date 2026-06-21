@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unnecessary-type-assertion -- the ingress dispatches over heterogeneous definitions by name/method at runtime; this is an existential proxy boundary (the same reason service.ts disables no-explicit-any), and runtime correctness is covered by the S2-backed ingress test. */
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unnecessary-type-assertion -- the ingress dispatches over heterogeneous definitions by name/method at runtime (the same reason service.ts disables no-explicit-any), and runtime correctness is covered by the S2-backed ingress test. */
 import { Effect, Layer, Option, Schema } from "effect"
 import { HttpClient, HttpClientRequest, HttpRouter } from "effect/unstable/http"
 import { HttpApi, HttpApiBuilder, HttpApiClient, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
@@ -40,6 +40,7 @@ import { DurableExecutionRuntime } from "./Runtime.ts"
 
 type AnyCodec = Schema.Codec<any, any, never, never>
 type HandlerCodecs = { readonly input: AnyCodec; readonly output: AnyCodec }
+type IngressMethod = (...args: ReadonlyArray<any>) => Effect.Effect<unknown, DurableFailure, unknown>
 
 /** A typed invocation failure surfaced to the ingress client (not a 500 defect). */
 export class DurableFailure extends Schema.ErrorClass<DurableFailure>("DurableFailure")({
@@ -421,17 +422,18 @@ export const connect = (
         return { invocationId, attach: attachBy(def, key, method, locator), output: outputBy(def, key, method, locator) }
       })
 
-    const proxy = (build: (method: string) => (...args: ReadonlyArray<any>) => Effect.Effect<unknown, DurableFailure, unknown>) =>
-      new Proxy({}, { get: (_t, method: string) => build(method) }) as any
+    const materializeClient = (def: AnyDef, build: (method: string) => IngressMethod): Record<string, IngressMethod> => {
+      return Object.fromEntries(Object.keys(def.compiled).map((method) => [method, build(method)]))
+    }
 
     return {
-      serviceClient: (def: AnyDef) => proxy(call(def, undefined)),
-      objectClient: (def: AnyDef, key: string) => proxy(call(def, key)),
-      serviceSendClient: (def: AnyDef) => proxy(send(def, undefined)),
-      objectSendClient: (def: AnyDef, key: string) => proxy(send(def, key)),
-      serviceAttachClient: (def: AnyDef) => proxy((method: string) => (locator: Locator) => attachBy(def, undefined, method, locator)),
-      objectAttachClient: (def: AnyDef, key: string) => proxy((method: string) => (locator: Locator) => attachBy(def, key, method, locator)),
-      serviceOutputClient: (def: AnyDef) => proxy((method: string) => (locator: Locator) => outputBy(def, undefined, method, locator)),
-      objectOutputClient: (def: AnyDef, key: string) => proxy((method: string) => (locator: Locator) => outputBy(def, key, method, locator)),
+      serviceClient: (def: AnyDef) => materializeClient(def, call(def, undefined)),
+      objectClient: (def: AnyDef, key: string) => materializeClient(def, call(def, key)),
+      serviceSendClient: (def: AnyDef) => materializeClient(def, send(def, undefined)),
+      objectSendClient: (def: AnyDef, key: string) => materializeClient(def, send(def, key)),
+      serviceAttachClient: (def: AnyDef) => materializeClient(def, (method: string) => (locator: Locator) => attachBy(def, undefined, method, locator)),
+      objectAttachClient: (def: AnyDef, key: string) => materializeClient(def, (method: string) => (locator: Locator) => attachBy(def, key, method, locator)),
+      serviceOutputClient: (def: AnyDef) => materializeClient(def, (method: string) => (locator: Locator) => outputBy(def, undefined, method, locator)),
+      objectOutputClient: (def: AnyDef, key: string) => materializeClient(def, (method: string) => (locator: Locator) => outputBy(def, key, method, locator)),
     } as DurableIngressClient
   })
