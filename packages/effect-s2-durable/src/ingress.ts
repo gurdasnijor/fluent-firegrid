@@ -82,49 +82,49 @@ const OutputResult = Schema.Union([
 
 export const DurableApi = HttpApi.make("durable").add(
   HttpApiGroup.make("invocations")
-    .add(HttpApiEndpoint.post("serviceCall", "/restate/call/:name/:method", {
+    .add(HttpApiEndpoint.post("serviceCall", "/durable/call/:name/:method", {
       params: ServiceParams,
       payload: InvokePayload,
       success: CallSuccess,
       error: DurableFailure,
     }))
-    .add(HttpApiEndpoint.post("objectCall", "/restate/call/:name/:key/:method", {
+    .add(HttpApiEndpoint.post("objectCall", "/durable/call/:name/:key/:method", {
       params: ObjectParams,
       payload: InvokePayload,
       success: CallSuccess,
       error: DurableFailure,
     }))
-    .add(HttpApiEndpoint.post("serviceSend", "/restate/send/:name/:method", {
+    .add(HttpApiEndpoint.post("serviceSend", "/durable/send/:name/:method", {
       params: ServiceParams,
       payload: InvokePayload,
       success: SendSuccess,
       error: DurableFailure,
     }))
-    .add(HttpApiEndpoint.post("objectSend", "/restate/send/:name/:key/:method", {
+    .add(HttpApiEndpoint.post("objectSend", "/durable/send/:name/:key/:method", {
       params: ObjectParams,
       payload: InvokePayload,
       success: SendSuccess,
       error: DurableFailure,
     }))
-    .add(HttpApiEndpoint.post("serviceAttach", "/restate/attach/:name/:method", {
+    .add(HttpApiEndpoint.post("serviceAttach", "/durable/attach/:name/:method", {
       params: ServiceParams,
       payload: LocatePayload,
       success: CallSuccess,
       error: DurableFailure,
     }))
-    .add(HttpApiEndpoint.post("objectAttach", "/restate/attach/:name/:key/:method", {
+    .add(HttpApiEndpoint.post("objectAttach", "/durable/attach/:name/:key/:method", {
       params: ObjectParams,
       payload: LocatePayload,
       success: CallSuccess,
       error: DurableFailure,
     }))
-    .add(HttpApiEndpoint.post("serviceOutput", "/restate/output/:name/:method", {
+    .add(HttpApiEndpoint.post("serviceOutput", "/durable/output/:name/:method", {
       params: ServiceParams,
       payload: LocatePayload,
       success: OutputResult,
       error: DurableFailure,
     }))
-    .add(HttpApiEndpoint.post("objectOutput", "/restate/output/:name/:key/:method", {
+    .add(HttpApiEndpoint.post("objectOutput", "/durable/output/:name/:key/:method", {
       params: ObjectParams,
       payload: LocatePayload,
       success: OutputResult,
