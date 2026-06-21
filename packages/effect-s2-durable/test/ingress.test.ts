@@ -5,7 +5,7 @@ import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem"
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient"
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
 import * as NodePath from "@effect/platform-node/NodePath"
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Layer, Option, Schema } from "effect"
 import { HttpServer } from "effect/unstable/http"
 import { connect, durableIngress, object, run, service, serviceLayer, state } from "../src/index.ts"
 import { primaryKey, Table } from "effect-s2-stream-db"
@@ -67,7 +67,9 @@ describe.skipIf(!hasS2())("durable ingress over HTTP (S2 + node http)", () => {
       // fire-and-forget: send returns an awaitable handle (Restate's Send → attach)
       const handle = yield* ingress.sendClient(Calculator).double(10)
       const attached = yield* handle.attach
-      return { doubled, added, invocationIdPresent: handle.invocationId.length > 0, attached }
+      // non-blocking output: once attached, the handle's output is ready
+      const polled = yield* handle.output
+      return { doubled, added, invocationIdPresent: handle.invocationId.length > 0, attached, polled: Option.getOrNull(polled) }
     })
 
     const result = await program.pipe(
@@ -81,6 +83,35 @@ describe.skipIf(!hasS2())("durable ingress over HTTP (S2 + node http)", () => {
       Effect.runPromise,
     )
 
-    expect(result).toEqual({ doubled: 42, added: 5, invocationIdPresent: true, attached: 20 })
+    expect(result).toEqual({ doubled: 42, added: 5, invocationIdPresent: true, attached: 20, polled: 20 })
+  }, 60_000)
+
+  it("attaches and polls an existing invocation by idempotency key (no original handle)", async () => {
+    const program = Effect.gen(function*() {
+      const server = yield* HttpServer.HttpServer
+      const port = server.address._tag === "TcpAddress" ? server.address.port : 0
+      const ingress = yield* connect(`http://127.0.0.1:${port}`)
+      // a "first caller" sends a keyed-object invocation pinned to an idempotency key
+      const idempotencyKey = "ingress-idem-1"
+      yield* ingress.sendClient(Counter, "wishlist").add(7, { idempotencyKey })
+      // a SECOND caller — holding only (def, key, method, idempotencyKey), not the
+      // server-minted id — re-attaches to the same invocation and reads its result
+      const attached = yield* ingress.attach(Counter, "wishlist").add({ idempotencyKey })
+      const polled = yield* ingress.output(Counter, "wishlist").add({ idempotencyKey })
+      return { attached, polled: Option.getOrNull(polled) }
+    })
+
+    const result = await program.pipe(
+      Effect.provide(NodeHttpClient.layerUndici),
+      Effect.provide(durableIngress([Calculator, Counter])),
+      Effect.provide(EngineLive),
+      Effect.provide(NodeHttpServer.layer(() => createServer(), { port: 0 })),
+      Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
+      Effect.provide(S2LiteLive),
+      Effect.scoped,
+      Effect.runPromise,
+    )
+
+    expect(result).toEqual({ attached: 7, polled: 7 })
   }, 60_000)
 })
