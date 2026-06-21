@@ -10,7 +10,7 @@ import { DurableExecutionRuntime } from "./Runtime.ts"
 /**
  * The HTTP **ingress** for durable definitions — the network front door an
  * out-of-process caller uses to invoke a service/object/workflow handler, the
- * analog of Restate's `restate-sdk-clients` (`connect(url)`) talking to a served
+ * analog of Restate's `restate-sdk-clients` (`connect({ url })`) talking to a served
  * deployment. Uses only the ABSTRACT Effect HTTP stack (`effect/unstable/http*` +
  * `httpapi`); the Node bindings (`NodeHttpServer`/`NodeHttpClient`) are supplied
  * at the edge, so the engine stays platform-free.
@@ -19,9 +19,10 @@ import { DurableExecutionRuntime } from "./Runtime.ts"
  * - **typed errors**: invocation failures come back as a `DurableFailure` in the
  *   Effect error channel, not opaque 500 defects;
  * - **idempotency keys**: forwarded so a retried call de-dups on the same id;
- * - **attach handles**: `sendClient(def).method(input)` returns an
+ * - **attach handles**: `serviceSendClient(def).method(input)` /
+ *   `objectSendClient(def, key).method(input)` returns an
  *   `InvocationHandle` whose `.attach` awaits the eventual result;
- * - **non-blocking output**: `.output` (or `ingress.output(def[, key]).method(...)`)
+ * - **non-blocking output**: `.output` (or `ingress.objectOutputClient(def, key).method(...)`)
  *   reads the completed result without blocking — `Option.none()` while still
  *   running (the Effect-idiomatic analog of Restate's `/output` HTTP 470);
  * - **attach/output by idempotency key**: a caller that didn't make the original
@@ -29,7 +30,8 @@ import { DurableExecutionRuntime } from "./Runtime.ts"
  *   — the server reconstructs the engine id the original `idempotencyKey` minted.
  *
  * Footgun-free split (as in Restate): the ingress client is obtained ONLY from
- * `connect(url)`; the in-handler durable-call path is `objectClient(def, key)`.
+ * `connect({ url })`; service and object callers use distinct surfaces, so keyed
+ * objects cannot accidentally be invoked with an empty key.
  *
  * NOTE: cancel / kill / purge / status are deliberately NOT here — in Restate
  * those are admin-plane operations (a separate port), not ingress; keep them off
@@ -44,22 +46,27 @@ export class DurableFailure extends Schema.ErrorClass<DurableFailure>("DurableFa
   message: Schema.String,
 }) {}
 
-// ── the wire API (one generic group; per-def typing is layered on the client) ──
+// ── the wire API (Restate-shaped routes; per-def typing is layered on the client) ──
 
 const InvokePayload = Schema.Struct({
-  name: Schema.String,
-  key: Schema.optionalKey(Schema.String),
-  method: Schema.String,
   input: Schema.Unknown,
   idempotencyKey: Schema.optionalKey(Schema.String),
 })
 
+const ServiceParams = {
+  name: Schema.String,
+  method: Schema.String,
+}
+
+const ObjectParams = {
+  name: Schema.String,
+  key: Schema.String,
+  method: Schema.String,
+}
+
 // Locate an existing invocation by EITHER its server-minted id OR the
 // idempotency key the original send used (the server reconstructs the id).
 const LocatePayload = Schema.Struct({
-  name: Schema.String,
-  key: Schema.optionalKey(Schema.String),
-  method: Schema.String,
   invocationId: Schema.optionalKey(Schema.String),
   idempotencyKey: Schema.optionalKey(Schema.String),
 })
@@ -75,10 +82,54 @@ const OutputResult = Schema.Union([
 
 export const DurableApi = HttpApi.make("durable").add(
   HttpApiGroup.make("invocations")
-    .add(HttpApiEndpoint.post("call", "/call", { payload: InvokePayload, success: CallSuccess, error: DurableFailure }))
-    .add(HttpApiEndpoint.post("send", "/send", { payload: InvokePayload, success: SendSuccess, error: DurableFailure }))
-    .add(HttpApiEndpoint.post("attach", "/attach", { payload: LocatePayload, success: CallSuccess, error: DurableFailure }))
-    .add(HttpApiEndpoint.post("output", "/output", { payload: LocatePayload, success: OutputResult, error: DurableFailure })),
+    .add(HttpApiEndpoint.post("serviceCall", "/restate/call/:name/:method", {
+      params: ServiceParams,
+      payload: InvokePayload,
+      success: CallSuccess,
+      error: DurableFailure,
+    }))
+    .add(HttpApiEndpoint.post("objectCall", "/restate/call/:name/:key/:method", {
+      params: ObjectParams,
+      payload: InvokePayload,
+      success: CallSuccess,
+      error: DurableFailure,
+    }))
+    .add(HttpApiEndpoint.post("serviceSend", "/restate/send/:name/:method", {
+      params: ServiceParams,
+      payload: InvokePayload,
+      success: SendSuccess,
+      error: DurableFailure,
+    }))
+    .add(HttpApiEndpoint.post("objectSend", "/restate/send/:name/:key/:method", {
+      params: ObjectParams,
+      payload: InvokePayload,
+      success: SendSuccess,
+      error: DurableFailure,
+    }))
+    .add(HttpApiEndpoint.post("serviceAttach", "/restate/attach/:name/:method", {
+      params: ServiceParams,
+      payload: LocatePayload,
+      success: CallSuccess,
+      error: DurableFailure,
+    }))
+    .add(HttpApiEndpoint.post("objectAttach", "/restate/attach/:name/:key/:method", {
+      params: ObjectParams,
+      payload: LocatePayload,
+      success: CallSuccess,
+      error: DurableFailure,
+    }))
+    .add(HttpApiEndpoint.post("serviceOutput", "/restate/output/:name/:method", {
+      params: ServiceParams,
+      payload: LocatePayload,
+      success: OutputResult,
+      error: DurableFailure,
+    }))
+    .add(HttpApiEndpoint.post("objectOutput", "/restate/output/:name/:key/:method", {
+      params: ObjectParams,
+      payload: LocatePayload,
+      success: OutputResult,
+      error: DurableFailure,
+    })),
 )
 
 // ── definitions registry + helpers ──────────────────────────────────────────
@@ -100,6 +151,16 @@ const resolve = (registry: Map<string, AnyDef>, payload: InvokePayloadType) => {
   const compiled = def.compiled[payload.method]
   if (compiled === undefined) return undefined
   return { def, codec: compiled.handler as unknown as HandlerCodecs }
+}
+
+const validateTarget = (def: AnyDef, payload: InvokePayloadType): Effect.Effect<void, DurableFailure> => {
+  if (def.kind === "object" && payload.key === undefined) {
+    return Effect.fail(new DurableFailure({ message: `object ${payload.name}/${payload.method} requires a key` }))
+  }
+  if (def.kind === "service" && payload.key !== undefined) {
+    return Effect.fail(new DurableFailure({ message: `service ${payload.name}/${payload.method} must not include a key` }))
+  }
+  return Effect.void
 }
 
 const optionsFor = (payload: InvokePayloadType): InvokeOptions | undefined =>
@@ -131,15 +192,16 @@ const prepare = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
   Effect.gen(function*() {
     const resolved = resolve(registry, payload)
     if (resolved === undefined) return yield* notFound(payload)
+    yield* validateTarget(resolved.def, payload)
     const input = yield* Schema.decodeUnknownEffect(resolved.codec.input)(payload.input)
     return { resolved, input }
   })
 
 const callProxy = (def: AnyDef, key: string | undefined): Record<string, any> =>
-  (def.kind === "object" ? client(def as ObjectDefinition<string, any>, key ?? "") : client(def as ServiceDefinition<string, any>)) as Record<string, any>
+  (def.kind === "object" ? client(def as ObjectDefinition<string, any>, key as string) : client(def as ServiceDefinition<string, any>)) as Record<string, any>
 
 const sendProxy = (def: AnyDef, key: string | undefined): Record<string, any> =>
-  (def.kind === "object" ? sendClient(def as ObjectDefinition<string, any>, key ?? "") : sendClient(def as ServiceDefinition<string, any>)) as Record<string, any>
+  (def.kind === "object" ? sendClient(def as ObjectDefinition<string, any>, key as string) : sendClient(def as ServiceDefinition<string, any>)) as Record<string, any>
 
 const runCall = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
   prepare(registry, payload).pipe(
@@ -167,7 +229,7 @@ const locateId = (def: AnyDef, payload: InvokePayloadType): Effect.Effect<string
     return Effect.fail(new DurableFailure({ message: "attach/output requires invocationId or idempotencyKey" }))
   }
   if (def.kind === "object") {
-    return encodeObjectCallId({ object: payload.name, key: payload.key ?? "", method: payload.method, nonce: payload.idempotencyKey })
+    return encodeObjectCallId({ object: payload.name, key: payload.key as string, method: payload.method, nonce: payload.idempotencyKey })
       .pipe(Effect.mapError(asFailure))
   }
   return Effect.succeed(payload.idempotencyKey)
@@ -178,6 +240,7 @@ const locate = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
   Effect.gen(function*() {
     const resolved = resolve(registry, payload)
     if (resolved === undefined) return yield* notFound(payload)
+    yield* validateTarget(resolved.def, payload)
     const id = yield* locateId(resolved.def, payload)
     const rt = yield* DurableExecutionRuntime
     return { resolved, id, rt }
@@ -206,12 +269,40 @@ const runOutput = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
  */
 export const durableIngress = (defs: ReadonlyArray<AnyDef>) => {
   const registry = new Map(defs.map((def) => [def.name, def] as const))
+  const servicePath = (path: { readonly name: string; readonly method: string }, payload: { readonly input?: unknown; readonly idempotencyKey?: string }): InvokePayloadType => ({
+    name: path.name,
+    method: path.method,
+    input: payload.input,
+    ...(payload.idempotencyKey === undefined ? {} : { idempotencyKey: payload.idempotencyKey }),
+  })
+  const objectPath = (
+    path: { readonly name: string; readonly key: string; readonly method: string },
+    payload: { readonly input?: unknown; readonly idempotencyKey?: string },
+  ): InvokePayloadType => ({
+    name: path.name,
+    key: path.key,
+    method: path.method,
+    input: payload.input,
+    ...(payload.idempotencyKey === undefined ? {} : { idempotencyKey: payload.idempotencyKey }),
+  })
+  const serviceLocatePath = (
+    path: { readonly name: string; readonly method: string },
+    payload: { readonly invocationId?: string; readonly idempotencyKey?: string },
+  ): InvokePayloadType => ({ name: path.name, method: path.method, ...payload })
+  const objectLocatePath = (
+    path: { readonly name: string; readonly key: string; readonly method: string },
+    payload: { readonly invocationId?: string; readonly idempotencyKey?: string },
+  ): InvokePayloadType => ({ name: path.name, key: path.key, method: path.method, ...payload })
   const InvocationsLive = HttpApiBuilder.group(DurableApi, "invocations", (handlers) =>
     handlers
-      .handle("call", ({ payload }) => runCall(registry, payload))
-      .handle("send", ({ payload }) => runSend(registry, payload))
-      .handle("attach", ({ payload }) => runAttach(registry, payload))
-      .handle("output", ({ payload }) => runOutput(registry, payload)))
+      .handle("serviceCall", ({ params, payload }) => runCall(registry, servicePath(params, payload)))
+      .handle("objectCall", ({ params, payload }) => runCall(registry, objectPath(params, payload)))
+      .handle("serviceSend", ({ params, payload }) => runSend(registry, servicePath(params, payload)))
+      .handle("objectSend", ({ params, payload }) => runSend(registry, objectPath(params, payload)))
+      .handle("serviceAttach", ({ params, payload }) => runAttach(registry, serviceLocatePath(params, payload)))
+      .handle("objectAttach", ({ params, payload }) => runAttach(registry, objectLocatePath(params, payload)))
+      .handle("serviceOutput", ({ params, payload }) => runOutput(registry, serviceLocatePath(params, payload)))
+      .handle("objectOutput", ({ params, payload }) => runOutput(registry, objectLocatePath(params, payload))))
   return HttpRouter.serve(HttpApiBuilder.layer(DurableApi).pipe(Layer.provide(InvocationsLive)))
 }
 
@@ -250,88 +341,97 @@ export type IngressOutputClient<H extends Handlers> = {
 }
 
 export interface DurableIngressClient {
-  client<Name extends string, H extends Handlers>(def: ServiceDefinition<Name, H>): IngressClient<H>
-  client<Name extends string, H extends Handlers>(def: ObjectDefinition<Name, H>, key: string): IngressClient<H>
-  sendClient<Name extends string, H extends Handlers>(def: ServiceDefinition<Name, H>): IngressSendClient<H>
-  sendClient<Name extends string, H extends Handlers>(def: ObjectDefinition<Name, H>, key: string): IngressSendClient<H>
-  attach<Name extends string, H extends Handlers>(def: ServiceDefinition<Name, H>): IngressAttachClient<H>
-  attach<Name extends string, H extends Handlers>(def: ObjectDefinition<Name, H>, key: string): IngressAttachClient<H>
-  output<Name extends string, H extends Handlers>(def: ServiceDefinition<Name, H>): IngressOutputClient<H>
-  output<Name extends string, H extends Handlers>(def: ObjectDefinition<Name, H>, key: string): IngressOutputClient<H>
+  serviceClient<Name extends string, H extends Handlers>(def: ServiceDefinition<Name, H>): IngressClient<H>
+  objectClient<Name extends string, H extends Handlers>(def: ObjectDefinition<Name, H>, key: string): IngressClient<H>
+  serviceSendClient<Name extends string, H extends Handlers>(def: ServiceDefinition<Name, H>): IngressSendClient<H>
+  objectSendClient<Name extends string, H extends Handlers>(def: ObjectDefinition<Name, H>, key: string): IngressSendClient<H>
+  serviceAttachClient<Name extends string, H extends Handlers>(def: ServiceDefinition<Name, H>): IngressAttachClient<H>
+  objectAttachClient<Name extends string, H extends Handlers>(def: ObjectDefinition<Name, H>, key: string): IngressAttachClient<H>
+  serviceOutputClient<Name extends string, H extends Handlers>(def: ServiceDefinition<Name, H>): IngressOutputClient<H>
+  objectOutputClient<Name extends string, H extends Handlers>(def: ObjectDefinition<Name, H>, key: string): IngressOutputClient<H>
 }
 
 const codecsOf = (def: AnyDef, method: string): HandlerCodecs => def.compiled[method]!.handler as unknown as HandlerCodecs
 
-const payloadFor = (def: AnyDef, key: string | undefined, method: string, encoded: unknown, options?: InvokeOptions) => ({
-  name: def.name,
-  method,
+const payloadFor = (encoded: unknown, options?: InvokeOptions) => ({
   input: encoded,
-  ...(key === undefined ? {} : { key }),
   ...(options?.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }),
 })
 
+export interface ConnectOptions {
+  readonly url: string
+}
+
 /**
- * Connect to a durable ingress at `baseUrl`. Returns typed client/sendClient
+ * Connect to a durable ingress at `url`. Returns typed service/object client
  * surfaces keyed by the SAME definition the server serves; input/output are
  * encoded/decoded via the definition's codecs. Requires an `HttpClient`
  * (supplied at the edge by `NodeHttpClient.layer`).
  */
 export const connect = (
-  baseUrl: string,
+  options: ConnectOptions,
 ): Effect.Effect<DurableIngressClient, never, HttpClient.HttpClient> =>
   Effect.gen(function*() {
     const api = yield* HttpApiClient.make(DurableApi, {
-      transformClient: (httpClient) => HttpClient.mapRequest(httpClient, HttpClientRequest.prependUrl(baseUrl)),
+      transformClient: (httpClient) => HttpClient.mapRequest(httpClient, HttpClientRequest.prependUrl(options.url)),
     }).pipe(Effect.orDie)
 
-    const call = (def: AnyDef, key: string | undefined) => (method: string) => (input: unknown, options?: InvokeOptions) =>
+    const call = (def: AnyDef, key: string | undefined) => (method: string) => (input: unknown, invokeOptions?: InvokeOptions) =>
       Effect.gen(function*() {
         const codec = codecsOf(def, method)
         const encoded = yield* Schema.encodeEffect(codec.input)(input).pipe(Effect.orDie)
-        const result = yield* api.invocations.call({ payload: payloadFor(def, key, method, encoded, options) }).pipe(Effect.mapError(asFailure))
+        const result = yield* (def.kind === "object"
+          ? api.invocations.objectCall!({ params: { name: def.name, key: key as string, method }, payload: payloadFor(encoded, invokeOptions) })
+          : api.invocations.serviceCall!({ params: { name: def.name, method }, payload: payloadFor(encoded, invokeOptions) })).pipe(Effect.mapError(asFailure))
         return yield* Schema.decodeUnknownEffect(codec.output)((result as { output: unknown }).output).pipe(Effect.orDie)
       })
 
-    const locatePayload = (def: AnyDef, key: string | undefined, method: string, locator: Locator) => ({
-      name: def.name,
-      method,
-      ...(key === undefined ? {} : { key }),
-      ...("invocationId" in locator ? { invocationId: locator.invocationId } : { idempotencyKey: locator.idempotencyKey }),
-    })
+    const locatePayload = (locator: Locator) =>
+      "invocationId" in locator ? { invocationId: locator.invocationId } : { idempotencyKey: locator.idempotencyKey }
 
     const attachBy = (def: AnyDef, key: string | undefined, method: string, locator: Locator) =>
       Effect.gen(function*() {
         const codec = codecsOf(def, method)
-        const result = yield* api.invocations.attach({ payload: locatePayload(def, key, method, locator) }).pipe(Effect.mapError(asFailure))
+        const result = yield* (def.kind === "object"
+          ? api.invocations.objectAttach!({ params: { name: def.name, key: key as string, method }, payload: locatePayload(locator) })
+          : api.invocations.serviceAttach!({ params: { name: def.name, method }, payload: locatePayload(locator) })).pipe(Effect.mapError(asFailure))
         return yield* Schema.decodeUnknownEffect(codec.output)((result as { output: unknown }).output).pipe(Effect.orDie)
       })
 
     const outputBy = (def: AnyDef, key: string | undefined, method: string, locator: Locator) =>
       Effect.gen(function*() {
         const codec = codecsOf(def, method)
-        const result = yield* api.invocations.output({ payload: locatePayload(def, key, method, locator) }).pipe(Effect.mapError(asFailure))
+        const result = yield* (def.kind === "object"
+          ? api.invocations.objectOutput!({ params: { name: def.name, key: key as string, method }, payload: locatePayload(locator) })
+          : api.invocations.serviceOutput!({ params: { name: def.name, method }, payload: locatePayload(locator) })).pipe(Effect.mapError(asFailure))
         const polled = result as { status: "ready"; output: unknown } | { status: "notReady" }
         if (polled.status === "notReady") return Option.none()
         return Option.some(yield* Schema.decodeUnknownEffect(codec.output)(polled.output).pipe(Effect.orDie))
       })
 
-    const send = (def: AnyDef, key: string | undefined) => (method: string) => (input: unknown, options?: InvokeOptions) =>
+    const send = (def: AnyDef, key: string | undefined) => (method: string) => (input: unknown, invokeOptions?: InvokeOptions) =>
       Effect.gen(function*() {
         const codec = codecsOf(def, method)
         const encoded = yield* Schema.encodeEffect(codec.input)(input).pipe(Effect.orDie)
-        const result = yield* api.invocations.send({ payload: payloadFor(def, key, method, encoded, options) }).pipe(Effect.mapError(asFailure))
+        const result = yield* (def.kind === "object"
+          ? api.invocations.objectSend!({ params: { name: def.name, key: key as string, method }, payload: payloadFor(encoded, invokeOptions) })
+          : api.invocations.serviceSend!({ params: { name: def.name, method }, payload: payloadFor(encoded, invokeOptions) })).pipe(Effect.mapError(asFailure))
         const invocationId = (result as { invocationId: string }).invocationId
         const locator: Locator = { invocationId }
         return { invocationId, attach: attachBy(def, key, method, locator), output: outputBy(def, key, method, locator) }
       })
 
-    const proxy = (build: (method: string) => (...args: ReadonlyArray<any>) => Effect.Effect<unknown, DurableFailure>) =>
+    const proxy = (build: (method: string) => (...args: ReadonlyArray<any>) => Effect.Effect<unknown, DurableFailure, unknown>) =>
       new Proxy({}, { get: (_t, method: string) => build(method) }) as any
 
     return {
-      client: (def: AnyDef, key?: string) => proxy(call(def, key)),
-      sendClient: (def: AnyDef, key?: string) => proxy(send(def, key)),
-      attach: (def: AnyDef, key?: string) => proxy((method: string) => (locator: Locator) => attachBy(def, key, method, locator)),
-      output: (def: AnyDef, key?: string) => proxy((method: string) => (locator: Locator) => outputBy(def, key, method, locator)),
+      serviceClient: (def: AnyDef) => proxy(call(def, undefined)),
+      objectClient: (def: AnyDef, key: string) => proxy(call(def, key)),
+      serviceSendClient: (def: AnyDef) => proxy(send(def, undefined)),
+      objectSendClient: (def: AnyDef, key: string) => proxy(send(def, key)),
+      serviceAttachClient: (def: AnyDef) => proxy((method: string) => (locator: Locator) => attachBy(def, undefined, method, locator)),
+      objectAttachClient: (def: AnyDef, key: string) => proxy((method: string) => (locator: Locator) => attachBy(def, key, method, locator)),
+      serviceOutputClient: (def: AnyDef) => proxy((method: string) => (locator: Locator) => outputBy(def, undefined, method, locator)),
+      objectOutputClient: (def: AnyDef, key: string) => proxy((method: string) => (locator: Locator) => outputBy(def, key, method, locator)),
     } as DurableIngressClient
   })

@@ -56,16 +56,16 @@ const hasS2 = (): boolean => {
 const EngineLive = serviceLayer(Calculator, Counter)
 
 describe.skipIf(!hasS2())("durable ingress over HTTP (S2 + node http)", () => {
-  it("connect(url) drives a service and a keyed object over real HTTP", async () => {
+  it("connect({ url }) drives a service and a keyed object over real HTTP", async () => {
     const program = Effect.gen(function*() {
       const server = yield* HttpServer.HttpServer
       const port = server.address._tag === "TcpAddress" ? server.address.port : 0
-      const ingress = yield* connect(`http://127.0.0.1:${port}`)
+      const ingress = yield* connect({ url: `http://127.0.0.1:${port}` })
       // request-response over HTTP, for a service and a keyed object
-      const doubled = yield* ingress.client(Calculator).double(21)
-      const added = yield* ingress.client(Counter, "cart").add(5)
+      const doubled = yield* ingress.serviceClient(Calculator).double(21)
+      const added = yield* ingress.objectClient(Counter, "cart").add(5)
       // fire-and-forget: send returns an awaitable handle (Restate's Send → attach)
-      const handle = yield* ingress.sendClient(Calculator).double(10)
+      const handle = yield* ingress.serviceSendClient(Calculator).double(10)
       const attached = yield* handle.attach
       // non-blocking output: once attached, the handle's output is ready
       const polled = yield* handle.output
@@ -90,14 +90,14 @@ describe.skipIf(!hasS2())("durable ingress over HTTP (S2 + node http)", () => {
     const program = Effect.gen(function*() {
       const server = yield* HttpServer.HttpServer
       const port = server.address._tag === "TcpAddress" ? server.address.port : 0
-      const ingress = yield* connect(`http://127.0.0.1:${port}`)
+      const ingress = yield* connect({ url: `http://127.0.0.1:${port}` })
       // a "first caller" sends a keyed-object invocation pinned to an idempotency key
       const idempotencyKey = "ingress-idem-1"
-      yield* ingress.sendClient(Counter, "wishlist").add(7, { idempotencyKey })
+      yield* ingress.objectSendClient(Counter, "wishlist").add(7, { idempotencyKey })
       // a SECOND caller — holding only (def, key, method, idempotencyKey), not the
       // server-minted id — re-attaches to the same invocation and reads its result
-      const attached = yield* ingress.attach(Counter, "wishlist").add({ idempotencyKey })
-      const polled = yield* ingress.output(Counter, "wishlist").add({ idempotencyKey })
+      const attached = yield* ingress.objectAttachClient(Counter, "wishlist").add({ idempotencyKey })
+      const polled = yield* ingress.objectOutputClient(Counter, "wishlist").add({ idempotencyKey })
       return { attached, polled: Option.getOrNull(polled) }
     })
 
