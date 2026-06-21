@@ -1,4 +1,6 @@
 export { DurableExecutionError } from "./errors.ts"
+export { connect, DurableApi, DurableFailure, durableIngress } from "./ingress.ts"
+export type { DurableIngressClient, IngressClient, IngressSendClient, InvocationHandle } from "./ingress.ts"
 export { handler } from "./handler.ts"
 export {
   attach,
