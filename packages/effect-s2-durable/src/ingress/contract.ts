@@ -1,7 +1,5 @@
-/* eslint-disable @typescript-eslint/no-explicit-any -- the ingress dispatches over heterogeneous definitions by name/method at runtime (the same reason service.ts disables no-explicit-any); the wire codecs are existential at this boundary. */
 import { Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
-import type { ObjectDefinition, ServiceDefinition } from "../service.ts"
 
 /**
  * The HTTP **ingress** wire contract for durable definitions — the shared
@@ -17,9 +15,16 @@ import type { ObjectDefinition, ServiceDefinition } from "../service.ts"
  * absent (admin-plane in Restate, not ingress).
  */
 
-export type AnyCodec = Schema.Codec<any, any, never, never>
-export type HandlerCodecs = { readonly input: AnyCodec; readonly output: AnyCodec }
-export type AnyDef = ServiceDefinition<string, any> | ObjectDefinition<string, any>
+// `AnyDef` is defined in service.ts (where the definition types live) and re-exported here.
+export type { AnyDef } from "../service.ts"
+
+/** A handler codec with its static types erased to `unknown` at the wire boundary. */
+export type ErasedCodec = Schema.Codec<unknown, unknown, never, never>
+/** The erased input/output codecs of a compiled handler (the wire decode/encode boundary). */
+export interface HandlerCodecs {
+  readonly input: ErasedCodec
+  readonly output: ErasedCodec
+}
 
 /** A typed invocation failure surfaced to the ingress client (not a 500 defect). */
 export class DurableFailure extends Schema.ErrorClass<DurableFailure>("DurableFailure")({

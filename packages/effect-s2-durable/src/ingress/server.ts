@@ -1,12 +1,11 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unnecessary-type-assertion -- the server dispatches over heterogeneous definitions by name/method at runtime (the same reason service.ts disables no-explicit-any), and runtime correctness is covered by the S2-backed ingress test. */
 import { Effect, Layer, Option, Schema } from "effect"
 import { HttpRouter } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { encodeObjectCallId } from "../actor/core.ts"
-import { client, sendClient } from "../service.ts"
-import type { InvokeOptions, ObjectDefinition, ServiceDefinition } from "../service.ts"
+import { invokeUntyped, sendUntyped } from "../service.ts"
+import type { InvokeOptions } from "../service.ts"
 import { DurableExecutionRuntime } from "../Runtime.ts"
-import { type AnyDef, asFailure, DurableApi, DurableFailure, type HandlerCodecs } from "./contract.ts"
+import { type AnyDef, asFailure, DurableApi, DurableFailure } from "./contract.ts"
 
 // ── definitions registry + helpers ──────────────────────────────────────────
 
@@ -24,7 +23,8 @@ const resolve = (registry: Map<string, AnyDef>, payload: InvokePayloadType) => {
   if (def === undefined) return undefined
   const compiled = def.compiled[payload.method]
   if (compiled === undefined) return undefined
-  return { def, codec: compiled.handler as unknown as HandlerCodecs }
+  // `compiled` already carries narrowed `input`/`output` codecs (see service.ts Compiled).
+  return { def, codec: compiled }
 }
 
 const validateTarget = (def: AnyDef, payload: InvokePayloadType): Effect.Effect<void, DurableFailure> => {
@@ -66,16 +66,10 @@ const prepare = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
     return { resolved, input }
   })
 
-const callProxy = (def: AnyDef, key: string | undefined): Record<string, any> =>
-  (def.kind === "object" ? client(def as ObjectDefinition<string, any>, key as string) : client(def as ServiceDefinition<string, any>)) as Record<string, any>
-
-const sendProxy = (def: AnyDef, key: string | undefined): Record<string, any> =>
-  (def.kind === "object" ? sendClient(def as ObjectDefinition<string, any>, key as string) : sendClient(def as ServiceDefinition<string, any>)) as Record<string, any>
-
 const runCall = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
   prepare(registry, payload).pipe(
     Effect.flatMap(({ input, resolved }) =>
-      (callProxy(resolved.def, payload.key)[payload.method](input, optionsFor(payload)) as Effect.Effect<unknown, unknown, DurableExecutionRuntime>)
+      invokeUntyped(resolved.def, payload.key)[payload.method]!(input, optionsFor(payload))
         .pipe(Effect.flatMap((output) => Schema.encodeEffect(resolved.codec.output)(output)), Effect.map((output) => ({ output })))),
     Effect.mapError(asFailure),
   )
@@ -83,7 +77,7 @@ const runCall = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
 const runSend = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
   prepare(registry, payload).pipe(
     Effect.flatMap(({ input, resolved }) =>
-      (sendProxy(resolved.def, payload.key)[payload.method](input, optionsFor(payload)) as Effect.Effect<string, unknown, DurableExecutionRuntime>)
+      sendUntyped(resolved.def, payload.key)[payload.method]!(input, optionsFor(payload))
         .pipe(Effect.map((invocationId) => ({ invocationId })))),
     Effect.mapError(asFailure),
   )
