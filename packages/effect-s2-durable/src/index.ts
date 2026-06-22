@@ -1,6 +1,17 @@
 export { DurableExecutionError } from "./errors.ts"
-export { connect, DurableApi, DurableFailure, durableIngress } from "./ingress.ts"
-export type { DurableIngressClient, IngressClient, IngressSendClient, InvocationHandle } from "./ingress.ts"
+export { DurableApi, DurableFailure } from "./ingress/contract.ts"
+export {
+  connect,
+  type ConnectOptions,
+  type DurableIngressClient,
+  type IngressAttachClient,
+  type IngressClient,
+  type IngressOutputClient,
+  type IngressSendClient,
+  type InvocationHandle,
+  type Locator,
+} from "./ingress/client.ts"
+export { durableIngress } from "./ingress/server.ts"
 export { handler } from "./handler.ts"
 export {
   attach,

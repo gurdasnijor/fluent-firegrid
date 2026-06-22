@@ -10,6 +10,10 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./client": {
+      "types": "./src/ingress/client.ts",
+      "default": "./src/ingress/client.ts"
     }
   },
   "files": [
