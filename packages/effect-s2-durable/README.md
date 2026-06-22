@@ -5,8 +5,7 @@ An Effect-native durable execution runtime over S2.
 The canonical design lives in
 [`docs/sdds/effect-durable-execution-sdd.md`](../../docs/sdds/effect-durable-execution-sdd.md).
 The S2 owner-stream object rewrite is specified in
-[`docs/sdds/effect-s2-durable-consolidation-sdd.md`](../../docs/sdds/effect-s2-durable-consolidation-sdd.md) and
-[`features/effect-s2-durable/stateful-execution.feature.yaml`](../../features/effect-s2-durable/stateful-execution.feature.yaml).
+[`docs/sdds/effect-s2-durable-consolidation-sdd.md`](../../docs/sdds/effect-s2-durable-consolidation-sdd.md).
 
 Implementation is currently transitional:
 
@@ -195,6 +194,78 @@ const awk = yield* awakeable(Approval)                      // { id, promise }
 For the actor runtime, ingress targets the durable owner stream derived from the call id and is
 therefore residency-independent. The existing service runtime still uses the resident execution
 map for some park-and-resume paths until those semantics are moved through the actor/drainer model.
+
+## HTTP ingress
+
+`client`/`sendClient` above are the **in-process** path (the embedded engine). To
+drive the same definitions from **out of process**, serve them over HTTP and
+connect a typed client — the analog of Restate's `restate-sdk-clients`.
+
+There is no codegen and no `.bind()`-style registration handshake: the
+**definition value itself is the contract**. The server and the client both
+import the same `Calculator`/`Counter` objects, and everything — routing,
+codecs, types — is derived from them.
+
+**Server** — two layers, each over the same defs:
+
+```ts
+import { durableIngress, serviceLayer } from "effect-s2-durable"
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
+
+durableIngress([Calculator, Counter]).pipe(           // HTTP front: a generic router
+  Layer.provide(serviceLayer(Calculator, Counter)),   // engine: mounts handlers so they run
+  Layer.provide(NodeHttpServer.layer(() => createServer(), { port: 8080 })),
+  Layer.provide(/* S2Client */),
+)
+```
+
+- `serviceLayer(...defs)` is the real analog of Restate's `bind`: it builds the
+  `DurableExecutionRuntime` with those handlers mounted (so their bodies run, and
+  boot recovery is seeded).
+- `durableIngress(defs)` is the HTTP exposure. Internally it's just a
+  `name → def` registry plus a generic router — the routes carry the service
+  name and method as **path segments** (`/durable/call/:name/:method`), not one
+  endpoint per handler. It uses only the abstract Effect HTTP stack, so the
+  engine stays platform-free; the Node bindings are supplied at the edge. It
+  requires `DurableExecutionRuntime`, which `serviceLayer` provides.
+
+**Client** — registers nothing; the def you pass supplies the path, codecs, and types:
+
+```ts
+import { connect } from "effect-s2-durable"
+// NodeHttpClient.layerUndici in scope
+const ingress = yield* connect({ url: "http://127.0.0.1:8080" })
+
+// serviceClient(Calculator).double(21):
+//   Calculator.name + "double" → POST /durable/call/ingress-calculator/double
+//   Calculator's codecs encode the input (21) and decode the reply (42)
+const doubled = yield* ingress.serviceClient(Calculator).double(21)   // 42
+const total   = yield* ingress.objectClient(Counter, "cart").add(5)   // 5
+
+// send → handle → attach / non-blocking output
+const handle  = yield* ingress.serviceSendClient(Calculator).double(10)
+const result  = yield* handle.attach                                  // 20
+const maybe   = yield* handle.output                                  // Option<20>
+
+// a different caller can re-attach / poll by idempotency key alone
+yield* ingress.objectSendClient(Counter, "cart").add(7, { idempotencyKey: "k1" })
+const r = yield* ingress.objectAttachClient(Counter, "cart").add({ idempotencyKey: "k1" })  // 7
+const o = yield* ingress.objectOutputClient(Counter, "cart").add({ idempotencyKey: "k1" })  // Option<7>
+```
+
+So the **name string in the URL is the only wire link**; the **def value carries
+typing + codecs on both ends**. A request flows: client encodes via the def's
+codec and POSTs to `/durable/{op}/{name}[/{key}]/{method}` → the server resolves
+the def by `name` from its registry, decodes the body, drives the engine, and
+re-encodes the result.
+
+Service and object callers use distinct surfaces (`serviceClient`/`objectClient`,
+etc.) so a keyed object can't be invoked without its key. `.output` (and
+`*OutputClient`) is the non-blocking read — `Option.none()` while the invocation
+is still running (or unknown), `Option.some(result)` once done — the
+Effect-idiomatic analog of Restate's `/output` 470. `cancel`/`kill`/`status` are
+deliberately absent (admin-plane in Restate, not ingress). End-to-end usage over
+real HTTP + `s2 lite` lives in `test/ingress.test.ts`.
 
 ## Status
 

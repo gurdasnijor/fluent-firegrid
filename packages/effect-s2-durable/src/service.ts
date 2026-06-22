@@ -1,10 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- handler input/output are existential at the definition boundary; `any` is required for inference across the handler record (mirrors restate-sdk-gen's define/free). Concrete types are recovered on the client surface via HandlerInput/HandlerOutput. */
-import { Effect, Random, type Layer, Schema } from "effect"
+import { Effect, Option, Random, type Layer, Schema } from "effect"
 import type { S2Client } from "effect-s2"
 import { encodeObjectCallId, OBJECT_ID_PREFIX } from "./actor/core.ts"
 import { type DurableExecutionError, durableError } from "./errors.ts"
 import { handler } from "./handler.ts"
 import { handlerRequest } from "./primitives.ts"
+import { ActiveInvocation } from "./runtime/invocation.ts"
 import { DurableExecutionRuntime } from "./Runtime.ts"
 import type { DurableExecutionRuntimeApi, ObjectHandlerSeed, RegisteredHandler, WorkflowStartStatus } from "./Runtime.ts"
 import type { Handler } from "./types.ts"
@@ -41,6 +42,10 @@ interface Compiled {
   // self-contained: a registered service handler has no unmet `R` beyond the
   // runtime (provided by `submit`) and surfaces no typed error to the caller.
   readonly handler: Handler<unknown, unknown, never, never>
+  // input/output codecs narrowed ONCE here from the handler's erased `Schema.Top`
+  // to `Codec<unknown, …>`, so the ingress + clients dispatch without re-casting.
+  readonly input: Schema.Codec<unknown, unknown, never, never>
+  readonly output: Schema.Codec<unknown, unknown, never, never>
 }
 
 /** A registerable service definition (stateless — each call a fresh execution). */
@@ -65,8 +70,10 @@ const compileHandlers = (
 ): Record<string, Compiled> =>
   Object.fromEntries(
     Object.entries(handlers).map(([method, fn]) => {
-      const input = schemas?.[method]?.input ?? Schema.Unknown
-      const output = schemas?.[method]?.output ?? Schema.Unknown
+      // narrow the erased schemas to `Codec<unknown, …>` once: the engine + ingress
+      // consume them as codecs, so this is the single place the cast lives.
+      const input = (schemas?.[method]?.input ?? Schema.Unknown) as Schema.Codec<unknown, unknown, never, never>
+      const output = (schemas?.[method]?.output ?? Schema.Unknown) as Schema.Codec<unknown, unknown, never, never>
       // fetch the decoded input (internal), then run the generator body with it —
       // the user writes neither `handlerRequest` nor an `Effect.gen` wrapper.
       const body = Effect.fnUntraced(fn)
@@ -77,7 +84,7 @@ const compileHandlers = (
         never,
         never
       >
-      return [method, { handler: compiledHandler }] as const
+      return [method, { handler: compiledHandler, input, output }] as const
     }),
   )
 
@@ -195,6 +202,9 @@ export const workflow = <const Name extends string, R extends HandlerFn, S exten
   }
 }
 
+/** Any registerable service/object definition — the erased union the ingress dispatches over. */
+export type AnyDef = ServiceDefinition<string, Handlers> | ObjectDefinition<string, Handlers>
+
 // ── clients ──────────────────────────────────────────────────────────────
 
 export interface InvokeOptions {
@@ -280,6 +290,18 @@ const beginInvoke = (
   object: ObjectIdentity | undefined,
 ): Effect.Effect<{ readonly id: string; readonly rt: DurableExecutionRuntimeApi }, DurableExecutionError, DurableExecutionRuntime> =>
   Effect.gen(function*() {
+    // Footgun guard (Restate keeps these surfaces physically separate): `client`/
+    // `sendClient` are the TOP-LEVEL / ingress path. Inside a handler they would
+    // mint a fresh random id on every replay (not deterministic) — so reject that
+    // and direct callers to the in-handler `objectClient`/`objectSendClient`,
+    // whose child ids are replay-stable.
+    if (Option.isSome(yield* ActiveInvocation)) {
+      return yield* durableError("submit")(
+        new Error(
+          "client(...)/sendClient(...) is the top-level invocation path and is not replay-safe inside a handler; use objectClient(def, key)/objectSendClient(def, key) for in-handler durable calls",
+        ),
+      )
+    }
     const id = yield* mintId(method, options, object)
     const rt = yield* DurableExecutionRuntime
     yield* rt.submit(compiled.handler, id, input)
@@ -323,8 +345,7 @@ export function client<Name extends string, H extends Handlers>(
   key?: string,
 ): ServiceClient<H> {
   // Intentional dynamic proxy cast: each Effect<unknown> is recovered structurally by ServiceClient<H>.
-  return makeProxy(def, (compiled, { id, rt }) =>
-    rt.attach(id, compiled.handler.output as Schema.Codec<unknown, unknown, never, never>), objectIdentity(def, key)) as unknown as ServiceClient<H>
+  return makeProxy(def, (compiled, { id, rt }) => rt.attach(id, compiled.output), objectIdentity(def, key)) as unknown as ServiceClient<H>
 }
 
 /**
@@ -340,6 +361,29 @@ export function sendClient<Name extends string, H extends Handlers>(
   // Intentional dynamic proxy cast; see client.
   return makeProxy(def, (_compiled, { id }) => Effect.succeed(id), objectIdentity(def, key)) as unknown as SendClient<H>
 }
+
+/** Erased (no per-method types) request-response dispatch — the ingress server's call surface. */
+export type UntypedClient = Record<
+  string,
+  (input: unknown, options?: InvokeOptions) => Effect.Effect<unknown, DurableExecutionError, DurableExecutionRuntime>
+>
+/** Erased fire-and-forget dispatch — each call returns the execution id. */
+export type UntypedSendClient = Record<
+  string,
+  (input: unknown, options?: InvokeOptions) => Effect.Effect<string, DurableExecutionError, DurableExecutionRuntime>
+>
+
+/**
+ * Untyped `client(...)` dispatch for the ingress server. The server sits OUTSIDE any
+ * handler, so the `client` footgun guard is satisfied; per-method types are erased
+ * (the wire is generic over name/key/method) and recovered on the ingress *client*.
+ */
+export const invokeUntyped = (def: AnyDef, key: string | undefined): UntypedClient =>
+  makeProxy(def, (compiled, { id, rt }) => rt.attach(id, compiled.output), objectIdentity(def, key))
+
+/** Untyped `sendClient(...)` dispatch for the ingress server (returns the execution id). */
+export const sendUntyped = (def: AnyDef, key: string | undefined): UntypedSendClient =>
+  makeProxy(def, (_compiled, { id }) => Effect.succeed(id), objectIdentity(def, key))
 
 type RuntimeCodec = Schema.Codec<unknown, unknown, never, never>
 type ObjectCallTarget = { readonly object: string; readonly key: string; readonly method: string }
@@ -364,8 +408,8 @@ const makeObjectStepProxy = <T>(
             rt,
             { object: def.name, key, method },
             input,
-            compiled.handler.input as RuntimeCodec,
-            compiled.handler.output as RuntimeCodec,
+            compiled.input,
+            compiled.output,
           )),
     }),
     {},
@@ -428,7 +472,7 @@ export function sharedClient(
               def.name,
               key,
               input,
-              compiled.handler.output as Schema.Codec<unknown, unknown, never, never>,
+              compiled.output,
             )),
       ] as const,
     ),
@@ -476,10 +520,7 @@ export const workflowAttach = <Name extends string, R extends HandlerFn, S exten
     const runCallId = yield* workflowRunId(def, id)
     const rt = yield* DurableExecutionRuntime
      
-    return (yield* rt.attach(
-      runCallId,
-      def.compiledRun.handler.output as Schema.Codec<unknown, unknown, never, never>,
-    )) as HandlerOutput<R>
+    return (yield* rt.attach(runCallId, def.compiledRun.output)) as HandlerOutput<R>
   })
 
 /**

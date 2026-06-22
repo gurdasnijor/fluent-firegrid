@@ -1,6 +1,0 @@
-{
-  "extends": "../packages/spec-harness/tsconfig.json",
-  "include": [
-    "**/*.ts"
-  ]
-}

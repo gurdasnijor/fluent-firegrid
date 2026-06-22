@@ -3,16 +3,12 @@ dist/
 coverage/
 .jscpd-report/
 .turbo/
-.eslintcache
-.cucumber-usage.json
 .env
 .env.*
 !.env.example
 .DS_Store
 *.log
 *.tsbuildinfo
-tsp-output/
-packages/firelab/.simulate/
 
 # Vendored source for reference only - not checked in
 repos/

@@ -10,6 +10,10 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./client": {
+      "types": "./src/ingress/client.ts",
+      "default": "./src/ingress/client.ts"
     }
   },
   "files": [
@@ -32,6 +36,7 @@
     "effect-s2-stream-db": "workspace:*"
   },
   "devDependencies": {
+    "@effect/platform-node": "4.0.0-beta.78",
     "@effect/vitest": "4.0.0-beta.78",
     "typescript": "^5.7.0",
     "vitest": "^3.2.0"
