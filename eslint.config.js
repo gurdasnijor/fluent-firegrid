@@ -4,13 +4,8 @@ import globals from "globals"
 import tseslint from "typescript-eslint"
 
 const sourceFiles = [
-  "src/**/*.ts",
-  "src/**/*.tsx",
   "packages/**/*.ts",
   "packages/**/*.tsx",
-  "apps/**/*.ts",
-  "apps/**/*.tsx",
-  "features/**/*.ts",
 ]
 
 const packageSourceFiles = [
@@ -23,10 +18,6 @@ const testFiles = [
   "packages/**/src/__tests__/**/*.ts",
   "packages/**/*.test.ts",
   "packages/**/*.test.tsx",
-  "apps/**/test/**/*.ts",
-  "apps/**/src/__tests__/**/*.ts",
-  "apps/**/*.test.ts",
-  "apps/**/*.test.tsx",
 ]
 
 const tsOnly = (configs) =>
@@ -211,10 +202,8 @@ export default tseslint.config(
       "node_modules/**",
       "coverage/**",
       "**/dist/**",
-      ".eslintcache",
       "*.tsbuildinfo",
       "repos/**",
-      "packages/firelab/**",
     ],
   },
   {
@@ -236,7 +225,7 @@ export default tseslint.config(
     languageOptions: {
       globals: { ...globals.node, ...globals.browser },
       parserOptions: {
-        project: "./tsconfig.eslint.json",
+        project: "./tsconfig.json",
         tsconfigRootDir: import.meta.dirname,
       },
     },

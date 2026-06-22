@@ -44,17 +44,6 @@ jobs:
       - name: Setup pnpm + Node + install
         uses: ./.github/actions/setup
 
-      # ESLint --cache (see the `lint` script) only re-lints files whose content
-      # or config changed. Persist it so a typical small-diff PR lints in ~1s.
-      # Keyed on the config so any rule change busts the cache.
-      - name: Restore ESLint cache
-        uses: actions/cache@v4
-        with:
-          path: .eslintcache
-          key: eslint-${{ runner.os }}-${{ hashFiles('eslint.config.js', 'tsconfig.eslint.json', 'pnpm-lock.yaml') }}-${{ github.sha }}
-          restore-keys: |
-            eslint-${{ runner.os }}-${{ hashFiles('eslint.config.js', 'tsconfig.eslint.json', 'pnpm-lock.yaml') }}-
-
       - name: Lint (eslint)
         run: pnpm run lint
 

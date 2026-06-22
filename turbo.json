@@ -8,7 +8,7 @@
     },
     "typecheck": {
       "dependsOn": ["^typecheck"],
-      "inputs": ["src/**", "test/**", "examples/**", "tsconfig.json", "../../tsconfig.base.json"],
+      "inputs": ["src/**", "test/**", "examples/**", "tsconfig.json", "../../tsconfig.json"],
       "outputs": []
     },
     "diagnostics": {
@@ -18,7 +18,7 @@
         "test/**",
         "examples/**",
         "tsconfig.json",
-        "../../tsconfig.base.json"
+        "../../tsconfig.json"
       ],
       "outputs": []
     },
@@ -30,8 +30,7 @@
         "examples/**",
         "tsconfig.json",
         "../../eslint.config.js",
-        "../../tsconfig.eslint.json",
-        "../../tsconfig.base.json"
+        "../../tsconfig.json"
       ],
       "outputs": []
     },
@@ -53,14 +52,13 @@
       "outputs": []
     },
     "//#lint:deps": {
-      "inputs": ["packages/**", ".dependency-cruiser.cjs", "tsconfig.json", "tsconfig.eslint.json"],
+      "inputs": ["packages/**", ".dependency-cruiser.cjs", "tsconfig.json"],
       "outputs": []
     },
     "//#lint:root": {
       "inputs": [
         "eslint.config.js",
-        "tsconfig.eslint.json",
-        "tsconfig.base.json"
+        "tsconfig.json"
       ],
       "outputs": []
     }

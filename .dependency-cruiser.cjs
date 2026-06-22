@@ -75,7 +75,7 @@ module.exports = {
     },
   ],
   options: {
-    tsConfig: { fileName: "tsconfig.eslint.json" },
+    tsConfig: { fileName: "tsconfig.json" },
     doNotFollow: { path: "node_modules" },
     includeOnly: "^packages/.*/src",
     enhancedResolveOptions: { exportsFields: ["exports"] },

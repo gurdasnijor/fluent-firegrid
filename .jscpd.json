@@ -10,15 +10,11 @@
     "**/dist/**",
     "**/.turbo/**",
     "**/coverage/**",
-    "**/apps/*/dist/**",
     "**/fixtures/**",
-    "**/firelab/src/simulations/**",
     "**/*.test.ts",
     "**/*.test.tsx",
     "**/*.test.mts",
-    "**/__tests__/**",
-    "packages/firelab/**",
-    "packages/conformance/**"
+    "**/__tests__/**"
   ],
   "reporters": [
     "console",
