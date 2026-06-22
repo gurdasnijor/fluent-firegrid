@@ -6,7 +6,6 @@
     "types": ["node"]
   },
   "include": [
-    "features/**/*.ts",
     "packages/**/*.ts",
     "packages/**/*.tsx"
   ],

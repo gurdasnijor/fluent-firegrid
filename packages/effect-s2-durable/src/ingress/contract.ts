@@ -19,7 +19,7 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
 export type { AnyDef } from "../service.ts"
 
 /** A handler codec with its static types erased to `unknown` at the wire boundary. */
-export type ErasedCodec = Schema.Codec<unknown, unknown, never, never>
+type ErasedCodec = Schema.Codec<unknown, unknown, never, never>
 /** The erased input/output codecs of a compiled handler (the wire decode/encode boundary). */
 export interface HandlerCodecs {
   readonly input: ErasedCodec

@@ -18,8 +18,7 @@
         "test/**",
         "examples/**",
         "tsconfig.json",
-        "../../tsconfig.base.json",
-        "../../features/**/*.ts"
+        "../../tsconfig.base.json"
       ],
       "outputs": []
     },
@@ -30,7 +29,6 @@
         "test/**",
         "examples/**",
         "tsconfig.json",
-        "../../features/**/*.ts",
         "../../eslint.config.js",
         "../../tsconfig.eslint.json",
         "../../tsconfig.base.json"
@@ -60,7 +58,6 @@
     },
     "//#lint:root": {
       "inputs": [
-        "features/**/*.ts",
         "eslint.config.js",
         "tsconfig.eslint.json",
         "tsconfig.base.json"

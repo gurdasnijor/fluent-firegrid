@@ -27,7 +27,6 @@ export default defineConfig({
         },
         resolve: {
           alias: {
-            "effect-s2/testing": path.resolve(__dirname, "./packages/effect-s2/src/TestS2.ts"),
             "effect-s2": path.resolve(__dirname, "./packages/effect-s2/src/index.ts"),
           },
         },

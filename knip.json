@@ -1,5 +1,5 @@
 {
-  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignoreDependencies": [
     "@typespec/http-server-js",
     "@typespec/rest",
@@ -10,46 +10,44 @@
     "summary"
   ],
   "workspaces": {
-    "packages/fluent-acp-process": {
-      "entry": [
-        "src/index.ts"
-      ],
+    "packages/*": {
       "project": [
-        "src/**/*.ts"
+        "src/**/*.ts!",
+        "test/**/*.ts"
+      ]
+    },
+    "packages/fluent-acp-process": {
+      "project": [
+        "src/**/*.ts!",
+        "test/**/*.ts"
       ]
     },
     "packages/effect-s2": {
       "entry": [
-        "src/index.ts",
-        "examples/**/*.ts"
+        "examples/**/*.ts!"
       ],
       "project": [
-        "src/**/*.ts",
-        "examples/**/*.ts"
+        "src/**/*.ts!",
+        "test/**/*.ts",
+        "examples/**/*.ts!"
       ]
     },
     "packages/effect-s2-stream-db": {
       "entry": [
-        "src/index.ts"
+        "test/usage.ts"
       ],
       "project": [
-        "src/**/*.ts"
+        "src/**/*.ts!",
+        "test/**/*.ts"
       ]
     },
     "packages/effect-s2-durable": {
       "entry": [
-        "src/index.ts"
+        "test/types.ts"
       ],
       "project": [
-        "src/**/*.ts"
-      ]
-    },
-    "packages/spec-harness": {
-      "entry": [
-        "src/index.ts"
-      ],
-      "project": [
-        "src/**/*.ts"
+        "src/**/*.ts!",
+        "test/**/*.ts"
       ]
     }
   }

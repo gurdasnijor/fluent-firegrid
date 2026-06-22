@@ -76,7 +76,7 @@ export const Footgun = service({
 })
 
 /** The whole catalog — passed explicitly to the engine + ingress (no global registry). */
-export const catalog = [Calculator, Counter, Proxy, Footgun]
+const catalog = [Calculator, Counter, Proxy, Footgun]
 
 const EngineLive = serviceLayer(Calculator, Counter, Proxy, Footgun)
 
