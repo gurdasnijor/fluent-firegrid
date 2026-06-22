@@ -14,7 +14,14 @@
     "./client": {
       "types": "./src/ingress/client.ts",
       "default": "./src/ingress/client.ts"
+    },
+    "./host": {
+      "types": "./src/host.ts",
+      "default": "./src/host.ts"
     }
+  },
+  "bin": {
+    "effect-s2-durable-host": "./src/bin/host.ts"
   },
   "files": [
     "src",
@@ -31,12 +38,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@effect/platform-node": "4.0.0-beta.78",
     "effect": "4.0.0-beta.78",
     "effect-s2": "workspace:*",
     "effect-s2-stream-db": "workspace:*"
   },
   "devDependencies": {
-    "@effect/platform-node": "4.0.0-beta.78",
     "@effect/vitest": "4.0.0-beta.78",
     "typescript": "^5.7.0",
     "vitest": "^3.2.0"
