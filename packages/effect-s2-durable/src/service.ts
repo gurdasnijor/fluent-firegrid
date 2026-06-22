@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- handler input/output are existential at the definition boundary; `any` is required for inference across the handler record (mirrors restate-sdk-gen's define/free). Concrete types are recovered on the client surface via HandlerInput/HandlerOutput. */
 import { Effect, Option, Random, type Layer, Schema } from "effect"
 import type { S2Client } from "effect-s2"
-import { encodeObjectCallId, OBJECT_ID_PREFIX } from "./actor/core.ts"
+import { encodeObjectCallId, OBJECT_ID_PREFIX } from "./object/events.ts"
 import { type DurableExecutionError, durableError } from "./errors.ts"
 import { handler } from "./handler.ts"
 import { handlerRequest } from "./primitives.ts"

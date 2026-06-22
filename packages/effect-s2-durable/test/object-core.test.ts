@@ -11,7 +11,7 @@ import {
   replay,
   signalValue,
   unPathSegment,
-} from "../src/actor/core.ts"
+} from "../src/object/events.ts"
 import { workflow, workflowRunId } from "../src/service.ts"
 
 // Pure (no S2) invariants for the object call-id routing + projection. S2-backed

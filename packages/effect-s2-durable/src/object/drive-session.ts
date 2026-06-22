@@ -10,7 +10,7 @@ import {
   S2NotFound,
 } from "effect-s2"
 import { type DurableExecutionError, durableError as toError } from "../errors.ts"
-import { ActorEvent } from "./core.ts"
+import { ActorEvent } from "./events.ts"
 
 /**
  * The scoped owner-drive session: the ONE place that combines fencing with owner

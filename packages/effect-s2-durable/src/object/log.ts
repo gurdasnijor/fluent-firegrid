@@ -10,7 +10,7 @@ import {
   SeqNumMismatchError,
 } from "effect-s2"
 import { DurableExecutionError, durableError as toError } from "../errors.ts"
-import { ActorEvent, type LogEntry } from "./core.ts"
+import { ActorEvent, type LogEntry } from "./events.ts"
 
 const isS2Conflict = Schema.is(S2Conflict)
 const isS2NotFound = Schema.is(S2NotFound)

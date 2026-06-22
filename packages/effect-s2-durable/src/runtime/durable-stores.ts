@@ -1,6 +1,6 @@
 import { Context, Effect, Layer } from "effect"
 import { S2Client, type S2ClientApi } from "effect-s2"
-import { InvocationStore, type InvocationStoreApi } from "../actor/object.ts"
+import { InvocationStore, type InvocationStoreApi } from "../object/invocation-store.ts"
 import { type DurableExecutionError } from "../errors.ts"
 import { ExecutionId, RosterDb, WorkflowDb } from "../schema.ts"
 import { toError } from "./helpers.ts"
@@ -27,7 +27,7 @@ const make = (): Effect.Effect<RuntimeStoresApi, DurableExecutionError, S2Client
   })
 
 export class RuntimeStores extends Context.Service<RuntimeStores, RuntimeStoresApi>()(
-  "effect-s2-durable/runtime/stores/RuntimeStores",
+  "effect-s2-durable/runtime/durable-stores/RuntimeStores",
 ) {
   static readonly layer: Layer.Layer<RuntimeStores, DurableExecutionError, S2Client> = Layer.effect(
     RuntimeStores,

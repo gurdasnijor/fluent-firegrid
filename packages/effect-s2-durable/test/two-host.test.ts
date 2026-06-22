@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest"
 import { Context, Effect, Layer, Schema } from "effect"
-import { encodeObjectCallId } from "../src/actor/core.ts"
+import { encodeObjectCallId } from "../src/object/events.ts"
 import { DurableExecutionRuntime } from "../src/Runtime.ts"
 import { serviceLayer } from "../src/service.ts"
 import { Counter, hasS2 } from "./ingress-support.ts"

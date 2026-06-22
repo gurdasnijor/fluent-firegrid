@@ -73,7 +73,7 @@ export class WorkflowDb extends StreamDb<WorkflowDb>("wf")({
 }, ExecutionId) {}
 
 // Virtual-object state moved to the per-owner `ActorEvent` log (see
-// `src/actor/`): admission, exclusive drain, journaled `state`, and completion now
+// `src/object/`): admission, exclusive drain, journaled `state`, and completion now
 // live on one ordered owner stream, replacing the old `obj/<name:key>` inbox +
 // state store (consolidation SDD deletion targets).
 

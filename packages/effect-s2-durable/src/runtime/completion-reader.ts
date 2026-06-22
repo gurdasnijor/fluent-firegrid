@@ -2,9 +2,9 @@ import { Cause, Context, Deferred, Duration, Effect, Exit, HashMap, Layer, Optio
 import { objectPartsOption } from "./address.ts"
 import { decode, fail, toError } from "./helpers.ts"
 import { RuntimeState } from "./state.ts"
-import { RuntimeStores } from "./stores.ts"
+import { RuntimeStores } from "./durable-stores.ts"
 import { DurableExecutionError } from "../errors.ts"
-import type { ObjectCallIdParts } from "../actor/core.ts"
+import type { ObjectCallIdParts } from "../object/events.ts"
 
 export interface CompletionReaderApi {
   readonly attach: <A, I>(
@@ -102,7 +102,7 @@ const make: Effect.Effect<CompletionReaderApi, never, RuntimeState | RuntimeStor
 })
 
 export class CompletionReader extends Context.Service<CompletionReader, CompletionReaderApi>()(
-  "effect-s2-durable/runtime/completion/CompletionReader",
+  "effect-s2-durable/runtime/completion-reader/CompletionReader",
 ) {
   static readonly layer: Layer.Layer<CompletionReader, never, RuntimeState | RuntimeStores> = Layer.effect(CompletionReader, make)
 }

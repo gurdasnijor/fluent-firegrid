@@ -1,6 +1,6 @@
 import { Cause, Clock, Context, Deferred, Duration, Effect, Exit, HashMap, Layer, Option, Ref, Schema } from "effect"
 import type { AnyTable, RowOf } from "effect-s2-stream-db"
-import { encodeObjectCallId, stateValue, type ObjectCallIdParts } from "../actor/core.ts"
+import { encodeObjectCallId, stateValue, type ObjectCallIdParts } from "../object/events.ts"
 import type { DurableExecutionError } from "../errors.ts"
 import type { RunOptions } from "../types.ts"
 import {
@@ -20,7 +20,7 @@ import {
 import { ActiveInvocation, type ObjectInvocation, type ServiceInvocation, type StepRecord, type TimerRecord } from "./invocation.ts"
 import { resolveServiceDeferred, serviceWaiterKey } from "./serviceDeferreds.ts"
 import { RuntimeState } from "./state.ts"
-import { RuntimeStores } from "./stores.ts"
+import { RuntimeStores } from "./durable-stores.ts"
 
 type ResolvePrimitive = <A, I>(
   name: string,
@@ -334,7 +334,7 @@ const make: Effect.Effect<PrimitiveInterpreterApi, never, RuntimeState | Runtime
 })
 
 export class PrimitiveInterpreter extends Context.Service<PrimitiveInterpreter, PrimitiveInterpreterApi>()(
-  "effect-s2-durable/runtime/primitives/PrimitiveInterpreter",
+  "effect-s2-durable/runtime/primitive-interpreter/PrimitiveInterpreter",
 ) {
   static readonly layer: Layer.Layer<PrimitiveInterpreter, never, RuntimeState | RuntimeStores> = Layer.effect(
     PrimitiveInterpreter,

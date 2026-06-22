@@ -3,7 +3,7 @@ import { objectPartsOption } from "./address.ts"
 import { encode, fail } from "./helpers.ts"
 import { resolveServiceDeferred } from "./serviceDeferreds.ts"
 import { RuntimeState } from "./state.ts"
-import { RuntimeStores } from "./stores.ts"
+import { RuntimeStores } from "./durable-stores.ts"
 import type { DurableExecutionError } from "../errors.ts"
 
 export interface IngressRouterApi {
@@ -46,7 +46,7 @@ const make: Effect.Effect<IngressRouterApi, never, RuntimeState | RuntimeStores>
 })
 
 export class IngressRouter extends Context.Service<IngressRouter, IngressRouterApi>()(
-  "effect-s2-durable/runtime/ingress/IngressRouter",
+  "effect-s2-durable/runtime/ingress-router/IngressRouter",
 ) {
   static readonly layer: Layer.Layer<IngressRouter, never, RuntimeState | RuntimeStores> = Layer.effect(IngressRouter, make)
 }

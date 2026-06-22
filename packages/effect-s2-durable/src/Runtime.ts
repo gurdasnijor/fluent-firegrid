@@ -16,11 +16,11 @@ import {
   type ActorExit,
   encodeObjectCallId,
   type ObjectCallIdParts,
-} from "./actor/core.ts"
-import { type AdmitResult, type ObjectStateBackend, type RunHead } from "./actor/object.ts"
+} from "./object/events.ts"
+import { type AdmitResult, type ObjectStateBackend, type RunHead } from "./object/invocation-store.ts"
 import { DurableExecutionError } from "./errors.ts"
 import { decodeExecutionAddress, objectPartsOption } from "./runtime/address.ts"
-import { CompletionReader, type CompletionReaderApi } from "./runtime/completion.ts"
+import { CompletionReader, type CompletionReaderApi } from "./runtime/completion-reader.ts"
 import {
   decode,
   encode,
@@ -40,10 +40,10 @@ import {
   type SharedObjectInvocation,
   type WfDb,
 } from "./runtime/invocation.ts"
-import { IngressRouter, type IngressRouterApi } from "./runtime/ingress.ts"
-import { PrimitiveInterpreter, type PrimitiveInterpreterApi } from "./runtime/primitives.ts"
+import { IngressRouter, type IngressRouterApi } from "./runtime/ingress-router.ts"
+import { PrimitiveInterpreter, type PrimitiveInterpreterApi } from "./runtime/primitive-interpreter.ts"
 import { RuntimeState } from "./runtime/state.ts"
-import { RuntimeStores } from "./runtime/stores.ts"
+import { RuntimeStores } from "./runtime/durable-stores.ts"
 import type { Handler } from "./types.ts"
 
 export type { ObjectHandlerSeed, RegisteredHandler } from "./runtime/invocation.ts"

@@ -17,7 +17,7 @@ import {
   stateValue,
   transition,
   unPathSegment,
-} from "./core.ts"
+} from "./events.ts"
 import { ensureStream, FenceLost, freshHostToken, openOwnerDriveSession } from "./drive-session.ts"
 import { type ActorLog, openLog } from "./log.ts"
 
@@ -513,7 +513,7 @@ const make = (): Effect.Effect<InvocationStoreApi> =>
   })
 
 export class InvocationStore extends Context.Service<InvocationStore, InvocationStoreApi>()(
-  "effect-s2-durable/actor/object/InvocationStore",
+  "effect-s2-durable/object/invocation-store/InvocationStore",
 ) {
   static readonly layer = Layer.effect(InvocationStore, make())
 }

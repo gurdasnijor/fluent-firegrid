@@ -15,6 +15,10 @@ The detailed canonical design still lives in:
 
 This document is a compact map for implementation and refactoring work.
 
+For the detailed refactor plan that applies Effect layer-composition guidance
+and the Restate partition-worker responsibility split, see
+[`REARCHITECTURE.md`](./REARCHITECTURE.md).
+
 ## Core Model
 
 User code calls public free primitives such as `run`, `sleep`, `state`,

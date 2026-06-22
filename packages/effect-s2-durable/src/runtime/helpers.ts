@@ -1,6 +1,6 @@
 import { Cause, Duration, Effect, Exit, Option, Schedule, Schema } from "effect"
 import type { AnyTable } from "effect-s2-stream-db"
-import type { ActorExit } from "../actor/core.ts"
+import type { ActorExit } from "../object/events.ts"
 import { DurableExecutionError, durableError } from "../errors.ts"
 import type { RetryPolicy } from "../types.ts"
 

@@ -1,7 +1,7 @@
 import { Effect, Layer, Option, Schema } from "effect"
 import { HttpRouter } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
-import { encodeObjectCallId } from "../actor/core.ts"
+import { encodeObjectCallId } from "../object/events.ts"
 import { invokeUntyped, sendUntyped } from "../service.ts"
 import type { InvokeOptions } from "../service.ts"
 import { DurableExecutionRuntime } from "../Runtime.ts"
