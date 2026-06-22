@@ -209,7 +209,7 @@ The `InvocationStore` owns object admission and draining:
 The owner log is the source of truth. In-process locks, snapshots, started sets,
 and waiters are only caches or safety guards for the current process.
 
-Keep the local per-owner drainer lock until the full host claim-sweep model lands.
+Keep the local per-owner drainer lock until there is a simpler proven replacement.
 S2 fencing is the storage-level safety rail; the local lock prevents duplicate
 same-process work before the first durable owner-driver write.
 
@@ -377,6 +377,49 @@ Recommended cleanup order:
    public, but runtime internals should route through object call ids and owner
    streams.
 
+## Recovery Model
+
+Separate two concerns that are easy to conflate:
+
+- **state rebuild**: how cheaply a host can reconstruct an owner projection when
+  it opens an owner stream;
+- **ownership takeover**: how quickly a peer decides a different host died while
+  driving that stream.
+
+The default plan should optimize state rebuild first and keep liveness simple:
+
+1. Keep S2 fencing for cross-host writer correctness.
+2. Add S2 snapshots to bound owner-log replay cost. A snapshot is a materialized
+   projection at a stream cursor; recovery loads the snapshot, then reads from
+   that cursor.
+3. Add trimming after snapshots when history covered by the snapshot no longer
+   needs to be retained. Trimming is compaction, not ownership.
+4. Use restart-based recovery as the default liveness model. On process restart,
+   boot recovery enumerates owner streams and re-drives pending heads from the
+   snapshot-plus-tail projection.
+
+Snapshots and trimming do not replace fencing: they make replay cheap. They also
+do not detect a dead writer. They reduce the need for prompt peer takeover by
+making restart recovery fast enough for the default deployment model.
+
+Lease, heartbeat, and proactive claim-sweep are therefore optional, not the next
+default milestone. They are only justified if the product requires prompt,
+coordinator-free peer takeover of a crashed host's in-flight owner stream without
+waiting for that host to restart. If that requirement appears later, design it as
+an explicit recovery mode:
+
+- **lease**: a peer may consider an owner abandoned after no owner write for
+  `leaseDurationMs`;
+- **heartbeat**: a live owner periodically writes so slow active work is not
+  mistaken for a dead process;
+- **release-on-park**: preferred for long signal/human waits, so parked handlers
+  do not hold ownership just to heartbeat an idle stream.
+
+Do not build heartbeat without lease-based takeover; it has no independent
+correctness role. Do not build lease-based takeover without deciding the
+operational tradeoff: quicker peer recovery versus false-positive ownership
+churn for slow-but-live work.
+
 ## Host Process Alignment
 
 The host process SDD is the production target for this package. Keep these points
@@ -390,9 +433,9 @@ in sync with it:
   contract; v1 does not need dynamic remote registration.
 - Ingress is optional and layered at the edge. The host can run headless as a
   recovery / embedded-caller worker.
-- Object owner streams should use fenced ownership. The current owner-log model
-  already points in this direction; the host SDD's target is fence + lease +
-  claim sweep so multiple peer hosts can safely collaborate over S2.
+- Object owner streams should use fenced ownership for write correctness. The
+  default recovery path should be snapshot/trim-based state rebuild plus
+  restart-driven liveness, not lease/heartbeat.
 - Fencing should be encapsulated by owner drive sessions. Do not thread raw
   tokens, expected tails, or conflict refs through handler state backends.
 - Per-append OCC inside a running handler is not the default architecture. It is
@@ -401,8 +444,9 @@ in sync with it:
 - Service execution is still the legacy path: per-execution workflow DB, roster,
   in-process running map. The host SDD's target is to unify services onto the
   owner-stream/fence model and eventually retire the in-process ownership map.
-- Boot recovery should evolve into a proactive claim-sweep / timer-driver loop,
-  not remain only request-driven or layer-construction-only.
+- Boot recovery should evolve toward snapshot-aware owner recovery and timer
+  re-arm. Proactive claim-sweep is a later optional mode for prompt peer
+  takeover, not the default recovery mechanism.
 
 ## Naming Rules
 
@@ -442,12 +486,14 @@ end-to-end.
 - Keep admission and external signal resolution as ingress appends; do not make
   callers know the current owner token.
 - Keep fence tokens within S2's maximum length.
-- Keep local per-owner serialization until claim-sweep/lease ownership fully
-  replaces it.
+- Keep local per-owner serialization until a simpler proven replacement exists.
 - Keep service recovery roster-backed until deliberately migrated.
 - Do not strengthen the current service `running` map as the long-term
   ownership mechanism; it is transitional under the host process SDD.
-- Preserve the path toward fence + lease + claim-sweep multi-host ownership.
+- Prefer snapshots and trimming for replay cost before adding lease/heartbeat
+  machinery.
+- Treat lease + heartbeat + claim-sweep as optional, only for prompt
+  coordinator-free peer takeover.
 - Do not let shared handlers mutate user state.
 - Do not make workflows independent from the object owner-log model.
 - When moving files, update imports in the smallest possible patch and run the

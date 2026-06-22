@@ -37,12 +37,14 @@ hard part* (journaling, invocation ownership, timers, retries, recovery,
 partitioning). **This system has no broker — and that is the point, not a gap.**
 It is a **distributed system of peer host processes that collaborate over the S2
 event backbone**: each owner stream's guarantees — total order, conditional
-(`matchSeqNum`) append, `fencingToken`, lease-based takeover — provide, *per owner*,
-the coordination Restate centralizes in a broker. So the broker's guarantees are
-**replaced, in a lighter-weight way**, by S2 primitives applied per-key:
+(`matchSeqNum`) append where appropriate, `fencingToken`, snapshots, and trimming
+— provide, *per owner*, the coordination Restate centralizes in a broker. So the
+broker's guarantees are **replaced, in a lighter-weight way**, by S2 primitives
+applied per-key:
 
 - single-writer / no split-brain → fencing token per owner stream;
-- exactly-one-driver handoff on failure → lease expiry + CAS fence claim;
+- crash recovery → restart-driven boot recovery over owner streams;
+- bounded rebuild cost → snapshots plus trimming;
 - ordered, replayable history → the owner stream itself.
 
 The trade is explicit and intended: we give up *"operate a Restate broker cluster"*
@@ -91,14 +93,12 @@ such peer.
    layered on for out-of-process callers; a host can also run headless (embedded
    callers / pure recovery worker). Adapters (HTTP ingress, later CLI/MCP) bind at
    the edge and depend on the host, never the reverse.
-7. **Ownership is fenced per-owner from the start — multi-host capable in v1.** Each
-   execution/owner stream is a fenced "generation": a host CAS-claims the fence
-   before driving and becomes a follower on mismatch. **Single-host is the N=1
-   degenerate case** (one host wins every claim), so we do NOT build a throwaway
-   in-process-`running`-map v1. The concurrency substrate (fence + lease + CAS
-   handoff) is provided by S2 and shipped as a first-party, tested pattern
-   (`@s2-dev/resumable-stream` `claimSharedGeneration`); we adopt the pattern, not
-   reinvent it. See §7 for the model and the genuinely-ours residual.
+7. **Ownership is fenced per-owner from the start — multi-host safe for writes in
+   v1.** Each owner stream is claimed before active driving and stale writers become
+   followers on fencing mismatch. **Single-host is the N=1 degenerate case** (one
+   host wins every claim). Lease-based peer takeover is not required for the v1
+   correctness model; it is an optional later liveness mode if prompt
+   coordinator-free recovery of a crashed peer becomes a product requirement.
 
 ## 4. The Host Composition
 
@@ -372,40 +372,47 @@ any daemon the host forks across the layer boundary.
   cross-host via fencing (§7).
 - **Ingress** (optional) — HTTP front door for out-of-process callers.
 
-## 7. Multi-Host Ownership (fence + lease + claim) — the v1 model
+## 7. Multi-Host Ownership and Recovery
 
-The concurrency substrate is **provided by S2 and already shipped as a first-party,
-tested pattern** — `@s2-dev/resumable-stream`'s `claimSharedGeneration`
-(`shared.ts`) + the fence/trim helpers + `@s2-dev/patterns` (dedupe/framing). The
-hard parts of multi-host are NOT ours to build:
+Separate correctness from liveness:
 
-- **Fence record** marks a generation; the holder's token is on the stream.
-- **CAS handoff** — `appendFenceCommand(stream, expectedToken, newToken)` succeeds
-  only if `expectedToken` matches; the stale owner's subsequent appends fail with
-  `FencingTokenMismatchError` → it stops driving and becomes a follower
-  (`createResumableStream` does exactly this).
-- **Lease-based takeover** — if the active generation hasn't written for
-  ≥ `leaseDurationMs` (`lastRecordTimestamp`), a peer treats it as abandoned and
-  claims it. This is the failure-detection that lets a *dead* host's work be picked
-  up — no external membership service needed.
-- **Resume-from-seqnum** — the claimant gets `{ fromSeqNum, matchSeqNumStart }` and
-  continues with `matchSeqNum` CAS.
+- **write correctness**: one current owner driver appends state/journal/completion
+  events; stale owners fail through S2 fencing and stop driving;
+- **state rebuild**: a host reconstructs an owner projection after restart or
+  takeover;
+- **prompt peer takeover**: a different live host detects a crashed owner and
+  takes over before that process restarts.
+
+The default v1 model needs the first two, not the third:
+
+- **Fencing** is load-bearing for correctness. The owner driver claims before
+  active work and every owner-driver append carries the fencing token. Admission
+  and external signal ingress remain bus-style appends outside the owner token.
+- **Snapshots** bound replay cost. A snapshot materializes the owner projection at
+  a stream cursor; recovery loads it and reads from that cursor forward.
+- **Trimming** is compaction after snapshots. It discards records already covered
+  by a snapshot; it is not an ownership or liveness mechanism.
+- **Restart-based recovery** is the default liveness model. A restarted host sweeps
+  known owner streams, rebuilds projections from snapshot-plus-tail, and re-drives
+  pending heads.
 
 **What is genuinely ours (map our execution model onto the pattern):**
-1. Model each execution/owner stream as a fenced generation; `claim`-before-drive,
-   follow-on-mismatch. The object path already has the CAS-per-append half
-   (`casAppend`/`matchSeqNum` in `actor/log.ts`) — this adds the fence/lease
-   ownership layer above it.
-2. **Lease heartbeat** — a host running a slow `run` action must touch the stream
-   within `leaseDurationMs` or a peer steals the lease mid-flight. The one real
-   operational knob (lease duration ↔ heartbeat cadence ↔ max step latency).
-3. **Service-path unification** — services still use the in-process `running` map;
+1. Keep fencing encapsulated in an owner-drive session; do not thread tokens or
+   expected tails through user state backends.
+2. Add owner snapshots and eventually trimming so cold recovery does not fold
+   unbounded history.
+3. Keep per-owner local serialization for same-process scheduling until a simpler
+   proven replacement exists.
+4. **Service-path unification** — services still use the in-process `running` map;
    move them onto the owner-stream/fence model (same work as "services on the actor
    model," already implied by the consolidation).
-4. **Claim-sweep** — `resumable-stream` is request-driven (claim-or-follow on a
-   request); a durable *worker* must also proactively drive parked work nobody is
-   requesting → a `listStreams`-with-pending-work + `claimSharedGeneration` loop
-   (list+claim, not novel concurrency). This also subsumes boot recovery (§5).
+
+Lease, heartbeat, and proactive claim-sweep are optional. They are justified only
+if the deployment needs prompt, coordinator-free peer takeover of a crashed host's
+in-flight stream without waiting for restart. In that mode, lease says "dead if
+silent for T" and heartbeat says "a live active owner stays noisy." Prefer
+release-on-park for long waits so a parked handler does not heartbeat an idle
+stream for minutes or hours.
 
 **We start far ahead of the predecessor**, which had *no* fencing (fragile
 per-activity `insertOrGet`, non-stable `hostSessionId`, documented double-drive
@@ -444,10 +451,9 @@ Incremental, but the end state is multi-host — no throwaway single-owner layer
    against `s2 lite`.
 3. Re-point `test/ingress-support.ts` to build on the host composition (dogfood the
    deployable; shrink the bespoke test wiring).
-4. **Fenced ownership + claim-sweep** (§7): adopt the `claimSharedGeneration`
-   pattern for object-owner streams, lease heartbeat, and the proactive
-   list+claim worker loop (which subsumes boot recovery §5 and the timer re-arm).
-   This is what makes >1 host safe.
+4. **Snapshot-aware owner recovery** (§7): add owner snapshots, then trimming, so
+   boot recovery rebuilds from snapshot-plus-tail instead of folding unbounded
+   history. Keep fencing for multi-host write correctness.
 5. **Service-path unification** (§7.3): move service executions onto the
    owner-stream/fence model, retiring the in-process `running` map.
 
@@ -476,11 +482,11 @@ Resolved against `S2Client` config + the predecessor (`gurdasnijor/firegrid`):
 
 ## 12. Resolved Decisions (one empirical knob remains)
 
-- **DECIDED: multi-host from the start** (§3.7 / §7), via the S2 fence/lease/claim
-  pattern — the concurrency substrate is first-party and tested, so single-owner-v1
-  would be throwaway. The remaining tuning knob is **`leaseDurationMs` ↔ heartbeat
-  cadence ↔ max `run`-step latency** (a host doing a slow step must heartbeat or be
-  preempted) — settle empirically during build-plan step 4.
+- **DECIDED: fenced ownership from the start** (§3.7 / §7). S2 fencing is the
+  cross-host write-correctness primitive. The default recovery model is
+  snapshot/trim-based state rebuild plus restart-driven liveness. Lease +
+  heartbeat + claim-sweep are optional later work only if prompt
+  coordinator-free peer takeover is explicitly required.
 - **DECIDED: catalog wiring is Model A** (compile-time). The deploying app imports
   its defs and calls `startHost({ catalog, … })` — *its* compiled program is the
   host (restate-sdk's `bind().listen()` shape); no standalone catalog-loading
