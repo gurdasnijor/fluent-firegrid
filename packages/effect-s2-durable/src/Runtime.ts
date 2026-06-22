@@ -9,7 +9,7 @@ import {
   Layer,
   Option,
   Ref,
-  type Schema,
+  Schema,
 } from "effect"
 import { type S2Client } from "effect-s2"
 import {
@@ -18,7 +18,7 @@ import {
   type ObjectCallIdParts,
 } from "./actor/core.ts"
 import { type AdmitResult, type ObjectStateBackend, type RunHead } from "./actor/object.ts"
-import { type DurableExecutionError } from "./errors.ts"
+import { DurableExecutionError } from "./errors.ts"
 import { decodeExecutionAddress, objectPartsOption } from "./runtime/address.ts"
 import { CompletionReader, type CompletionReaderApi } from "./runtime/completion.ts"
 import {
@@ -47,6 +47,9 @@ import { RuntimeStores } from "./runtime/stores.ts"
 import type { Handler } from "./types.ts"
 
 export type { ObjectHandlerSeed, RegisteredHandler } from "./runtime/invocation.ts"
+
+const isDurableExecutionError = Schema.is(DurableExecutionError)
+const isObjectInfrastructureError = (error: DurableExecutionError): boolean => error.operation.startsWith("object.")
 
 /** The address of a durable object call target (`call`/`send` between executions). */
 export interface CallTarget {
@@ -379,6 +382,14 @@ const makeRuntime = Effect.gen(function*() {
         if (Exit.isSuccess(exit)) {
           const encoded = yield* encode(handler.output as Schema.Codec<unknown, unknown, never, never>, exit.value)
           return { _tag: "Success", value: encoded }
+        }
+        const failure = Cause.findErrorOption(exit.cause)
+        if (
+          Option.isSome(failure) &&
+          isDurableExecutionError(failure.value) &&
+          isObjectInfrastructureError(failure.value)
+        ) {
+          return yield* Effect.fail(failure.value)
         }
         return toActorExit(exit)
       })

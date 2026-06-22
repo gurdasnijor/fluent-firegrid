@@ -12,7 +12,7 @@ import { S2LiteLive } from "./s2lite.ts"
 // writer + fence handoff, with NO in-process coordination shared between them.
 
 const engineLayer = serviceLayer(Counter)
- 
+
 const addHandler = Counter.compiled.add!.handler
 const callId = (key: string, nonce: string) =>
   encodeObjectCallId({ object: Counter.name, key, method: "add", nonce })

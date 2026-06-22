@@ -18,7 +18,7 @@ import {
   transition,
   unPathSegment,
 } from "./core.ts"
-import { ensureStream, type FenceLost, freshHostToken, openOwnerDriveSession } from "./drive-session.ts"
+import { ensureStream, FenceLost, freshHostToken, openOwnerDriveSession } from "./drive-session.ts"
 import { type ActorLog, openLog } from "./log.ts"
 
 /**
@@ -140,6 +140,8 @@ const ownerStream = (object: string, key: string): Effect.Effect<string, Durable
     Effect.mapError(toError("object.ownerStream")),
   )
 
+const isFenceLostCause = (cause: unknown): cause is FenceLost =>
+  cause instanceof FenceLost || (typeof cause === "object" && cause !== null && "_tag" in cause && cause._tag === "FenceLost")
 
 // The journaled state context for a running call: reads record a `Journaled` fact
 // and replay verbatim (crash-stable RMW); writes append `StateChanged` and advance
@@ -384,9 +386,9 @@ const make = (): Effect.Effect<InvocationStoreApi> =>
             // stamps every drive append. A peer's later claim makes those appends fail
             // with FenceLost (caught below) — we stop, becoming a follower.
             const session = yield* openOwnerDriveSession(stream, hostToken)
-            // The backend never sees the fence: a lost fence inside the handler surfaces
-            // as a plain DurableExecutionError (absorbed by the handler's `Effect.exit`);
-            // the subsequent `Completed` append re-detects the loss and propagates it.
+            // Object primitives expose only DurableExecutionError to handlers. If that
+            // wraps a lost fence, runOne unwraps it back to FenceLost at the owner-driver
+            // boundary so the drainer stops without committing a user-level failure.
             const backendAppend = (event: ActorEvent): Effect.Effect<number, DurableExecutionError, S2Client> =>
               session.append(event).pipe(
                 Effect.catchTag("FenceLost", (lost) =>
@@ -418,7 +420,11 @@ const make = (): Effect.Effect<InvocationStoreApi> =>
                   method: accepted.event.method,
                   input: accepted.event.input,
                   state: backend,
-                })
+                }).pipe(
+                  Effect.catchTag("DurableExecutionError", (error): Effect.Effect<never, DurableExecutionError | FenceLost> =>
+                    isFenceLostCause(error.cause) ? Effect.fail(error.cause) : Effect.fail(error),
+                  ),
+                )
                 const event = { _tag: "Completed" as const, callId: headCall, exit }
                 const seqNum = yield* session.append(event)
                 // Advance the live snapshot (state + this completion) WITHOUT a fresh
