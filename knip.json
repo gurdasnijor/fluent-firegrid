@@ -1,14 +1,5 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "ignoreDependencies": [
-    "@typespec/http-server-js",
-    "@typespec/rest",
-    "tslib",
-    "tsx"
-  ],
-  "ignoreUnresolved": [
-    "summary"
-  ],
   "workspaces": {
     "packages/*": {
       "project": [
