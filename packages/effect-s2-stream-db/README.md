@@ -95,3 +95,10 @@ Built and validated. Landed: the State-Protocol codec (`ChangeMessage`), the fol
 real `s2 lite` server (snapshot+trim replay, transaction
 atomicity, read-after-ack visibility, enumeration, existence, and config).
 Package-local tests are kept pure; S2-backed behavioral proofs belong in the spec harness.
+
+## Proposed next layer
+
+The current package models durable latest-state tables. The proposed next layer
+adds first-class append-only streams, stream/table derivations, and incremental
+materialized views over those streams. See
+[`docs/sdds/effect-s2-stream-db-relational-ivm-sdd.md`](../../docs/sdds/effect-s2-stream-db-relational-ivm-sdd.md).
