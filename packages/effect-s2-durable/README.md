@@ -196,6 +196,51 @@ For the actor runtime, ingress targets the durable owner stream derived from the
 therefore residency-independent. The existing service runtime still uses the resident execution
 map for some park-and-resume paths until those semantics are moved through the actor/drainer model.
 
+## HTTP ingress
+
+`client`/`sendClient` above are the **in-process** path (the embedded engine). To
+drive the same definitions from **out of process**, serve them over HTTP and
+connect a typed client — the analog of Restate's `restate-sdk-clients`:
+
+- `durableIngress(defs)` mounts an `HttpApi` (abstract Effect HTTP only, so the
+  engine stays platform-free); the Node bindings are supplied at the edge.
+- `connect({ url })` derives a client whose per-method surface is typed from the
+  **same definition** the server serves (input/output via each handler's codec).
+  Service and object callers use distinct surfaces — a keyed object can't be
+  invoked without its key.
+
+```ts
+import { connect, durableIngress, serviceLayer } from "effect-s2-durable"
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient"
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
+
+// server edge: durableIngress(defs) + the engine over the same defs
+//   .pipe(Layer.provide(serviceLayer(Calculator, Counter)), NodeHttpServer.layer(...), S2…)
+
+// client edge (NodeHttpClient.layerUndici in scope):
+const ingress = yield* connect({ url: "http://127.0.0.1:8080" })
+
+// call (blocking) — service and keyed object
+const doubled = yield* ingress.serviceClient(Calculator).double(21)   // 42
+const total   = yield* ingress.objectClient(Counter, "cart").add(5)   // 5
+
+// send → handle → attach / non-blocking output
+const handle  = yield* ingress.serviceSendClient(Calculator).double(10)
+const result  = yield* handle.attach                                  // 20
+const maybe   = yield* handle.output                                  // Option<20>
+
+// a different caller can re-attach / poll by idempotency key alone
+yield* ingress.objectSendClient(Counter, "cart").add(7, { idempotencyKey: "k1" })
+const r = yield* ingress.objectAttachClient(Counter, "cart").add({ idempotencyKey: "k1" })  // 7
+const o = yield* ingress.objectOutputClient(Counter, "cart").add({ idempotencyKey: "k1" })  // Option<7>
+```
+
+`.output` (and `*OutputClient`) is the non-blocking read — `Option.none()` while
+the invocation is still running (or unknown), `Option.some(result)` once done —
+the Effect-idiomatic analog of Restate's `/output` 470. `cancel`/`kill`/`status`
+are deliberately absent (admin-plane in Restate, not ingress). End-to-end usage
+over real HTTP + `s2 lite` lives in `test/ingress.test.ts`.
+
 ## Status
 
 Built and validated through Firelab against `s2 lite` for the existing service/runtime surface:

@@ -114,4 +114,35 @@ describe.skipIf(!hasS2())("durable ingress over HTTP (S2 + node http)", () => {
 
     expect(result).toEqual({ attached: 7, polled: 7 })
   }, 60_000)
+
+  it("attaches/polls a SERVICE invocation by idempotency key, and reports not-ready as None", async () => {
+    const program = Effect.gen(function*() {
+      const server = yield* HttpServer.HttpServer
+      const port = server.address._tag === "TcpAddress" ? server.address.port : 0
+      const ingress = yield* connect({ url: `http://127.0.0.1:${port}` })
+      const idempotencyKey = "ingress-svc-idem-1"
+      // first caller sends a stateless-service invocation pinned to an idempotency key
+      yield* ingress.serviceSendClient(Calculator).double(9, { idempotencyKey })
+      // second caller re-attaches by key over the SERVICE route (no :key segment)
+      const attached = yield* ingress.serviceAttachClient(Calculator).double({ idempotencyKey })
+      // and the non-blocking output is ready once the invocation has completed
+      const ready = yield* ingress.serviceOutputClient(Calculator).double({ idempotencyKey })
+      // an invocation that was never sent reads back as not-ready (Option.none / wire "notReady")
+      const unknown = yield* ingress.serviceOutputClient(Calculator).double({ idempotencyKey: "ingress-never-sent" })
+      return { attached, ready: Option.getOrNull(ready), unknown: Option.getOrNull(unknown) }
+    })
+
+    const result = await program.pipe(
+      Effect.provide(NodeHttpClient.layerUndici),
+      Effect.provide(durableIngress([Calculator, Counter])),
+      Effect.provide(EngineLive),
+      Effect.provide(NodeHttpServer.layer(() => createServer(), { port: 0 })),
+      Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
+      Effect.provide(S2LiteLive),
+      Effect.scoped,
+      Effect.runPromise,
+    )
+
+    expect(result).toEqual({ attached: 18, ready: 18, unknown: null })
+  }, 60_000)
 })

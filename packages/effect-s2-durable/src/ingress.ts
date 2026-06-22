@@ -188,12 +188,20 @@ const notFound = (payload: InvokePayloadType) =>
 // `sendClient` are the correct surfaces; decode the wire input via the def's
 // codec, drive the engine, re-encode the output.
 
-// Resolve the def + decode the wire input (the shared head of call/send).
-const prepare = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
+// Resolve the def for a payload and enforce the service/object key contract
+// (the shared head of every server handler).
+const resolveValidated = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
   Effect.gen(function*() {
     const resolved = resolve(registry, payload)
     if (resolved === undefined) return yield* notFound(payload)
     yield* validateTarget(resolved.def, payload)
+    return resolved
+  })
+
+// Resolve the def + decode the wire input (the shared head of call/send).
+const prepare = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
+  Effect.gen(function*() {
+    const resolved = yield* resolveValidated(registry, payload)
     const input = yield* Schema.decodeUnknownEffect(resolved.codec.input)(payload.input)
     return { resolved, input }
   })
@@ -239,9 +247,7 @@ const locateId = (def: AnyDef, payload: InvokePayloadType): Effect.Effect<string
 // Resolve the def + the engine id + the runtime (the shared head of attach/output).
 const locate = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
   Effect.gen(function*() {
-    const resolved = resolve(registry, payload)
-    if (resolved === undefined) return yield* notFound(payload)
-    yield* validateTarget(resolved.def, payload)
+    const resolved = yield* resolveValidated(registry, payload)
     const id = yield* locateId(resolved.def, payload)
     const rt = yield* DurableExecutionRuntime
     return { resolved, id, rt }
@@ -377,13 +383,25 @@ export const connect = (
       transformClient: (httpClient) => HttpClient.mapRequest(httpClient, HttpClientRequest.prependUrl(options.url)),
     }).pipe(Effect.orDie)
 
+    // Pick the object-vs-service endpoint pair and build its params from the def.
+    // (The wire is generic over (name, key?, method); the typed surface below is
+    // recovered per-method from the def's codecs — see the file header.)
+    const invokeEndpoint = (
+      endpoints: { object: (req: any) => Effect.Effect<any, any>; service: (req: any) => Effect.Effect<any, any> },
+      def: AnyDef,
+      key: string | undefined,
+      method: string,
+      payload: unknown,
+    ): Effect.Effect<unknown, DurableFailure> =>
+      (def.kind === "object"
+        ? endpoints.object({ params: { name: def.name, key: key as string, method }, payload })
+        : endpoints.service({ params: { name: def.name, method }, payload })).pipe(Effect.mapError(asFailure))
+
     const call = (def: AnyDef, key: string | undefined) => (method: string) => (input: unknown, invokeOptions?: InvokeOptions) =>
       Effect.gen(function*() {
         const codec = codecsOf(def, method)
         const encoded = yield* Schema.encodeEffect(codec.input)(input).pipe(Effect.orDie)
-        const result = yield* (def.kind === "object"
-          ? api.invocations.objectCall!({ params: { name: def.name, key: key as string, method }, payload: payloadFor(encoded, invokeOptions) })
-          : api.invocations.serviceCall!({ params: { name: def.name, method }, payload: payloadFor(encoded, invokeOptions) })).pipe(Effect.mapError(asFailure))
+        const result = yield* invokeEndpoint({ object: api.invocations.objectCall!, service: api.invocations.serviceCall! }, def, key, method, payloadFor(encoded, invokeOptions))
         return yield* Schema.decodeUnknownEffect(codec.output)((result as { output: unknown }).output).pipe(Effect.orDie)
       })
 
@@ -393,18 +411,14 @@ export const connect = (
     const attachBy = (def: AnyDef, key: string | undefined, method: string, locator: Locator) =>
       Effect.gen(function*() {
         const codec = codecsOf(def, method)
-        const result = yield* (def.kind === "object"
-          ? api.invocations.objectAttach!({ params: { name: def.name, key: key as string, method }, payload: locatePayload(locator) })
-          : api.invocations.serviceAttach!({ params: { name: def.name, method }, payload: locatePayload(locator) })).pipe(Effect.mapError(asFailure))
+        const result = yield* invokeEndpoint({ object: api.invocations.objectAttach!, service: api.invocations.serviceAttach! }, def, key, method, locatePayload(locator))
         return yield* Schema.decodeUnknownEffect(codec.output)((result as { output: unknown }).output).pipe(Effect.orDie)
       })
 
     const outputBy = (def: AnyDef, key: string | undefined, method: string, locator: Locator) =>
       Effect.gen(function*() {
         const codec = codecsOf(def, method)
-        const result = yield* (def.kind === "object"
-          ? api.invocations.objectOutput!({ params: { name: def.name, key: key as string, method }, payload: locatePayload(locator) })
-          : api.invocations.serviceOutput!({ params: { name: def.name, method }, payload: locatePayload(locator) })).pipe(Effect.mapError(asFailure))
+        const result = yield* invokeEndpoint({ object: api.invocations.objectOutput!, service: api.invocations.serviceOutput! }, def, key, method, locatePayload(locator))
         const polled = result as { status: "ready"; output: unknown } | { status: "notReady" }
         if (polled.status === "notReady") return Option.none()
         return Option.some(yield* Schema.decodeUnknownEffect(codec.output)(polled.output).pipe(Effect.orDie))
@@ -414,17 +428,14 @@ export const connect = (
       Effect.gen(function*() {
         const codec = codecsOf(def, method)
         const encoded = yield* Schema.encodeEffect(codec.input)(input).pipe(Effect.orDie)
-        const result = yield* (def.kind === "object"
-          ? api.invocations.objectSend!({ params: { name: def.name, key: key as string, method }, payload: payloadFor(encoded, invokeOptions) })
-          : api.invocations.serviceSend!({ params: { name: def.name, method }, payload: payloadFor(encoded, invokeOptions) })).pipe(Effect.mapError(asFailure))
+        const result = yield* invokeEndpoint({ object: api.invocations.objectSend!, service: api.invocations.serviceSend! }, def, key, method, payloadFor(encoded, invokeOptions))
         const invocationId = (result as { invocationId: string }).invocationId
         const locator: Locator = { invocationId }
         return { invocationId, attach: attachBy(def, key, method, locator), output: outputBy(def, key, method, locator) }
       })
 
-    const materializeClient = (def: AnyDef, build: (method: string) => IngressMethod): Record<string, IngressMethod> => {
-      return Object.fromEntries(Object.keys(def.compiled).map((method) => [method, build(method)]))
-    }
+    const materializeClient = (def: AnyDef, build: (method: string) => IngressMethod): Record<string, IngressMethod> =>
+      Object.fromEntries(Object.keys(def.compiled).map((method) => [method, build(method)]))
 
     return {
       serviceClient: (def: AnyDef) => materializeClient(def, call(def, undefined)),
