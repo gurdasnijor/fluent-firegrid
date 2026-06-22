@@ -1,14 +1,11 @@
-// @effect-diagnostics effect/nodeBuiltinImport:off effect/multipleEffectProvide:off -- edge integration support: node:http creates the server NodeHttpServer.layer adapts, node:child_process probes for the `s2` binary, and the chained provides are the intentional edge wiring (HttpClient → ingress → engine → server → S2).
+// @effect-diagnostics effect/nodeBuiltinImport:off effect/multipleEffectProvide:off -- edge integration support: node:child_process probes for the `s2` binary, and the chained provides are the intentional edge wiring (HttpClient → DurableHostLive (ingress → engine → server → S2)).
 import { execSync } from "node:child_process"
-import { createServer } from "node:http"
-import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem"
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient"
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
-import * as NodePath from "@effect/platform-node/NodePath"
-import { Effect, Layer, Schema } from "effect"
-import { HttpServer } from "effect/unstable/http"
+import * as NodeSocketServer from "@effect/platform-node/NodeSocketServer"
+import { Effect, Schema } from "effect"
 import { primaryKey, Table } from "effect-s2-stream-db"
-import { client, connect, type DurableIngressClient, durableIngress, object, objectClient, run, service, serviceLayer, state } from "../src/index.ts"
+import { DurableHostLive } from "../src/host.ts"
+import { client, connect, type DurableIngressClient, object, objectClient, run, service, state } from "../src/index.ts"
 import { S2LiteLive } from "./s2lite.ts"
 
 // A small restate-style "catalog" of durable definitions, each exercising one
@@ -75,10 +72,16 @@ export const Footgun = service({
   schemas: { callTopLevel: { input: Schema.Number, output: Schema.Number } },
 })
 
-/** The whole catalog — passed explicitly to the engine + ingress (no global registry). */
+/** The whole catalog — passed explicitly to the host (no global registry). */
 const catalog = [Calculator, Counter, Proxy, Footgun]
 
-const EngineLive = serviceLayer(Calculator, Counter, Proxy, Footgun)
+/** Allocate a free TCP port, then release it for the host's ingress to bind. */
+const freePort = Effect.scoped(
+  Effect.gen(function*() {
+    const server = yield* NodeSocketServer.make({ port: 0, host: "127.0.0.1" })
+    return server.address._tag === "TcpAddress" ? server.address.port : 0
+  }),
+).pipe(Effect.orDie)
 
 /** True when the `s2` CLI is on PATH (the S2-backed tests skip without it). */
 export const hasS2 = (): boolean => {
@@ -91,26 +94,31 @@ export const hasS2 = (): boolean => {
 }
 
 /**
- * Stand up the full edge — a real Node HTTP server serving the catalog, an
- * out-of-process-style `connect()` client over HTTP, the engine, and s2-lite S2 —
- * run `program` against the connected ingress client, and return its result. The
- * one place the provide-stack is wired.
+ * Stand up the full edge by dogfooding the real host surface: `DurableHostLive`
+ * serves the catalog over its own Node HTTP server (on a pre-allocated free port,
+ * the realistic `INGRESS_PORT` path) backed by s2-lite, with an
+ * out-of-process-style `connect()` client over HTTP. Run `program` against the
+ * connected ingress client and return its result.
  */
 export const runIngress = <A, E>(
   program: (ingress: DurableIngressClient) => Effect.Effect<A, E>,
 ): Promise<A> =>
-  Effect.gen(function*() {
-    const server = yield* HttpServer.HttpServer
-    const port = server.address._tag === "TcpAddress" ? server.address.port : 0
-    const ingress = yield* connect({ url: `http://127.0.0.1:${port}` })
-    return yield* program(ingress)
-  }).pipe(
-    Effect.provide(NodeHttpClient.layerUndici),
-    Effect.provide(durableIngress(catalog)),
-    Effect.provide(EngineLive),
-    Effect.provide(NodeHttpServer.layer(() => createServer(), { port: 0 })),
-    Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
-    Effect.provide(S2LiteLive),
-    Effect.scoped,
+  freePort.pipe(
+    Effect.flatMap((port) =>
+      Effect.gen(function*() {
+        const ingress = yield* connect({ url: `http://127.0.0.1:${port}` })
+        return yield* program(ingress)
+      }).pipe(
+        Effect.provide(NodeHttpClient.layerUndici),
+        Effect.provide(
+          DurableHostLive({
+            catalog,
+            namespace: "effect-s2-durable-test",
+            ingress: { port },
+            s2: S2LiteLive,
+          }),
+        ),
+        Effect.scoped,
+      )),
     Effect.runPromise,
   )

@@ -32,6 +32,12 @@ export interface DurableHostOptions {
   readonly namespace: string
   /** Serve the HTTP ingress when present; omit for a headless (recover-only) host. */
   readonly ingress?: { readonly port: number }
+  /**
+   * Override the S2 backing layer. Defaults to `S2Client.layer` built from
+   * `namespace` + `S2_ACCESS_TOKEN`. Tests inject an in-process `s2 lite` layer
+   * here to dogfood the host composition without real S2 creds.
+   */
+  readonly s2?: Layer.Layer<S2Client, Config.ConfigError>
 }
 
 /**
@@ -47,7 +53,7 @@ export const DurableHostLive = (
   DurableExecutionRuntime,
   DurableExecutionError | Config.ConfigError | HttpServerError.ServeError
 > => {
-  const s2 = S2Client.layer({
+  const s2 = opts.s2 ?? S2Client.layer({
     accessToken: Config.redacted("S2_ACCESS_TOKEN"),
     basinName: opts.namespace,
   })
