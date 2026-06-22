@@ -1,8 +1,9 @@
 import { Context, Deferred, Effect, Layer, Option, Ref, Schema, Semaphore } from "effect"
-import { S2Client, S2Conflict } from "effect-s2"
+import { type S2Client } from "effect-s2"
 import { StreamDb } from "effect-s2-stream-db"
 import { DurableExecutionError, durableError as toError } from "../errors.ts"
 import {
+  type ActorEvent,
   type ActorExit,
   callStatus,
   type CallStatus,
@@ -17,9 +18,8 @@ import {
   transition,
   unPathSegment,
 } from "./core.ts"
+import { ensureStream, type FenceLost, freshHostToken, openOwnerDriveSession } from "./drive-session.ts"
 import { type ActorLog, openLog } from "./log.ts"
-
-const isS2Conflict = Schema.is(S2Conflict)
 
 /**
  * `InvocationStore` — the object-backed durable store the runtime's object call
@@ -140,20 +140,15 @@ const ownerStream = (object: string, key: string): Effect.Effect<string, Durable
     Effect.mapError(toError("object.ownerStream")),
   )
 
-// Create the owner stream if absent (idempotent) so the first admission CAS does
-// not depend on conditional-append auto-creating it.
-const ensureStream = (stream: string): Effect.Effect<void, DurableExecutionError, S2Client> =>
-  S2Client.createStream({ stream }).pipe(
-    Effect.asVoid,
-    Effect.catch((cause) => (isS2Conflict(cause) ? Effect.void : Effect.fail(cause))),
-    Effect.mapError(toError("object.ensure")),
-  )
 
 // The journaled state context for a running call: reads record a `Journaled` fact
 // and replay verbatim (crash-stable RMW); writes append `StateChanged` and advance
-// the in-memory snapshot so the handler observes its own writes.
+// the in-memory snapshot so the handler observes its own writes. All writes go
+// through the owner-drive session's `append` (fenced) — the backend never sees the
+// token; a peer's claim surfaces as a `FenceLost` defect the drainer catches.
 const makeBackend = (
   log: ActorLog,
+  append: (event: ActorEvent) => Effect.Effect<number, DurableExecutionError, S2Client>,
   snapshotRef: Ref.Ref<ReturnType<typeof replay>>,
   callId: string,
   readCounter: Ref.Ref<number>,
@@ -167,7 +162,7 @@ const makeBackend = (
   ): Effect.Effect<void, DurableExecutionError, S2Client> =>
     Effect.gen(function*() {
       const event = { _tag: "StateChanged" as const, op, table, key, ...(op === "set" ? { value } : {}) }
-      const seqNum = yield* log.append(event)
+      const seqNum = yield* append(event)
       yield* Ref.update(snapshotRef, (snapshot) => transition(snapshot, { seqNum, event }))
     })
 
@@ -184,7 +179,7 @@ const makeBackend = (
         const live = stateValue(snapshot, table, key)
         const record = { present: Option.isSome(live), value: Option.getOrNull(live) }
         const event = { _tag: "Journaled" as const, callId, kind: "read", step, value: record }
-        const seqNum = yield* log.append(event)
+        const seqNum = yield* append(event)
         yield* Ref.update(snapshotRef, (s) => transition(s, { seqNum, event }))
         return live
       }),
@@ -198,7 +193,7 @@ const makeBackend = (
       put: (kind, step, value) =>
         Effect.gen(function*() {
           const event = { _tag: "Journaled" as const, callId, kind, step, value }
-          const seqNum = yield* log.append(event)
+          const seqNum = yield* append(event)
           yield* Ref.update(snapshotRef, (snapshot) => transition(snapshot, { seqNum, event }))
         }),
     },
@@ -234,7 +229,7 @@ const makeBackend = (
       resolve: (name, value) =>
         Effect.gen(function*() {
           const event = { _tag: "SignalResolved" as const, callId, name, value }
-          const seqNum = yield* log.append(event)
+          const seqNum = yield* append(event)
           yield* Ref.update(snapshotRef, (snapshot) => transition(snapshot, { seqNum, event }))
           yield* signalPort.poke(callId, name)
         }),
@@ -244,6 +239,10 @@ const makeBackend = (
 
 const make = (): Effect.Effect<InvocationStoreApi> =>
   Effect.gen(function*() {
+    // This host's owner fence token (minted once per process). The drainer claims an
+    // owner stream with it via an owner-drive session; S2 enforces cross-host
+    // single-writer. The in-process guards below are intra-process only.
+    const hostToken = freshHostToken()
     // per-owner-stream exclusive drainer lock (single-writer admission, EXECUTION.1).
     const locks = yield* Ref.make(new Map<string, Semaphore.Semaphore>())
     // Per-owner authoritative projection cache, updated under the drainer lock. The
@@ -358,55 +357,7 @@ const make = (): Effect.Effect<InvocationStoreApi> =>
         const stream = yield* ownerStream(object, key)
         const log = openLog(stream)
         const lock = yield* lockFor(stream)
-
-        // Run one head and return the snapshot ADVANCED in memory by its writes +
-        // its `Completed`. The head's `Accepted` (method/input) comes from the batch
-        // read once at drain start.
-        const runOne = (
-          entries: ReadonlyArray<LogEntry>,
-          snapshot: ReturnType<typeof replay>,
-          headCall: string,
-        ): Effect.Effect<ReturnType<typeof replay>, DurableExecutionError, S2Client> =>
-          Effect.gen(function*() {
-            const accepted = entries.find((e) => e.event._tag === "Accepted" && e.event.callId === headCall)
-            if (accepted === undefined || accepted.event._tag !== "Accepted") {
-              return snapshot // unreachable: a head always has an Accepted
-            }
-            const snapshotRef = yield* Ref.make(snapshot)
-            const readCounter = yield* Ref.make(0)
-            const backend = makeBackend(log, snapshotRef, headCall, readCounter, signalPort)
-            const exit = yield* runHead({
-              callId: headCall,
-              method: accepted.event.method,
-              input: accepted.event.input,
-              state: backend,
-            })
-            const event = { _tag: "Completed" as const, callId: headCall, exit }
-            const seqNum = yield* log.append(event)
-            // Advance the live snapshot (state + this completion) WITHOUT a fresh
-            // durable read — a re-read here can lag the append and re-run a settled
-            // head (double-apply). New admissions are handled by their own drain.
-            return transition(yield* Ref.get(snapshotRef), { seqNum, event })
-          })
-
         const startedSet = startedFor(stream)
-        const drainFrom = (
-          entries: ReadonlyArray<LogEntry>,
-          snapshot: ReturnType<typeof replay>,
-        ): Effect.Effect<ReturnType<typeof replay>, DurableExecutionError, S2Client> =>
-          Effect.gen(function*() {
-            // the head is the lowest accepted call that is neither completed nor
-            // already started by this process (the in-memory at-most-once guard).
-            const headCall = snapshot.order.find((c) => !snapshot.results.has(c) && !startedSet.has(c))
-            if (headCall === undefined) {
-              return snapshot // batch drained to quiescence
-            }
-            startedSet.add(headCall) // mark BEFORE running — never selected again
-            const advanced = yield* runOne(entries, snapshot, headCall).pipe(
-              Effect.tapError(() => Effect.sync(() => startedSet.delete(headCall))), // a failed start may retry
-            )
-            return yield* drainFrom(entries, advanced)
-          })
 
         yield* lock.withPermits(1)(
           Effect.gen(function*() {
@@ -420,11 +371,102 @@ const make = (): Effect.Effect<InvocationStoreApi> =>
                 (s, e) => (e.event._tag === "Accepted" && !s.order.includes(e.event.callId) ? transition(s, e) : s),
                 cached,
               )
+            // No pending head → don't fence a quiescent stream (boot recovery and
+            // redundant drains would otherwise cause ownership churn). Read/replay
+            // first, claim only when there is work.
+            const hasPending = base.order.some((c) => !base.results.has(c) && !startedSet.has(c))
+            if (!hasPending) {
+              yield* Ref.update(snapshots, (m) => new Map(m).set(stream, base))
+              return
+            }
+
+            // Claim leadership: a scoped owner-drive session fences the stream and
+            // stamps every drive append. A peer's later claim makes those appends fail
+            // with FenceLost (caught below) — we stop, becoming a follower.
+            const session = yield* openOwnerDriveSession(stream, hostToken)
+            // The backend never sees the fence: a lost fence inside the handler surfaces
+            // as a plain DurableExecutionError (absorbed by the handler's `Effect.exit`);
+            // the subsequent `Completed` append re-detects the loss and propagates it.
+            const backendAppend = (event: ActorEvent): Effect.Effect<number, DurableExecutionError, S2Client> =>
+              session.append(event).pipe(
+                Effect.catchTag("FenceLost", (lost) =>
+                  Effect.fail(
+                    new DurableExecutionError({
+                      operation: "object.driveAppend",
+                      message: `owner fence lost on ${lost.stream}`,
+                      cause: lost,
+                    }),
+                  )),
+              )
+
+            // Run one head, advancing the in-memory snapshot by its writes + `Completed`.
+            const runOne = (
+              entries: ReadonlyArray<LogEntry>,
+              snapshot: ReturnType<typeof replay>,
+              headCall: string,
+            ): Effect.Effect<ReturnType<typeof replay>, DurableExecutionError | FenceLost, S2Client> =>
+              Effect.gen(function*() {
+                const accepted = entries.find((e) => e.event._tag === "Accepted" && e.event.callId === headCall)
+                if (accepted === undefined || accepted.event._tag !== "Accepted") {
+                  return snapshot // unreachable: a head always has an Accepted
+                }
+                const snapshotRef = yield* Ref.make(snapshot)
+                const readCounter = yield* Ref.make(0)
+                const backend = makeBackend(log, backendAppend, snapshotRef, headCall, readCounter, signalPort)
+                const exit = yield* runHead({
+                  callId: headCall,
+                  method: accepted.event.method,
+                  input: accepted.event.input,
+                  state: backend,
+                })
+                const event = { _tag: "Completed" as const, callId: headCall, exit }
+                const seqNum = yield* session.append(event)
+                // Advance the live snapshot (state + this completion) WITHOUT a fresh
+                // durable read — a re-read here can lag the append and re-run a settled
+                // head (double-apply). New admissions are handled by their own drain.
+                return transition(yield* Ref.get(snapshotRef), { seqNum, event })
+              })
+
+            const drainFrom = (
+              entries: ReadonlyArray<LogEntry>,
+              snapshot: ReturnType<typeof replay>,
+            ): Effect.Effect<ReturnType<typeof replay>, DurableExecutionError | FenceLost, S2Client> =>
+              Effect.gen(function*() {
+                // the head is the lowest accepted call that is neither completed nor
+                // already started by this process (the in-memory at-most-once guard).
+                const headCall = snapshot.order.find((c) => !snapshot.results.has(c) && !startedSet.has(c))
+                if (headCall === undefined) {
+                  return snapshot // batch drained to quiescence
+                }
+                startedSet.add(headCall) // mark BEFORE running — never selected again
+                const advanced = yield* runOne(entries, snapshot, headCall).pipe(
+                  Effect.tapError(() => Effect.sync(() => startedSet.delete(headCall))), // a failed start may retry
+                )
+                return yield* drainFrom(entries, advanced)
+              })
+
             const advanced = yield* drainFrom(entries, base)
             yield* Ref.update(snapshots, (m) => new Map(m).set(stream, advanced))
-          }),
+          }).pipe(
+            // A peer claimed the stream mid-drive → stop driving (become a follower).
+            // Drop this stream's in-process guards so a later drain re-reads from truth
+            // and re-claims (host SDD §7).
+            Effect.catchTag("FenceLost", () =>
+              Effect.sync(() => started.delete(stream)).pipe(
+                Effect.andThen(Ref.update(snapshots, (m) => {
+                  const next = new Map(m)
+                  next.delete(stream)
+                  return next
+                })),
+              )),
+          ),
         )
-      }).pipe(Effect.withSpan("effect-s2-durable.object.drain", { attributes: { object, key } }))
+      }).pipe(
+        // A forked drainer's failure is otherwise swallowed (attach just times out);
+        // surface it so an owner-driver crash is visible.
+        Effect.tapCause((cause) => Effect.logError("effect-s2-durable: object drainer failed", cause)),
+        Effect.withSpan("effect-s2-durable.object.drain", { attributes: { object, key } }),
+      )
 
     const resolveSignal = (
       callId: string,
