@@ -2,13 +2,18 @@ export {
   AppendInput,
   AppendRecord,
   BatchTransform,
+  FencingTokenMismatchError,
+  MAX_APPEND_BYTES,
+  MAX_APPEND_RECORDS,
+  meteredBytes,
   Producer,
+  RangeNotSatisfiableError,
+  randomToken,
   S2,
   S2Environment,
   S2Error as SdkS2Error,
   SeqNumMismatchError,
-  FencingTokenMismatchError,
-  RangeNotSatisfiableError,
+  utf8ByteLength,
 } from "@s2-dev/streamstore"
 
 export type {

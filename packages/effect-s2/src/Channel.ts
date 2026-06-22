@@ -52,6 +52,24 @@ export const readDecoded = <A, I, RD, RE>(
     ),
   )
 
+export const guardedAppend = <A, I, RD, RE>(
+  name: string,
+  schema: Schema.Codec<A, I, RD, RE>,
+  value: A,
+  options: AppendOptions,
+): Effect.Effect<
+  AppendAck,
+  Schema.SchemaError | S2ClientError,
+  S2Client | RE
+> =>
+  Effect.gen(function*() {
+    const record = yield* encodedRecord(schema, value)
+    return yield* S2Client.append(
+      name,
+      AppendInput.create([record], options),
+    )
+  })
+
 export const conditionalAppend = <A, I, RD, RE>(
   name: string,
   schema: Schema.Codec<A, I, RD, RE>,
@@ -61,12 +79,4 @@ export const conditionalAppend = <A, I, RD, RE>(
   AppendAck,
   Schema.SchemaError | S2ClientError,
   S2Client | RE
-> =>
-  Effect.gen(function*() {
-    const options: AppendOptions = { matchSeqNum }
-    const record = yield* encodedRecord(schema, value)
-    return yield* S2Client.append(
-      name,
-      AppendInput.create([record], options),
-    )
-  })
+> => guardedAppend(name, schema, value, { matchSeqNum })

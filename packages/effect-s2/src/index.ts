@@ -8,8 +8,9 @@ export {
   type S2ClientApi,
   type S2OperationOptions,
   type S2Producer,
+  type S2ProducerAck,
 } from "./S2Client.ts"
-export { conditionalAppend, publish, readDecoded, type DecodedRecord } from "./Channel.ts"
+export { conditionalAppend, type DecodedRecord, guardedAppend, publish, readDecoded } from "./Channel.ts"
 export {
   S2Conflict,
   S2Error,
@@ -24,12 +25,17 @@ export {
   AppendInput,
   AppendRecord,
   BatchTransform,
+  FencingTokenMismatchError,
+  MAX_APPEND_BYTES,
+  MAX_APPEND_RECORDS,
+  meteredBytes,
   Producer,
+  RangeNotSatisfiableError,
+  randomToken,
   S2Environment,
   SdkS2Error,
   SeqNumMismatchError,
-  FencingTokenMismatchError,
-  RangeNotSatisfiableError,
+  utf8ByteLength,
 } from "./internal/sdk.ts"
 export type * from "./internal/sdk.ts"
 export type { S2Record, S2RecordBytes } from "./internal/record.ts"
