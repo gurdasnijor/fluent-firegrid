@@ -474,16 +474,22 @@ Resolved against `S2Client` config + the predecessor (`gurdasnijor/firegrid`):
   state persists and is re-driven on next boot. Mirror that; revisit a drain once
   the timer driver + fencing exist.
 
-## 12. Open (genuinely undecided)
+## 12. Resolved Decisions (one empirical knob remains)
 
 - **DECIDED: multi-host from the start** (§3.7 / §7), via the S2 fence/lease/claim
   pattern — the concurrency substrate is first-party and tested, so single-owner-v1
   would be throwaway. The remaining tuning knob is **`leaseDurationMs` ↔ heartbeat
   cadence ↔ max `run`-step latency** (a host doing a slow step must heartbeat or be
   preempted) — settle empirically during build-plan step 4.
-- **Catalog wiring** — does the deploying app import defs and call `startHost`
-  (compile-time catalog, this SDD's assumption), or is there ever a need for a
-  generic host binary parameterized by a catalog module path?
+- **DECIDED: catalog wiring is Model A** (compile-time). The deploying app imports
+  its defs and calls `startHost({ catalog, … })` — *its* compiled program is the
+  host (restate-sdk's `bind().listen()` shape); no standalone catalog-loading
+  binary. This keeps the engine a **general substrate**: a firegrid-like system and
+  the (next) distributed cucumber runtime each own and compile their own catalog +
+  host, rather than sharing one dynamic binary. Model B (a generic
+  `durable host --catalog ./path.js` that `import()`s a catalog) is **deferred and
+  purely additive** — a thin `bin` over `startHost`, no engine change — added only
+  if a hosted/one-image-many-catalogs driver appears.
 
 ## 13. References
 
