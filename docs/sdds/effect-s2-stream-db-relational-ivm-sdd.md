@@ -198,34 +198,35 @@ stream-db.
 
 ## 5. Typed Event Stream Layering
 
-Use a name like `TypedEventStreamInstance<A>` rather than `DurableStream` to
-avoid implying a second transport client.
+Typed event streams use the source/sink split defined in
+[`effect-s2-stream-db-processor-architecture-api-sdd.md`](./effect-s2-stream-db-processor-architecture-api-sdd.md).
+This relational/IVM SDD builds on that substrate; it does not define a separate
+opened stream instance API.
 
 ```ts
-interface TypedEventStreamInstance<A> {
-  readonly append: (value: A) => Effect.Effect<AppendAck, StreamDbError>
-  readonly appendBatch: (values: ReadonlyArray<A>) => Effect.Effect<AppendAck, StreamDbError>
-  readonly read: (options?: ReadOptions) => Stream.Stream<EventRecord<A>, StreamDbError>
-  readonly tail: (options?: TailOptions) => Stream.Stream<EventRecord<A>, StreamDbError>
-}
+interface EventSource<K, A>
+interface EventSink<K, A>
+interface EventRecord<K, A>
+interface EventCursor
 ```
 
 Delegation table:
 
-| Typed stream operation | Underlying `effect-s2` operation |
+| Stream-db operation | Underlying `effect-s2` operation |
 | --- | --- |
 | create/open if needed | `S2Client.ensureStream({ stream })` |
-| append one/many values | `Schema.encode` then `S2Client.append(name, AppendInput.create(records))` |
-| read finite records | `S2Client.read(name, options)` then schema decode |
-| tail live records | `S2Client.read(name, liveOptions)` then schema decode |
-| high-throughput sink | `S2Client.producer(name)` then encode before `producer.submit(record)` |
+| `EventSink.append` / `appendBatch` | `Schema.encode` then `S2Client.append(name, AppendInput.create(records))` |
+| `EventSource.read` | `S2Client.read(name, options)` then schema decode |
+| `EventSource.tail` | `S2Client.read(name, liveOptions)` then schema decode |
+| high-throughput processor output | `S2Client.producer(name)` then encode before `producer.submit(record)` |
 | current tail/resume planning | `S2Client.checkTail(name)` |
 
-The typed stream adds only:
+The typed event stream substrate adds only:
 
 - schema ownership;
 - key/path derivation;
-- typed `EventRecord<A>`;
+- typed `EventRecord<K, A>`;
+- source/sink capability separation;
 - stream-db errors containing stream name, seq number, and schema context;
 - metadata for materializers, indexes, and checkpoints.
 
