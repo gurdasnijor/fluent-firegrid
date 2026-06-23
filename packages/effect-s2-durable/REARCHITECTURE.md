@@ -231,7 +231,7 @@ export class ServiceExecutor extends Context.Service<ServiceExecutor, {
   static readonly layerNoDeps = Layer.effect(
     ServiceExecutor,
     Effect.gen(function*() {
-      const stores = yield* DurableStores
+      const stores = yield* RuntimeStores
       const state = yield* RuntimeState
 
       const submitService = Effect.fn("ServiceExecutor.submitService")(function*(...) {
@@ -268,7 +268,7 @@ Target:
 ```ts
 const RuntimeBaseLive = Layer.mergeAll(
   RuntimeState.layer(handlers, objectSeeds),
-  DurableStores.layer,
+  RuntimeStores.layer,
 )
 
 const RuntimeInternalLive = Layer.mergeAll(
@@ -329,7 +329,7 @@ Owns all `ActiveInvocation.kind` branching for durable primitives.
 Allowed dependencies:
 
 - `ActiveInvocation`;
-- `DurableStores`;
+- `RuntimeStores`;
 - `RuntimeState` for local waiters / counters;
 - object state backend through `ObjectInvocation`.
 
@@ -579,7 +579,7 @@ Inputs:
 - `RuntimeState.engineScope`;
 - `ObjectExecutor` or `InvocationStore` drain API;
 - `CompletionReader`;
-- `DurableStores.provideClient`.
+- `RuntimeStores.provideClient`.
 
 ### Step 4: Extract `ServiceExecutor`
 
