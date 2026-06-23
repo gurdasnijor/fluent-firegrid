@@ -1,18 +1,18 @@
 # effect-s2-durable
 
-An Effect-native durable execution runtime over S2.
+An Effect-native durable execution engine over S2.
 
 The canonical design lives in
 [`docs/sdds/effect-durable-execution-sdd.md`](../../docs/sdds/effect-durable-execution-sdd.md).
 The S2 owner-stream object rewrite is specified in
 [`docs/sdds/effect-s2-durable-consolidation-sdd.md`](../../docs/sdds/effect-s2-durable-consolidation-sdd.md).
 
-Implementation is currently transitional:
+The package has one public engine, `DurableEngine`, with authoring APIs layered
+on top:
 
-- `service(...)` uses the existing ephemeral one-stream-per-call runtime.
-- `object(...)` is being moved from the legacy two-stream/roster path to the per-key
-  S2 owner-stream model.
-- `workflow(...)` is planned as an object specialization, not a third runtime.
+- `service(...)` uses the per-execution `WorkflowDb` service path.
+- `object(...)` uses the per-key S2 owner-stream model.
+- `workflow(...)` is an object specialization, not a third engine.
 
 ## Authoring surface
 
@@ -21,13 +21,16 @@ The ergonomic surface is **restate-sdk-gen-shaped**: group handlers in a `servic
 `handlerRequest`, no `Effect.gen` wrapper) — and call through a typed `client` that
 hides the execution id and the submit/attach dance. Inside, `yield* run(...)` etc. stay
 typed (an Effect is `yield*`-able); the **free primitives**
-(`run`/`sleep`/`state`/`signal`/`awakeable`/`deferred`) read an internal
-active-invocation slot and delegate to `DurableExecutionRuntime` — no `ctx` object.
+(`run`/`sleep`/`state`/`signal`/`awakeable`/`deferred`) delegate to the active
+`CurrentInvocationScope`, while `DurableEngine` stays the public lifecycle
+facade.
 
 ```ts
 import { Duration, Effect, Layer, Schema } from "effect"
 import { S2Client } from "effect-s2"
-import { client, run, service, serviceLayer } from "effect-s2-durable"
+import { run, service } from "effect-s2-durable"
+import { serviceLayer } from "effect-s2-durable/catalog"
+import { client } from "effect-s2-durable/invocation"
 
 const greeter = service({
   name: "greeter",
@@ -50,8 +53,7 @@ const program = Effect.gen(function*() {
 })
 
 program.pipe(
-  // `serviceLayer(greeter)` seeds the recovery registry; `DurableExecutionRuntime.layer()`
-  // is the bare engine (no recovery) when you don't need cross-restart durability.
+  // `serviceLayer(greeter)` mounts handlers and builds the live engine layer.
   Effect.provide(serviceLayer(greeter).pipe(Layer.provide(S2Client.layerConfig))),
   Effect.scoped,
 )
@@ -66,10 +68,10 @@ encode/decode boundary (default: opaque JSON).
 ### Low-level primitives
 
 `service`/`client` are a thin layer over the engine primitives, which are also public:
-`handler(name, { input, output })(program)` (the definition primitive; `program` uses
-`handlerRequest(Schema)` to read the input), `DurableExecutionRuntime.submit(handler,
-id, input)`, and the by-id `attach(id, schema)` / `poll(id, schema)`. Reach for these
-only when you want to manage execution ids yourself.
+`handler(name, { input, output })(program)` (the definition primitive; `program`
+uses `handlerRequest(Schema)` to read the input), `DurableEngine.submit(handler,
+id, input)`, and the by-id `attach(id, schema)` / `poll(id, schema)`. Reach for
+these only when you want to manage execution ids yourself.
 
 ## Semantics
 
@@ -124,7 +126,7 @@ export const checkout = service({
 ```
 
 A `run` action **cannot** use durable primitives (`run`/`sleep`/`state`/`signal`):
-its type forbids `DurableExecutionRuntime` in `R`, so `run(state(Cart).set(…))`
+its type forbids `CurrentInvocationScope` in `R`, so `run(state(Cart).set(…))`
 is a *compile* error at the `run` call — the Effect analog of Restate's ctx-less
 run closure. Perform durable work in the handler body, not inside a `run` action.
 
@@ -140,7 +142,8 @@ depend on the call being resident in memory. Persistent user state is a projecti
 events. See the actor SDD for the exact invariants.
 
 ```ts
-import { client, object, state } from "effect-s2-durable"
+import { object, state } from "effect-s2-durable"
+import { client } from "effect-s2-durable/invocation"
 
 class CounterState extends Table<CounterState>("counterState")({
   id: Schema.String.pipe(primaryKey),
@@ -191,9 +194,10 @@ const awk = yield* awakeable(Approval)                      // { id, promise }
 // awk.id is replay-stable (executionId + ordinal); hand it to an ingress client
 ```
 
-For the actor runtime, ingress targets the durable owner stream derived from the call id and is
-therefore residency-independent. The existing service runtime still uses the resident execution
-map for some park-and-resume paths until those semantics are moved through the actor/drainer model.
+For the object path, ingress targets the durable owner stream derived from the
+call id and is therefore residency-independent. The service path still uses the
+resident execution map for some park-and-resume paths until those semantics are
+moved through the object owner/drainer model.
 
 ## HTTP ingress
 
@@ -209,7 +213,8 @@ codecs, types — is derived from them.
 **Server** — two layers, each over the same defs:
 
 ```ts
-import { durableIngress, serviceLayer } from "effect-s2-durable"
+import { serviceLayer } from "effect-s2-durable/catalog"
+import { durableIngress } from "effect-s2-durable/ingress"
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
 
 durableIngress([Calculator, Counter]).pipe(           // HTTP front: a generic router
@@ -220,19 +225,19 @@ durableIngress([Calculator, Counter]).pipe(           // HTTP front: a generic r
 ```
 
 - `serviceLayer(...defs)` is the real analog of Restate's `bind`: it builds the
-  `DurableExecutionRuntime` with those handlers mounted (so their bodies run, and
-  boot recovery is seeded).
+  `DurableEngine` with those handlers mounted (so their bodies run, and boot
+  recovery is seeded).
 - `durableIngress(defs)` is the HTTP exposure. Internally it's just a
   `name → def` registry plus a generic router — the routes carry the service
   name and method as **path segments** (`/durable/call/:name/:method`), not one
   endpoint per handler. It uses only the abstract Effect HTTP stack, so the
   engine stays platform-free; the Node bindings are supplied at the edge. It
-  requires `DurableExecutionRuntime`, which `serviceLayer` provides.
+  requires `DurableEngine`, which `serviceLayer` provides.
 
 **Client** — registers nothing; the def you pass supplies the path, codecs, and types:
 
 ```ts
-import { connect } from "effect-s2-durable"
+import { connect } from "effect-s2-durable/client"
 // NodeHttpClient.layerUndici in scope
 const ingress = yield* connect({ url: "http://127.0.0.1:8080" })
 
@@ -269,7 +274,7 @@ real HTTP + `s2 lite` lives in `test/ingress.test.ts`.
 
 ## Status
 
-Built and validated through Firelab against `s2 lite` for the existing service/runtime surface:
+Built and validated through Firelab against `s2 lite` for the current engine surface:
 - `handler` / `handlerRequest`; `run` (memoize / retry / typed-failure facts);
   `submit` / `attach` / `poll`; completion ordering.
 - `sleep` (durable timer row, `pending`→`fired`).
@@ -277,7 +282,7 @@ Built and validated through Firelab against `s2 lite` for the existing service/r
   record replays its original value, so read-modify-write is replay-sound); a type-level
   guard forbids durable ops inside a `run` action.
 - `signal` / `awakeable` / `deferred` — park-and-resume over durable `deferreds` rows.
-- **Boot recovery** — on layer build the current service runtime sweeps the roster for `running`/
+- **Boot recovery** — on layer build the current service path sweeps the roster for `running`/
   `suspended` executions and re-drives each (looked up by `handlerName` in the registry
   seeded via `serviceLayer(...services)`): it re-opens the `WorkflowDb`, reads the genesis
   `input`, and re-runs the handler from the top. Replay-from-top is what makes this work —
@@ -288,10 +293,11 @@ Built and validated through Firelab against `s2 lite` for the existing service/r
   the spec harness, feature `stateless-execution`). An execution whose
   `handlerName` isn't in the registry is skipped (so a partial registry never crashes boot).
 
-Use **`serviceLayer(...services)`** (not the bare `DurableExecutionRuntime.layer()`)
-whenever an execution can outlive the process, so its handlers are registered for recovery.
+Use **`serviceLayer(...services)`** whenever an execution can outlive the process,
+so its handlers are registered for recovery.
 
-The object actor runtime is tracked by the top-level SDD and feature spec linked above.
+The object owner-stream path is tracked by the top-level SDD and feature spec
+linked above.
 Package-local tests are kept pure; S2-backed behavioral proofs belong in executable specs.
 
 **Not yet:** `resultAcked` is written but not yet consumed (no post-completion reclaim

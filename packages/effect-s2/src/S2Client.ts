@@ -73,10 +73,20 @@ export interface ProducerConfig {
   readonly maxBatchBytes?: number
   readonly maxInflightBytes?: number
   readonly maxInflightBatches?: number
+  /** Fencing token enforced on every batch (static across batches). */
+  readonly fencingToken?: string
+  /** Expected seq-num for the first batch; the producer auto-increments it per batch. */
+  readonly matchSeqNum?: number
+}
+
+/** A producer's per-record acknowledgement: the record's own `seqNum` plus its enclosing batch ack. */
+export interface S2ProducerAck {
+  readonly seqNum: number
+  readonly batch: AppendAck
 }
 
 export interface S2Producer {
-  readonly submit: (record: SdkAppendRecord) => Effect.Effect<AppendAck, S2ClientError>
+  readonly submit: (record: SdkAppendRecord) => Effect.Effect<S2ProducerAck, S2ClientError>
 }
 
 export interface AppendSessionConfig {
@@ -515,6 +525,8 @@ const batchTransformOptions = (config: ProducerConfig): BatchTransformOptions =>
     : { lingerDurationMillis: config.lingerDurationMillis }),
   ...(config.maxBatchRecords === undefined ? {} : { maxBatchRecords: config.maxBatchRecords }),
   ...(config.maxBatchBytes === undefined ? {} : { maxBatchBytes: config.maxBatchBytes }),
+  ...(config.fencingToken === undefined ? {} : { fencingToken: config.fencingToken }),
+  ...(config.matchSeqNum === undefined ? {} : { matchSeqNum: config.matchSeqNum }),
 })
 
 const appendSessionOptions = (config: AppendSessionConfig): AppendSessionOptions => ({
@@ -876,8 +888,11 @@ const makeLiveApi = (input: {
             Effect.gen(function*() {
               const ticket = yield* trySdk("producer.submit", () => sdkProducer.submit(record))
               const ack = yield* trySdk("producer.ack", () => ticket.ack())
-              yield* Effect.annotateCurrentSpan({ seqNum: ack.seqNum() })
-              return ack.batchAppendAck()
+              const seqNum = ack.seqNum()
+              yield* Effect.annotateCurrentSpan({ seqNum })
+              // preserve the upstream per-record coordinate alongside the batch ack —
+              // a batched owner write still knows its own assigned seq-num.
+              return { seqNum, batch: ack.batchAppendAck() }
             }),
           )
 

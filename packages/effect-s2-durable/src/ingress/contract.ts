@@ -15,8 +15,8 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
  * absent (admin-plane in Restate, not ingress).
  */
 
-// `AnyDef` is defined in service.ts (where the definition types live) and re-exported here.
-export type { AnyDef } from "../service.ts"
+// `AnyDef` is defined with the authoring definitions and re-exported here.
+export type { AnyDef } from "../authoring/definition.ts"
 
 /** A handler codec with its static types erased to `unknown` at the wire boundary. */
 type ErasedCodec = Schema.Codec<unknown, unknown, never, never>

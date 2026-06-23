@@ -2,17 +2,16 @@ import { describe, expect, it } from "@effect/vitest"
 import { Effect, Option } from "effect"
 import {
   callStatus,
-  decodeObjectCallId,
-  encodeObjectCallId,
   journalValue,
   type LogEntry,
-  OBJECT_ID_PREFIX,
   pathSegment,
   replay,
   signalValue,
   unPathSegment,
-} from "../src/actor/core.ts"
-import { workflow, workflowRunId } from "../src/service.ts"
+} from "../src/object/machine/index.ts"
+import { decodeObjectCallId, encodeObjectCallId, OBJECT_ID_PREFIX } from "../src/object/address.ts"
+import { workflow } from "../src/authoring/definition.ts"
+import { workflowRunId } from "../src/invocation/client.ts"
 
 // Pure (no S2) invariants for the object call-id routing + projection. S2-backed
 // behaviour is proven in Firelab (effect-s2-durable-object-call); these guard the
@@ -146,7 +145,7 @@ describe("workflow run-id is deterministic (run-once anchor)", () => {
     }))
 
   it("rejects a shared handler named `run` (reserved for the entrypoint)", () => {
-    // the `as any` deliberately bypasses the type-level guard to prove the runtime guard fires.
+    // the `as any` deliberately bypasses the type-level guard to prove the engine guard fires.
     expect(() =>
       workflow({ name: "wf-clash", *run(n: number) { return n }, handlers: { *run() { return 0 } } as any }),
     ).toThrow(/reserved for the run-once entrypoint/)

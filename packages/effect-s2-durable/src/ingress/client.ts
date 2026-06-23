@@ -1,11 +1,12 @@
 import { Effect, Option, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { HttpApiClient } from "effect/unstable/httpapi"
-import type { Handlers, HandlerInput, HandlerOutput, InvokeOptions, ObjectDefinition, ServiceDefinition } from "../service.ts"
+import type { Handlers, HandlerInput, HandlerOutput, ObjectDefinition, ServiceDefinition } from "../authoring/definition.ts"
+import type { InvokeOptions } from "../invocation/plan.ts"
 import { type AnyDef, asFailure, DurableApi, type DurableFailure, type HandlerCodecs } from "./contract.ts"
 
 // The ingress client depends only on the wire contract + the definition *types*
-// (and the def's runtime codecs) — never on the engine runtime — so it can be
+// (and the def's wire codecs) — never on the engine — so it can be
 // consumed out of process via the `effect-s2-durable/client` subpath.
 export { DurableFailure } from "./contract.ts"
 
@@ -60,8 +61,8 @@ export interface DurableIngressClient {
 }
 
 const codecsOf = (def: AnyDef, method: string): HandlerCodecs => {
-  const compiled = def.compiled[method]!
-  return { input: compiled.input, output: compiled.output }
+  const codecs = def.codecs[method]!
+  return { input: codecs.input, output: codecs.output }
 }
 
 const payloadFor = (encoded: unknown, options?: InvokeOptions) => ({
@@ -144,7 +145,7 @@ export const connect = (
       })
 
     const materializeClient = (def: AnyDef, build: (method: string) => IngressMethod): Record<string, IngressMethod> =>
-      Object.fromEntries(Object.keys(def.compiled).map((method) => [method, build(method)]))
+      Object.fromEntries(Object.keys(def.codecs).map((method) => [method, build(method)]))
 
     return {
       serviceClient: (def: AnyDef) => materializeClient(def, call(def, undefined)),

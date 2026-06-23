@@ -1,18 +1,5 @@
 export { DurableExecutionError } from "./errors.ts"
-export { DurableApi, DurableFailure } from "./ingress/contract.ts"
-export {
-  connect,
-  type ConnectOptions,
-  type DurableIngressClient,
-  type IngressAttachClient,
-  type IngressClient,
-  type IngressOutputClient,
-  type IngressSendClient,
-  type InvocationHandle,
-  type Locator,
-} from "./ingress/client.ts"
-export { durableIngress } from "./ingress/server.ts"
-export { handler } from "./handler.ts"
+export { handler } from "./authoring/handler.ts"
 export {
   attach,
   awakeable,
@@ -26,49 +13,23 @@ export {
   signal,
   sleep,
   state,
-} from "./primitives.ts"
-export { DurableExecutionRuntime } from "./Runtime.ts"
-export type { CallTarget, DurableExecutionRuntimeApi, WorkflowStartStatus } from "./Runtime.ts"
+} from "./authoring/primitives.ts"
 export {
-  client,
   object,
-  objectClient,
-  objectSendClient,
-  sendClient,
   service,
-  serviceLayer,
-  sharedClient,
   workflow,
-  workflowAttach,
-  workflowRunId,
-  workflowSubmit,
-} from "./service.ts"
+} from "./authoring/definition.ts"
 export type {
   HandlerInput,
   HandlerOutput,
   Handlers,
   HandlerSchemas,
-  InvokeOptions,
   ObjectDefinition,
-  SendClient,
-  ServiceClient,
   ServiceConfig,
   ServiceDefinition,
-  SharedClient,
   WorkflowConfig,
   WorkflowDefinition,
-} from "./service.ts"
-export {
-  ClockWakeupRow,
-  DeferredRow,
-  ExecutionId,
-  ExecutionRow,
-  RosterDb,
-  RosterRow,
-  StateReadRow,
-  StepRow,
-  WorkflowDb,
-} from "./schema.ts"
+} from "./authoring/definition.ts"
 export type {
   AwakeableHandle,
   DeferredHandle,
@@ -79,4 +40,4 @@ export type {
   RunActionViolation,
   RunOptions,
   StateBinding,
-} from "./types.ts"
+} from "./authoring/types.ts"
