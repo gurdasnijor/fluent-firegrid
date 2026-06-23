@@ -21,7 +21,7 @@ import { type HttpServerError } from "effect/unstable/http"
 import { S2Client } from "effect-s2"
 import type { DurableExecutionError } from "../errors.ts"
 import { type DurableEngine } from "../engine/api.ts"
-import { serviceLayer } from "../engine/catalog-layer.ts"
+import { serviceLayer } from "../catalog/layer.ts"
 import { durableIngress } from "../ingress/server.ts"
 import type { AnyDef } from "../authoring/definition.ts"
 

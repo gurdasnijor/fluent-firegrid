@@ -2,16 +2,14 @@ import { describe, expect, it } from "@effect/vitest"
 import { Effect, Option } from "effect"
 import {
   callStatus,
-  decodeObjectCallId,
-  encodeObjectCallId,
   journalValue,
   type LogEntry,
-  OBJECT_ID_PREFIX,
   pathSegment,
   replay,
   signalValue,
   unPathSegment,
 } from "../src/object/machine/index.ts"
+import { decodeObjectCallId, encodeObjectCallId, OBJECT_ID_PREFIX } from "../src/object/address.ts"
 import { workflow } from "../src/authoring/definition.ts"
 import { workflowRunId } from "../src/invocation/client.ts"
 

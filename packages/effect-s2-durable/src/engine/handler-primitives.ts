@@ -1,6 +1,7 @@
 import { Cause, Clock, Context, Deferred, Duration, Effect, Exit, HashMap, Layer, Option, Ref, Schema } from "effect"
 import type { AnyTable, RowOf } from "effect-s2-stream-db"
-import { encodeObjectCallId, stateValue, type ObjectCallIdParts } from "../object/machine/index.ts"
+import { encodeObjectCallId, type ObjectCallIdParts } from "../object/address.ts"
+import { stateValue } from "../object/machine/index.ts"
 import type { DurableExecutionError } from "../errors.ts"
 import type { RunOptions } from "../authoring/types.ts"
 import {

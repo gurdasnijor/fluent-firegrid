@@ -1,7 +1,7 @@
 import { Effect, Layer, Option, Schema } from "effect"
 import { HttpRouter } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
-import { compileOne } from "../authoring/compiler.ts"
+import { compileOne } from "../catalog/compiler.ts"
 import { DurableEngine } from "../engine/api.ts"
 import { locateInvocationId, objectIdentity, planInvocationId, type InvokeOptions } from "../invocation/plan.ts"
 import { type AnyDef, asFailure, DurableApi, DurableFailure } from "./contract.ts"

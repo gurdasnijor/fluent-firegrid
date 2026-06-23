@@ -1,4 +1,4 @@
-import { Effect, Option, Schema } from "effect"
+import { Option, Schema } from "effect"
 
 /**
  * Internal object mechanics for `DurableEngine` (consolidation SDD).
@@ -82,50 +82,6 @@ export interface LogEntry {
   readonly seqNum: number
   readonly event: ActorEvent
 }
-
-// ── schema-owned call id (self-routing, no side index) ───────────────────────
-
-/**
- * An object call id encodes enough owner identity to derive the owner stream by a
- * pure decode — `attach(callId)`/`poll(callId)` route without residency or a
- * roster. `key` is the owner key (through the owner-key codec; `String` today);
- * `object` is the definition name; `nonce` is the idempotency horizon.
- */
-const ObjectCallId = Schema.fromJsonString(
-  Schema.Struct({
-    object: Schema.String,
-    key: Schema.String,
-    method: Schema.String,
-    nonce: Schema.String,
-  }),
-)
-export type ObjectCallIdParts = typeof ObjectCallId.Type
-
-/**
- * Reserved namespace prefix for object call ids. An id is an object call ONLY if it
- * carries this prefix — so a service id / `idempotencyKey` that merely happens to be
- * JSON of the right shape is NOT misrouted to an owner stream. Service id minting
- * rejects this prefix (see `invocation/client.ts`), so the namespaces are disjoint.
- */
-export const OBJECT_ID_PREFIX = "durable.object.v1:"
-
-/** Encode `{ object, key, method, nonce }` into a namespaced, opaque call id string. */
-export const encodeObjectCallId = (parts: ObjectCallIdParts): Effect.Effect<string, Schema.SchemaError> =>
-  Schema.encodeEffect(ObjectCallId)(parts).pipe(
-    Effect.map((json) => OBJECT_ID_PREFIX + json),
-    Effect.withSpan("effect-s2-durable.callId.encode"),
-  )
-
-/**
- * Decode a namespaced object call id back to its parts — owner recovery is a pure
- * decode. A string WITHOUT the reserved prefix is not an object call id and fails
- * to decode (the caller routes it to the service path).
- */
-export const decodeObjectCallId = (id: string): Effect.Effect<ObjectCallIdParts, Schema.SchemaError> =>
-  // a non-prefixed id decodes a deliberately-invalid payload (empty string is not
-  // valid JSON) → SchemaError → service routing; never decode it as an object call.
-  Schema.decodeUnknownEffect(ObjectCallId)(id.startsWith(OBJECT_ID_PREFIX) ? id.slice(OBJECT_ID_PREFIX.length) : "")
-    .pipe(Effect.withSpan("effect-s2-durable.callId.decode"))
 
 /**
  * Escape a raw string into a single S2 path segment that cannot contain a raw `/`,

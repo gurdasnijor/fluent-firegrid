@@ -21,6 +21,7 @@ export type WorkflowStartStatus = "started" | "alreadyStarted"
 
 /** The public durable engine surface that authoring APIs and primitives target. */
 export interface DurableEngineApi {
+  readonly assertTopLevel: Effect.Effect<void, DurableExecutionError>
   readonly submit: <I, O, E, R>(
     handler: Handler<I, O, E, R>,
     executionId: string,

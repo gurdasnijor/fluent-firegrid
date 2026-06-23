@@ -1,8 +1,7 @@
-import { Effect, Option, type Schema } from "effect"
+import { Effect, type Schema } from "effect"
 import { DurableEngine, type DurableEngineApi, type WorkflowStartStatus } from "../engine/api.ts"
-import { ActiveInvocation } from "../engine/context.ts"
 import { type DurableExecutionError, durableError } from "../errors.ts"
-import { compileExclusive, compileOne, compileShared, type CompiledMethod } from "../authoring/compiler.ts"
+import { compileExclusive, compileOne, compileShared, type CompiledMethod } from "../catalog/compiler.ts"
 import {
   type InvokeOptions,
   objectIdentity,
@@ -56,20 +55,10 @@ const beginInvoke = (
   object: ObjectIdentity | undefined,
 ): Effect.Effect<{ readonly id: string; readonly rt: DurableEngineApi }, DurableExecutionError, DurableEngine> =>
   Effect.gen(function*() {
-    // Footgun guard (Restate keeps these surfaces physically separate): `client`/
-    // `sendClient` are the TOP-LEVEL / ingress path. Inside a handler they would
-    // mint a fresh random id on every replay (not deterministic) — so reject that
-    // and direct callers to the in-handler `objectClient`/`objectSendClient`,
-    // whose child ids are replay-stable.
-    if (Option.isSome(yield* ActiveInvocation)) {
-      return yield* durableError("submit")(
-        new Error(
-          "client(...)/sendClient(...) is the top-level invocation path and is not replay-safe inside a handler; use objectClient(def, key)/objectSendClient(def, key) for in-handler durable calls",
-        ),
-      )
-    }
-    const id = yield* planInvocationId(method, options, object)
     const rt = yield* DurableEngine
+    // Guard before minting a random id: root clients are not replay-safe inside handlers.
+    yield* rt.assertTopLevel
+    const id = yield* planInvocationId(method, options, object)
     yield* rt.submit(compiled.handler, id, input)
     return { id, rt }
   })

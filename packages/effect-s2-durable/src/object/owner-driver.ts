@@ -2,11 +2,11 @@ import { Context, Deferred, Effect, Layer, Option, Ref, Schema, Semaphore } from
 import { type S2Client } from "effect-s2"
 import { StreamDb } from "effect-s2-stream-db"
 import { DurableExecutionError, durableError as toError } from "../errors.ts"
+import type { ObjectCallIdParts } from "./address.ts"
 import {
   type ActorEvent,
   type ActorExit,
   type CallStatus,
-  type ObjectCallIdParts,
   pathSegment,
   replay,
   transition,

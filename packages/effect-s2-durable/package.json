@@ -15,6 +15,10 @@
       "types": "./src/ingress/client.ts",
       "default": "./src/ingress/client.ts"
     },
+    "./catalog": {
+      "types": "./src/catalog/index.ts",
+      "default": "./src/catalog/index.ts"
+    },
     "./engine": {
       "types": "./src/engine/index.ts",
       "default": "./src/engine/index.ts"

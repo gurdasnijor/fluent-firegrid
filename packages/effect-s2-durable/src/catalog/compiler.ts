@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import type { Handler } from "./types.ts"
+import type { Handler } from "../authoring/types.ts"
 import type {
   HandlerFn,
   Handlers,
@@ -7,10 +7,10 @@ import type {
   ObjectDefinition,
   ServiceDefinition,
   WorkflowDefinition,
-} from "./definition.ts"
-import { WORKFLOW_RUN } from "./definition.ts"
-import { handler } from "./handler.ts"
-import { handlerRequest } from "./primitives.ts"
+} from "../authoring/definition.ts"
+import { WORKFLOW_RUN } from "../authoring/definition.ts"
+import { handler } from "../authoring/handler.ts"
+import { handlerRequest } from "../authoring/primitives.ts"
 
 export interface CompiledMethod {
   readonly handler: Handler<unknown, unknown, never, never>

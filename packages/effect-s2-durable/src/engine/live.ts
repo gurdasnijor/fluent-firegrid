@@ -13,9 +13,8 @@ import {
 import { type S2Client } from "effect-s2"
 import {
   type ActorExit,
-  encodeObjectCallId,
-  type ObjectCallIdParts,
 } from "../object/machine/index.ts"
+import { encodeObjectCallId, type ObjectCallIdParts } from "../object/address.ts"
 import { type AdmitResult, type ObjectStateBackend, type RunHead } from "../object/owner-driver.ts"
 import { DurableExecutionError } from "../errors.ts"
 import { ResultReader } from "./result-reader.ts"
@@ -76,6 +75,15 @@ const makeEngine = Effect.gen(function*() {
     const withActive = (operation: string): Effect.Effect<Invocation, DurableExecutionError> =>
       Effect.flatMap(ActiveInvocation, (opt) =>
         Option.isNone(opt) ? fail(operation, `${operation} called outside an active handler`) : Effect.succeed(opt.value))
+
+    const assertTopLevel: DurableEngineApi["assertTopLevel"] =
+      Effect.flatMap(ActiveInvocation, (opt) =>
+        Option.isNone(opt)
+          ? Effect.void
+          : fail(
+            "submit",
+            "client(...)/sendClient(...) is the top-level invocation path and is not replay-safe inside a handler; use objectClient(def, key)/objectSendClient(def, key) for in-handler durable calls",
+          ))
 
     const primitives = yield* HandlerPrimitives
 
@@ -422,6 +430,7 @@ const makeEngine = Effect.gen(function*() {
     ).pipe(Effect.withSpan("effect-s2-durable.object.boot-recover"), Effect.ignore)
 
     const api: DurableEngineApi = {
+      assertTopLevel,
       submit,
       attach: completion.attach,
       poll: completion.poll,

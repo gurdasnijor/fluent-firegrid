@@ -4,7 +4,7 @@ import { EngineState } from "./state.ts"
 import { objectPartsOption } from "./address.ts"
 import { DurableStores } from "./durable-stores.ts"
 import { DurableExecutionError } from "../errors.ts"
-import type { ObjectCallIdParts } from "../object/machine/index.ts"
+import type { ObjectCallIdParts } from "../object/address.ts"
 
 export interface ResultReaderApi {
   readonly attach: <A, I>(

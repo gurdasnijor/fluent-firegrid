@@ -1,5 +1,5 @@
 import { Effect, Option } from "effect"
-import { decodeObjectCallId, type ObjectCallIdParts } from "../object/machine/index.ts"
+import { decodeObjectCallId, type ObjectCallIdParts } from "../object/address.ts"
 import type { DurableExecutionError } from "../errors.ts"
 
 export type ExecutionAddress =

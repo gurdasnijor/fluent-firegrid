@@ -1,10 +1,10 @@
 import { type Layer } from "effect"
 import type { S2Client } from "effect-s2"
 import type { DurableExecutionError } from "../errors.ts"
-import type { DurableEngine } from "./api.ts"
-import { type ObjectHandlerSeed, type RegisteredHandler } from "./context.ts"
-import { DurableEngineLive } from "./live.ts"
-import { compileExclusive } from "../authoring/compiler.ts"
+import type { DurableEngine } from "../engine/api.ts"
+import { type ObjectHandlerSeed, type RegisteredHandler } from "../engine/context.ts"
+import { DurableEngineLive } from "../engine/live.ts"
+import { compileExclusive } from "./compiler.ts"
 import type {
   HandlerFn,
   Handlers,
