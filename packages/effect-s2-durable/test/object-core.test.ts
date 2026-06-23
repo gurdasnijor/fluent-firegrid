@@ -1,5 +1,9 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Effect, Option } from "effect"
+import * as Effect from "effect/Effect"
+import * as Option from "effect/Option"
+import { workflow } from "../src/authoring/definition.ts"
+import { workflowRunId } from "../src/invocation/client.ts"
+import { decodeObjectCallId, encodeObjectCallId, OBJECT_ID_PREFIX } from "../src/object/address.ts"
 import {
   callStatus,
   journalValue,
@@ -7,11 +11,8 @@ import {
   pathSegment,
   replay,
   signalValue,
-  unPathSegment,
+  unPathSegment
 } from "../src/object/machine/index.ts"
-import { decodeObjectCallId, encodeObjectCallId, OBJECT_ID_PREFIX } from "../src/object/address.ts"
-import { workflow } from "../src/authoring/definition.ts"
-import { workflowRunId } from "../src/invocation/client.ts"
 
 // Pure (no S2) invariants for the object call-id routing + projection. S2-backed
 // behaviour is proven in Firelab (effect-s2-durable-object-call); these guard the
@@ -63,11 +64,11 @@ describe("journal identity is kind-aware (run vs read cannot collide)", () => {
   // under a {callId, step}-only key these would collide and be misinterpreted.
   const readFact: LogEntry = {
     seqNum: 1,
-    event: { _tag: "Journaled", callId: "c1", kind: "read", step: "0", value: { present: false, value: null } },
+    event: { _tag: "Journaled", callId: "c1", kind: "read", step: "0", value: { present: false, value: null } }
   }
   const runFact: LogEntry = {
     seqNum: 2,
-    event: { _tag: "Journaled", callId: "c1", kind: "run", step: "read/0", value: { success: true, value: 99 } },
+    event: { _tag: "Journaled", callId: "c1", kind: "run", step: "read/0", value: { success: true, value: 99 } }
   }
   const snap = replay([readFact, runFact])
 
@@ -84,7 +85,10 @@ describe("journal identity is kind-aware (run vs read cannot collide)", () => {
 
 describe("signals projection (durable ingress, first-write-wins)", () => {
   const first: LogEntry = { seqNum: 1, event: { _tag: "SignalResolved", callId: "c1", name: "approved", value: true } }
-  const second: LogEntry = { seqNum: 2, event: { _tag: "SignalResolved", callId: "c1", name: "approved", value: false } }
+  const second: LogEntry = {
+    seqNum: 2,
+    event: { _tag: "SignalResolved", callId: "c1", name: "approved", value: false }
+  }
 
   it("resolves to the FIRST value (a double-resolve is a no-op)", () => {
     expect(signalValue(replay([first, second]), "c1", "approved")).toEqual(Option.some(true))
@@ -101,7 +105,7 @@ describe("call status distinguishes Unknown from Pending", () => {
   const accepted: LogEntry = { seqNum: 1, event: { _tag: "Accepted", callId: "c1", method: "m", input: 1 } }
   const completed: LogEntry = {
     seqNum: 2,
-    event: { _tag: "Completed", callId: "c1", exit: { _tag: "Success", value: 42 } },
+    event: { _tag: "Completed", callId: "c1", exit: { _tag: "Success", value: 42 } }
   }
 
   it("a never-admitted callId is Unknown (so attach fails, not loops)", () => {
@@ -122,7 +126,12 @@ describe("call status distinguishes Unknown from Pending", () => {
 // (at most one run). These pin that contract without S2 (the run-once + already-started
 // behaviour itself is proven over a real backend in effect-s2-durable-workflow).
 describe("workflow run-id is deterministic (run-once anchor)", () => {
-  const wf = workflow({ name: "wf-test", *run(n: number) { return n } })
+  const wf = workflow({
+    name: "wf-test",
+    *run(n: number) {
+      return n
+    }
+  })
 
   it.effect("the same (workflow, id) always derives the SAME run call id", () =>
     Effect.gen(function*() {
@@ -141,13 +150,28 @@ describe("workflow run-id is deterministic (run-once anchor)", () => {
   it.effect("the run call id decodes to the workflow's owner key + reserved `run` method", () =>
     Effect.gen(function*() {
       const id = yield* workflowRunId(wf, "order-1")
-      expect(yield* decodeObjectCallId(id)).toEqual({ object: "wf-test", key: "order-1", method: "run", nonce: "order-1" })
+      expect(yield* decodeObjectCallId(id)).toEqual({
+        object: "wf-test",
+        key: "order-1",
+        method: "run",
+        nonce: "order-1"
+      })
     }))
 
   it("rejects a shared handler named `run` (reserved for the entrypoint)", () => {
     // the `as any` deliberately bypasses the type-level guard to prove the engine guard fires.
     expect(() =>
-      workflow({ name: "wf-clash", *run(n: number) { return n }, handlers: { *run() { return 0 } } as any }),
+      workflow({
+        name: "wf-clash",
+        *run(n: number) {
+          return n
+        },
+        handlers: {
+          *run() {
+            return 0
+          }
+        } as any
+      })
     ).toThrow(/reserved for the run-once entrypoint/)
   })
 })

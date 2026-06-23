@@ -36,11 +36,11 @@ Those primitives do not own execution. They look up the ambient
 `DurableEngine` then interprets the operation according to the active
 handler invocation:
 
-| Invocation kind | Starts from | Durable backing | Writes state | Durable primitives |
-| --- | --- | --- | --- | --- |
-| `service` | plain execution id | per-execution `WorkflowDb` plus global roster | yes | yes |
-| `object` | object call id | per-`(object,key)` owner `ActorEvent` log | yes, serialized | yes |
-| `shared` | `sharedClient(...)` | folded object snapshot | no | mostly forbidden; `resolvePromise` is special ingress |
+| Invocation kind | Starts from         | Durable backing                               | Writes state    | Durable primitives                                    |
+| --------------- | ------------------- | --------------------------------------------- | --------------- | ----------------------------------------------------- |
+| `service`       | plain execution id  | per-execution `WorkflowDb` plus global roster | yes             | yes                                                   |
+| `object`        | object call id      | per-`(object,key)` owner `ActorEvent` log     | yes, serialized | yes                                                   |
+| `shared`        | `sharedClient(...)` | folded object snapshot                        | no              | mostly forbidden; `resolvePromise` is special ingress |
 
 The unifying switchboard is `ActiveInvocation`, which lives under the `engine`
 boundary. A handler is always run with exactly one active invocation value.
@@ -117,14 +117,14 @@ This mirrors the S2 examples:
 
 For this package, map those concepts as:
 
-| S2 pattern | effect-s2-durable object path |
-| --- | --- |
-| per-agent private stream | per-`(object,key)` owner stream |
-| shared bus stream | `Accepted` and external `SignalResolved` ingress |
-| private memory records | `StateChanged`, `Journaled`, and `Completed` |
-| replay from `seqNum` | `replay(entries)` into `ActorSnapshot` |
-| append session / producer | scoped owner drive session |
-| fencing token | owner-driver write capability |
+| S2 pattern                | effect-s2-durable object path                    |
+| ------------------------- | ------------------------------------------------ |
+| per-agent private stream  | per-`(object,key)` owner stream                  |
+| shared bus stream         | `Accepted` and external `SignalResolved` ingress |
+| private memory records    | `StateChanged`, `Journaled`, and `Completed`     |
+| replay from `seqNum`      | `replay(entries)` into `ActorSnapshot`           |
+| append session / producer | scoped owner drive session                       |
+| fencing token             | owner-driver write capability                    |
 
 Do not push every correctness concern into per-append optimistic CAS. That is the
 main complexity driver: if a `StateChanged`, `Journaled`, or `Completed` append
@@ -134,13 +134,13 @@ of the handler drive path.
 
 Use the right tool for each concern:
 
-| Concern | Preferred mechanism |
-| --- | --- |
-| cross-host stale owner writes | S2 fencing token |
-| two drains racing in one process | small in-process per-owner lock |
-| stale read re-running a settled head | in-process started guard / projection cache |
-| call admission idempotency | CAS on `Accepted` admission |
-| external signal ingress | append ingress event, optionally idempotent by projection |
+| Concern                              | Preferred mechanism                                       |
+| ------------------------------------ | --------------------------------------------------------- |
+| cross-host stale owner writes        | S2 fencing token                                          |
+| two drains racing in one process     | small in-process per-owner lock                           |
+| stale read re-running a settled head | in-process started guard / projection cache               |
+| call admission idempotency           | CAS on `Accepted` admission                               |
+| external signal ingress              | append ingress event, optionally idempotent by projection |
 
 This is still S2-native: S2 is the durable source of truth and the arbiter for
 cross-host ownership. The in-process guards are only for local scheduling and
@@ -156,7 +156,7 @@ The intended internal shape is:
 interface OwnerDriveSession {
   readonly token: string
   readonly append: (
-    event: ActorEvent,
+    event: ActorEvent
   ) => Effect.Effect<number, FenceLost, S2Client>
   readonly refreshTail: Effect.Effect<void, DurableExecutionError, S2Client>
 }

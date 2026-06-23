@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices"
-import { Clock, Effect } from "effect"
+import * as Clock from "effect/Clock"
+import * as Effect from "effect/Effect"
 import { describe, expect, it } from "vitest"
 import { spawnAcpProcess } from "../src/process-owner.ts"
 
@@ -22,7 +23,7 @@ maybe(`spawnAcpProcess (real ${AGENT})`, () => {
     () =>
       Effect.runPromise(
         Effect.scoped(
-          Effect.gen(function* () {
+          Effect.gen(function*() {
             const handle = yield* spawnAcpProcess({ agent: AGENT, cwd: "." })
 
             const writer = handle.stream.writable.getWriter()
@@ -31,8 +32,8 @@ maybe(`spawnAcpProcess (real ${AGENT})`, () => {
                 jsonrpc: "2.0",
                 id: 1,
                 method: "initialize",
-                params: { protocolVersion: 1, clientCapabilities: {} },
-              }),
+                params: { protocolVersion: 1, clientCapabilities: {} }
+              })
             )
 
             const reader = handle.stream.readable.getReader()
@@ -50,9 +51,9 @@ maybe(`spawnAcpProcess (real ${AGENT})`, () => {
 
             expect(response?.result).toBeDefined()
             reader.releaseLock()
-          }),
-        ).pipe(Effect.provide(NodeServices.layer)),
+          })
+        ).pipe(Effect.provide(NodeServices.layer))
       ),
-    90_000,
+    90_000
   )
 })

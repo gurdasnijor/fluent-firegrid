@@ -1,15 +1,15 @@
-import { Data, Effect, Option, Ref, Schema, SchemaAST, Semaphore, Stream } from "effect"
-import {
-  AppendInput,
-  AppendRecord,
-  S2Client,
-  S2Conflict,
-  S2NotFound,
-  type StreamConfig,
-} from "effect-s2"
+import { AppendInput, AppendRecord, S2Client, S2Conflict, S2NotFound, type StreamConfig } from "effect-s2"
+import * as Data from "effect/Data"
+import * as Effect from "effect/Effect"
+import * as Option from "effect/Option"
+import * as Ref from "effect/Ref"
+import * as Schema from "effect/Schema"
+import * as SchemaAST from "effect/SchemaAST"
+import * as Semaphore from "effect/Semaphore"
+import * as Stream from "effect/Stream"
 import * as ChangeMessage from "./ChangeMessage.ts"
-import { MaterializedState } from "./MaterializedState.ts"
 import { S2StreamDbError } from "./errors.ts"
+import { MaterializedState } from "./MaterializedState.ts"
 
 const isS2Conflict = Schema.is(S2Conflict)
 const isS2NotFound = Schema.is(S2NotFound)
@@ -33,8 +33,7 @@ const readPrimaryKey = SchemaAST.resolveAt<boolean>(PrimaryKeyAnnotation)
  *   result: Schema.Unknown,
  * }) {}
  */
-export const primaryKey = <S extends Schema.Top>(schema: S): S =>
-  schema.annotate({ [PrimaryKeyAnnotation]: true }) as S
+export const primaryKey = <S extends Schema.Top>(schema: S): S => schema.annotate({ [PrimaryKeyAnnotation]: true }) as S
 
 const findPrimaryKey = (schema: Schema.Struct<Schema.Struct.Fields>): string => {
   const entry = Object.entries(schema.fields).find(([, field]) => readPrimaryKey(field.ast) === true)
@@ -48,7 +47,7 @@ const findPrimaryKey = (schema: Schema.Struct<Schema.Struct.Fields>): string => 
 
 /** The static shape of a Table class: it carries its `type` name, schema, and key. */
 export interface TableClass<Fields extends Schema.Struct.Fields> {
-  new (): object
+  new(): object
   readonly tableName: string
   readonly schema: Schema.Struct<Fields>
   readonly pkField: string
@@ -68,10 +67,10 @@ export type RowOf<T extends AnyTable> = T["Row"]
  * db's stream. The primary key is the `primaryKey`-annotated field.
  */
 export const Table =
-  <_Self = never>(name: string) =>
-  <const Fields extends Schema.Struct.Fields>(fields: Fields): TableClass<Fields> => {
+  <_Self = never>(name: string) => <const Fields extends Schema.Struct.Fields>(fields: Fields): TableClass<Fields> => {
     const schema = Schema.Struct(fields)
     const pkField = findPrimaryKey(schema)
+    // oxlint-disable-next-line typescript/no-extraneous-class -- factory returns a nominal static table surface
     class TableImpl {
       static readonly tableName = name
       static readonly schema = schema
@@ -157,7 +156,7 @@ export type KeySchema = Schema.Codec<unknown, string>
 
 /** The static shape of a StreamDb class. */
 export interface StreamDbClass<T extends Tables, Key extends KeySchema> {
-  new (): object
+  new(): object
   readonly basePath: string
   readonly key: Key
   readonly tables: T
@@ -167,7 +166,10 @@ export interface StreamDbClass<T extends Tables, Key extends KeySchema> {
    * `options.config` is applied to the create-if-absent (inherits basin defaults
    * when omitted).
    */
-  readonly open: (key: Key["Type"], options?: OpenOptions) => Effect.Effect<StreamDbInstance<T>, S2StreamDbError, S2Client>
+  readonly open: (
+    key: Key["Type"],
+    options?: OpenOptions
+  ) => Effect.Effect<StreamDbInstance<T>, S2StreamDbError, S2Client>
   /**
    * The typed instance keys that currently exist as streams under `basePath`:
    * enumerate by db base path, strip `basePath`, decode each suffix through the
@@ -184,7 +186,7 @@ export interface StreamDbClass<T extends Tables, Key extends KeySchema> {
    * against — a missing stream resolves to `None`.
    */
   readonly openExisting: (
-    key: Key["Type"],
+    key: Key["Type"]
   ) => Effect.Effect<Option.Option<StreamDbInstance<T>>, S2StreamDbError, S2Client>
 }
 
@@ -201,26 +203,31 @@ export const StreamDb =
   <_Self = never>(basePath: string) =>
   <const T extends Tables, Key extends KeySchema = typeof Schema.String>(
     tables: T,
-    key?: Key,
+    key?: Key
   ): StreamDbClass<T, Key> => {
     const keySchema = (key ?? Schema.String) as Schema.Codec<unknown, string>
-    const encodeKey = (value: unknown) =>
-      Schema.encodeUnknownEffect(keySchema)(value)
+    const encodeKey = (value: unknown) => Schema.encodeUnknownEffect(keySchema)(value)
     const decodeKey = (segment: string) =>
       Schema.decodeUnknownEffect(keySchema)(segment) as Effect.Effect<Key["Type"], Schema.SchemaError>
     const prefix = `${basePath}/`
+    // oxlint-disable-next-line typescript/no-extraneous-class -- factory returns a nominal static StreamDb surface
     class StreamDbImpl {
       static readonly basePath = basePath
       static readonly key = keySchema
       static readonly tables = tables
       static readonly open = (
         value: Key["Type"],
-        options?: OpenOptions,
+        options?: OpenOptions
       ): Effect.Effect<StreamDbInstance<T>, S2StreamDbError, S2Client> =>
         encodeKey(value).pipe(
           Effect.mapError(toError("open")),
           Effect.flatMap((segment) =>
-            openStream(`${basePath}/${segment}`, tables, options?.config === undefined ? {} : { config: options.config })),
+            openStream(
+              `${basePath}/${segment}`,
+              tables,
+              options?.config === undefined ? {} : { config: options.config }
+            )
+          )
         )
       static readonly list = (): Effect.Effect<ReadonlyArray<Key["Type"]>, S2StreamDbError, S2Client> =>
         // listAllStreams paginates the SDK's stream list for us (includeDeleted
@@ -231,13 +238,13 @@ export const StreamDb =
           Stream.runCollect,
           Effect.map((keys) => Array.from(keys)),
           withStreamDbSpan("list", { basePath }),
-          Effect.mapError(toError("list")),
+          Effect.mapError(toError("list"))
         )
       // Race-free: the open's non-creating preload is authoritative —
       // `create: false` propagates `S2NotFound`, which maps to `None`. No
       // separate public `exists` probe races against a concurrent drop.
       static readonly openExisting = (
-        value: Key["Type"],
+        value: Key["Type"]
       ): Effect.Effect<Option.Option<StreamDbInstance<T>>, S2StreamDbError, S2Client> =>
         encodeKey(value).pipe(
           Effect.mapError(toError("openExisting")),
@@ -246,8 +253,9 @@ export const StreamDb =
           Effect.catch((error) =>
             isS2StreamDbError(error) && isS2NotFound(error.cause)
               ? Effect.succeedNone
-              : Effect.fail(error)),
-          withStreamDbSpan("openExisting", { basePath }),
+              : Effect.fail(error)
+          ),
+          withStreamDbSpan("openExisting", { basePath })
         )
     }
     // Intentional class-factory cast: the static shape plus constructor surface cannot be expressed structurally on a class declaration.
@@ -260,7 +268,7 @@ const toError = (operation: string) => (cause: unknown): S2StreamDbError =>
   new S2StreamDbError({
     operation,
     message: cause instanceof Error ? cause.message : String(cause),
-    cause,
+    cause
   })
 
 type TraceAttributeValue = string | number | boolean
@@ -271,7 +279,6 @@ const withStreamDbSpan =
   <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
     effect.pipe(Effect.withSpan(`effect-s2-stream-db.${operation}`, { attributes }))
 
-
 /** Command records (fence/trim) carry an empty-name header; data records do not. */
 const isCommandRecord = (headers: ReadonlyArray<readonly [string, string]>): boolean =>
   headers.some(([name]) => name === "")
@@ -280,14 +287,14 @@ const change = (
   operation: "insert" | "update" | "delete",
   type: string,
   key: string,
-  value?: unknown,
+  value?: unknown
 ): ChangeMessage.Message =>
   operation === "delete"
     ? { type, key, headers: { operation } }
     : { type, key, value, headers: { operation } }
 
 const control = (signal: "snapshot-start" | "snapshot-end", offset: number): ChangeMessage.Message => ({
-  headers: { control: signal, offset: String(offset) },
+  headers: { control: signal, offset: String(offset) }
 })
 
 /** Max records in one S2 append batch (the snapshot must fit one atomic batch). */
@@ -306,11 +313,9 @@ class StreamDbSchemaCodecError extends Data.TaggedError("StreamDbSchemaCodecErro
   readonly cause: unknown
 }> {}
 
-const asServiceFreeEncoder = (schema: TableMeta["schema"]): Schema.Encoder<unknown, never> =>
-  schema as never
+const asServiceFreeEncoder = (schema: TableMeta["schema"]): Schema.Encoder<unknown, never> => schema as never
 
-const asServiceFreeDecoder = (schema: TableMeta["schema"]): Schema.Decoder<unknown, never> =>
-  schema as never
+const asServiceFreeDecoder = (schema: TableMeta["schema"]): Schema.Decoder<unknown, never> => schema as never
 
 type Intent =
   | { readonly _tag: "write"; readonly meta: TableMeta; readonly row: unknown }
@@ -326,13 +331,13 @@ interface TableMeta {
 const metaOf = (table: AnyTable): TableMeta => ({
   type: table.tableName,
   schema: table.schema,
-  pkField: table.pkField,
+  pkField: table.pkField
 })
 
 const openStream = <T extends Tables>(
   stream: string,
   tables: T,
-  options?: { readonly create?: boolean; readonly config?: StreamConfig },
+  options?: { readonly create?: boolean; readonly config?: StreamConfig }
 ): Effect.Effect<StreamDbInstance<T>, S2StreamDbError, S2Client> =>
   Effect.gen(function*() {
     const client = yield* S2Client
@@ -343,12 +348,12 @@ const openStream = <T extends Tables>(
     const encodeSchema = (schema: TableMeta["schema"], row: unknown) =>
       Effect.try({
         try: () => Schema.encodeUnknownSync(asServiceFreeEncoder(schema))(row),
-        catch: (cause) => new StreamDbSchemaCodecError({ cause }),
+        catch: (cause) => new StreamDbSchemaCodecError({ cause })
       })
     const decodeSchema = (schema: TableMeta["schema"], encoded: unknown) =>
       Effect.try({
         try: () => Schema.decodeUnknownSync(asServiceFreeDecoder(schema))(encoded),
-        catch: (cause) => new StreamDbSchemaCodecError({ cause }),
+        catch: (cause) => new StreamDbSchemaCodecError({ cause })
       })
 
     const encodeRow = (meta: TableMeta, row: unknown) =>
@@ -356,15 +361,19 @@ const openStream = <T extends Tables>(
         Effect.map((encoded) => ({
           type: meta.type,
           key: String((encoded as Record<string, unknown>)[meta.pkField]),
-          encoded,
-        })),
+          encoded
+        }))
       )
 
     const decodeRow = (meta: TableMeta, encoded: unknown) => decodeSchema(meta.schema, encoded)
 
     // preload: paginate from head, fold data records, skip command records.
     const foldRecord = (
-      record: { readonly seqNum: number; readonly body: string; readonly headers: ReadonlyArray<readonly [string, string]> },
+      record: {
+        readonly seqNum: number
+        readonly body: string
+        readonly headers: ReadonlyArray<readonly [string, string]>
+      }
     ) =>
       isCommandRecord(record.headers)
         ? Effect.void
@@ -380,9 +389,9 @@ const openStream = <T extends Tables>(
               return last !== undefined && last.seqNum + 1 < tailSeq
                 ? preloadFrom(last.seqNum + 1)
                 : Ref.set(tailRef, tailSeq)
-            }),
-          ),
-        ),
+            })
+          )
+        )
       )
 
     // `create: false` (openExisting) never provisions; default ensures-if-absent,
@@ -390,7 +399,7 @@ const openStream = <T extends Tables>(
     if (options?.create !== false) {
       yield* client.createStream({ stream, ...(options?.config === undefined ? {} : { config: options.config }) }).pipe(
         Effect.catch((cause) => (isS2Conflict(cause) ? Effect.void : Effect.fail(cause))),
-        Effect.mapError(toError("createStream")),
+        Effect.mapError(toError("createStream"))
       )
     }
     // An empty stream (tail 0) is a 416 on read and a never-appended one is a 404 —
@@ -401,9 +410,8 @@ const openStream = <T extends Tables>(
     const swallowMissing = options?.create !== false
     yield* client.checkTail(stream).pipe(
       Effect.flatMap((tail) => (tail.tail.seqNum === 0 ? Ref.set(tailRef, 0) : preloadFrom(0))),
-      Effect.catch((cause) =>
-        isS2NotFound(cause) && swallowMissing ? Ref.set(tailRef, 0) : Effect.fail(cause)),
-      Effect.mapError(toError("preload")),
+      Effect.catch((cause) => isS2NotFound(cause) && swallowMissing ? Ref.set(tailRef, 0) : Effect.fail(cause)),
+      Effect.mapError(toError("preload"))
     )
 
     // commit a batch of messages atomically: CAS-append, advance tail, then apply.
@@ -415,7 +423,7 @@ const openStream = <T extends Tables>(
         }
         yield* Effect.annotateCurrentSpan({
           stream,
-          messageCount: messages.length,
+          messageCount: messages.length
         })
         const bodies = yield* Effect.forEach(messages, ChangeMessage.encode)
         const records = bodies.map((body) => AppendRecord.string({ body }))
@@ -429,11 +437,11 @@ const openStream = <T extends Tables>(
       insert: (row) =>
         lock.withPermits(1)(
           encodeRow(meta, row).pipe(
-            Effect.flatMap(({ encoded, key, type }) => commitLocked([change("insert", type, key, encoded)])),
-          ),
+            Effect.flatMap(({ encoded, key, type }) => commitLocked([change("insert", type, key, encoded)]))
+          )
         ).pipe(
           withStreamDbSpan("table.insert", { stream, table: meta.type }),
-          Effect.mapError(toError("insert")),
+          Effect.mapError(toError("insert"))
         ),
       upsert: (row) =>
         lock.withPermits(1)(
@@ -441,16 +449,16 @@ const openStream = <T extends Tables>(
             Effect.flatMap(({ encoded, key, type }) => {
               const op = Option.isSome(state.get(type, key)) ? "update" : "insert"
               return commitLocked([change(op, type, key, encoded)])
-            }),
-          ),
+            })
+          )
         ).pipe(
           withStreamDbSpan("table.upsert", { stream, table: meta.type }),
-          Effect.mapError(toError("upsert")),
+          Effect.mapError(toError("upsert"))
         ),
       delete: (key) =>
         lock.withPermits(1)(commitLocked([change("delete", meta.type, key)])).pipe(
           withStreamDbSpan("table.delete", { stream, table: meta.type }),
-          Effect.mapError(toError("delete")),
+          Effect.mapError(toError("delete"))
         ),
       insertOrGet: (row) =>
         lock.withPermits(1)(
@@ -463,10 +471,10 @@ const openStream = <T extends Tables>(
             }
             yield* commitLocked([change("insert", type, key, encoded)])
             return { _tag: "Inserted" } satisfies InsertOrGetResult<unknown>
-          }),
+          })
         ).pipe(
           withStreamDbSpan("table.insertOrGet", { stream, table: meta.type }),
-          Effect.mapError(toError("insertOrGet")),
+          Effect.mapError(toError("insertOrGet"))
         ),
       // `Effect.suspend` so the read observes `MaterializedState` when the Effect
       // RUNS, not when `get`/`query` is called — otherwise a reused read Effect
@@ -475,22 +483,22 @@ const openStream = <T extends Tables>(
         Effect.suspend(() =>
           Option.match(state.get(meta.type, key), {
             onNone: () => Effect.succeedNone,
-            onSome: (encoded) => decodeRow(meta, encoded).pipe(Effect.map(Option.some)),
-          }),
+            onSome: (encoded) => decodeRow(meta, encoded).pipe(Effect.map(Option.some))
+          })
         ).pipe(
           withStreamDbSpan("table.get", { stream, table: meta.type }),
-          Effect.mapError(toError("get")),
+          Effect.mapError(toError("get"))
         ),
       query: (build) =>
         Effect.suspend(() => Effect.forEach(state.values(meta.type), (encoded) => decodeRow(meta, encoded))).pipe(
           withStreamDbSpan("table.query", { stream, table: meta.type }),
           Effect.map(build),
-          Effect.mapError(toError("query")),
-        ),
+          Effect.mapError(toError("query"))
+        )
     })
 
     const facades = Object.fromEntries(
-      Object.entries(tables).map(([name, table]) => [name, makeFacade(metaOf(table))] as const),
+      Object.entries(tables).map(([name, table]) => [name, makeFacade(metaOf(table))] as const)
     )
     const table = (tbl: AnyTable): TableFacade<unknown> => makeFacade(metaOf(tbl))
 
@@ -501,7 +509,7 @@ const openStream = <T extends Tables>(
           const tx: Transaction = {
             insert: (t, row) => intents.push({ _tag: "write", meta: metaOf(t), row }),
             upsert: (t, row) => intents.push({ _tag: "write", meta: metaOf(t), row }),
-            delete: (t, key) => intents.push({ _tag: "delete", meta: metaOf(t), key }),
+            delete: (t, key) => intents.push({ _tag: "delete", meta: metaOf(t), key })
           }
           const result = body(tx)
           return Effect.forEach(intents, (intent) =>
@@ -511,15 +519,15 @@ const openStream = <T extends Tables>(
                 Effect.map(({ encoded, key, type }) => {
                   const op = Option.isSome(state.get(type, key)) ? "update" : "insert"
                   return change(op, type, key, encoded)
-                }),
+                })
               )).pipe(
-                Effect.flatMap((messages) => commitLocked(messages)),
-                Effect.as(result),
-              )
-        }),
+              Effect.flatMap((messages) => commitLocked(messages)),
+              Effect.as(result)
+            )
+        })
       ).pipe(
         withStreamDbSpan("transact", { stream }),
-        Effect.mapError(toError("transact")),
+        Effect.mapError(toError("transact"))
       )
 
     // snapshot the live set at the tail + trim before it, as one atomic batch
@@ -535,28 +543,29 @@ const openStream = <T extends Tables>(
         const startBody = yield* ChangeMessage.encode(control("snapshot-start", cursor))
         const endBody = yield* ChangeMessage.encode(control("snapshot-end", cursor))
         const entryBodies = yield* Effect.forEach(entries, (entry) =>
-          ChangeMessage.encode(change("insert", entry.type, entry.key, entry.value)),
-        )
+          ChangeMessage.encode(change("insert", entry.type, entry.key, entry.value)))
         const records = [
           AppendRecord.string({ body: startBody }),
-          ...entryBodies.map((body) => AppendRecord.string({ body })),
+          ...entryBodies.map((body) =>
+            AppendRecord.string({ body })
+          ),
           AppendRecord.string({ body: endBody }),
-          AppendRecord.trim(cursor),
+          AppendRecord.trim(cursor)
         ]
         const ack = yield* client.append(stream, AppendInput.create(records, { matchSeqNum: cursor }))
         yield* Ref.set(tailRef, ack.tail.seqNum)
-      }),
+      })
     )
 
     const checkpoint = runCheckpoint.pipe(
       withStreamDbSpan("checkpoint", { stream }),
-      Effect.mapError(toError("checkpoint")),
+      Effect.mapError(toError("checkpoint"))
     )
 
     // `compact` is the original name for `checkpoint`, kept for backward compat.
     const compact = runCheckpoint.pipe(
       withStreamDbSpan("compact", { stream }),
-      Effect.mapError(toError("compact")),
+      Effect.mapError(toError("compact"))
     )
 
     const trim = (cursor: number) =>
@@ -564,17 +573,20 @@ const openStream = <T extends Tables>(
         Effect.gen(function*() {
           const tail = yield* Ref.get(tailRef)
           yield* Effect.annotateCurrentSpan({ stream, cursor })
-          const ack = yield* client.append(stream, AppendInput.create([AppendRecord.trim(cursor)], { matchSeqNum: tail }))
+          const ack = yield* client.append(
+            stream,
+            AppendInput.create([AppendRecord.trim(cursor)], { matchSeqNum: tail })
+          )
           yield* Ref.set(tailRef, ack.tail.seqNum)
-        }),
+        })
       ).pipe(
         withStreamDbSpan("trim", { stream }),
-        Effect.mapError(toError("trim")),
+        Effect.mapError(toError("trim"))
       )
 
     const drop = client.deleteStream({ stream }).pipe(
       withStreamDbSpan("drop", { stream }),
-      Effect.mapError(toError("drop")),
+      Effect.mapError(toError("drop"))
     )
 
     // Intentional dynamic facade cast: the per-table mapped type cannot be proven structurally here.

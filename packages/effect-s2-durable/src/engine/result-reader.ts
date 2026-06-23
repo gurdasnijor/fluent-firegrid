@@ -1,19 +1,29 @@
-import { Cause, Context, Deferred, Duration, Effect, Exit, HashMap, Layer, Option, Ref, type Schema } from "effect"
-import { decode, fail, toError } from "./helpers.ts"
-import { EngineState } from "./state.ts"
-import { objectPartsOption } from "./address.ts"
-import { DurableStores } from "./durable-stores.ts"
+import * as Cause from "effect/Cause"
+import * as Context from "effect/Context"
+import * as Deferred from "effect/Deferred"
+import * as Duration from "effect/Duration"
+import * as Effect from "effect/Effect"
+import * as Exit from "effect/Exit"
+import * as HashMap from "effect/HashMap"
+import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
+import * as Ref from "effect/Ref"
+import type * as Schema from "effect/Schema"
 import { DurableExecutionError } from "../errors.ts"
 import type { ObjectCallIdParts } from "../object/address.ts"
+import { objectPartsOption } from "./address.ts"
+import { DurableStores } from "./durable-stores.ts"
+import { decode, fail, toError } from "./helpers.ts"
+import { EngineState } from "./state.ts"
 
 export interface ResultReaderApi {
   readonly attach: <A, I>(
     executionId: string,
-    schema: Schema.Codec<A, I, never, never>,
+    schema: Schema.Codec<A, I, never, never>
   ) => Effect.Effect<A, DurableExecutionError>
   readonly poll: <A, I>(
     executionId: string,
-    schema: Schema.Codec<A, I, never, never>,
+    schema: Schema.Codec<A, I, never, never>
   ) => Effect.Effect<Option.Option<A>, DurableExecutionError>
 }
 
@@ -27,7 +37,7 @@ const make: Effect.Effect<ResultReaderApi, never, EngineState | DurableStores> =
     callId: string,
     parts: ObjectCallIdParts,
     schema: Schema.Codec<A, I, never, never>,
-    unknownBudget: number,
+    unknownBudget: number
   ): Effect.Effect<A, DurableExecutionError> =>
     provideClient(store.status(callId, parts)).pipe(Effect.flatMap((st): Effect.Effect<A, DurableExecutionError> => {
       switch (st._tag) {
@@ -41,20 +51,20 @@ const make: Effect.Effect<ResultReaderApi, never, EngineState | DurableStores> =
           return fail("attach", "call was interrupted")
         case "Pending":
           return Effect.sleep(Duration.millis(25)).pipe(
-            Effect.andThen(attachObject(callId, parts, schema, UNKNOWN_ATTACH_RETRIES)),
+            Effect.andThen(attachObject(callId, parts, schema, UNKNOWN_ATTACH_RETRIES))
           )
         case "Unknown":
           return unknownBudget <= 0
             ? fail("attach", `unknown call: ${callId}`)
             : Effect.sleep(Duration.millis(25)).pipe(
-              Effect.andThen(attachObject(callId, parts, schema, unknownBudget - 1)),
+              Effect.andThen(attachObject(callId, parts, schema, unknownBudget - 1))
             )
       }
     }))
 
   const attach = <A, I>(
     executionId: string,
-    schema: Schema.Codec<A, I, never, never>,
+    schema: Schema.Codec<A, I, never, never>
   ): Effect.Effect<A, DurableExecutionError> =>
     Effect.gen(function*() {
       const parts = yield* objectPartsOption(executionId)
@@ -70,7 +80,7 @@ const make: Effect.Effect<ResultReaderApi, never, EngineState | DurableStores> =
           return yield* new DurableExecutionError({
             operation: "attach",
             message: `execution failed: ${Cause.pretty(exit.cause)}`,
-            cause: exit.cause,
+            cause: exit.cause
           })
         }
       }
@@ -84,7 +94,7 @@ const make: Effect.Effect<ResultReaderApi, never, EngineState | DurableStores> =
 
   const poll = <A, I>(
     executionId: string,
-    schema: Schema.Codec<A, I, never, never>,
+    schema: Schema.Codec<A, I, never, never>
   ): Effect.Effect<Option.Option<A>, DurableExecutionError> =>
     Effect.gen(function*() {
       const parts = yield* objectPartsOption(executionId)
@@ -102,7 +112,10 @@ const make: Effect.Effect<ResultReaderApi, never, EngineState | DurableStores> =
 })
 
 export class ResultReader extends Context.Service<ResultReader, ResultReaderApi>()(
-  "effect-s2-durable/engine/result-reader/ResultReader",
+  "effect-s2-durable/engine/result-reader/ResultReader"
 ) {
-  static readonly layer: Layer.Layer<ResultReader, never, EngineState | DurableStores> = Layer.effect(ResultReader, make)
+  static readonly layer: Layer.Layer<ResultReader, never, EngineState | DurableStores> = Layer.effect(
+    ResultReader,
+    make
+  )
 }

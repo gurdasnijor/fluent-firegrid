@@ -12,18 +12,20 @@
  * This is the **only** module in the package that imports `@effect/platform-node`
  * (alongside its `bin/` entrypoint). The engine core must stay Node-free.
  */
-import { createServer } from "node:http"
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem"
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
 import * as NodePath from "@effect/platform-node/NodePath"
-import { Config, Effect, Layer } from "effect"
-import { type HttpServerError } from "effect/unstable/http"
 import { S2Client } from "effect-s2"
-import type { DurableExecutionError } from "../errors.ts"
-import { type DurableEngine } from "../engine/api.ts"
-import { serviceLayer } from "../catalog/layer.ts"
-import { durableIngress } from "../ingress/server.ts"
+import * as Config from "effect/Config"
+import * as Effect from "effect/Effect"
+import * as Layer from "effect/Layer"
+import type * as HttpServerError from "effect/unstable/http/HttpServerError"
+import { createServer } from "node:http"
 import type { AnyDef } from "../authoring/definition.ts"
+import { serviceLayer } from "../catalog/layer.ts"
+import type { DurableEngine } from "../engine/api.ts"
+import type { DurableExecutionError } from "../errors.ts"
+import { durableIngress } from "../ingress/server.ts"
 
 /** Configuration for a single durable host. */
 export interface DurableHostOptions {
@@ -49,14 +51,14 @@ export interface DurableHostOptions {
  * `namespace` plus `S2_ACCESS_TOKEN` from config.
  */
 export const DurableHostLive = (
-  opts: DurableHostOptions,
+  opts: DurableHostOptions
 ): Layer.Layer<
   DurableEngine,
   DurableExecutionError | Config.ConfigError | HttpServerError.ServeError
 > => {
   const s2 = opts.s2 ?? S2Client.layer({
     accessToken: Config.redacted("S2_ACCESS_TOKEN"),
-    basinName: opts.namespace,
+    basinName: opts.namespace
   })
   const engine = serviceLayer(...opts.catalog).pipe(Layer.provide(s2))
   if (opts.ingress === undefined) return engine
@@ -67,7 +69,7 @@ export const DurableHostLive = (
   return durableIngress(opts.catalog).pipe(
     Layer.provideMerge(engine),
     Layer.provide(NodeHttpServer.layer(() => createServer(), { port })),
-    Layer.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)),
+    Layer.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer))
   )
 }
 
@@ -77,7 +79,7 @@ export const DurableHostLive = (
  * headless). The catalog is supplied by the caller (compile-time, Model A).
  */
 export const DurableHostFromConfig = (
-  catalog: ReadonlyArray<AnyDef>,
+  catalog: ReadonlyArray<AnyDef>
 ): Layer.Layer<
   DurableEngine,
   DurableExecutionError | Config.ConfigError | HttpServerError.ServeError
@@ -89,14 +91,14 @@ export const DurableHostFromConfig = (
       return DurableHostLive({
         catalog,
         namespace,
-        ...(ingressPort._tag === "Some" ? { ingress: { port: ingressPort.value } } : {}),
+        ...(ingressPort._tag === "Some" ? { ingress: { port: ingressPort.value } } : {})
       })
-    }),
+    })
   )
 
 /** Launch a host and run forever (build the layer, then never return). */
 export const startHost = (
-  opts: DurableHostOptions,
+  opts: DurableHostOptions
 ): Effect.Effect<
   never,
   DurableExecutionError | Config.ConfigError | HttpServerError.ServeError

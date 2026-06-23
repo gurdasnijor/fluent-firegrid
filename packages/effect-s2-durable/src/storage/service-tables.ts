@@ -1,5 +1,5 @@
-import { Schema } from "effect"
 import { primaryKey, StreamDb, Table } from "effect-s2-stream-db"
+import * as Schema from "effect/Schema"
 
 /**
  * The current stateless-execution per-execution and roster schemas — ordinary
@@ -23,7 +23,7 @@ class ExecutionRow extends Table<ExecutionRow>("executions")({
   status: Schema.Literals(["running", "suspended", "completed", "failed"]),
   suspended: Schema.Boolean,
   /** A virtual object's `"name:key"`, if this is an object-method execution. */
-  objectKey: Schema.optional(Schema.String),
+  objectKey: Schema.optional(Schema.String)
 }) {}
 
 /**
@@ -36,13 +36,13 @@ class StepRow extends Table<StepRow>("steps")({
   stepKey: Schema.String.pipe(primaryKey),
   success: Schema.Boolean,
   value: Schema.optional(Schema.Unknown),
-  error: Schema.optional(Schema.Unknown),
+  error: Schema.optional(Schema.Unknown)
 }) {}
 
 /** A durable deferred / signal — `value` present once resolved (slice 3). */
 class DeferredRow extends Table<DeferredRow>("deferreds")({
   name: Schema.String.pipe(primaryKey),
-  value: Schema.optional(Schema.Unknown),
+  value: Schema.optional(Schema.Unknown)
 }) {}
 
 /**
@@ -53,14 +53,14 @@ class DeferredRow extends Table<DeferredRow>("deferreds")({
  */
 class StateReadRow extends Table<StateReadRow>("stateReads")({
   readKey: Schema.String.pipe(primaryKey),
-  value: Schema.Unknown,
+  value: Schema.Unknown
 }) {}
 
 /** A durable timer (`sleep`): a `clockWakeups` row + an in-process arm (slice 2). */
 class ClockWakeupRow extends Table<ClockWakeupRow>("clockWakeups")({
   name: Schema.String.pipe(primaryKey),
   deadlineMs: Schema.Number,
-  status: Schema.Literals(["pending", "fired"]),
+  status: Schema.Literals(["pending", "fired"])
 }) {}
 
 /** One S2 stream (`wf/<execId>`) per execution, aggregating its tables. */
@@ -69,7 +69,7 @@ export class WorkflowDb extends StreamDb<WorkflowDb>("wf")({
   steps: StepRow,
   stateReads: StateReadRow,
   deferreds: DeferredRow,
-  clockWakeups: ClockWakeupRow,
+  clockWakeups: ClockWakeupRow
 }, ExecutionId) {}
 
 // Virtual-object state moved to the per-owner `ActorEvent` log (see
@@ -95,7 +95,7 @@ class RosterRow extends Table<RosterRow>("roster")({
   result: Schema.optional(Schema.Unknown),
   error: Schema.optional(Schema.String),
   resultAcked: Schema.optional(Schema.Boolean),
-  updatedMs: Schema.Number,
+  updatedMs: Schema.Number
 }) {}
 
 /** The shared roster db. Opened once, under a single key (default `"global"`). */

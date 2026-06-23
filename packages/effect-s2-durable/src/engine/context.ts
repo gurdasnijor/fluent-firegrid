@@ -1,9 +1,16 @@
-import { Context, type Deferred, type Effect, type Exit, type Fiber, type HashMap, Option, type Ref } from "effect"
 import type { AnyTable, RowOf, TableFacade } from "effect-s2-stream-db"
+import * as Context from "effect/Context"
+import type * as Deferred from "effect/Deferred"
+import type * as Effect from "effect/Effect"
+import type * as Exit from "effect/Exit"
+import type * as Fiber from "effect/Fiber"
+import type * as HashMap from "effect/HashMap"
+import * as Option from "effect/Option"
+import type * as Ref from "effect/Ref"
+import type { Handler } from "../authoring/types.ts"
+import type { DurableExecutionError } from "../errors.ts"
 import type { ActorSnapshot } from "../object/machine/index.ts"
 import type { ObjectStateBackend } from "../object/owner-driver.ts"
-import type { DurableExecutionError } from "../errors.ts"
-import type { Handler } from "../authoring/types.ts"
 import type { WorkflowDb } from "../storage/service-tables.ts"
 
 /** The opened per-execution db (success type of `WorkflowDb.open`). */
@@ -56,7 +63,7 @@ export type Invocation = ServiceInvocation | ObjectInvocation | SharedObjectInvo
  */
 export const ActiveInvocation = Context.Reference<Option.Option<Invocation>>(
   "effect-s2-durable/engine/ActiveInvocation",
-  { defaultValue: () => Option.none() },
+  { defaultValue: () => Option.none() }
 )
 
 /** An in-process owned service execution: live fiber, result waiter, and db. */

@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import * as Schema from "effect/Schema"
 
 /**
  * The error channel of every `S2StreamDB` operation. Wraps codec failures,
@@ -9,5 +9,5 @@ export class S2StreamDbError extends Schema.TaggedErrorClass<S2StreamDbError>()(
   /** The operation that failed (`insert` / `get` / `transact` / `compact` / …). */
   operation: Schema.String,
   message: Schema.String,
-  cause: Schema.Defect(),
+  cause: Schema.Defect()
 }) {}

@@ -1,4 +1,4 @@
-import { Option } from "effect"
+import * as Option from "effect/Option"
 import type { Message } from "./ChangeMessage.ts"
 import { isChange } from "./ChangeMessage.ts"
 
@@ -50,7 +50,7 @@ export class MaterializedState {
   /** All live `(type, key, value)` entries — the snapshot source for compaction. */
   entries(): ReadonlyArray<{ readonly type: string; readonly key: string; readonly value: unknown }> {
     return Array.from(this.byType.entries()).flatMap(([type, collection]) =>
-      Array.from(collection.entries()).map(([key, value]) => ({ type, key, value })),
+      Array.from(collection.entries()).map(([key, value]) => ({ type, key, value }))
     )
   }
 

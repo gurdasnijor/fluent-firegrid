@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import * as Effect from "effect/Effect"
 import { describe, expect, it } from "vitest"
 import { DurableFailure } from "../src/ingress/contract.ts"
 import { Footgun, hasS2, Proxy, runIngress, ServiceProxy } from "./ingress-support.ts"

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Effect, Option, Schema } from "effect"
+import * as Effect from "effect/Effect"
+import * as Option from "effect/Option"
+import * as Schema from "effect/Schema"
 import { ChangeMessage, MaterializedState, primaryKey, Table } from "../src/index.ts"
 
 class Item extends Table<Item>("items")({
   id: Schema.String.pipe(primaryKey),
-  value: Schema.Number,
+  value: Schema.Number
 }) {}
 
 describe("Table definition", () => {
@@ -17,8 +19,8 @@ describe("Table definition", () => {
     expect(() =>
       Table("broken")({
         id: Schema.String,
-        value: Schema.Number,
-      }),
+        value: Schema.Number
+      })
     ).toThrow(/no primaryKey/)
   })
 })
@@ -31,18 +33,18 @@ describe("ChangeMessage projection", () => {
         type: "items",
         key: "a",
         value: { id: "a", value: 1 },
-        headers: { operation: "insert" },
+        headers: { operation: "insert" }
       } satisfies ChangeMessage.Message
       const update = {
         type: "items",
         key: "a",
         value: { id: "a", value: 2 },
-        headers: { operation: "update" },
+        headers: { operation: "update" }
       } satisfies ChangeMessage.Message
       const remove = {
         type: "items",
         key: "a",
-        headers: { operation: "delete" },
+        headers: { operation: "delete" }
       } satisfies ChangeMessage.Message
 
       state.apply(yield* ChangeMessage.decode(yield* ChangeMessage.encode(insert)))

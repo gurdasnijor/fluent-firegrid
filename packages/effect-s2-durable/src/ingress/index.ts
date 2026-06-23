@@ -1,8 +1,2 @@
-export {
-  DurableApi,
-  DurableFailure,
-  type AnyDef,
-  type HandlerCodecs,
-  asFailure,
-} from "./contract.ts"
+export { type AnyDef, asFailure, DurableApi, DurableFailure, type HandlerCodecs } from "./contract.ts"
 export { durableIngress } from "./server.ts"

@@ -1,4 +1,5 @@
-import { Effect, Schema } from "effect"
+import * as Effect from "effect/Effect"
+import * as Schema from "effect/Schema"
 
 /**
  * An object call id encodes enough owner identity to derive the owner stream by a
@@ -9,8 +10,8 @@ const ObjectCallId = Schema.fromJsonString(
     object: Schema.String,
     key: Schema.String,
     method: Schema.String,
-    nonce: Schema.String,
-  }),
+    nonce: Schema.String
+  })
 )
 
 export type ObjectCallIdParts = typeof ObjectCallId.Type
@@ -26,7 +27,7 @@ export const OBJECT_ID_PREFIX = "durable.object.v1:"
 export const encodeObjectCallId = (parts: ObjectCallIdParts): Effect.Effect<string, Schema.SchemaError> =>
   Schema.encodeEffect(ObjectCallId)(parts).pipe(
     Effect.map((json) => OBJECT_ID_PREFIX + json),
-    Effect.withSpan("effect-s2-durable.callId.encode"),
+    Effect.withSpan("effect-s2-durable.callId.encode")
   )
 
 /**

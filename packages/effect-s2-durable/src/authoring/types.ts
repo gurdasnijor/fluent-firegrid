@@ -1,6 +1,9 @@
-import type { Duration, Effect, Option, Schema } from "effect"
-import type { DurableExecutionError } from "../errors.ts"
+import type * as Duration from "effect/Duration"
+import type * as Effect from "effect/Effect"
+import type * as Option from "effect/Option"
+import type * as Schema from "effect/Schema"
 import type { DurableEngine } from "../engine/api.ts"
+import type { DurableExecutionError } from "../errors.ts"
 import type { CurrentInvocationScope } from "../invocation/scope.ts"
 
 /** Retry policy for a `run` step. Controls attempts *before* a terminal fact. */
@@ -50,10 +53,12 @@ export interface RunActionViolation<M extends string> {
   readonly [RunActionViolationId]: M
 }
 
-type RunResult<A, E, R> = [DurableEngine] extends [R]
-  ? RunActionViolation<"a run action cannot use durable primitives (run/sleep/state/signal); use them in the handler body">
-  : [CurrentInvocationScope] extends [R]
-  ? RunActionViolation<"a run action cannot use durable primitives (run/sleep/state/durablePromise); use them in the handler body">
+type RunResult<A, E, R> = [DurableEngine] extends [R] ? RunActionViolation<
+    "a run action cannot use durable primitives (run/sleep/state/signal); use them in the handler body"
+  >
+  : [CurrentInvocationScope] extends [R] ? RunActionViolation<
+      "a run action cannot use durable primitives (run/sleep/state/durablePromise); use them in the handler body"
+    >
   : Effect.Effect<A, E | DurableExecutionError, R | CurrentInvocationScope>
 
 /**
@@ -71,23 +76,23 @@ export interface Run {
   <A, E, R, EncodedA = unknown, EncodedE = unknown>(
     name: string,
     action: Effect.Effect<A, E, R>,
-    options?: RunOptions<A, E, EncodedA, EncodedE>,
+    options?: RunOptions<A, E, EncodedA, EncodedE>
   ): RunResult<A, E, R>
   <A, E, R, EncodedA = unknown, EncodedE = unknown>(
     action: Effect.Effect<A, E, R>,
-    options?: RunOptions<A, E, EncodedA, EncodedE>,
+    options?: RunOptions<A, E, EncodedA, EncodedE>
   ): RunResult<A, E, R>
 }
 
 export type RunStep = <A, E, R, EncodedA, EncodedE>(
   action: Effect.Effect<A, E, R>,
-  options?: RunOptions<A, E, EncodedA, EncodedE>,
+  options?: RunOptions<A, E, EncodedA, EncodedE>
 ) => Effect.Effect<A, E | DurableExecutionError, R>
 
 export type DurablePromiseResolver = <A, I>(
   name: string,
   schema: Schema.Codec<A, I, never, never>,
-  value: A,
+  value: A
 ) => Effect.Effect<void, DurableExecutionError>
 
 /**
@@ -135,7 +140,12 @@ export interface AwakeableHandle<A> {
  * `resolveAwakeable` free functions.
  */
 export interface IngressResolve {
-  <A, I>(executionId: string, name: string, schema: Schema.Codec<A, I, never, never>, value: A): Effect.Effect<void, DurableExecutionError, DurableEngine>
+  <A, I>(
+    executionId: string,
+    name: string,
+    schema: Schema.Codec<A, I, never, never>,
+    value: A
+  ): Effect.Effect<void, DurableExecutionError, DurableEngine>
 }
 
 /**
