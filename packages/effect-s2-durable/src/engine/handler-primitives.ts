@@ -1,6 +1,6 @@
 import { Cause, Clock, Context, Deferred, Duration, Effect, Exit, HashMap, Layer, Option, Ref, Schema } from "effect"
 import type { AnyTable, RowOf } from "effect-s2-stream-db"
-import { encodeObjectCallId, stateValue, type ObjectCallIdParts } from "../object/events.ts"
+import { encodeObjectCallId, stateValue, type ObjectCallIdParts } from "../object/machine/index.ts"
 import type { DurableExecutionError } from "../errors.ts"
 import type { RunOptions } from "../types.ts"
 import {
@@ -17,10 +17,10 @@ import {
   sharedForbidden,
   toError,
 } from "./helpers.ts"
-import { ActiveInvocation, type ObjectInvocation, type ServiceInvocation, type StepRecord, type TimerRecord } from "./invocation.ts"
-import { resolveServiceDeferred, serviceWaiterKey } from "./serviceDeferreds.ts"
-import { RuntimeState } from "./state.ts"
-import { RuntimeStores } from "./durable-stores.ts"
+import { EngineState } from "./state.ts"
+import { DurableStores } from "./durable-stores.ts"
+import { resolveServiceDeferred, serviceWaiterKey } from "./service-deferreds.ts"
+import { ActiveInvocation, type ObjectInvocation, type ServiceInvocation, type StepRecord, type TimerRecord } from "./context.ts"
 
 type ResolvePrimitive = <A, I>(
   name: string,
@@ -28,7 +28,7 @@ type ResolvePrimitive = <A, I>(
   value: A,
 ) => Effect.Effect<void, DurableExecutionError>
 
-export interface PrimitiveInterpreterApi {
+export interface HandlerPrimitivesApi {
   readonly runStep: <A, E, R, EncodedA, EncodedE>(
     action: Effect.Effect<A, E, R>,
     options?: RunOptions<A, E, EncodedA, EncodedE>,
@@ -56,11 +56,11 @@ const withActive = (operation: string) =>
   Effect.flatMap(ActiveInvocation, (opt) =>
     Option.isNone(opt) ? fail(operation, `${operation} called outside an active handler`) : Effect.succeed(opt.value))
 
-const make: Effect.Effect<PrimitiveInterpreterApi, never, RuntimeState | RuntimeStores> = Effect.gen(function*() {
-  const runtimeState = yield* RuntimeState
-  const stores = yield* RuntimeStores
-  const { waiters } = runtimeState
-  const { objectStore: store, provideClient, roster } = stores
+const make: Effect.Effect<HandlerPrimitivesApi, never, EngineState | DurableStores> = Effect.gen(function*() {
+  const engineState = yield* EngineState
+  const stores = yield* DurableStores
+  const { waiters } = engineState
+  const { objectDriver: store, provideClient, roster } = stores
 
   const runJournalFor = (active: ServiceInvocation | ObjectInvocation) =>
     active.kind === "object"
@@ -286,7 +286,7 @@ const make: Effect.Effect<PrimitiveInterpreterApi, never, RuntimeState | Runtime
         }),
     ))
 
-  const resolveLocal: PrimitiveInterpreterApi["resolveLocal"] = (name, schema, value) =>
+  const resolveLocal: HandlerPrimitivesApi["resolveLocal"] = (name, schema, value) =>
     withActive("resolve").pipe(Effect.flatMap((active) =>
       active.kind === "shared"
         ? sharedForbidden("resolve")
@@ -297,7 +297,7 @@ const make: Effect.Effect<PrimitiveInterpreterApi, never, RuntimeState | Runtime
         ),
     ))
 
-  const resolvePromise: PrimitiveInterpreterApi["resolvePromise"] = (name, schema, value) =>
+  const resolvePromise: HandlerPrimitivesApi["resolvePromise"] = (name, schema, value) =>
     withActive("resolvePromise").pipe(Effect.flatMap((active) =>
       active.kind !== "shared"
         ? fail("resolvePromise", "resolvePromise is only valid inside a shared workflow handler")
@@ -333,11 +333,11 @@ const make: Effect.Effect<PrimitiveInterpreterApi, never, RuntimeState | Runtime
   }
 })
 
-export class PrimitiveInterpreter extends Context.Service<PrimitiveInterpreter, PrimitiveInterpreterApi>()(
-  "effect-s2-durable/runtime/primitive-interpreter/PrimitiveInterpreter",
+export class HandlerPrimitives extends Context.Service<HandlerPrimitives, HandlerPrimitivesApi>()(
+  "effect-s2-durable/engine/handler-primitives/HandlerPrimitives",
 ) {
-  static readonly layer: Layer.Layer<PrimitiveInterpreter, never, RuntimeState | RuntimeStores> = Layer.effect(
-    PrimitiveInterpreter,
+  static readonly layer: Layer.Layer<HandlerPrimitives, never, EngineState | DurableStores> = Layer.effect(
+    HandlerPrimitives,
     make,
   )
 }

@@ -10,7 +10,7 @@ import {
   S2NotFound,
 } from "effect-s2"
 import { type DurableExecutionError, durableError as toError } from "../errors.ts"
-import { ActorEvent } from "./events.ts"
+import { ActorEvent } from "./machine/index.ts"
 
 /**
  * The scoped owner-drive session: the ONE place that combines fencing with owner
@@ -50,7 +50,7 @@ export class FenceLost extends Data.TaggedError("FenceLost")<{ readonly stream: 
 /**
  * This process's owner fence token. Uses the upstream `randomToken` (a base64
  * token) sized to stay within S2's 36-byte fencing-token limit. Mint once per
- * `InvocationStore` (per host process).
+ * `ObjectOwnerDriver` (per host process).
  */
 export const freshHostToken = (): string => `host-${randomToken(20)}`
 

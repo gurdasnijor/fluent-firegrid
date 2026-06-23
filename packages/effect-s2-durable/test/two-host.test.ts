@@ -1,12 +1,12 @@
 import { describe, expect, it } from "@effect/vitest"
 import { Context, Effect, Layer, Schema } from "effect"
-import { encodeObjectCallId } from "../src/object/events.ts"
-import { DurableExecutionRuntime } from "../src/Runtime.ts"
+import { encodeObjectCallId } from "../src/object/machine/index.ts"
+import { DurableEngine } from "../src/engine/api.ts"
 import { serviceLayer } from "../src/service.ts"
 import { Counter, hasS2 } from "./ingress-support.ts"
 import { S2LiteLive } from "./s2lite.ts"
 
-// Two independent engines (distinct InvocationStore → distinct host tokens) over
+// Two independent engines (distinct ObjectOwnerDriver → distinct host tokens) over
 // ONE shared `s2 lite` basin = two hosts on the same durable state. Proves the
 // S2-native fenced-ownership drive (host SDD §7 / build-step-4): cross-host single
 // writer + fence handoff, with NO in-process coordination shared between them.
@@ -20,14 +20,14 @@ const callId = (key: string, nonce: string) =>
 /** Build two engines sharing one s2-lite S2Client, run `program(e1, e2)`. */
 const runTwoHosts = <A, E>(
   program: (
-    e1: typeof DurableExecutionRuntime.Service,
-    e2: typeof DurableExecutionRuntime.Service,
+    e1: typeof DurableEngine.Service,
+    e2: typeof DurableEngine.Service,
   ) => Effect.Effect<A, E>,
 ): Promise<A> =>
   Effect.gen(function*() {
     const ctx1 = yield* Layer.build(engineLayer)
     const ctx2 = yield* Layer.build(engineLayer)
-    return yield* program(Context.get(ctx1, DurableExecutionRuntime), Context.get(ctx2, DurableExecutionRuntime))
+    return yield* program(Context.get(ctx1, DurableEngine), Context.get(ctx2, DurableEngine))
   }).pipe(Effect.scoped, Effect.provide(S2LiteLive), Effect.runPromise)
 
 describe.skipIf(!hasS2())("two hosts over shared S2 (fenced ownership)", () => {

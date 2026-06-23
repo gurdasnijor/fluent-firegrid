@@ -1,12 +1,12 @@
 import { Cause, Context, Deferred, Duration, Effect, Exit, HashMap, Layer, Option, Ref, type Schema } from "effect"
-import { objectPartsOption } from "./address.ts"
 import { decode, fail, toError } from "./helpers.ts"
-import { RuntimeState } from "./state.ts"
-import { RuntimeStores } from "./durable-stores.ts"
+import { EngineState } from "./state.ts"
+import { objectPartsOption } from "./address.ts"
+import { DurableStores } from "./durable-stores.ts"
 import { DurableExecutionError } from "../errors.ts"
-import type { ObjectCallIdParts } from "../object/events.ts"
+import type { ObjectCallIdParts } from "../object/machine/index.ts"
 
-export interface CompletionReaderApi {
+export interface ResultReaderApi {
   readonly attach: <A, I>(
     executionId: string,
     schema: Schema.Codec<A, I, never, never>,
@@ -19,9 +19,9 @@ export interface CompletionReaderApi {
 
 const UNKNOWN_ATTACH_RETRIES = 40
 
-const make: Effect.Effect<CompletionReaderApi, never, RuntimeState | RuntimeStores> = Effect.gen(function*() {
-  const { running } = yield* RuntimeState
-  const { objectStore: store, provideClient, roster } = yield* RuntimeStores
+const make: Effect.Effect<ResultReaderApi, never, EngineState | DurableStores> = Effect.gen(function*() {
+  const { running } = yield* EngineState
+  const { objectDriver: store, provideClient, roster } = yield* DurableStores
 
   const attachObject = <A, I>(
     callId: string,
@@ -101,8 +101,8 @@ const make: Effect.Effect<CompletionReaderApi, never, RuntimeState | RuntimeStor
   return { attach, poll }
 })
 
-export class CompletionReader extends Context.Service<CompletionReader, CompletionReaderApi>()(
-  "effect-s2-durable/runtime/completion-reader/CompletionReader",
+export class ResultReader extends Context.Service<ResultReader, ResultReaderApi>()(
+  "effect-s2-durable/engine/result-reader/ResultReader",
 ) {
-  static readonly layer: Layer.Layer<CompletionReader, never, RuntimeState | RuntimeStores> = Layer.effect(CompletionReader, make)
+  static readonly layer: Layer.Layer<ResultReader, never, EngineState | DurableStores> = Layer.effect(ResultReader, make)
 }

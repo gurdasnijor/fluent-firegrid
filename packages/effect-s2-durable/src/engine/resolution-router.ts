@@ -1,12 +1,12 @@
 import { Context, Effect, HashMap, Layer, Option, Ref, type Schema } from "effect"
-import { objectPartsOption } from "./address.ts"
 import { encode, fail } from "./helpers.ts"
-import { resolveServiceDeferred } from "./serviceDeferreds.ts"
-import { RuntimeState } from "./state.ts"
-import { RuntimeStores } from "./durable-stores.ts"
+import { EngineState } from "./state.ts"
+import { objectPartsOption } from "./address.ts"
+import { DurableStores } from "./durable-stores.ts"
+import { resolveServiceDeferred } from "./service-deferreds.ts"
 import type { DurableExecutionError } from "../errors.ts"
 
-export interface IngressRouterApi {
+export interface ResolutionRouterApi {
   readonly resolveExternal: <A, I>(
     executionId: string,
     name: string,
@@ -15,9 +15,9 @@ export interface IngressRouterApi {
   ) => Effect.Effect<void, DurableExecutionError>
 }
 
-const make: Effect.Effect<IngressRouterApi, never, RuntimeState | RuntimeStores> = Effect.gen(function*() {
-  const { running, waiters } = yield* RuntimeState
-  const { objectStore: store, provideClient } = yield* RuntimeStores
+const make: Effect.Effect<ResolutionRouterApi, never, EngineState | DurableStores> = Effect.gen(function*() {
+  const { running, waiters } = yield* EngineState
+  const { objectDriver: store, provideClient } = yield* DurableStores
 
   const resolveExternal = <A, I>(
     executionId: string,
@@ -45,8 +45,8 @@ const make: Effect.Effect<IngressRouterApi, never, RuntimeState | RuntimeStores>
   return { resolveExternal }
 })
 
-export class IngressRouter extends Context.Service<IngressRouter, IngressRouterApi>()(
-  "effect-s2-durable/runtime/ingress-router/IngressRouter",
+export class ResolutionRouter extends Context.Service<ResolutionRouter, ResolutionRouterApi>()(
+  "effect-s2-durable/engine/resolution-router/ResolutionRouter",
 ) {
-  static readonly layer: Layer.Layer<IngressRouter, never, RuntimeState | RuntimeStores> = Layer.effect(IngressRouter, make)
+  static readonly layer: Layer.Layer<ResolutionRouter, never, EngineState | DurableStores> = Layer.effect(ResolutionRouter, make)
 }

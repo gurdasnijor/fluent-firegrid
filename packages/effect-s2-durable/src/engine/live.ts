@@ -1,7 +1,6 @@
 import {
   Cause,
   Clock,
-  Context,
   Deferred,
   Effect,
   Exit,
@@ -16,11 +15,11 @@ import {
   type ActorExit,
   encodeObjectCallId,
   type ObjectCallIdParts,
-} from "./object/events.ts"
-import { type AdmitResult, type ObjectStateBackend, type RunHead } from "./object/invocation-store.ts"
-import { DurableExecutionError } from "./errors.ts"
-import { decodeExecutionAddress, objectPartsOption } from "./runtime/address.ts"
-import { CompletionReader, type CompletionReaderApi } from "./runtime/completion-reader.ts"
+} from "../object/machine/index.ts"
+import { type AdmitResult, type ObjectStateBackend, type RunHead } from "../object/owner-driver.ts"
+import { DurableExecutionError } from "../errors.ts"
+import { ResultReader } from "./result-reader.ts"
+import { EngineState } from "./state.ts"
 import {
   decode,
   encode,
@@ -28,7 +27,7 @@ import {
   sharedForbidden,
   toActorExit,
   toError,
-} from "./runtime/helpers.ts"
+} from "./helpers.ts"
 import {
   ActiveInvocation,
   type Invocation,
@@ -39,150 +38,46 @@ import {
   type ServiceInvocation,
   type SharedObjectInvocation,
   type WfDb,
-} from "./runtime/invocation.ts"
-import { IngressRouter, type IngressRouterApi } from "./runtime/ingress-router.ts"
-import { PrimitiveInterpreter, type PrimitiveInterpreterApi } from "./runtime/primitive-interpreter.ts"
-import { RuntimeState } from "./runtime/state.ts"
-import { RuntimeStores } from "./runtime/durable-stores.ts"
-import type { Handler } from "./types.ts"
-
-export type { ObjectHandlerSeed, RegisteredHandler } from "./runtime/invocation.ts"
+} from "./context.ts"
+import { decodeExecutionAddress, objectPartsOption } from "./address.ts"
+import { HandlerPrimitives } from "./handler-primitives.ts"
+import { ResolutionRouter } from "./resolution-router.ts"
+import { DurableStores } from "./durable-stores.ts"
+import { DurableEngine, type CallTarget, type DurableEngineApi } from "./api.ts"
+import type { Handler } from "../types.ts"
 
 const isDurableExecutionError = Schema.is(DurableExecutionError)
 const isObjectInfrastructureError = (error: DurableExecutionError): boolean => error.operation.startsWith("object.")
 
-/** The address of a durable object call target (`call`/`send` between executions). */
-export interface CallTarget {
-  readonly object: string
-  readonly key: string
-  readonly method: string
-}
-
 /**
- * The outcome of starting a workflow. A workflow `run` is admitted **at most once**
- * per workflow id: the first start is `"started"`; any later start (while running or
- * after completion) is `"alreadyStarted"` — never a second run (Restate workflow
- * semantics: duplicate start returns already-started, not a deduped second run).
+ * The S2-backed engine layer. Requires an `S2Client`; owns its fiber scope.
+ * `handlers` seed service boot recovery; `objectSeeds` seed object owner-stream
+ * recovery so a fresh engine can re-drive pending object heads.
  */
-export type WorkflowStartStatus = "started" | "alreadyStarted"
-
-/** The public engine surface (host ops) plus the primitive ops the free functions delegate to. */
-export interface DurableExecutionRuntimeApi {
-  /**
-   * Genesis + fork. A plain `executionId` is a stateless service execution
-   * (genesis + fork now). An `executionId` that decodes as an object call id routes
-   * to the per-owner `ActorEvent` log: durably admit the call, then fork the
-   * exclusive drainer (`state(Table)` is journaled to the owner stream; same-key
-   * methods run serially).
-   */
-  readonly submit: <I, O, E, R>(
-    handler: Handler<I, O, E, R>,
-    executionId: string,
-    input: I,
-  ) => Effect.Effect<void, DurableExecutionError, R>
-  /** Block until the execution finishes; decode its output via `schema` (or fail). */
-  readonly attach: CompletionReaderApi["attach"]
-  /** Non-blocking read of the completed output, decoded via `schema`, if any. */
-  readonly poll: CompletionReaderApi["poll"]
-  /** The durable `run` step (delegated to by the `run` free primitive). */
-  readonly runStep: PrimitiveInterpreterApi["runStep"]
-  /** The decoded handler request (delegated to by the `handlerRequest` free primitive). */
-  readonly handlerRequest: PrimitiveInterpreterApi["handlerRequest"]
-  /** The durable timer (delegated to by the `sleep` free primitive). */
-  readonly sleepStep: PrimitiveInterpreterApi["sleepStep"]
-  /** State ops (delegated to by the `state(Table)` binding's methods). */
-  readonly stateGet: PrimitiveInterpreterApi["stateGet"]
-  readonly stateSet: PrimitiveInterpreterApi["stateSet"]
-  readonly stateDelete: PrimitiveInterpreterApi["stateDelete"]
-  /** Park until a named durable promise (signal/deferred/awakeable) is resolved. */
-  readonly awaitDeferred: PrimitiveInterpreterApi["awaitDeferred"]
-  /** Resolve a named durable promise on the active execution (handler-side `deferred.resolve`). */
-  readonly resolveLocal: PrimitiveInterpreterApi["resolveLocal"]
-  /** Resolve a named durable promise on another execution (ingress `signal`/`awakeable`). */
-  readonly resolveExternal: IngressRouterApi["resolveExternal"]
-  /**
-   * From a SHARED workflow handler, resolve a durable promise the workflow's `run` body
-   * awaits via `signal(name)`. Appends a `SignalResolved` to the run's owner stream
-   * (derived from the active shared call's object + key) — an INGRESS append, the one
-   * write HANDLERS.5 permits a shared handler (it never mutates user state). Delegated to
-   * by the `resolvePromise(...)` free primitive; forbidden outside a shared handler.
-   */
-  readonly resolvePromise: PrimitiveInterpreterApi["resolvePromise"]
-  /** A fresh replay-stable awakeable id for the active execution. */
-  readonly nextAwakeableId: PrimitiveInterpreterApi["nextAwakeableId"]
-  /**
-   * Run a SHARED (read-only) object handler ephemerally over a folded snapshot —
-   * no admission, no drainer, concurrent with the exclusive drainer (`EXECUTION.3`).
-   * Delegated to by the `sharedClient(...)` proxy.
-   */
-  readonly sharedCall: <A, I>(
-    handler: Handler<unknown, unknown, never, never>,
-    object: string,
-    key: string,
-    input: unknown,
-    schema: Schema.Codec<A, I, never, never>,
-  ) => Effect.Effect<A, DurableExecutionError>
-  /** Durable `call`: issue a child object call (encoding input via `inputSchema`) and await its decoded result. */
-  readonly callStep: <A, I, B, J>(
-    target: CallTarget,
-    input: unknown,
-    inputSchema: Schema.Codec<B, J, never, never>,
-    schema: Schema.Codec<A, I, never, never>,
-  ) => Effect.Effect<A, DurableExecutionError>
-  /** Durable one-way `send`: issue a child object call (encoding input via `inputSchema`), returning its id. */
-  readonly sendStep: <B, J>(
-    target: CallTarget,
-    input: unknown,
-    inputSchema: Schema.Codec<B, J, never, never>,
-  ) => Effect.Effect<string, DurableExecutionError>
-  /**
-   * Start a workflow's `run` at its DETERMINISTIC owner call id (`runCallId`), encoding
-   * input via the handler's input codec, and report whether this admitted a fresh run
-   * (`"started"`) or hit an existing one (`"alreadyStarted"`). Run-once: a second start
-   * never re-runs the body. Attach to the result via `attach(runCallId, …)`.
-   */
-  readonly workflowStart: <I, O, E, R>(
-    handler: Handler<I, O, E, R>,
-    runCallId: string,
-    input: I,
-  ) => Effect.Effect<WorkflowStartStatus, DurableExecutionError, R>
-}
-
-export class DurableExecutionRuntime
-  extends Context.Service<DurableExecutionRuntime, DurableExecutionRuntimeApi>()(
-    "effect-s2-durable/Runtime/DurableExecutionRuntime",
+export const DurableEngineLive = (
+  handlers: ReadonlyArray<RegisteredHandler> = [],
+  objectSeeds: ReadonlyArray<ObjectHandlerSeed> = [],
+): Layer.Layer<DurableEngine, DurableExecutionError, S2Client> => {
+  const base = Layer.mergeAll(EngineState.layer(handlers, objectSeeds), DurableStores.layer)
+  const internal = Layer.mergeAll(HandlerPrimitives.layer, ResolutionRouter.layer, ResultReader.layer).pipe(
+    Layer.provideMerge(base),
   )
-{
-  /**
-   * The S2-backed runtime layer. Requires an `S2Client`; owns its fiber scope.
-   * `handlers` seed service boot recovery; `objectSeeds` (keyed `${object}/${method}`)
-   * seed object boot recovery so a fresh engine can re-drive pending object heads.
-   */
-  static layer(
-    handlers: ReadonlyArray<RegisteredHandler> = [],
-    objectSeeds: ReadonlyArray<ObjectHandlerSeed> = [],
-  ): Layer.Layer<DurableExecutionRuntime, DurableExecutionError, S2Client> {
-    const base = Layer.mergeAll(RuntimeState.layer(handlers, objectSeeds), RuntimeStores.layer)
-    const internal = Layer.mergeAll(PrimitiveInterpreter.layer, IngressRouter.layer, CompletionReader.layer).pipe(
-      Layer.provideMerge(base),
-    )
-    return Layer.effect(DurableExecutionRuntime)(makeRuntime).pipe(Layer.provide(internal))
-  }
+  return Layer.effect(DurableEngine)(makeEngine).pipe(Layer.provide(internal))
 }
 
-const makeRuntime = Effect.gen(function*() {
-    const runtimeState = yield* RuntimeState
-    const stores = yield* RuntimeStores
-    const { engineScope, registry, objectHandlers, objectNames, running } = runtimeState
-    const { objectStore: store, openWf, provideClient, roster } = stores
-    const ingress = yield* IngressRouter
-    const completion = yield* CompletionReader
+const makeEngine = Effect.gen(function*() {
+    const engineState = yield* EngineState
+    const stores = yield* DurableStores
+    const { engineScope, registry, objectHandlers, objectNames, running } = engineState
+    const { objectDriver: store, openWf, provideClient, roster } = stores
+    const ingress = yield* ResolutionRouter
+    const completion = yield* ResultReader
 
     const withActive = (operation: string): Effect.Effect<Invocation, DurableExecutionError> =>
       Effect.flatMap(ActiveInvocation, (opt) =>
         Option.isNone(opt) ? fail(operation, `${operation} called outside an active handler`) : Effect.succeed(opt.value))
 
-    const primitives = yield* PrimitiveInterpreter
+    const primitives = yield* HandlerPrimitives
 
     const runInternalHandler = (
       handler: RegisteredHandler,
@@ -190,12 +85,12 @@ const makeRuntime = Effect.gen(function*() {
     ) =>
       handler.program.pipe(
         Effect.provideService(ActiveInvocation, Option.some(invocation)),
-        Effect.provideService(DurableExecutionRuntime, api),
+        Effect.provideService(DurableEngine, api),
         Effect.exit,
       )
 
     // ── shared (read-only) object handlers ────────────────────────────────────
-    const sharedCall: DurableExecutionRuntimeApi["sharedCall"] = (handler, object, key, input, schema) =>
+    const sharedCall: DurableEngineApi["sharedCall"] = (handler, object, key, input, schema) =>
       Effect.gen(function*() {
         // encode the input through the handler's input codec — the same boundary the
         // normal submit path uses, so a transform codec (decoded ≠ encoded) round-trips.
@@ -249,7 +144,7 @@ const makeRuntime = Effect.gen(function*() {
         return callId
       })
 
-    const callStep: DurableExecutionRuntimeApi["callStep"] = (target, input, inputSchema, schema) =>
+    const callStep: DurableEngineApi["callStep"] = (target, input, inputSchema, schema) =>
       withActive("call").pipe(Effect.flatMap((active) =>
         // encode the input through the target's input codec — the same boundary submit
         // uses — so a transform codec (decoded ≠ encoded) round-trips on the target.
@@ -259,7 +154,7 @@ const makeRuntime = Effect.gen(function*() {
         ),
       ))
 
-    const sendStep: DurableExecutionRuntimeApi["sendStep"] = (target, input, inputSchema) =>
+    const sendStep: DurableEngineApi["sendStep"] = (target, input, inputSchema) =>
       withActive("send").pipe(Effect.flatMap((active) =>
         encode(inputSchema, input).pipe(Effect.flatMap((enc) => issueCall(active, target, enc))),
       ))
@@ -311,7 +206,7 @@ const makeRuntime = Effect.gen(function*() {
 
     // Fork ONE service handler body into the engine scope, register it as the live
     // owner, and hand back its completion waiter. (Object calls do NOT run here —
-    // they settle on their owner log via the InvocationStore drainer.)
+    // they settle on their owner log via the ObjectOwnerDriver drainer.)
     const runExecution = <E, R>(
       handler: Handler<unknown, unknown, E, R>,
       executionId: string,
@@ -338,7 +233,7 @@ const makeRuntime = Effect.gen(function*() {
         }
         const body: Effect.Effect<boolean, never, R> = handler.program.pipe(
           Effect.provideService(ActiveInvocation, Option.some(invocation)),
-          Effect.provideService(DurableExecutionRuntime, api),
+          Effect.provideService(DurableEngine, api),
           Effect.exit,
           Effect.flatMap((exit) =>
             // route a completion failure to the result waiter instead of dying
@@ -425,28 +320,28 @@ const makeRuntime = Effect.gen(function*() {
         return outcome
       })
 
-    const workflowStart: DurableExecutionRuntimeApi["workflowStart"] = (handler, runCallId, input) =>
+    const workflowStart: DurableEngineApi["workflowStart"] = (handler, runCallId, input) =>
       Effect.gen(function*() {
         const inputEncoded = yield* encode(handler.input as Schema.Codec<unknown, unknown, never, never>, input)
         const address = yield* decodeExecutionAddress(runCallId)
         if (address._tag !== "object") {
           return yield* fail("workflowStart", `workflow run id is not an object call id: ${runCallId}`)
         }
-        // Intentional existential handler cast: compiled workflow generics are recovered at the runtime boundary.
+        // Intentional existential handler cast: compiled workflow generics are recovered at the engine boundary.
         const outcome = yield* admitObject(handler as unknown as RegisteredHandler, runCallId, address.parts, inputEncoded)
         // a fresh `Admitted` is the only "started"; an existing pending/completed run is
         // already-started (run-once: the body is never executed a second time).
         return outcome._tag === "Admitted" ? "started" : "alreadyStarted"
       })
 
-    const submit: DurableExecutionRuntimeApi["submit"] = (handler, executionId, input) =>
+    const submit: DurableEngineApi["submit"] = (handler, executionId, input) =>
       Effect.gen(function*() {
         const inputEncoded = yield* encode(handler.input as Schema.Codec<unknown, unknown, never, never>, input)
         // An object call id self-routes to its owner ActorEvent log; any other id is
         // a stateless service execution on the WorkflowDb/roster path.
         const address = yield* decodeExecutionAddress(executionId)
         if (address._tag === "object") {
-          // Intentional existential handler cast: compiled object generics are recovered at the runtime boundary.
+          // Intentional existential handler cast: compiled object generics are recovered at the engine boundary.
           yield* admitObject(handler as unknown as RegisteredHandler, executionId, address.parts, inputEncoded)
           return
         }
@@ -526,7 +421,7 @@ const makeRuntime = Effect.gen(function*() {
       { discard: true },
     ).pipe(Effect.withSpan("effect-s2-durable.object.boot-recover"), Effect.ignore)
 
-    const api: DurableExecutionRuntimeApi = {
+    const api: DurableEngineApi = {
       submit,
       attach: completion.attach,
       poll: completion.poll,

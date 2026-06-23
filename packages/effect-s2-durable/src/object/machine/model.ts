@@ -1,10 +1,10 @@
 import { Effect, Option, Schema } from "effect"
 
 /**
- * Internal object mechanics for `DurableExecutionRuntime` (consolidation SDD).
+ * Internal object mechanics for `DurableEngine` (consolidation SDD).
  *
- * NOT a public API and NOT a sibling runtime: these are the durable-event model
- * the runtime's object call path folds over. One ordered `ActorEvent` log per
+ * NOT a public API and NOT a sibling engine: these are the durable-event model
+ * the object owner driver folds over. One ordered `ActorEvent` log per
  * `(object, key)` owner stream is the system of record; the latest-value view is a
  * pure projection (`replay`) — never a separate table.
  *

@@ -21,7 +21,7 @@ import { type HttpServerError } from "effect/unstable/http"
 import { S2Client } from "effect-s2"
 import type { DurableExecutionError } from "./errors.ts"
 import { durableIngress } from "./ingress/server.ts"
-import { type DurableExecutionRuntime } from "./Runtime.ts"
+import { type DurableEngine } from "./engine/api.ts"
 import { type AnyDef, serviceLayer } from "./service.ts"
 
 /** Configuration for a single durable host. */
@@ -50,7 +50,7 @@ export interface DurableHostOptions {
 export const DurableHostLive = (
   opts: DurableHostOptions,
 ): Layer.Layer<
-  DurableExecutionRuntime,
+  DurableEngine,
   DurableExecutionError | Config.ConfigError | HttpServerError.ServeError
 > => {
   const s2 = opts.s2 ?? S2Client.layer({
@@ -78,7 +78,7 @@ export const DurableHostLive = (
 export const DurableHostFromConfig = (
   catalog: ReadonlyArray<AnyDef>,
 ): Layer.Layer<
-  DurableExecutionRuntime,
+  DurableEngine,
   DurableExecutionError | Config.ConfigError | HttpServerError.ServeError
 > =>
   Layer.unwrap(

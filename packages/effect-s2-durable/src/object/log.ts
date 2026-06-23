@@ -10,7 +10,7 @@ import {
   SeqNumMismatchError,
 } from "effect-s2"
 import { DurableExecutionError, durableError as toError } from "../errors.ts"
-import { ActorEvent, type LogEntry } from "./events.ts"
+import { ActorEvent, type LogEntry } from "./machine/index.ts"
 
 const isS2Conflict = Schema.is(S2Conflict)
 const isS2NotFound = Schema.is(S2NotFound)
@@ -19,7 +19,7 @@ const isS2RangeNotSatisfiable = Schema.is(S2RangeNotSatisfiable)
 /**
  * The effectful read/write surface of one owner stream as an ordered `ActorEvent`
  * log. Reads via `effect-s2.readDecoded`, writes via `publish`/`conditionalAppend`
- * — never a `StreamDb` table fold. Internal to the runtime's object path.
+ * — never a `StreamDb` table fold. Internal to the object owner driver.
  */
 export interface ActorLog {
   readonly streamName: string

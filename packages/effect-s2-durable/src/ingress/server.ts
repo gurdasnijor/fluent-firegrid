@@ -1,10 +1,10 @@
 import { Effect, Layer, Option, Schema } from "effect"
 import { HttpRouter } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
-import { encodeObjectCallId } from "../object/events.ts"
+import { encodeObjectCallId } from "../object/machine/index.ts"
 import { invokeUntyped, sendUntyped } from "../service.ts"
 import type { InvokeOptions } from "../service.ts"
-import { DurableExecutionRuntime } from "../Runtime.ts"
+import { DurableEngine } from "../engine/api.ts"
 import { type AnyDef, asFailure, DurableApi, DurableFailure } from "./contract.ts"
 
 // ── definitions registry + helpers ──────────────────────────────────────────
@@ -98,12 +98,12 @@ const locateId = (def: AnyDef, payload: InvokePayloadType): Effect.Effect<string
   return Effect.succeed(payload.idempotencyKey)
 }
 
-// Resolve the def + the engine id + the runtime (the shared head of attach/output).
+// Resolve the def + the engine id + the engine (the shared head of attach/output).
 const locate = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
   Effect.gen(function*() {
     const resolved = yield* resolveValidated(registry, payload)
     const id = yield* locateId(resolved.def, payload)
-    const rt = yield* DurableExecutionRuntime
+    const rt = yield* DurableEngine
     return { resolved, id, rt }
   })
 
@@ -125,7 +125,7 @@ const runOutput = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
 
 /**
  * The ingress server layer for a set of definitions. Requires `HttpServer`
- * (supplied at the edge by `NodeHttpServer.layer`) and `DurableExecutionRuntime`
+ * (supplied at the edge by `NodeHttpServer.layer`) and `DurableEngine`
  * (the engine, from `serviceLayer(...)` over the same definitions).
  */
 export const durableIngress = (defs: ReadonlyArray<AnyDef>) => {

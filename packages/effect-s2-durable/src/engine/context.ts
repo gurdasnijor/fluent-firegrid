@@ -1,7 +1,7 @@
 import { Context, type Deferred, type Effect, type Exit, type Fiber, type HashMap, Option, type Ref } from "effect"
 import type { AnyTable, RowOf, TableFacade } from "effect-s2-stream-db"
-import type { ActorSnapshot } from "../object/events.ts"
-import type { ObjectStateBackend } from "../object/invocation-store.ts"
+import type { ActorSnapshot } from "../object/machine/index.ts"
+import type { ObjectStateBackend } from "../object/owner-driver.ts"
 import type { DurableExecutionError } from "../errors.ts"
 import type { WorkflowDb } from "../schema.ts"
 import type { Handler } from "../types.ts"
@@ -55,7 +55,7 @@ export type Invocation = ServiceInvocation | ObjectInvocation | SharedObjectInvo
  * Context.Reference is the right Effect primitive.
  */
 export const ActiveInvocation = Context.Reference<Option.Option<Invocation>>(
-  "effect-s2-durable/ActiveInvocation",
+  "effect-s2-durable/engine/ActiveInvocation",
   { defaultValue: () => Option.none() },
 )
 

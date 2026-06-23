@@ -1,13 +1,13 @@
 import { Deferred, Effect, HashMap, Option, Ref } from "effect"
 import type { DurableExecutionError } from "../errors.ts"
 import { toError } from "./helpers.ts"
-import type { ServiceInvocation } from "./invocation.ts"
-import type { RuntimeStateApi } from "./state.ts"
+import type { EngineStateApi } from "./state.ts"
+import type { ServiceInvocation } from "./context.ts"
 
 export const serviceWaiterKey = (executionId: string, name: string) => `${executionId}/${name}`
 
 const pokeServiceDeferred = (
-  waiters: RuntimeStateApi["waiters"],
+  waiters: EngineStateApi["waiters"],
   executionId: string,
   name: string,
 ): Effect.Effect<void> =>
@@ -19,7 +19,7 @@ const pokeServiceDeferred = (
   ))
 
 export const resolveServiceDeferred = (
-  waiters: RuntimeStateApi["waiters"],
+  waiters: EngineStateApi["waiters"],
   db: ServiceInvocation["db"],
   executionId: string,
   name: string,

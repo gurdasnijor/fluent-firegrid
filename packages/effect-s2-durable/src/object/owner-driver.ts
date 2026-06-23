@@ -5,38 +5,28 @@ import { DurableExecutionError, durableError as toError } from "../errors.ts"
 import {
   type ActorEvent,
   type ActorExit,
-  callStatus,
   type CallStatus,
-  isDone,
-  journalValue,
-  type LogEntry,
   type ObjectCallIdParts,
   pathSegment,
   replay,
-  signalValue,
-  stateValue,
   transition,
   unPathSegment,
-} from "./events.ts"
+} from "./machine/index.ts"
 import { ensureStream, FenceLost, freshHostToken, openOwnerDriveSession } from "./drive-session.ts"
 import { type ActorLog, openLog } from "./log.ts"
+import * as ObjectMachine from "./machine/index.ts"
 
 /**
- * `InvocationStore` — the object-backed durable store the runtime's object call
- * path uses (consolidation SDD). It owns owner-stream access, admission, the
- * exclusive per-key drainer, and the journaled `state` backend. It is NOT exported
- * from the package and is NOT a sibling runtime: only `DurableExecutionRuntime`
- * constructs and calls it.
+ * `ObjectOwnerDriver` interprets pure `ObjectMachine` decisions against the S2
+ * owner stream. It owns owner-stream access, admission, fenced draining, local
+ * waiters, and the handler-facing `state` backend.
  *
  * Scope so far: admit + state + run-journal + signal ingress + completion + by-id
  * status. Boot-recovery, timers (`sleep`), and checkpointing land in later batch items.
  */
 
 /** The outcome of admitting a call (idempotent on a re-admit of the same id). */
-export type AdmitResult =
-  | { readonly _tag: "Admitted" }
-  | { readonly _tag: "AlreadyPending" }
-  | { readonly _tag: "AlreadyCompleted" }
+export type AdmitResult = ObjectMachine.AdmitResult
 
 /** The durable surfaces a running object method writes through (state + run journal). */
 export interface ObjectStateBackend {
@@ -83,7 +73,7 @@ export type RunHead = (call: {
   readonly state: ObjectStateBackend
 }) => Effect.Effect<ActorExit, DurableExecutionError, S2Client>
 
-export interface InvocationStoreApi {
+export interface ObjectOwnerDriverApi {
   /** Durably admit a call into its owner FIFO (CAS `Accepted`); idempotent by id. */
   readonly admit: (
     callId: string,
@@ -155,49 +145,58 @@ const makeBackend = (
   callId: string,
   readCounter: Ref.Ref<number>,
   signalPort: SignalPort,
-): ObjectStateBackend => {
-  const write = (
-    op: "set" | "delete",
-    table: string,
+	): ObjectStateBackend => {
+	  const decide = (
+	    snapshot: ReturnType<typeof replay>,
+	    command: ObjectMachine.ObjectCommand,
+	  ): ObjectMachine.ObjectDecision => ObjectMachine.decide(snapshot, command)
+	
+	  const appendAndApply = (event: ActorEvent): Effect.Effect<void, DurableExecutionError, S2Client> =>
+	    Effect.gen(function*() {
+	      const seqNum = yield* append(event)
+	      yield* Ref.update(snapshotRef, (snapshot) => transition(snapshot, { seqNum, event }))
+	    })
+	
+	  const appendEvents = (events: ReadonlyArray<ActorEvent>): Effect.Effect<void, DurableExecutionError, S2Client> =>
+	    Effect.forEach(events, appendAndApply, { discard: true })
+	
+	  const write = (
+	    op: "set" | "delete",
+	    table: string,
     key: string,
     value: unknown,
-  ): Effect.Effect<void, DurableExecutionError, S2Client> =>
-    Effect.gen(function*() {
-      const event = { _tag: "StateChanged" as const, op, table, key, ...(op === "set" ? { value } : {}) }
-      const seqNum = yield* append(event)
-      yield* Ref.update(snapshotRef, (snapshot) => transition(snapshot, { seqNum, event }))
-    })
+	  ): Effect.Effect<void, DurableExecutionError, S2Client> =>
+	    Effect.gen(function*() {
+	      const snapshot = yield* Ref.get(snapshotRef)
+	      const result = decide(
+	        snapshot,
+	        op === "set" ? { _tag: "StateSet", table, key, value } : { _tag: "StateDelete", table, key },
+	      )
+	      yield* appendEvents(result.events)
+	    })
 
   return {
     get: (table, key) =>
       Effect.gen(function*() {
-        const step = String(yield* Ref.getAndUpdate(readCounter, (n) => n + 1))
-        const snapshot = yield* Ref.get(snapshotRef)
-        const recorded = journalValue(snapshot, callId, "read", step)
-        if (Option.isSome(recorded)) {
-          const record = recorded.value as { readonly present: boolean; readonly value: unknown }
-          return record.present ? Option.some(record.value) : Option.none<unknown>()
-        }
-        const live = stateValue(snapshot, table, key)
-        const record = { present: Option.isSome(live), value: Option.getOrNull(live) }
-        const event = { _tag: "Journaled" as const, callId, kind: "read", step, value: record }
-        const seqNum = yield* append(event)
-        yield* Ref.update(snapshotRef, (s) => transition(s, { seqNum, event }))
-        return live
-      }),
+	        const step = String(yield* Ref.getAndUpdate(readCounter, (n) => n + 1))
+	        const snapshot = yield* Ref.get(snapshotRef)
+	        const result = decide(snapshot, { _tag: "StateGet", callId, step, table, key })
+	        yield* appendEvents(result.events)
+	        return result.result as Option.Option<unknown>
+	      }),
     set: (table, key, value) => write("set", table, key, value),
     delete: (table, key) => write("delete", table, key, undefined),
     // the durable-primitive journal, namespaced by `kind` (`run`, `sleep`, …) so a
     // step named like a state-read journal can never collide with one.
     journal: {
       get: (kind, step) =>
-        Ref.get(snapshotRef).pipe(Effect.map((snapshot) => journalValue(snapshot, callId, kind, step))),
-      put: (kind, step, value) =>
-        Effect.gen(function*() {
-          const event = { _tag: "Journaled" as const, callId, kind, step, value }
-          const seqNum = yield* append(event)
-          yield* Ref.update(snapshotRef, (snapshot) => transition(snapshot, { seqNum, event }))
-        }),
+        Ref.get(snapshotRef).pipe(Effect.map((snapshot) => ObjectMachine.journalGet(snapshot, callId, kind, step))),
+	      put: (kind, step, value) =>
+	        Effect.gen(function*() {
+	          const snapshot = yield* Ref.get(snapshotRef)
+	          const result = decide(snapshot, { _tag: "JournalPut", callId, kind, step, value })
+	          yield* appendEvents(result.events)
+	        }),
     },
     signal: {
       await: (name) => {
@@ -206,7 +205,8 @@ const makeBackend = (
         const check = Effect.gen(function*() {
           const live = replay(yield* log.read())
           yield* Ref.set(snapshotRef, live)
-          return signalValue(live, callId, name)
+          const result = ObjectMachine.awaitSignal(live, callId, name)
+          return result.result._tag === "Resolved" ? Option.some(result.result.value) : Option.none()
         })
         const loop = (): Effect.Effect<unknown, DurableExecutionError, S2Client> =>
           Effect.gen(function*() {
@@ -229,17 +229,26 @@ const makeBackend = (
         return loop()
       },
       resolve: (name, value) =>
-        Effect.gen(function*() {
-          const event = { _tag: "SignalResolved" as const, callId, name, value }
-          const seqNum = yield* append(event)
-          yield* Ref.update(snapshotRef, (snapshot) => transition(snapshot, { seqNum, event }))
-          yield* signalPort.poke(callId, name)
+	        Effect.gen(function*() {
+	          const snapshot = yield* Ref.get(snapshotRef)
+	          const result = decide(snapshot, { _tag: "ResolveSignal", callId, name, value })
+	          yield* appendEvents(result.events)
+          yield* Effect.forEach(
+            result.actions,
+            (action) =>
+              Effect.gen(function*() {
+                if (action._tag === "NotifySignalWaiter") {
+                  yield* signalPort.poke(action.callId, action.name)
+                }
+              }),
+            { discard: true },
+          )
         }),
     },
   }
 }
 
-const make = (): Effect.Effect<InvocationStoreApi> =>
+const make = (): Effect.Effect<ObjectOwnerDriverApi> =>
   Effect.gen(function*() {
     // This host's owner fence token (minted once per process). The drainer claims an
     // owner stream with it via an owner-drive session; S2 enforces cross-host
@@ -319,15 +328,15 @@ const make = (): Effect.Effect<InvocationStoreApi> =>
           Effect.gen(function*() {
             const entries = yield* log.read()
             const snapshot = replay(entries)
-            if (snapshot.order.includes(callId)) {
-              return isDone(snapshot, callId)
-                ? { _tag: "AlreadyCompleted" as const }
-                : { _tag: "AlreadyPending" as const }
+            const result = ObjectMachine.admit(snapshot, { callId, method: parts.method, input })
+            const event = result.events[0]
+            if (event === undefined) {
+              return result.result
             }
             const tail = yield* log.tailSeqNum
-            const ack = yield* log.casAppend({ _tag: "Accepted", callId, method: parts.method, input }, tail)
+            const ack = yield* log.casAppend(event, tail)
             if (Option.isSome(ack)) {
-              return { _tag: "Admitted" as const }
+              return result.result
             }
             if (remaining <= 0) {
               return yield* new DurableExecutionError({
@@ -347,7 +356,7 @@ const make = (): Effect.Effect<InvocationStoreApi> =>
     ): Effect.Effect<CallStatus, DurableExecutionError, S2Client> =>
       Effect.gen(function*() {
         const log = openLog(yield* ownerStream(parts.object, parts.key))
-        return callStatus(replay(yield* log.read()), callId)
+        return ObjectMachine.status(replay(yield* log.read()), callId)
       }).pipe(Effect.withSpan("effect-s2-durable.object.status", { attributes: { object: parts.object, key: parts.key } }))
 
     const drain = (
@@ -376,8 +385,9 @@ const make = (): Effect.Effect<InvocationStoreApi> =>
             // No pending head → don't fence a quiescent stream (boot recovery and
             // redundant drains would otherwise cause ownership churn). Read/replay
             // first, claim only when there is work.
-            const hasPending = base.order.some((c) => !base.results.has(c) && !startedSet.has(c))
-            if (!hasPending) {
+            const acceptedHeads = ObjectMachine.acceptedHeads(entries.map((entry) => entry.event))
+            const firstHead = ObjectMachine.selectNextHead(base, acceptedHeads, { started: startedSet })
+            if (firstHead.result === undefined) {
               yield* Ref.update(snapshots, (m) => new Map(m).set(stream, base))
               return
             }
@@ -403,29 +413,28 @@ const make = (): Effect.Effect<InvocationStoreApi> =>
 
             // Run one head, advancing the in-memory snapshot by its writes + `Completed`.
             const runOne = (
-              entries: ReadonlyArray<LogEntry>,
               snapshot: ReturnType<typeof replay>,
-              headCall: string,
+              head: ObjectMachine.PendingHead,
             ): Effect.Effect<ReturnType<typeof replay>, DurableExecutionError | FenceLost, S2Client> =>
               Effect.gen(function*() {
-                const accepted = entries.find((e) => e.event._tag === "Accepted" && e.event.callId === headCall)
-                if (accepted === undefined || accepted.event._tag !== "Accepted") {
-                  return snapshot // unreachable: a head always has an Accepted
-                }
                 const snapshotRef = yield* Ref.make(snapshot)
                 const readCounter = yield* Ref.make(0)
-                const backend = makeBackend(log, backendAppend, snapshotRef, headCall, readCounter, signalPort)
+                const backend = makeBackend(log, backendAppend, snapshotRef, head.callId, readCounter, signalPort)
                 const exit = yield* runHead({
-                  callId: headCall,
-                  method: accepted.event.method,
-                  input: accepted.event.input,
+                  callId: head.callId,
+                  method: head.method,
+                  input: head.input,
                   state: backend,
                 }).pipe(
                   Effect.catchTag("DurableExecutionError", (error): Effect.Effect<never, DurableExecutionError | FenceLost> =>
                     isFenceLostCause(error.cause) ? Effect.fail(error.cause) : Effect.fail(error),
                   ),
                 )
-                const event = { _tag: "Completed" as const, callId: headCall, exit }
+                const result = ObjectMachine.complete(yield* Ref.get(snapshotRef), head.callId, exit)
+                const event = result.events[0]
+                if (event === undefined) {
+                  return yield* Ref.get(snapshotRef)
+                }
                 const seqNum = yield* session.append(event)
                 // Advance the live snapshot (state + this completion) WITHOUT a fresh
                 // durable read — a re-read here can lag the append and re-run a settled
@@ -434,24 +443,22 @@ const make = (): Effect.Effect<InvocationStoreApi> =>
               })
 
             const drainFrom = (
-              entries: ReadonlyArray<LogEntry>,
               snapshot: ReturnType<typeof replay>,
             ): Effect.Effect<ReturnType<typeof replay>, DurableExecutionError | FenceLost, S2Client> =>
               Effect.gen(function*() {
-                // the head is the lowest accepted call that is neither completed nor
-                // already started by this process (the in-memory at-most-once guard).
-                const headCall = snapshot.order.find((c) => !snapshot.results.has(c) && !startedSet.has(c))
-                if (headCall === undefined) {
+                const selected = ObjectMachine.selectNextHead(snapshot, acceptedHeads, { started: startedSet })
+                const head = selected.result
+                if (head === undefined) {
                   return snapshot // batch drained to quiescence
                 }
-                startedSet.add(headCall) // mark BEFORE running — never selected again
-                const advanced = yield* runOne(entries, snapshot, headCall).pipe(
-                  Effect.tapError(() => Effect.sync(() => startedSet.delete(headCall))), // a failed start may retry
+                startedSet.add(head.callId) // mark BEFORE running — never selected again
+                const advanced = yield* runOne(snapshot, head).pipe(
+                  Effect.tapError(() => Effect.sync(() => startedSet.delete(head.callId))), // a failed start may retry
                 )
-                return yield* drainFrom(entries, advanced)
+                return yield* drainFrom(advanced)
               })
 
-            const advanced = yield* drainFrom(entries, base)
+            const advanced = yield* drainFrom(base)
             yield* Ref.update(snapshots, (m) => new Map(m).set(stream, advanced))
           }).pipe(
             // A peer claimed the stream mid-drive → stop driving (become a follower).
@@ -512,8 +519,8 @@ const make = (): Effect.Effect<InvocationStoreApi> =>
     return { admit, status, drain, resolveSignal, ownerKeys, readSnapshot }
   })
 
-export class InvocationStore extends Context.Service<InvocationStore, InvocationStoreApi>()(
-  "effect-s2-durable/object/invocation-store/InvocationStore",
+export class ObjectOwnerDriver extends Context.Service<ObjectOwnerDriver, ObjectOwnerDriverApi>()(
+  "effect-s2-durable/object/owner-driver/ObjectOwnerDriver",
 ) {
-  static readonly layer = Layer.effect(InvocationStore, make())
+  static readonly layer = Layer.effect(ObjectOwnerDriver, make())
 }

@@ -1,13 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- handler input/output are existential at the definition boundary; `any` is required for inference across the handler record (mirrors restate-sdk-gen's define/free). Concrete types are recovered on the client surface via HandlerInput/HandlerOutput. */
 import { Effect, Option, Random, type Layer, Schema } from "effect"
 import type { S2Client } from "effect-s2"
-import { encodeObjectCallId, OBJECT_ID_PREFIX } from "./object/events.ts"
+import { encodeObjectCallId, OBJECT_ID_PREFIX } from "./object/machine/index.ts"
 import { type DurableExecutionError, durableError } from "./errors.ts"
 import { handler } from "./handler.ts"
 import { handlerRequest } from "./primitives.ts"
-import { ActiveInvocation } from "./runtime/invocation.ts"
-import { DurableExecutionRuntime } from "./Runtime.ts"
-import type { DurableExecutionRuntimeApi, ObjectHandlerSeed, RegisteredHandler, WorkflowStartStatus } from "./Runtime.ts"
+import { ActiveInvocation } from "./engine/context.ts"
+import { DurableEngine, type DurableEngineApi, type WorkflowStartStatus } from "./engine/api.ts"
+import { type ObjectHandlerSeed, type RegisteredHandler } from "./engine/context.ts"
+import { DurableEngineLive } from "./engine/live.ts"
 import type { Handler } from "./types.ts"
 
 /**
@@ -40,7 +41,7 @@ type SchemasFor<H extends Handlers> = {
 
 interface Compiled {
   // self-contained: a registered service handler has no unmet `R` beyond the
-  // runtime (provided by `submit`) and surfaces no typed error to the caller.
+  // engine (provided by `submit`) and surfaces no typed error to the caller.
   readonly handler: Handler<unknown, unknown, never, never>
   // input/output codecs narrowed ONCE here from the handler's erased `Schema.Top`
   // to `Codec<unknown, …>`, so the ingress + clients dispatch without re-casting.
@@ -131,7 +132,7 @@ export const object = <const Name extends string, H extends Handlers, S extends 
 })
 
 /**
- * A durable **workflow** definition — an object specialization (not a third runtime).
+ * A durable **workflow** definition — an object specialization (not a third engine).
  * Its `run` is a single exclusive handler admitted **at most once** per workflow id;
  * optional `handlers` are shared, read-only **query** handlers over the run's owner
  * projection. Waits/timers/durable steps/state all reuse the same object primitives,
@@ -178,7 +179,7 @@ export const workflow = <const Name extends string, R extends HandlerFn, S exten
   config: WorkflowConfig<Name, R, S>,
 ): WorkflowDefinition<Name, R, S> => {
   // `run` is the reserved exclusive entrypoint — a shared handler of the same name would
-  // shadow it on `sharedClient(wf, id).run`. Typed out above; guard at runtime too.
+  // shadow it on `sharedClient(wf, id).run`. Typed out above; guard dynamically too.
   if (config.handlers !== undefined && Object.prototype.hasOwnProperty.call(config.handlers, WORKFLOW_RUN)) {
     throw new Error(`workflow ${JSON.stringify(config.name)}: a shared handler may not be named ${JSON.stringify(WORKFLOW_RUN)} (reserved for the run-once entrypoint)`)
   }
@@ -221,21 +222,21 @@ type InvokeArgs<I> = [I] extends [void] ? [input?: undefined, options?: InvokeOp
 export type ServiceClient<H extends Handlers> = {
   readonly [K in keyof H]: (
     ...args: InvokeArgs<HandlerInput<H[K]>>
-  ) => Effect.Effect<HandlerOutput<H[K]>, DurableExecutionError, DurableExecutionRuntime>
+  ) => Effect.Effect<HandlerOutput<H[K]>, DurableExecutionError, DurableEngine>
 }
 
 /** Fire-and-forget surface: `sendClient(def).method(input)` submits, returning the execution id. */
 export type SendClient<H extends Handlers> = {
   readonly [K in keyof H]: (
     ...args: InvokeArgs<HandlerInput<H[K]>>
-  ) => Effect.Effect<string, DurableExecutionError, DurableExecutionRuntime>
+  ) => Effect.Effect<string, DurableExecutionError, DurableEngine>
 }
 
 /** Read-only call surface for an object's SHARED handlers: `sharedClient(obj, key).method(input)`. */
 export type SharedClient<S extends Handlers> = {
   readonly [K in keyof S]: (
     ...args: InvokeArgs<HandlerInput<S[K]>>
-  ) => Effect.Effect<HandlerOutput<S[K]>, DurableExecutionError, DurableExecutionRuntime>
+  ) => Effect.Effect<HandlerOutput<S[K]>, DurableExecutionError, DurableEngine>
 }
 
 /** A virtual object's identity for a call: its definition name + the typed key. */
@@ -281,14 +282,14 @@ const mintId = (
       ),
     )
 
-/** Mint the execution id, submit, and hand back the id + runtime for the caller to finish. */
+/** Mint the execution id, submit, and hand back the id + engine for the caller to finish. */
 const beginInvoke = (
   compiled: Compiled,
   method: string,
   input: unknown,
   options: InvokeOptions | undefined,
   object: ObjectIdentity | undefined,
-): Effect.Effect<{ readonly id: string; readonly rt: DurableExecutionRuntimeApi }, DurableExecutionError, DurableExecutionRuntime> =>
+): Effect.Effect<{ readonly id: string; readonly rt: DurableEngineApi }, DurableExecutionError, DurableEngine> =>
   Effect.gen(function*() {
     // Footgun guard (Restate keeps these surfaces physically separate): `client`/
     // `sendClient` are the TOP-LEVEL / ingress path. Inside a handler they would
@@ -303,7 +304,7 @@ const beginInvoke = (
       )
     }
     const id = yield* mintId(method, options, object)
-    const rt = yield* DurableExecutionRuntime
+    const rt = yield* DurableEngine
     yield* rt.submit(compiled.handler, id, input)
     return { id, rt }
   })
@@ -313,10 +314,10 @@ const makeProxy = <T>(
   def: { readonly compiled: Record<string, Compiled> },
   finish: (
     compiled: Compiled,
-    ctx: { readonly id: string; readonly rt: DurableExecutionRuntimeApi },
-  ) => Effect.Effect<T, DurableExecutionError, DurableExecutionRuntime>,
+    ctx: { readonly id: string; readonly rt: DurableEngineApi },
+  ) => Effect.Effect<T, DurableExecutionError, DurableEngine>,
   object: ObjectIdentity | undefined,
-): Record<string, (input: unknown, options?: InvokeOptions) => Effect.Effect<T, DurableExecutionError, DurableExecutionRuntime>> =>
+): Record<string, (input: unknown, options?: InvokeOptions) => Effect.Effect<T, DurableExecutionError, DurableEngine>> =>
   Object.fromEntries(
     Object.entries(def.compiled).map(([method, compiled]) =>
       [
@@ -365,12 +366,12 @@ export function sendClient<Name extends string, H extends Handlers>(
 /** Erased (no per-method types) request-response dispatch — the ingress server's call surface. */
 export type UntypedClient = Record<
   string,
-  (input: unknown, options?: InvokeOptions) => Effect.Effect<unknown, DurableExecutionError, DurableExecutionRuntime>
+  (input: unknown, options?: InvokeOptions) => Effect.Effect<unknown, DurableExecutionError, DurableEngine>
 >
 /** Erased fire-and-forget dispatch — each call returns the execution id. */
 export type UntypedSendClient = Record<
   string,
-  (input: unknown, options?: InvokeOptions) => Effect.Effect<string, DurableExecutionError, DurableExecutionRuntime>
+  (input: unknown, options?: InvokeOptions) => Effect.Effect<string, DurableExecutionError, DurableEngine>
 >
 
 /**
@@ -392,18 +393,18 @@ const makeObjectStepProxy = <T>(
   def: ObjectDefinition<string, Handlers>,
   key: string,
   invoke: (
-    rt: DurableExecutionRuntimeApi,
+    rt: DurableEngineApi,
     target: ObjectCallTarget,
     input: unknown,
     inputCodec: RuntimeCodec,
     outputCodec: RuntimeCodec,
-  ) => Effect.Effect<T, DurableExecutionError, DurableExecutionRuntime>,
-): Record<string, (input: unknown) => Effect.Effect<T, DurableExecutionError, DurableExecutionRuntime>> =>
-  Object.entries(def.compiled).reduce<Record<string, (input: unknown) => Effect.Effect<T, DurableExecutionError, DurableExecutionRuntime>>>(
+  ) => Effect.Effect<T, DurableExecutionError, DurableEngine>,
+): Record<string, (input: unknown) => Effect.Effect<T, DurableExecutionError, DurableEngine>> =>
+  Object.entries(def.compiled).reduce<Record<string, (input: unknown) => Effect.Effect<T, DurableExecutionError, DurableEngine>>>(
     (proxy, [method, compiled]) => ({
       ...proxy,
       [method]: (input: unknown) =>
-        Effect.flatMap(DurableExecutionRuntime, (rt) =>
+        Effect.flatMap(DurableEngine, (rt) =>
           invoke(
             rt,
             { object: def.name, key, method },
@@ -466,7 +467,7 @@ export function sharedClient(
       [
         method,
         (input: unknown) =>
-          Effect.flatMap(DurableExecutionRuntime, (rt) =>
+          Effect.flatMap(DurableEngine, (rt) =>
             rt.sharedCall(
               compiled.handler,
               def.name,
@@ -504,10 +505,10 @@ export const workflowSubmit = <Name extends string, R extends HandlerFn, S exten
   def: WorkflowDefinition<Name, R, S>,
   id: string,
   ...args: InvokeArgs<HandlerInput<R>>
-): Effect.Effect<WorkflowStartStatus, DurableExecutionError, DurableExecutionRuntime> =>
+): Effect.Effect<WorkflowStartStatus, DurableExecutionError, DurableEngine> =>
   Effect.gen(function*() {
     const runCallId = yield* workflowRunId(def, id)
-    const rt = yield* DurableExecutionRuntime
+    const rt = yield* DurableEngine
     return yield* rt.workflowStart(def.compiledRun.handler, runCallId, args[0])
   })
 
@@ -515,19 +516,19 @@ export const workflowSubmit = <Name extends string, R extends HandlerFn, S exten
 export const workflowAttach = <Name extends string, R extends HandlerFn, S extends Handlers>(
   def: WorkflowDefinition<Name, R, S>,
   id: string,
-): Effect.Effect<HandlerOutput<R>, DurableExecutionError, DurableExecutionRuntime> =>
+): Effect.Effect<HandlerOutput<R>, DurableExecutionError, DurableEngine> =>
   Effect.gen(function*() {
     const runCallId = yield* workflowRunId(def, id)
-    const rt = yield* DurableExecutionRuntime
+    const rt = yield* DurableEngine
      
     return (yield* rt.attach(runCallId, def.compiledRun.output)) as HandlerOutput<R>
   })
 
 /**
  * The engine layer **seeded with these definitions' handlers** so boot recovery can
- * re-drive their running/suspended work after a process restart. Use this instead of
- * the bare `DurableExecutionRuntime.layer()` whenever work can outlive the process
- * (it parks on `sleep`/`signal`/`awakeable`, or is a pending object/workflow call).
+ * re-drive their running/suspended work after a process restart. Use this whenever
+ * work can outlive the process (it parks on `sleep`/`signal`/`awakeable`, or is a
+ * pending object/workflow call).
  * Service handlers seed the by-name registry; object/workflow methods seed owner-stream
  * recovery (a workflow's `run` re-drives its pending head exactly like an object call).
  */
@@ -537,7 +538,7 @@ export const serviceLayer = (
     | ObjectDefinition<string, Handlers>
     | WorkflowDefinition<string, HandlerFn, Handlers>
   >
-): Layer.Layer<DurableExecutionRuntime, DurableExecutionError, S2Client> => {
+): Layer.Layer<DurableEngine, DurableExecutionError, S2Client> => {
   const services = defs.filter((def): def is ServiceDefinition<string, Handlers> => def.kind === "service")
   // objects and workflows share owner-stream recovery: seed each `compiled` method as
   // `${name}/${method}`. (A workflow's only exclusive method is `run`.)
@@ -545,7 +546,7 @@ export const serviceLayer = (
     (def): def is ObjectDefinition<string, Handlers> | WorkflowDefinition<string, HandlerFn, Handlers> =>
       def.kind === "object" || def.kind === "workflow",
   )
-  return DurableExecutionRuntime.layer(
+  return DurableEngineLive(
     services.flatMap((def): ReadonlyArray<RegisteredHandler> => Object.values(def.compiled).map((c) => c.handler)),
     ownerLogged.flatMap((def): ReadonlyArray<ObjectHandlerSeed> =>
       Object.entries(def.compiled).map(([method, c]) => ({ object: def.name, method, handler: c.handler })),

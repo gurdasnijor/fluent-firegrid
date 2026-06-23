@@ -11,7 +11,7 @@ import {
   replay,
   signalValue,
   unPathSegment,
-} from "../src/object/events.ts"
+} from "../src/object/machine/index.ts"
 import { workflow, workflowRunId } from "../src/service.ts"
 
 // Pure (no S2) invariants for the object call-id routing + projection. S2-backed
@@ -146,7 +146,7 @@ describe("workflow run-id is deterministic (run-once anchor)", () => {
     }))
 
   it("rejects a shared handler named `run` (reserved for the entrypoint)", () => {
-    // the `as any` deliberately bypasses the type-level guard to prove the runtime guard fires.
+    // the `as any` deliberately bypasses the type-level guard to prove the engine guard fires.
     expect(() =>
       workflow({ name: "wf-clash", *run(n: number) { return n }, handlers: { *run() { return 0 } } as any }),
     ).toThrow(/reserved for the run-once entrypoint/)

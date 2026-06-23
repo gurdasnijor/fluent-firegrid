@@ -1,31 +1,31 @@
 import { type Duration, Effect, type Option, type Schema } from "effect"
 import type { AnyTable, RowOf } from "effect-s2-stream-db"
 import type { DurableExecutionError } from "./errors.ts"
-import { DurableExecutionRuntime } from "./Runtime.ts"
+import { DurableEngine } from "./engine/api.ts"
 import type { AwakeableHandle, DeferredHandle, IngressResolve, Run, RunOptions, StateBinding } from "./types.ts"
 
 /**
  * The free primitives — module-level functions that read the active-invocation
- * slot (internal) and delegate to the ambient `DurableExecutionRuntime`. There is
- * no `ctx` object and no public runtime accessor; a durable program is plain
+ * slot (internal) and delegate to the ambient `DurableEngine`. There is
+ * no `ctx` object and no public engine accessor; a durable program is plain
  * `Effect.gen` that yields these.
  */
 
 /**
  * A durable, replay-aware side-effect boundary. The action may use the caller's
- * own services but not the durable runtime (enforced by `Run`'s type — see
+ * own services but not the durable engine (enforced by `Run`'s type — see
  * `RunActionViolation`). The cast bridges the impl to that conditional public
- * signature, which the runtime impl can't express directly.
+ * signature, which the engine impl can't express directly.
  */
 type RunImplOptions = RunOptions<unknown, unknown, unknown, unknown>
 
-// Intentional public-surface cast: Run carries a conditional violation brand the impl cannot produce; runtime always returns the Effect branch.
+// Intentional public-surface cast: Run carries a conditional violation brand the impl cannot produce; the implementation always returns the Effect branch.
 export const run: Run = ((
   actionOrName: Effect.Effect<unknown, unknown, never> | string,
   actionOrOptions?: Effect.Effect<unknown, unknown, never> | RunImplOptions,
   options?: RunImplOptions,
 ) =>
-  Effect.flatMap(DurableExecutionRuntime, (rt) => {
+  Effect.flatMap(DurableEngine, (rt) => {
     if (typeof actionOrName === "string") {
       const namedOptions: RunImplOptions = { ...options, name: actionOrName }
       return rt.runStep(actionOrOptions as Effect.Effect<unknown, unknown, never>, namedOptions)
@@ -36,15 +36,15 @@ export const run: Run = ((
 /** The decoded handler request (the active invocation's input). */
 export const handlerRequest = <A, I>(
   schema: Schema.Codec<A, I, never, never>,
-): Effect.Effect<A, DurableExecutionError, DurableExecutionRuntime> =>
-  Effect.flatMap(DurableExecutionRuntime, (rt) => rt.handlerRequest(schema))
+): Effect.Effect<A, DurableExecutionError, DurableEngine> =>
+  Effect.flatMap(DurableEngine, (rt) => rt.handlerRequest(schema))
 
 /** A durable timer: suspend the step until `duration` has elapsed (replay-safe). */
 export const sleep = (
   name: string,
   duration: Duration.Duration,
-): Effect.Effect<void, DurableExecutionError, DurableExecutionRuntime> =>
-  Effect.flatMap(DurableExecutionRuntime, (rt) => rt.sleepStep(name, duration))
+): Effect.Effect<void, DurableExecutionError, DurableEngine> =>
+  Effect.flatMap(DurableEngine, (rt) => rt.sleepStep(name, duration))
 
 /**
  * A user-defined durable state collection over the active execution's stream — a
@@ -52,9 +52,9 @@ export const sleep = (
  * names a table); only the operations are Effects.
  */
 export const state = <Tbl extends AnyTable>(table: Tbl): StateBinding<RowOf<Tbl>> => ({
-  get: (key) => Effect.flatMap(DurableExecutionRuntime, (rt) => rt.stateGet(table, key)),
-  set: (row) => Effect.flatMap(DurableExecutionRuntime, (rt) => rt.stateSet(table, row)),
-  delete: (key) => Effect.flatMap(DurableExecutionRuntime, (rt) => rt.stateDelete(table, key)),
+  get: (key) => Effect.flatMap(DurableEngine, (rt) => rt.stateGet(table, key)),
+  set: (row) => Effect.flatMap(DurableEngine, (rt) => rt.stateSet(table, row)),
+  delete: (key) => Effect.flatMap(DurableEngine, (rt) => rt.stateDelete(table, key)),
 })
 
 /**
@@ -64,16 +64,16 @@ export const state = <Tbl extends AnyTable>(table: Tbl): StateBinding<RowOf<Tbl>
 export const signal = <A, I>(
   name: string,
   schema: Schema.Codec<A, I, never, never>,
-): Effect.Effect<A, DurableExecutionError, DurableExecutionRuntime> =>
-  Effect.flatMap(DurableExecutionRuntime, (rt) => rt.awaitDeferred(name, schema))
+): Effect.Effect<A, DurableExecutionError, DurableEngine> =>
+  Effect.flatMap(DurableEngine, (rt) => rt.awaitDeferred(name, schema))
 
 /**
  * A named, invocation-scoped durable promise resolved by the handler itself.
  * Returned synchronously; `resolve`/`get` are Effects.
  */
 export const deferred = <A, I>(name: string, schema: Schema.Codec<A, I, never, never>): DeferredHandle<A> => ({
-  resolve: (value) => Effect.flatMap(DurableExecutionRuntime, (rt) => rt.resolveLocal(name, schema, value)),
-  get: () => Effect.flatMap(DurableExecutionRuntime, (rt) => rt.awaitDeferred(name, schema)),
+  resolve: (value) => Effect.flatMap(DurableEngine, (rt) => rt.resolveLocal(name, schema, value)),
+  get: () => Effect.flatMap(DurableEngine, (rt) => rt.awaitDeferred(name, schema)),
 })
 
 /**
@@ -82,16 +82,16 @@ export const deferred = <A, I>(name: string, schema: Schema.Codec<A, I, never, n
  */
 export const awakeable = <A, I>(
   schema: Schema.Codec<A, I, never, never>,
-): Effect.Effect<AwakeableHandle<A>, DurableExecutionError, DurableExecutionRuntime> =>
-  Effect.flatMap(DurableExecutionRuntime, (rt) =>
+): Effect.Effect<AwakeableHandle<A>, DurableExecutionError, DurableEngine> =>
+  Effect.flatMap(DurableEngine, (rt) =>
     Effect.map(rt.nextAwakeableId, (id) => ({
       id,
-      promise: Effect.flatMap(DurableExecutionRuntime, (r) => r.awaitDeferred(id, schema)),
+      promise: Effect.flatMap(DurableEngine, (r) => r.awaitDeferred(id, schema)),
     })))
 
 /** Ingress door: resolve a receiver-side `signal(name)` on `executionId`. */
 export const resolveSignal: IngressResolve = (executionId, name, schema, value) =>
-  Effect.flatMap(DurableExecutionRuntime, (rt) => rt.resolveExternal(executionId, name, schema, value))
+  Effect.flatMap(DurableEngine, (rt) => rt.resolveExternal(executionId, name, schema, value))
 
 /**
  * From inside a SHARED workflow handler, resolve a durable promise the workflow's `run`
@@ -104,28 +104,28 @@ export const resolvePromise = <A, I>(
   name: string,
   schema: Schema.Codec<A, I, never, never>,
   value: A,
-): Effect.Effect<void, DurableExecutionError, DurableExecutionRuntime> =>
-  Effect.flatMap(DurableExecutionRuntime, (rt) => rt.resolvePromise(name, schema, value))
+): Effect.Effect<void, DurableExecutionError, DurableEngine> =>
+  Effect.flatMap(DurableEngine, (rt) => rt.resolvePromise(name, schema, value))
 
 /** Ingress door: resolve an `awakeable()` by its `id` on `executionId`. */
 export const resolveAwakeable: IngressResolve = (executionId, id, schema, value) =>
-  Effect.flatMap(DurableExecutionRuntime, (rt) => rt.resolveExternal(executionId, id, schema, value))
+  Effect.flatMap(DurableEngine, (rt) => rt.resolveExternal(executionId, id, schema, value))
 
 /** Block until `executionId` finishes, decoding its output via `schema` (restate's `attach`). */
 export const attach = <A, I>(
   executionId: string,
   schema: Schema.Codec<A, I, never, never>,
-): Effect.Effect<A, DurableExecutionError, DurableExecutionRuntime> =>
-  Effect.flatMap(DurableExecutionRuntime, (rt) => rt.attach(executionId, schema))
+): Effect.Effect<A, DurableExecutionError, DurableEngine> =>
+  Effect.flatMap(DurableEngine, (rt) => rt.attach(executionId, schema))
 
 /** Non-blocking read of `executionId`'s completed output, decoded via `schema`. */
 export const poll = <A, I>(
   executionId: string,
   schema: Schema.Codec<A, I, never, never>,
-): Effect.Effect<Option.Option<A>, DurableExecutionError, DurableExecutionRuntime> =>
-  Effect.flatMap(DurableExecutionRuntime, (rt) => rt.poll(executionId, schema))
+): Effect.Effect<Option.Option<A>, DurableExecutionError, DurableEngine> =>
+  Effect.flatMap(DurableEngine, (rt) => rt.poll(executionId, schema))
 
 // Durable inter-execution calls are exposed as the TYPED `objectClient(Def, key)` /
 // `objectSendClient(Def, key)` proxies in service.ts (identity derived from the object
 // definition, not raw strings). The low-level `callStep`/`sendStep` stay internal to
-// the runtime API.
+// the engine API.

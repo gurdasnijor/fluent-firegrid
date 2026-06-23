@@ -28,11 +28,7 @@ export const publish = <A, I, RD, RE>(
   AppendAck,
   Schema.SchemaError | S2ClientError,
   S2Client | RE
-> =>
-  Effect.gen(function*() {
-    const record = yield* encodedRecord(schema, value)
-    return yield* S2Client.append(name, AppendInput.create([record]))
-  })
+> => guardedAppend(name, schema, value)
 
 export const readDecoded = <A, I, RD, RE>(
   name: string,
@@ -56,7 +52,7 @@ export const guardedAppend = <A, I, RD, RE>(
   name: string,
   schema: Schema.Codec<A, I, RD, RE>,
   value: A,
-  options: AppendOptions,
+  options?: AppendOptions,
 ): Effect.Effect<
   AppendAck,
   Schema.SchemaError | S2ClientError,

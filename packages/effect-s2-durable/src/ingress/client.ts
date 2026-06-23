@@ -5,7 +5,7 @@ import type { Handlers, HandlerInput, HandlerOutput, InvokeOptions, ObjectDefini
 import { type AnyDef, asFailure, DurableApi, type DurableFailure, type HandlerCodecs } from "./contract.ts"
 
 // The ingress client depends only on the wire contract + the definition *types*
-// (and the def's runtime codecs) — never on the engine runtime — so it can be
+// (and the def's wire codecs) — never on the engine — so it can be
 // consumed out of process via the `effect-s2-durable/client` subpath.
 export { DurableFailure } from "./contract.ts"
 

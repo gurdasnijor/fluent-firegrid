@@ -1,11 +1,11 @@
 # effect-s2-durable Design Handoff
 
 This package has one public durable execution engine:
-`DurableExecutionRuntime`.
+`DurableEngine`.
 
-Several internal modules are named like runtime components, but they are not
-independent runtimes. They are interpreters, stores, and object-log mechanics
-that the single runtime composes.
+There is no separate `Runtime` boundary. Internal code should keep engine
+internals together under `engine/` as semantic modules, with separate vertical
+boundaries for `object`, `ingress`, and `host`.
 
 The detailed canonical design still lives in:
 
@@ -17,7 +17,13 @@ This document is a compact map for implementation and refactoring work.
 
 For the detailed refactor plan that applies Effect layer-composition guidance
 and the Restate partition-worker responsibility split, see
-[`REARCHITECTURE.md`](./REARCHITECTURE.md).
+[`REARCHITECTURE.md`](./REARCHITECTURE.md), the index for the focused
+rearchitecture sub-documents.
+
+The most important structural rule: durable semantics belong in a state machine,
+not smeared across Effect services. Services should be ports/drivers around the
+machine: S2 reads/appends/fencing, handler execution, timers, waiters, ingress,
+and host lifecycle.
 
 ## Core Model
 
@@ -25,9 +31,9 @@ User code calls public free primitives such as `run`, `sleep`, `state`,
 `signal`, `deferred`, `awakeable`, `attach`, and `poll`.
 
 Those primitives do not own execution. They look up the ambient
-`DurableExecutionRuntime` service and delegate to it.
+`DurableEngine` service and delegate to it.
 
-`DurableExecutionRuntime` then interprets the operation according to the active
+`DurableEngine` then interprets the operation according to the active
 handler invocation:
 
 | Invocation kind | Starts from | Durable backing | Writes state | Durable primitives |
@@ -36,29 +42,32 @@ handler invocation:
 | `object` | object call id | per-`(object,key)` owner `ActorEvent` log | yes, serialized | yes |
 | `shared` | `sharedClient(...)` | folded object snapshot | no | mostly forbidden; `resolvePromise` is special ingress |
 
-The unifying switchboard is `ActiveInvocation` in
-`src/runtime/invocation.ts`. A handler is always run with exactly one active
-invocation value. The primitive interpreter branches on that value.
+The unifying switchboard is `ActiveInvocation`, which lives under the `engine`
+boundary. A handler is always run with exactly one active invocation value.
+`HandlerPrimitives` branches on that value.
 
-## Runtime Composition
+## Engine Composition
 
-`src/Runtime.ts` is the composition root and the public runtime service.
+`src/engine/api.ts` is the public engine API. The target
+composition root is `engine/live.ts`, with the recursive handler/API assembly
+isolated in `engine/kernel.ts`.
 
-It wires these internal services:
+The engine wires these internal boundaries:
 
-- `RuntimeState`: in-process engine state such as the runtime scope, handler
+- `EngineState`: in-process engine state such as the engine scope, handler
   registries, running service fibers, and local waiters.
-- `RuntimeStores`: opened S2-backed stores and helpers, including the global
-  roster, per-execution workflow DB opener, and object invocation store.
-- `PrimitiveInterpreter`: implementation of durable primitives against the
+- `S2Access`, `ServiceStores`, and `ObjectStores`: opened S2-backed stores and
+  helpers, including the global roster, per-execution workflow DB opener, and
+  object owner driver.
+- `HandlerPrimitives`: implementation of durable primitives against the
   active invocation.
-- `IngressRouter`: external signal / awakeable resolution routing.
-- `CompletionReader`: `attach` / `poll` behavior for service and object ids.
-- `InvocationStore`: object-owner admission, draining, status, signals, and
+- `ResolutionRouter`: external signal / awakeable resolution routing.
+- `ResultReader`: `attach` / `poll` behavior for service and object ids.
+- `ObjectOwnerDriver`: object-owner admission, draining, status, signals, and
   snapshot reads.
 
-Only `DurableExecutionRuntime` should be exported as the runtime. The others are
-internal implementation services.
+Only the public engine service should be exported from the root authoring
+surface. The other engine services are internal implementation services.
 
 ## Service Execution Path
 
@@ -69,7 +78,7 @@ Flow:
 1. Encode handler input.
 2. Open the execution's `WorkflowDb`.
 3. Write the execution row and global roster row.
-4. Fork the handler into the runtime scope.
+4. Fork the handler into the engine scope.
 5. Provide `ActiveInvocation` with `kind: "service"`.
 6. On completion, write the result to the roster, drop the execution stream, and
    remove the in-process running entry.
@@ -119,7 +128,7 @@ For this package, map those concepts as:
 
 Do not push every correctness concern into per-append optimistic CAS. That is the
 main complexity driver: if a `StateChanged`, `Journaled`, or `Completed` append
-can hit a seq-num conflict in the middle of a user handler, the runtime needs
+can hit a seq-num conflict in the middle of a user handler, the engine needs
 out-of-band abort/retry machinery to unwind and replay the handler. Keep that out
 of the handler drive path.
 
@@ -200,12 +209,12 @@ Important events:
 - `SignalResolved`: durable ingress / named promise resolution.
 - `Completed`: terminal call result.
 
-The `InvocationStore` owns object admission and draining:
+The `ObjectOwnerDriver` owns object admission and draining:
 
 1. `admit` CAS-appends `Accepted`, idempotent by call id.
 2. `drain` opens a scoped owner drive session for the stream.
 3. The drainer runs accepted calls serially by owner key.
-4. The runtime resolves the method handler and runs it with
+4. The engine resolves the method handler and runs it with
    `ActiveInvocation.kind === "object"`.
 5. Object state and primitive journals append through the owner drive session.
 6. The drainer appends `Completed` through the same session.
@@ -256,11 +265,11 @@ thin facade over the object owner-log model.
 
 ## Package Structure & Coherence Plan
 
-The structural plan — target directory shape, the module-rename map, service
-extraction steps, naming rules, and code conventions — lives in
-**[`REARCHITECTURE.md`](./REARCHITECTURE.md)**, the single source for structure.
-This section previously duplicated it and drifted (stale module names), so it has
-been collapsed to this pointer.
+The structural plan — state-machine extraction, storage substrate, target
+directory shape, module-rename map, service extraction steps, naming rules, and
+code conventions — lives under **[`REARCHITECTURE.md`](./REARCHITECTURE.md)**.
+This section previously duplicated it and drifted, so it has been collapsed to
+this pointer.
 
 ## Host Process Alignment
 
@@ -278,6 +287,11 @@ in sync with it:
 - Object owner streams should use fenced ownership for write correctness. The
   default recovery path should be snapshot/trim-based state rebuild plus
   restart-driven liveness, not lease/heartbeat.
+- Treat `effect-s2-stream-db` as the shared S2 storage substrate, but keep the
+  stream/table split clear: object owner logs are ordered typed event streams;
+  service/user state and read models are latest-value tables/materialized views.
+  Expand stream-db with first-class `EventStream<ActorEvent>` support before
+  adding more bespoke object-log IO in this package.
 - Fencing should be encapsulated by owner drive sessions. Do not thread raw
   tokens, expected tails, or conflict refs through handler state backends.
 - Per-append OCC inside a running handler is not the default architecture. It is
@@ -294,8 +308,17 @@ in sync with it:
 
 Use these terms consistently:
 
-- **runtime**: only the public `DurableExecutionRuntime`.
-- **interpreter**: logic that implements primitives for an active invocation.
+- **engine**: the durable execution engine service. The public name is
+  `DurableEngine`; internal modules should use engine vocabulary.
+- **runtime**: avoid for package internals. Use it only for a language/platform
+  runtime such as Node.
+- **invocation context**: the active handler context: service, object, or shared.
+- **handler primitives**: logic that implements `run`, `sleep`, `state`, signals,
+  and awakeables for an active invocation.
+- **executor**: lifecycle owner for service or object handler execution.
+- **coordinator**: orchestration that routes child calls, recovery, or external
+  resolutions without owning storage semantics.
+- **result reader**: `attach` / `poll` lookup.
 - **store**: opened durable storage dependencies.
 - **owner log**: the S2 stream for one `(object,key)`.
 - **ingress append**: an external bus-style append such as `Accepted` or external
@@ -307,8 +330,9 @@ Use these terms consistently:
 - **shared handler**: read-only handler over a projection.
 - **workflow**: object-backed run-once entrypoint plus shared handlers.
 
-Avoid names that imply new runtimes unless a component really owns execution
-end-to-end.
+Avoid names that imply new runtimes. Prefer semantic boundaries such as
+`engine`, `invocation`, `execution`, `completion`, `signals`, `storage`, `object`,
+`ingress`, and `host`.
 
 ## Build Agent Guardrails
 
@@ -316,10 +340,22 @@ end-to-end.
 - Keep object call ids self-routing; do not add a side index for object status.
 - Keep object state, primitive journals, signals, and completions on the owner
   log.
-- Keep file/module responsibilities narrow. Do not add more long nested runtime
+- Do not model ordered object history as a latest-value table keyed by seq num.
+  Add/reuse a first-class typed event-stream abstraction in `effect-s2-stream-db`
+  and keep tables for projections/read models.
+- Keep file/module responsibilities narrow. Do not add more long nested engine
   closures when a named internal module would make the behavior clearer.
-- Keep public surface, runtime internals, object log mechanics, ingress adapters,
-  and host composition in separate directories/modules.
+- Put object durable protocol decisions in `object/machine/` before
+  adding more driver/services. `ObjectOwnerDriver` should trend toward "read/fold,
+  decide, append, run emitted action" rather than owning the protocol itself.
+- Treat Effect services as ports/adapters unless they are the public engine
+  service. A service that both decides durable state and performs IO is probably
+  hiding the state machine.
+- Keep public surface, engine assembly, invocation context, execution lifecycle,
+  completion reads, signal resolution, storage, object log mechanics, ingress
+  adapters, and host composition in separate directories/modules.
+- Do not add new implementation files under a generic `src/runtime` namespace.
+  Use the semantic directory that describes the responsibility.
 - Keep S2 ownership mechanics localized. `ObjectStateBackend` should call an
   owner-session append function, not know about fencing tokens, tail refs, or
   conflict refs.

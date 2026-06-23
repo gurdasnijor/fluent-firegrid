@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
-import { DurableFailure } from "../src/index.ts"
+import { DurableFailure } from "../src/ingress/contract.ts"
 import { Footgun, hasS2, Proxy, runIngress } from "./ingress-support.ts"
 
 // The "footgun-free client split" claim, defended over the real ingress: the

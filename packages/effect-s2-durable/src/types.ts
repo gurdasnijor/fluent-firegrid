@@ -1,6 +1,6 @@
 import type { Duration, Effect, Option, Schema } from "effect"
 import type { DurableExecutionError } from "./errors.ts"
-import type { DurableExecutionRuntime } from "./Runtime.ts"
+import type { DurableEngine } from "./engine/api.ts"
 
 /** Retry policy for a `run` step. Controls attempts *before* a terminal fact. */
 export interface RetryPolicy {
@@ -42,26 +42,26 @@ declare const RunActionViolationId: unique symbol
 
 /**
  * The type a `run` call resolves to when its action illegally requires the
- * durable runtime — a non-`Effect` brand so `yield*`-ing it is a compile error at
+ * durable engine — a non-`Effect` brand so `yield*`-ing it is a compile error at
  * the `run` call site. Carries a human-readable message in `M`.
  */
 export interface RunActionViolation<M extends string> {
   readonly [RunActionViolationId]: M
 }
 
-type RunResult<A, E, R> = [DurableExecutionRuntime] extends [R]
+type RunResult<A, E, R> = [DurableEngine] extends [R]
   ? RunActionViolation<"a run action cannot use durable primitives (run/sleep/state/signal); use them in the handler body">
-  : Effect.Effect<A, E | DurableExecutionError, R | DurableExecutionRuntime>
+  : Effect.Effect<A, E | DurableExecutionError, R | DurableEngine>
 
 /**
  * The `run` free primitive (a durable, replay-aware side-effect boundary):
- * `run(action, { name? })` or the compatibility form `run(name, action, options)`.
+ * `run(action, { name? })` or the named form `run(name, action, options)`.
  * The action runs once; on replay the recorded value is returned without
  * re-running it. The action may use the caller's own services, but **not** the
- * durable runtime: if it requires `DurableExecutionRuntime` (i.e. it calls
+ * durable engine: if it requires `DurableEngine` (i.e. it calls
  * `run`/`sleep`/`state`/`signal`), `run` resolves to a `RunActionViolation`
  * instead of an `Effect`, so the misuse is a type error here rather than a
- * runtime fault — the Effect analog of restate's ctx-less `run`.
+ * dynamic fault — the Effect analog of restate's ctx-less `run`.
  */
 export interface Run {
   <A, E, R, EncodedA = unknown, EncodedE = unknown>(
@@ -78,7 +78,7 @@ export interface Run {
 /**
  * A handler definition: stable identity + input/output schemas + the durable
  * program. The program is just an ordinary Effect that additionally requires the
- * `DurableExecutionRuntime` (supplied by the host Layer) — there is no custom
+ * `DurableEngine` (supplied by the host Layer) — there is no custom
  * program/operation type; user code is plain `Effect.gen` + the free primitives.
  * `handler(...)` is the only definition primitive (no service/object/workflow
  * containers — those belong to hosts above this package).
@@ -89,7 +89,7 @@ export interface Handler<I, O, E = never, R = never> {
   readonly input: Schema.Top
   /** Decodes/encodes the result. */
   readonly output: Schema.Top
-  readonly program: Effect.Effect<O, E, R | DurableExecutionRuntime>
+  readonly program: Effect.Effect<O, E, R | DurableEngine>
   /** Phantom carrier for the decoded input type `I` (never set at runtime). */
   readonly Input?: I
 }
@@ -97,11 +97,11 @@ export interface Handler<I, O, E = never, R = never> {
 /**
  * A named, invocation-scoped durable promise. `resolve` writes it (handler-side);
  * `get` reads it, parking the handler until it's resolved (replay returns the
- * recorded value). Both are Effects requiring the durable runtime.
+ * recorded value). Both are Effects requiring the durable engine.
  */
 export interface DeferredHandle<A> {
-  readonly resolve: (value: A) => Effect.Effect<void, DurableExecutionError, DurableExecutionRuntime>
-  readonly get: () => Effect.Effect<A, DurableExecutionError, DurableExecutionRuntime>
+  readonly resolve: (value: A) => Effect.Effect<void, DurableExecutionError, DurableEngine>
+  readonly get: () => Effect.Effect<A, DurableExecutionError, DurableEngine>
 }
 
 /**
@@ -111,7 +111,7 @@ export interface DeferredHandle<A> {
  */
 export interface AwakeableHandle<A> {
   readonly id: string
-  readonly promise: Effect.Effect<A, DurableExecutionError, DurableExecutionRuntime>
+  readonly promise: Effect.Effect<A, DurableExecutionError, DurableEngine>
 }
 
 /**
@@ -120,7 +120,7 @@ export interface AwakeableHandle<A> {
  * `resolveAwakeable` free functions.
  */
 export interface IngressResolve {
-  <A, I>(executionId: string, name: string, schema: Schema.Codec<A, I, never, never>, value: A): Effect.Effect<void, DurableExecutionError, DurableExecutionRuntime>
+  <A, I>(executionId: string, name: string, schema: Schema.Codec<A, I, never, never>, value: A): Effect.Effect<void, DurableExecutionError, DurableEngine>
 }
 
 /**
@@ -143,7 +143,7 @@ export interface IngressResolve {
  * the type level — perform them in the handler body.
  */
 export interface StateBinding<Row> {
-  readonly get: (key: string) => Effect.Effect<Option.Option<Row>, DurableExecutionError, DurableExecutionRuntime>
-  readonly set: (row: Row) => Effect.Effect<void, DurableExecutionError, DurableExecutionRuntime>
-  readonly delete: (key: string) => Effect.Effect<void, DurableExecutionError, DurableExecutionRuntime>
+  readonly get: (key: string) => Effect.Effect<Option.Option<Row>, DurableExecutionError, DurableEngine>
+  readonly set: (row: Row) => Effect.Effect<void, DurableExecutionError, DurableEngine>
+  readonly delete: (key: string) => Effect.Effect<void, DurableExecutionError, DurableEngine>
 }

@@ -1,7 +1,7 @@
 {
   "name": "effect-s2-durable",
   "version": "0.0.0",
-  "description": "An Effect-native durable execution runtime over S2.",
+  "description": "An Effect-native durable execution engine over S2.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -15,9 +15,17 @@
       "types": "./src/ingress/client.ts",
       "default": "./src/ingress/client.ts"
     },
+    "./engine": {
+      "types": "./src/engine/index.ts",
+      "default": "./src/engine/index.ts"
+    },
     "./host": {
       "types": "./src/host.ts",
       "default": "./src/host.ts"
+    },
+    "./ingress": {
+      "types": "./src/ingress/index.ts",
+      "default": "./src/ingress/index.ts"
     }
   },
   "bin": {

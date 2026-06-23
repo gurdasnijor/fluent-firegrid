@@ -1,7 +1,7 @@
 import { Context, type Deferred, Effect, HashMap, Layer, Ref, type Scope } from "effect"
-import type { ObjectHandlerSeed, RegisteredHandler, RunningEntry, RunningMap } from "./invocation.ts"
+import type { ObjectHandlerSeed, RegisteredHandler, RunningEntry, RunningMap } from "./context.ts"
 
-export interface RuntimeStateApi {
+export interface EngineStateApi {
   readonly engineScope: Scope.Scope
   readonly registry: Map<string, RegisteredHandler>
   readonly objectHandlers: Map<string, RegisteredHandler>
@@ -13,7 +13,7 @@ export interface RuntimeStateApi {
 const make = (
   handlers: ReadonlyArray<RegisteredHandler>,
   objectSeeds: ReadonlyArray<ObjectHandlerSeed>,
-): Effect.Effect<RuntimeStateApi, never, Scope.Scope> =>
+): Effect.Effect<EngineStateApi, never, Scope.Scope> =>
   Effect.gen(function*() {
     const engineScope = yield* Effect.scope
     const running = yield* Ref.make(HashMap.empty<string, RunningEntry>())
@@ -26,13 +26,13 @@ const make = (
     return { engineScope, registry, objectHandlers, objectNames, running, waiters }
   })
 
-export class RuntimeState extends Context.Service<RuntimeState, RuntimeStateApi>()(
-  "effect-s2-durable/runtime/state/RuntimeState",
+export class EngineState extends Context.Service<EngineState, EngineStateApi>()(
+  "effect-s2-durable/engine/state/EngineState",
 ) {
   static layer(
     handlers: ReadonlyArray<RegisteredHandler>,
     objectSeeds: ReadonlyArray<ObjectHandlerSeed>,
-  ): Layer.Layer<RuntimeState> {
-    return Layer.effect(RuntimeState, make(handlers, objectSeeds))
+  ): Layer.Layer<EngineState> {
+    return Layer.effect(EngineState, make(handlers, objectSeeds))
   }
 }
