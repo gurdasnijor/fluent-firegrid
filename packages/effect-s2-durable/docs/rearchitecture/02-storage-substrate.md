@@ -105,5 +105,6 @@ where possible.
 ## References
 
 - [`docs/sdds/effect-s2-stream-db-relational-ivm-sdd.md`](../../../../docs/sdds/effect-s2-stream-db-relational-ivm-sdd.md)
+- [`docs/sdds/effect-s2-stream-db-processor-architecture-api-sdd.md`](../../../../docs/sdds/effect-s2-stream-db-processor-architecture-api-sdd.md)
 - https://s2.dev/docs/concepts/snapshots
 - https://s2.dev/docs/concepts/trimming
