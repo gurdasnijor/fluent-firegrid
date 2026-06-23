@@ -1,6 +1,7 @@
 import type { Duration, Effect, Option, Schema } from "effect"
 import type { DurableExecutionError } from "../errors.ts"
 import type { DurableEngine } from "../engine/api.ts"
+import type { CurrentInvocationScope } from "../invocation/scope.ts"
 
 /** Retry policy for a `run` step. Controls attempts *before* a terminal fact. */
 export interface RetryPolicy {
@@ -51,17 +52,20 @@ export interface RunActionViolation<M extends string> {
 
 type RunResult<A, E, R> = [DurableEngine] extends [R]
   ? RunActionViolation<"a run action cannot use durable primitives (run/sleep/state/signal); use them in the handler body">
-  : Effect.Effect<A, E | DurableExecutionError, R | DurableEngine>
+  : [CurrentInvocationScope] extends [R]
+  ? RunActionViolation<"a run action cannot use durable primitives (run/sleep/state/durablePromise); use them in the handler body">
+  : Effect.Effect<A, E | DurableExecutionError, R | CurrentInvocationScope>
 
 /**
  * The `run` free primitive (a durable, replay-aware side-effect boundary):
  * `run(action, { name? })` or the named form `run(name, action, options)`.
  * The action runs once; on replay the recorded value is returned without
  * re-running it. The action may use the caller's own services, but **not** the
- * durable engine: if it requires `DurableEngine` (i.e. it calls
- * `run`/`sleep`/`state`/`signal`), `run` resolves to a `RunActionViolation`
- * instead of an `Effect`, so the misuse is a type error here rather than a
- * dynamic fault — the Effect analog of restate's ctx-less `run`.
+ * durable invocation scope: if it requires `CurrentInvocationScope` (i.e. it
+ * calls `run`/`sleep`/`state`/`durablePromise`), `run` resolves to a
+ * `RunActionViolation` instead of an `Effect`, so the misuse is a type error
+ * here rather than a dynamic fault — the Effect analog of restate's ctx-less
+ * `run`.
  */
 export interface Run {
   <A, E, R, EncodedA = unknown, EncodedE = unknown>(
@@ -75,10 +79,21 @@ export interface Run {
   ): RunResult<A, E, R>
 }
 
+export type RunStep = <A, E, R, EncodedA, EncodedE>(
+  action: Effect.Effect<A, E, R>,
+  options?: RunOptions<A, E, EncodedA, EncodedE>,
+) => Effect.Effect<A, E | DurableExecutionError, R>
+
+export type DurablePromiseResolver = <A, I>(
+  name: string,
+  schema: Schema.Codec<A, I, never, never>,
+  value: A,
+) => Effect.Effect<void, DurableExecutionError>
+
 /**
  * A handler definition: stable identity + input/output schemas + the durable
  * program. The program is just an ordinary Effect that additionally requires the
- * `DurableEngine` (supplied by the host Layer) — there is no custom
+ * `CurrentInvocationScope` (supplied while the handler is running) — there is no custom
  * program/operation type; user code is plain `Effect.gen` + the free primitives.
  * `handler(...)` is the only definition primitive (no service/object/workflow
  * containers — those belong to hosts above this package).
@@ -89,7 +104,7 @@ export interface Handler<I, O, E = never, R = never> {
   readonly input: Schema.Top
   /** Decodes/encodes the result. */
   readonly output: Schema.Top
-  readonly program: Effect.Effect<O, E, R | DurableEngine>
+  readonly program: Effect.Effect<O, E, R | CurrentInvocationScope>
   /** Phantom carrier for the decoded input type `I` (never set at runtime). */
   readonly Input?: I
 }
@@ -97,11 +112,11 @@ export interface Handler<I, O, E = never, R = never> {
 /**
  * A named, invocation-scoped durable promise. `resolve` writes it (handler-side);
  * `get` reads it, parking the handler until it's resolved (replay returns the
- * recorded value). Both are Effects requiring the durable engine.
+ * recorded value). Both are Effects requiring the active invocation scope.
  */
 export interface DeferredHandle<A> {
-  readonly resolve: (value: A) => Effect.Effect<void, DurableExecutionError, DurableEngine>
-  readonly get: () => Effect.Effect<A, DurableExecutionError, DurableEngine>
+  readonly resolve: (value: A) => Effect.Effect<void, DurableExecutionError, CurrentInvocationScope>
+  readonly get: () => Effect.Effect<A, DurableExecutionError, CurrentInvocationScope>
 }
 
 /**
@@ -111,7 +126,7 @@ export interface DeferredHandle<A> {
  */
 export interface AwakeableHandle<A> {
   readonly id: string
-  readonly promise: Effect.Effect<A, DurableExecutionError, DurableEngine>
+  readonly promise: Effect.Effect<A, DurableExecutionError, CurrentInvocationScope>
 }
 
 /**
@@ -143,7 +158,7 @@ export interface IngressResolve {
  * the type level — perform them in the handler body.
  */
 export interface StateBinding<Row> {
-  readonly get: (key: string) => Effect.Effect<Option.Option<Row>, DurableExecutionError, DurableEngine>
-  readonly set: (row: Row) => Effect.Effect<void, DurableExecutionError, DurableEngine>
-  readonly delete: (key: string) => Effect.Effect<void, DurableExecutionError, DurableEngine>
+  readonly get: (key: string) => Effect.Effect<Option.Option<Row>, DurableExecutionError, CurrentInvocationScope>
+  readonly set: (row: Row) => Effect.Effect<void, DurableExecutionError, CurrentInvocationScope>
+  readonly delete: (key: string) => Effect.Effect<void, DurableExecutionError, CurrentInvocationScope>
 }

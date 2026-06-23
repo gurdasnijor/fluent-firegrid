@@ -7,7 +7,7 @@ import { primaryKey, Table } from "effect-s2-stream-db"
 import { DurableHostLive } from "../src/host/index.ts"
 import { connect, type DurableIngressClient } from "../src/ingress/client.ts"
 import { object, run, service, state } from "../src/index.ts"
-import { client, objectClient } from "../src/invocation/client.ts"
+import { client, objectClient, serviceClient } from "../src/invocation/client.ts"
 import { S2LiteLive } from "./s2lite.ts"
 
 // A small restate-style "catalog" of durable definitions, each exercising one
@@ -60,6 +60,21 @@ export const Proxy = service({
 })
 
 /**
+ * A service that calls another service via the **correct** in-handler surface
+ * (`serviceClient`). Proves service definitions compile into both root clients
+ * and replay-stable service-to-service child calls.
+ */
+export const ServiceProxy = service({
+  name: "ingress-service-proxy",
+  handlers: {
+    *doubleViaService(amount: number) {
+      return yield* serviceClient(Calculator).double(amount)
+    },
+  },
+  schemas: { doubleViaService: { input: Schema.Number, output: Schema.Number } },
+})
+
+/**
  * A service that (wrongly) uses the **top-level** `client(...)` surface inside a
  * handler. The footgun guard must reject this (a fresh random id per replay is
  * not replay-safe), surfacing as a typed `DurableFailure` over the ingress.
@@ -75,7 +90,7 @@ export const Footgun = service({
 })
 
 /** The whole catalog — passed explicitly to the host (no global registry). */
-const catalog = [Calculator, Counter, Proxy, Footgun]
+const catalog = [Calculator, Counter, Proxy, ServiceProxy, Footgun]
 
 /** Allocate a free TCP port, then release it for the host's ingress to bind. */
 const freePort = Effect.scoped(

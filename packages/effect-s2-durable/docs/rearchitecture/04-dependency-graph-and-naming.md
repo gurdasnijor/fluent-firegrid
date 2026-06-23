@@ -10,9 +10,9 @@ problem visible:
   reach only `engine/api.ts` for the public service tag and API types, while
   live engine assembly reaches most engine/object implementation modules because
   it implements execution.
-- The root barrel `index.ts` exports the server-side ingress adapter. That makes
-  the default package surface look like authoring primitives, engine internals,
-  client helpers, and server adapter wiring all at once.
+- The root barrel `index.ts` is now intended to be the authoring surface. Keep
+  server/client/host adapters behind subpath exports so the default package
+  surface does not become another mixed drawer.
 - `DurableStores` is a mixed storage service: it opens service workflow DBs and
   the global roster, but also owns `ObjectOwnerDriver`. Completion, resolution, and
   primitive modules then appear to depend on all storage.
@@ -37,9 +37,10 @@ Use semantic names instead:
 | Concept | Preferred internal name |
 | --- | --- |
 | public engine API | `DurableEngine` / `DurableEngineApi` |
-| engine assembly | `EngineLive`, `EngineKernel` |
-| active handler context | `InvocationContext`, `ActiveInvocation` |
-| primitive implementation | `HandlerPrimitives` |
+| engine assembly | `EngineLive` |
+| active handler context | `ActiveInvocation` |
+| handler authoring capabilities | `CurrentInvocationScope` / `InvocationScope` |
+| primitive implementation | capability modules under `invocation/` |
 | service execution lifecycle | `ServiceExecutor` |
 | object execution lifecycle | `ObjectExecutor` |
 | child call dispatch | `ChildCallCoordinator` |
@@ -58,12 +59,15 @@ namespace.
 index.ts / subpath exports
   -> public authoring types, primitives, clients
 
-primitives.ts / invocation-client.ts / service-layer.ts / ingress adapters
+authoring/primitives.ts / handler-scoped invocation clients
+  -> invocation/scope.ts
+
+root clients / service-layer.ts / ingress adapters
   -> engine/api.ts
 
 engine/live.ts
-  -> engine/kernel.ts
   -> engine/* semantic modules
+  -> invocation/scope.ts
   -> ServiceStores / ObjectStores
 
 object/owner-driver.ts

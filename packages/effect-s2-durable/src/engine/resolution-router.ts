@@ -5,14 +5,10 @@ import { objectPartsOption } from "./address.ts"
 import { DurableStores } from "./durable-stores.ts"
 import { resolveServiceDeferred } from "./service-deferreds.ts"
 import type { DurableExecutionError } from "../errors.ts"
+import type { ExternalResolution } from "./api.ts"
 
 export interface ResolutionRouterApi {
-  readonly resolveExternal: <A, I>(
-    executionId: string,
-    name: string,
-    schema: Schema.Codec<A, I, never, never>,
-    value: A,
-  ) => Effect.Effect<void, DurableExecutionError>
+  readonly resolveExternal: ExternalResolution
 }
 
 const make: Effect.Effect<ResolutionRouterApi, never, EngineState | DurableStores> = Effect.gen(function*() {

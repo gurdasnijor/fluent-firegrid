@@ -1,16 +1,7 @@
 import { Context, type Effect, type Schema } from "effect"
 import type { DurableExecutionError } from "../errors.ts"
 import type { Handler } from "../authoring/types.ts"
-import type { HandlerPrimitivesApi } from "./handler-primitives.ts"
-import type { ResolutionRouterApi } from "./resolution-router.ts"
 import type { ResultReaderApi } from "./result-reader.ts"
-
-/** The address of a durable object call target (`call`/`send` between executions). */
-export interface CallTarget {
-  readonly object: string
-  readonly key: string
-  readonly method: string
-}
 
 /**
  * The outcome of starting a workflow. A workflow `run` is admitted at most once
@@ -19,9 +10,23 @@ export interface CallTarget {
  */
 export type WorkflowStartStatus = "started" | "alreadyStarted"
 
+export type DurableQuery = <A, I>(
+  handler: Handler<unknown, unknown, never, never>,
+  object: string,
+  key: string,
+  input: unknown,
+  schema: Schema.Codec<A, I, never, never>,
+) => Effect.Effect<A, DurableExecutionError>
+
+export type ExternalResolution = <A, I>(
+  executionId: string,
+  name: string,
+  schema: Schema.Codec<A, I, never, never>,
+  value: A,
+) => Effect.Effect<void, DurableExecutionError>
+
 /** The public durable engine surface that authoring APIs and primitives target. */
 export interface DurableEngineApi {
-  readonly assertTopLevel: Effect.Effect<void, DurableExecutionError>
   readonly submit: <I, O, E, R>(
     handler: Handler<I, O, E, R>,
     executionId: string,
@@ -29,35 +34,9 @@ export interface DurableEngineApi {
   ) => Effect.Effect<void, DurableExecutionError, R>
   readonly attach: ResultReaderApi["attach"]
   readonly poll: ResultReaderApi["poll"]
-  readonly runStep: HandlerPrimitivesApi["runStep"]
-  readonly handlerRequest: HandlerPrimitivesApi["handlerRequest"]
-  readonly sleepStep: HandlerPrimitivesApi["sleepStep"]
-  readonly stateGet: HandlerPrimitivesApi["stateGet"]
-  readonly stateSet: HandlerPrimitivesApi["stateSet"]
-  readonly stateDelete: HandlerPrimitivesApi["stateDelete"]
-  readonly awaitDeferred: HandlerPrimitivesApi["awaitDeferred"]
-  readonly resolveLocal: HandlerPrimitivesApi["resolveLocal"]
-  readonly resolveExternal: ResolutionRouterApi["resolveExternal"]
-  readonly resolvePromise: HandlerPrimitivesApi["resolvePromise"]
-  readonly nextAwakeableId: HandlerPrimitivesApi["nextAwakeableId"]
-  readonly sharedCall: <A, I>(
-    handler: Handler<unknown, unknown, never, never>,
-    object: string,
-    key: string,
-    input: unknown,
-    schema: Schema.Codec<A, I, never, never>,
-  ) => Effect.Effect<A, DurableExecutionError>
-  readonly callStep: <A, I, B, J>(
-    target: CallTarget,
-    input: unknown,
-    inputSchema: Schema.Codec<B, J, never, never>,
-    schema: Schema.Codec<A, I, never, never>,
-  ) => Effect.Effect<A, DurableExecutionError>
-  readonly sendStep: <B, J>(
-    target: CallTarget,
-    input: unknown,
-    inputSchema: Schema.Codec<B, J, never, never>,
-  ) => Effect.Effect<string, DurableExecutionError>
+  readonly query: DurableQuery
+  readonly resolveAwakeable: ExternalResolution
+  readonly resolveDurablePromise: ExternalResolution
   readonly workflowStart: <I, O, E, R>(
     handler: Handler<I, O, E, R>,
     runCallId: string,

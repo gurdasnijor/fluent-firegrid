@@ -166,8 +166,8 @@ flowchart LR
 
 ## Review Questions
 
-- Should the next pass split `engine/live.ts` into `engine/kernel.ts` plus
-  executor modules, or should storage substrate work land first?
+- Should the next pass split `engine/live.ts` into executor modules, or should
+  storage substrate work land first?
 - Is `engine/durable-stores.ts` still too broad, or is that acceptable until the
   storage substrate work introduces `S2Access`, `ServiceStores`, and
   `ObjectStores`?

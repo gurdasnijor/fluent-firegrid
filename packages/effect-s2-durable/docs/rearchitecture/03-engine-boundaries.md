@@ -1,5 +1,11 @@
 # Engine Boundaries Axis
 
+> Superseded by [`03-capability-boundaries.md`](./03-capability-boundaries.md).
+> This document captured an intermediate plan that grouped a wide
+> `DurableEngineApi` into lifecycle/primitive/dispatch sections. That framing is
+> no longer the target: handler-scoped operations should move behind structured
+> invocation capability objects, not remain flattened on the engine facade.
+
 ## Public Engine Interface
 
 The public service is `DurableEngine`. Treat it as the public durable

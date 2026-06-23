@@ -14,7 +14,7 @@ import { type S2Client } from "effect-s2"
 import {
   type ActorExit,
 } from "../object/machine/index.ts"
-import { encodeObjectCallId, type ObjectCallIdParts } from "../object/address.ts"
+import { type ObjectCallIdParts } from "../object/address.ts"
 import { type AdmitResult, type ObjectStateBackend, type RunHead } from "../object/owner-driver.ts"
 import { DurableExecutionError } from "../errors.ts"
 import { ResultReader } from "./result-reader.ts"
@@ -42,8 +42,10 @@ import { decodeExecutionAddress, objectPartsOption } from "./address.ts"
 import { HandlerPrimitives } from "./handler-primitives.ts"
 import { ResolutionRouter } from "./resolution-router.ts"
 import { DurableStores } from "./durable-stores.ts"
-import { DurableEngine, type CallTarget, type DurableEngineApi } from "./api.ts"
+import { DurableEngine, type DurableEngineApi } from "./api.ts"
 import type { Handler } from "../authoring/types.ts"
+import { CurrentInvocationScope, type InvocationScope, type ObjectCallTarget, type ServiceCallTarget } from "../invocation/scope.ts"
+import { planChildInvocationId } from "../invocation/plan.ts"
 
 const isDurableExecutionError = Schema.is(DurableExecutionError)
 const isObjectInfrastructureError = (error: DurableExecutionError): boolean => error.operation.startsWith("object.")
@@ -76,15 +78,6 @@ const makeEngine = Effect.gen(function*() {
       Effect.flatMap(ActiveInvocation, (opt) =>
         Option.isNone(opt) ? fail(operation, `${operation} called outside an active handler`) : Effect.succeed(opt.value))
 
-    const assertTopLevel: DurableEngineApi["assertTopLevel"] =
-      Effect.flatMap(ActiveInvocation, (opt) =>
-        Option.isNone(opt)
-          ? Effect.void
-          : fail(
-            "submit",
-            "client(...)/sendClient(...) is the top-level invocation path and is not replay-safe inside a handler; use objectClient(def, key)/objectSendClient(def, key) for in-handler durable calls",
-          ))
-
     const primitives = yield* HandlerPrimitives
 
     const runInternalHandler = (
@@ -93,12 +86,12 @@ const makeEngine = Effect.gen(function*() {
     ) =>
       handler.program.pipe(
         Effect.provideService(ActiveInvocation, Option.some(invocation)),
-        Effect.provideService(DurableEngine, api),
+        Effect.provideService(CurrentInvocationScope, makeInvocationScope(invocation)),
         Effect.exit,
       )
 
     // ── shared (read-only) object handlers ────────────────────────────────────
-    const sharedCall: DurableEngineApi["sharedCall"] = (handler, object, key, input, schema) =>
+    const sharedCall: DurableEngineApi["query"] = (handler, object, key, input, schema) =>
       Effect.gen(function*() {
         // encode the input through the handler's input codec — the same boundary the
         // normal submit path uses, so a transform codec (decoded ≠ encoded) round-trips.
@@ -119,7 +112,27 @@ const makeEngine = Effect.gen(function*() {
     // the caller id + a per-activation ordinal — so a replay recomputes the same id,
     // admission dedups, and the call is issued exactly once (the result is re-read,
     // never re-issued). No new event: it reuses admission (idempotent) + attach.
-    const issueCall = (active: Invocation, target: CallTarget, input: unknown): Effect.Effect<string, DurableExecutionError> =>
+    const parentIdOf = (active: Exclude<Invocation, SharedObjectInvocation>): string =>
+      active.kind === "object" ? active.callId : active.executionId
+
+    const nextChildId = (
+      active: Invocation,
+      target: { readonly kind: "service"; readonly name: string; readonly method: string } | {
+        readonly kind: "object"
+        readonly name: string
+        readonly key: string
+        readonly method: string
+      },
+    ): Effect.Effect<string, DurableExecutionError> =>
+      Effect.gen(function*() {
+        if (active.kind === "shared") {
+          return yield* sharedForbidden("call")
+        }
+        const ordinal = yield* Ref.getAndUpdate(active.callSeq, (n) => n + 1)
+        return yield* planChildInvocationId(parentIdOf(active), ordinal, target)
+      })
+
+    const issueObjectCall = (active: Invocation, target: ObjectCallTarget, input: unknown): Effect.Effect<string, DurableExecutionError> =>
       Effect.gen(function*() {
         // a SHARED (read-only) handler has no durable journal to anchor a replay-stable
         // child id — issuing a call from one would not be deterministic. Forbid it.
@@ -134,16 +147,18 @@ const makeEngine = Effect.gen(function*() {
             return yield* fail("call", `self-call to the same object/key (${target.object}/${target.key}) is not supported`)
           }
         }
-        const ordinal = yield* Ref.getAndUpdate(active.callSeq, (n) => n + 1)
-        const parentId = active.kind === "object" ? active.callId : active.executionId
-        const parts: ObjectCallIdParts = {
-          object: target.object,
+        const callId = yield* nextChildId(active, {
+          kind: "object",
+          name: target.object,
           key: target.key,
           method: target.method,
-          nonce: `${parentId}/call/${ordinal}`,
-        }
-        const callId = yield* encodeObjectCallId(parts).pipe(Effect.mapError(toError("call")))
-        yield* provideClient(store.admit(callId, parts, input)) // idempotent by callId
+        })
+        const callParts = yield* decodeExecutionAddress(callId).pipe(Effect.flatMap((address) =>
+          address._tag === "object"
+            ? Effect.succeed(address.parts)
+            : fail("call", `child object id did not encode an object: ${callId}`),
+        ))
+        yield* provideClient(store.admit(callId, callParts, input)) // idempotent by callId
         // drive the target's drainer so the call runs (residency-independent dispatch).
         yield* Effect.forkIn(
           provideClient(store.drain(target.object, target.key, makeRunHead(target.object))),
@@ -152,20 +167,89 @@ const makeEngine = Effect.gen(function*() {
         return callId
       })
 
-    const callStep: DurableEngineApi["callStep"] = (target, input, inputSchema, schema) =>
+    const callObject = <A, I, B, J>(
+      target: ObjectCallTarget,
+      input: unknown,
+      inputSchema: Schema.Codec<B, J, never, never>,
+      schema: Schema.Codec<A, I, never, never>,
+    ) =>
       withActive("call").pipe(Effect.flatMap((active) =>
         // encode the input through the target's input codec — the same boundary submit
         // uses — so a transform codec (decoded ≠ encoded) round-trips on the target.
         encode(inputSchema, input).pipe(
-          Effect.flatMap((enc) => issueCall(active, target, enc)),
+          Effect.flatMap((enc) => issueObjectCall(active, target, enc)),
           Effect.flatMap((callId) => completion.attach(callId, schema)),
         ),
       ))
 
-    const sendStep: DurableEngineApi["sendStep"] = (target, input, inputSchema) =>
+    const sendObject = <B, J>(target: ObjectCallTarget, input: unknown, inputSchema: Schema.Codec<B, J, never, never>) =>
       withActive("send").pipe(Effect.flatMap((active) =>
-        encode(inputSchema, input).pipe(Effect.flatMap((enc) => issueCall(active, target, enc))),
+        encode(inputSchema, input).pipe(Effect.flatMap((enc) => issueObjectCall(active, target, enc))),
       ))
+
+    const issueServiceCall = (
+      active: Invocation,
+      handler: Handler<unknown, unknown, never, never>,
+      target: ServiceCallTarget,
+      input: unknown,
+    ): Effect.Effect<string, DurableExecutionError> =>
+      Effect.gen(function*() {
+        const executionId = yield* nextChildId(active, {
+          kind: "service",
+          name: target.service,
+          method: target.method,
+        })
+        yield* submit(handler, executionId, input)
+        return executionId
+      })
+
+    const callService: InvocationScope["calls"]["callService"] = (handler, target, input, schema) =>
+      withActive("service.call").pipe(Effect.flatMap((active) =>
+        issueServiceCall(active, handler, target, input).pipe(
+          Effect.flatMap((executionId) => completion.attach(executionId, schema)),
+        ),
+      ))
+
+    const sendService: InvocationScope["calls"]["sendService"] = (handler, target, input) =>
+      withActive("service.send").pipe(Effect.flatMap((active) => issueServiceCall(active, handler, target, input)))
+
+    const makeInvocationScope = (_invocation: Invocation): InvocationScope => ({
+      request: {
+        input: primitives.handlerRequest,
+      },
+      steps: {
+        run: primitives.runStep,
+      },
+      clock: {
+        sleep: primitives.sleepStep,
+      },
+      state: {
+        table: (table) => ({
+          get: (key) => primitives.stateGet(table, key),
+          set: (row) => primitives.stateSet(table, row),
+          delete: (key) => primitives.stateDelete(table, key),
+        }),
+      },
+      awakeables: {
+        create: (schema) =>
+          primitives.nextAwakeableId.pipe(Effect.map((id) => ({
+            id,
+            promise: primitives.awaitDeferred(id, schema),
+          }))),
+      },
+      durablePromises: {
+        await: primitives.awaitDeferred,
+        resolve: primitives.resolveLocal,
+        resolveWorkflow: primitives.resolvePromise,
+      },
+      calls: {
+        callService,
+        sendService,
+        callObject,
+        sendObject,
+        sharedObject: sharedCall,
+      },
+    })
 
     // ── completion (SDD §B6): the result must outlive the dropped stream ───────
     const complete = (
@@ -241,7 +325,7 @@ const makeEngine = Effect.gen(function*() {
         }
         const body: Effect.Effect<boolean, never, R> = handler.program.pipe(
           Effect.provideService(ActiveInvocation, Option.some(invocation)),
-          Effect.provideService(DurableEngine, api),
+          Effect.provideService(CurrentInvocationScope, makeInvocationScope(invocation)),
           Effect.exit,
           Effect.flatMap((exit) =>
             // route a completion failure to the result waiter instead of dying
@@ -430,24 +514,12 @@ const makeEngine = Effect.gen(function*() {
     ).pipe(Effect.withSpan("effect-s2-durable.object.boot-recover"), Effect.ignore)
 
     const api: DurableEngineApi = {
-      assertTopLevel,
       submit,
       attach: completion.attach,
       poll: completion.poll,
-      runStep: primitives.runStep,
-      handlerRequest: primitives.handlerRequest,
-      sleepStep: primitives.sleepStep,
-      stateGet: primitives.stateGet,
-      stateSet: primitives.stateSet,
-      stateDelete: primitives.stateDelete,
-      awaitDeferred: primitives.awaitDeferred,
-      resolveLocal: primitives.resolveLocal,
-      resolveExternal: ingress.resolveExternal,
-      resolvePromise: primitives.resolvePromise,
-      nextAwakeableId: primitives.nextAwakeableId,
-      sharedCall,
-      callStep,
-      sendStep,
+      query: sharedCall,
+      resolveAwakeable: ingress.resolveExternal,
+      resolveDurablePromise: ingress.resolveExternal,
       workflowStart,
     }
 

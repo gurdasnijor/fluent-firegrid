@@ -13,6 +13,10 @@ export interface ObjectIdentity {
   readonly key: string
 }
 
+export type ChildInvocationTarget =
+  | { readonly kind: "service"; readonly name: string; readonly method: string }
+  | { readonly kind: "object"; readonly name: string; readonly key: string; readonly method: string }
+
 const freshNonce = Effect.map(
   Effect.all([Random.nextInt, Random.nextInt, Random.nextInt]),
   (parts) => parts.map((part) => Math.abs(part).toString(36)).join("-"),
@@ -69,3 +73,29 @@ export const workflowRunIdFor = (
   encodeObjectCallId({ object: workflow.name, key: id, method: "run", nonce: id }).pipe(
     Effect.mapError(durableError("workflow.runId")),
   )
+
+const segment = (value: string): string => encodeURIComponent(value)
+
+export const planChildInvocationId = (
+  parentId: string,
+  ordinal: number,
+  target: ChildInvocationTarget,
+): Effect.Effect<string, DurableExecutionError> => {
+  if (target.kind === "object") {
+    return encodeObjectCallId({
+      object: target.name,
+      key: target.key,
+      method: target.method,
+      nonce: `${parentId}/call/${ordinal}`,
+    }).pipe(Effect.mapError(durableError("object.callId")))
+  }
+  return Effect.succeed(
+    [
+      "svc",
+      segment(parentId),
+      String(ordinal),
+      segment(target.name),
+      segment(target.method),
+    ].join(":"),
+  )
+}

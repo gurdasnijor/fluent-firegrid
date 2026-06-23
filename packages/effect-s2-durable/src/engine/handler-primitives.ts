@@ -3,7 +3,7 @@ import type { AnyTable, RowOf } from "effect-s2-stream-db"
 import { encodeObjectCallId, type ObjectCallIdParts } from "../object/address.ts"
 import { stateValue } from "../object/machine/index.ts"
 import type { DurableExecutionError } from "../errors.ts"
-import type { RunOptions } from "../authoring/types.ts"
+import type { DurablePromiseResolver, RunOptions, RunStep } from "../authoring/types.ts"
 import {
   decode,
   decodeRowFor,
@@ -23,17 +23,8 @@ import { DurableStores } from "./durable-stores.ts"
 import { resolveServiceDeferred, serviceWaiterKey } from "./service-deferreds.ts"
 import { ActiveInvocation, type ObjectInvocation, type ServiceInvocation, type StepRecord, type TimerRecord } from "./context.ts"
 
-type ResolvePrimitive = <A, I>(
-  name: string,
-  schema: Schema.Codec<A, I, never, never>,
-  value: A,
-) => Effect.Effect<void, DurableExecutionError>
-
 export interface HandlerPrimitivesApi {
-  readonly runStep: <A, E, R, EncodedA, EncodedE>(
-    action: Effect.Effect<A, E, R>,
-    options?: RunOptions<A, E, EncodedA, EncodedE>,
-  ) => Effect.Effect<A, E | DurableExecutionError, R>
+  readonly runStep: RunStep
   readonly handlerRequest: <A, I>(
     schema: Schema.Codec<A, I, never, never>,
   ) => Effect.Effect<A, DurableExecutionError>
@@ -48,8 +39,8 @@ export interface HandlerPrimitivesApi {
     name: string,
     schema: Schema.Codec<A, I, never, never>,
   ) => Effect.Effect<A, DurableExecutionError>
-  readonly resolveLocal: ResolvePrimitive
-  readonly resolvePromise: ResolvePrimitive
+  readonly resolveLocal: DurablePromiseResolver
+  readonly resolvePromise: DurablePromiseResolver
   readonly nextAwakeableId: Effect.Effect<string, DurableExecutionError>
 }
 

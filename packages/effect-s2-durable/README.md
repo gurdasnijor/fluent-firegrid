@@ -21,8 +21,9 @@ The ergonomic surface is **restate-sdk-gen-shaped**: group handlers in a `servic
 `handlerRequest`, no `Effect.gen` wrapper) — and call through a typed `client` that
 hides the execution id and the submit/attach dance. Inside, `yield* run(...)` etc. stay
 typed (an Effect is `yield*`-able); the **free primitives**
-(`run`/`sleep`/`state`/`signal`/`awakeable`/`deferred`) read an internal
-active-invocation slot and delegate to `DurableEngine` — no `ctx` object.
+(`run`/`sleep`/`state`/`signal`/`awakeable`/`deferred`) delegate to the active
+`CurrentInvocationScope`, while `DurableEngine` stays the public lifecycle
+facade.
 
 ```ts
 import { Duration, Effect, Layer, Schema } from "effect"
@@ -125,7 +126,7 @@ export const checkout = service({
 ```
 
 A `run` action **cannot** use durable primitives (`run`/`sleep`/`state`/`signal`):
-its type forbids `DurableEngine` in `R`, so `run(state(Cart).set(…))`
+its type forbids `CurrentInvocationScope` in `R`, so `run(state(Cart).set(…))`
 is a *compile* error at the `run` call — the Effect analog of Restate's ctx-less
 run closure. Perform durable work in the handler body, not inside a `run` action.
 

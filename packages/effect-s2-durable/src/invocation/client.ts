@@ -1,4 +1,4 @@
-import { Effect, type Schema } from "effect"
+import { Effect, Option } from "effect"
 import { DurableEngine, type DurableEngineApi, type WorkflowStartStatus } from "../engine/api.ts"
 import { type DurableExecutionError, durableError } from "../errors.ts"
 import { compileExclusive, compileOne, compileShared, type CompiledMethod } from "../catalog/compiler.ts"
@@ -19,6 +19,9 @@ import type {
   ServiceDefinition,
   WorkflowDefinition,
 } from "../authoring/definition.ts"
+import { ActiveInvocation } from "../engine/context.ts"
+import { fail } from "../engine/helpers.ts"
+import { CurrentInvocationScope, type ObjectCallTarget, type ServiceCallTarget } from "./scope.ts"
 
 // a `void`-input method (e.g. `*get()`) takes no input argument; everything else
 // takes its declared input. `options` is always optional and trailing.
@@ -26,17 +29,17 @@ type InvokeArgs<I> = [I] extends [void] ? [input?: undefined, options?: InvokeOp
   : [input: I, options?: InvokeOptions]
 
 /** Call surface: `client(def).method(input)` submits + attaches, returning the result. */
-export type ServiceClient<H extends Handlers> = {
+export type ServiceClient<H extends Handlers, R = DurableEngine> = {
   readonly [K in keyof H]: (
     ...args: InvokeArgs<HandlerInput<H[K]>>
-  ) => Effect.Effect<HandlerOutput<H[K]>, DurableExecutionError, DurableEngine>
+  ) => Effect.Effect<HandlerOutput<H[K]>, DurableExecutionError, R>
 }
 
 /** Fire-and-forget surface: `sendClient(def).method(input)` submits, returning the execution id. */
-export type SendClient<H extends Handlers> = {
+export type SendClient<H extends Handlers, R = DurableEngine> = {
   readonly [K in keyof H]: (
     ...args: InvokeArgs<HandlerInput<H[K]>>
-  ) => Effect.Effect<string, DurableExecutionError, DurableEngine>
+  ) => Effect.Effect<string, DurableExecutionError, R>
 }
 
 /** Read-only call surface for an object's SHARED handlers: `sharedClient(obj, key).method(input)`. */
@@ -55,9 +58,14 @@ const beginInvoke = (
   object: ObjectIdentity | undefined,
 ): Effect.Effect<{ readonly id: string; readonly rt: DurableEngineApi }, DurableExecutionError, DurableEngine> =>
   Effect.gen(function*() {
+    const active = yield* ActiveInvocation
+    if (Option.isSome(active)) {
+      return yield* fail(
+        "submit",
+        "client(...)/sendClient(...) is the top-level invocation path and is not replay-safe inside a handler; use serviceClient(...)/serviceSendClient(...) or objectClient(def, key)/objectSendClient(def, key) for in-handler durable calls",
+      )
+    }
     const rt = yield* DurableEngine
-    // Guard before minting a random id: root clients are not replay-safe inside handlers.
-    yield* rt.assertTopLevel
     const id = yield* planInvocationId(method, options, object)
     yield* rt.submit(compiled.handler, id, input)
     return { id, rt }
@@ -87,56 +95,46 @@ const makeProxy = <T>(
  * `client(object, key).method(input)` for a keyed virtual object. Submits + attaches,
  * returning the decoded result.
  */
-export function client<Name extends string, H extends Handlers>(def: ServiceDefinition<Name, H>): ServiceClient<H>
-export function client<Name extends string, H extends Handlers>(def: ObjectDefinition<Name, H>, key: string): ServiceClient<H>
+export function client<Name extends string, H extends Handlers>(def: ServiceDefinition<Name, H>): ServiceClient<H, DurableEngine>
+export function client<Name extends string, H extends Handlers>(def: ObjectDefinition<Name, H>, key: string): ServiceClient<H, DurableEngine>
 export function client<Name extends string, H extends Handlers>(
   def: ServiceDefinition<Name, H> | ObjectDefinition<Name, H>,
   key?: string,
-): ServiceClient<H> {
+): ServiceClient<H, DurableEngine> {
   // Intentional dynamic proxy cast: each Effect<unknown> is recovered structurally by ServiceClient<H>.
-  return makeProxy(def, (compiled, { id, rt }) => rt.attach(id, compiled.output), objectIdentity(def, key)) as unknown as ServiceClient<H>
+  return makeProxy(def, (compiled, { id, rt }) => rt.attach(id, compiled.output), objectIdentity(def, key)) as unknown as ServiceClient<H, DurableEngine>
 }
 
 /**
  * A typed fire-and-forget client: `sendClient(service).method(input)` /
  * `sendClient(object, key).method(input)`. Submits, returning the execution id.
  */
-export function sendClient<Name extends string, H extends Handlers>(def: ServiceDefinition<Name, H>): SendClient<H>
-export function sendClient<Name extends string, H extends Handlers>(def: ObjectDefinition<Name, H>, key: string): SendClient<H>
+export function sendClient<Name extends string, H extends Handlers>(def: ServiceDefinition<Name, H>): SendClient<H, DurableEngine>
+export function sendClient<Name extends string, H extends Handlers>(def: ObjectDefinition<Name, H>, key: string): SendClient<H, DurableEngine>
 export function sendClient<Name extends string, H extends Handlers>(
   def: ServiceDefinition<Name, H> | ObjectDefinition<Name, H>,
   key?: string,
-): SendClient<H> {
+): SendClient<H, DurableEngine> {
   // Intentional dynamic proxy cast; see client.
-  return makeProxy(def, (_compiled, { id }) => Effect.succeed(id), objectIdentity(def, key)) as unknown as SendClient<H>
+  return makeProxy(def, (_compiled, { id }) => Effect.succeed(id), objectIdentity(def, key)) as unknown as SendClient<H, DurableEngine>
 }
 
-type RuntimeCodec = Schema.Codec<unknown, unknown, never, never>
-type ObjectCallTarget = { readonly object: string; readonly key: string; readonly method: string }
-
-const makeObjectStepProxy = <T>(
-  def: ObjectDefinition<string, Handlers>,
-  key: string,
+const makeScopedProxy = <Target, T>(
+  def: ServiceDefinition<string, Handlers> | ObjectDefinition<string, Handlers>,
+  targetFor: (method: string) => Target,
   invoke: (
-    rt: DurableEngineApi,
-    target: ObjectCallTarget,
+    scope: CurrentInvocationScope["Service"],
+    compiled: CompiledMethod,
+    target: Target,
     input: unknown,
-    inputCodec: RuntimeCodec,
-    outputCodec: RuntimeCodec,
-  ) => Effect.Effect<T, DurableExecutionError, DurableEngine>,
-): Record<string, (input: unknown) => Effect.Effect<T, DurableExecutionError, DurableEngine>> =>
-  Object.entries(compileExclusive(def)).reduce<Record<string, (input: unknown) => Effect.Effect<T, DurableExecutionError, DurableEngine>>>(
+  ) => Effect.Effect<T, DurableExecutionError, CurrentInvocationScope>,
+): Record<string, (input: unknown) => Effect.Effect<T, DurableExecutionError, CurrentInvocationScope>> =>
+  Object.entries(compileExclusive(def)).reduce<Record<string, (input: unknown) => Effect.Effect<T, DurableExecutionError, CurrentInvocationScope>>>(
     (proxy, [method, compiled]) => ({
       ...proxy,
       [method]: (input: unknown) =>
-        Effect.flatMap(DurableEngine, (rt) =>
-          invoke(
-            rt,
-            { object: def.name, key, method },
-            input,
-            compiled.input,
-            compiled.output,
-          )),
+        Effect.flatMap(CurrentInvocationScope, (scope) =>
+          invoke(scope, compiled, targetFor(method), input)),
     }),
     {},
   )
@@ -150,10 +148,13 @@ const makeObjectStepProxy = <T>(
 export const objectClient = <Name extends string, H extends Handlers>(
   def: ObjectDefinition<Name, H>,
   key: string,
-): ServiceClient<H> =>
+): ServiceClient<H, CurrentInvocationScope> =>
   // Intentional dynamic proxy cast: each Effect<unknown> is recovered structurally by ServiceClient<H>.
-  makeObjectStepProxy(def, key, (rt, target, input, inputCodec, outputCodec) =>
-    rt.callStep(target, input, inputCodec, outputCodec)) as unknown as ServiceClient<H>
+  makeScopedProxy<ObjectCallTarget, unknown>(
+    def,
+    (method) => ({ object: def.name, key, method }),
+    (scope, compiled, target, input) => scope.calls.callObject(target, input, compiled.input, compiled.output),
+  ) as unknown as ServiceClient<H, CurrentInvocationScope>
 
 /**
  * The typed **in-handler** one-way send surface: `objectSendClient(Def, key).method(input)`
@@ -162,10 +163,40 @@ export const objectClient = <Name extends string, H extends Handlers>(
 export const objectSendClient = <Name extends string, H extends Handlers>(
   def: ObjectDefinition<Name, H>,
   key: string,
-): SendClient<H> =>
+): SendClient<H, CurrentInvocationScope> =>
   // Intentional dynamic proxy cast; see objectClient.
-  makeObjectStepProxy(def, key, (rt, target, input, inputCodec) =>
-    rt.sendStep(target, input, inputCodec)) as unknown as SendClient<H>
+  makeScopedProxy<ObjectCallTarget, string>(
+    def,
+    (method) => ({ object: def.name, key, method }),
+    (scope, compiled, target, input) => scope.calls.sendObject(target, input, compiled.input),
+  ) as unknown as SendClient<H, CurrentInvocationScope>
+
+/**
+ * The typed **in-handler** call surface to another service:
+ * `serviceClient(Service).method(input)`. Unlike root `client(Service)`, the
+ * child id is derived from the active invocation and is replay-stable.
+ */
+export const serviceClient = <Name extends string, H extends Handlers>(
+  def: ServiceDefinition<Name, H>,
+): ServiceClient<H, CurrentInvocationScope> =>
+  makeScopedProxy<ServiceCallTarget, unknown>(
+    def,
+    (method) => ({ service: def.name, method }),
+    (scope, compiled, target, input) => scope.calls.callService(compiled.handler, target, input, compiled.output),
+  ) as unknown as ServiceClient<H, CurrentInvocationScope>
+
+/**
+ * The typed **in-handler** one-way send surface to another service:
+ * `serviceSendClient(Service).method(input)`.
+ */
+export const serviceSendClient = <Name extends string, H extends Handlers>(
+  def: ServiceDefinition<Name, H>,
+): SendClient<H, CurrentInvocationScope> =>
+  makeScopedProxy<ServiceCallTarget, string>(
+    def,
+    (method) => ({ service: def.name, method }),
+    (scope, compiled, target, input) => scope.calls.sendService(compiled.handler, target, input),
+  ) as unknown as SendClient<H, CurrentInvocationScope>
 
 /**
  * A typed **shared** (read-only) call surface for a virtual object or workflow:
@@ -193,7 +224,7 @@ export function sharedClient(
         method,
         (input: unknown) =>
           Effect.flatMap(DurableEngine, (rt) =>
-            rt.sharedCall(
+            rt.query(
               compiled.handler,
               def.name,
               key,

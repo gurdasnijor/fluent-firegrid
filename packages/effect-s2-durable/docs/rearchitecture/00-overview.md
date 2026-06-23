@@ -45,9 +45,9 @@ effects.
 - **Storage substrate**: object owner logs are typed event streams; latest-value
   state remains tables/materialized views. See
   [`02-storage-substrate.md`](./02-storage-substrate.md).
-- **Engine boundaries**: make `DurableEngine` the public engine API over
-  co-located semantic engine internals. See
-  [`03-engine-boundaries.md`](./03-engine-boundaries.md).
+- **Capability boundaries**: keep `DurableEngine` narrow and move handler
+  primitives behind invocation-scoped capability objects. See
+  [`03-capability-boundaries.md`](./03-capability-boundaries.md).
 - **Dependency graph and naming**: remove `runtime` as a catch-all namespace and
   split entrypoints by audience. See
   [`04-dependency-graph-and-naming.md`](./04-dependency-graph-and-naming.md).
@@ -73,8 +73,9 @@ The rearchitecture is successful when:
   with no S2, Effect service, handler registry, fiber, or waiter dependency;
 - `object/owner-driver.ts` is a driver around the object state machine:
   read/fold, decide, append, run emitted action;
-- `engine/api.ts` is the public engine API, with engine assembly in `engine/live.ts`
-  and the recursive handler/API knot isolated in `engine/kernel.ts`;
+- `engine/api.ts` is the public lifecycle/query API, handler-scoped operations
+  flow through `invocation/scope.ts`, and engine assembly lives in
+  `engine/live.ts` until the internal executor split is worth doing;
 - object owner-log IO is a durable adapter over `effect-s2-stream-db`
   `EventStream<ActorEvent>` rather than bespoke S2 stream mechanics;
 - object S2 fencing lives only in `object/drive-session.ts`;

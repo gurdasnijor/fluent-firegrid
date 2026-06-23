@@ -3,7 +3,7 @@ import { primaryKey, Table } from "effect-s2-stream-db"
 import { handler, handlerRequest, run, state } from "../src/index.ts"
 
 // Typecheck-only (not run by vitest): a `run` action may NOT use durable
-// primitives. When the action requires `DurableEngine`, `run` resolves
+// primitives. When the action requires `CurrentInvocationScope`, `run` resolves
 // to `RunActionViolation` (not an `Effect`), so `yield*`-ing it is a compile
 // error — asserted here with `@ts-expect-error`. If the guard regressed, the
 // directive would itself error ("unused @ts-expect-error").
@@ -15,7 +15,7 @@ class Note extends Table<Note>("note")({
   text: Schema.String,
 }) {}
 
-// A plain action (no durable engine in R) is legal.
+// A plain action (no durable invocation scope in R) is legal.
 export const legal = handler("legal", { input: Input, output: Schema.Number })(
   Effect.gen(function*() {
     yield* handlerRequest(Input)

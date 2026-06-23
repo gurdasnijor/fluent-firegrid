@@ -3,6 +3,8 @@ export {
   objectClient,
   objectSendClient,
   sendClient,
+  serviceClient,
+  serviceSendClient,
   sharedClient,
   workflowAttach,
   workflowRunId,

@@ -109,7 +109,6 @@ Created:
 src/engine/api.ts
   DurableEngineApi
   DurableEngine
-  CallTarget
   WorkflowStartStatus
 ```
 
@@ -151,15 +150,17 @@ Replace `DurableStores` with:
 - `ObjectStores`;
 - `S2Access`.
 
-### Step 0: Resolve the handler/engine knot
+### Capability Step 0: Resolve the handler/engine knot — done
 
-Every executor that runs handlers injects the engine API via
-`provideService(DurableEngine, api)`, and `api` is assembled from those
-executors. Decide and land the mechanism before moving handler-running code:
+Handlers no longer receive the broad engine API for handler-scoped operations.
+Every executor that runs handlers provides:
 
-- `Deferred`;
-- lazy ref;
-- `EngineKernel.makeApi`.
+- `ActiveInvocation`, the internal execution record;
+- `CurrentInvocationScope`, the semantic authoring capability object.
+
+Root clients still use `DurableEngine`; handler-scoped clients use
+`CurrentInvocationScope.calls`. This removes the old recursive pressure where
+handlers needed the same wide API object that `engine/live.ts` was assembling.
 
 ### Executor Extraction
 
@@ -170,8 +171,8 @@ After the state machine and API knot are clear:
 3. Extract `ServiceExecutor`.
 4. Extract `ObjectExecutor`.
 5. Introduce `RecoveryCoordinator`.
-6. Split `engine/live.ts` further by extracting `engine/kernel.ts` and executor
-   modules.
+6. Split `engine/live.ts` further by extracting executor modules only when the
+   capability implementation has a clear home.
 7. Remove transitional object storage mechanics superseded by `EventStream` and
    snapshots.
 
