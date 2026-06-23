@@ -1,9 +1,9 @@
 import { Effect, Layer, Option, Schema } from "effect"
 import { HttpRouter } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
-import { encodeObjectCallId } from "../object/machine/index.ts"
-import { invokeUntyped, sendUntyped, type InvokeOptions } from "../invocation-client.ts"
+import { compileOne } from "../definition-compiler.ts"
 import { DurableEngine } from "../engine/api.ts"
+import { locateInvocationId, objectIdentity, planInvocationId, type InvokeOptions } from "../invocation-plan.ts"
 import { type AnyDef, asFailure, DurableApi, DurableFailure } from "./contract.ts"
 
 // ── definitions registry + helpers ──────────────────────────────────────────
@@ -20,10 +20,11 @@ interface InvokePayloadType {
 const resolve = (registry: Map<string, AnyDef>, payload: InvokePayloadType) => {
   const def = registry.get(payload.name)
   if (def === undefined) return undefined
-  const compiled = def.compiled[payload.method]
+  const codecs = def.codecs[payload.method]
+  const compiled = compileOne(def, payload.method)
   if (compiled === undefined) return undefined
-  // `compiled` already carries narrowed `input`/`output` codecs (see definition.ts Compiled).
-  return { def, codec: compiled }
+  if (codecs === undefined) return undefined
+  return { def, codecs, compiled }
 }
 
 const validateTarget = (def: AnyDef, payload: InvokePayloadType): Effect.Effect<void, DurableFailure> => {
@@ -43,9 +44,8 @@ const notFound = (payload: InvokePayloadType) =>
   new DurableFailure({ message: `no handler ${payload.name}/${payload.method}` })
 
 // ── server handlers ─────────────────────────────────────────────────────────
-// The ingress sits OUTSIDE any handler (no ActiveInvocation), so `client`/
-// `sendClient` are the correct surfaces; decode the wire input via the def's
-// codec, drive the engine, re-encode the output.
+// The ingress sits outside handler replay. It plans an invocation id, submits
+// directly to the engine, then attaches/polls via the same typed codecs.
 
 // Resolve the def for a payload and enforce the service/object key contract
 // (the shared head of every server handler).
@@ -61,40 +61,37 @@ const resolveValidated = (registry: Map<string, AnyDef>, payload: InvokePayloadT
 const prepare = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
   Effect.gen(function*() {
     const resolved = yield* resolveValidated(registry, payload)
-    const input = yield* Schema.decodeUnknownEffect(resolved.codec.input)(payload.input)
+    const input = yield* Schema.decodeUnknownEffect(resolved.codecs.input)(payload.input)
     return { resolved, input }
   })
 
 const runCall = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
-  prepare(registry, payload).pipe(
-    Effect.flatMap(({ input, resolved }) =>
-      invokeUntyped(resolved.def, payload.key)[payload.method]!(input, optionsFor(payload))
-        .pipe(Effect.flatMap((output) => Schema.encodeEffect(resolved.codec.output)(output)), Effect.map((output) => ({ output })))),
-    Effect.mapError(asFailure),
-  )
+  Effect.gen(function*() {
+    const { input, resolved } = yield* prepare(registry, payload)
+    const rt = yield* DurableEngine
+    const id = yield* planInvocationId(payload.method, optionsFor(payload), objectIdentity(resolved.def, payload.key))
+    yield* rt.submit(resolved.compiled.handler, id, input)
+    const decoded = yield* rt.attach(id, resolved.codecs.output)
+    return { output: yield* Schema.encodeEffect(resolved.codecs.output)(decoded) }
+  }).pipe(Effect.mapError(asFailure))
 
 const runSend = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
-  prepare(registry, payload).pipe(
-    Effect.flatMap(({ input, resolved }) =>
-      sendUntyped(resolved.def, payload.key)[payload.method]!(input, optionsFor(payload))
-        .pipe(Effect.map((invocationId) => ({ invocationId })))),
-    Effect.mapError(asFailure),
-  )
+  Effect.gen(function*() {
+    const { input, resolved } = yield* prepare(registry, payload)
+    const rt = yield* DurableEngine
+    const invocationId = yield* planInvocationId(payload.method, optionsFor(payload), objectIdentity(resolved.def, payload.key))
+    yield* rt.submit(resolved.compiled.handler, invocationId, input)
+    return { invocationId }
+  }).pipe(Effect.mapError(asFailure))
 
 // Resolve the engine execution id from the locate payload: an explicit
-// invocationId wins; otherwise reconstruct the id the original idempotencyKey
-// minted (a service id IS its idempotencyKey; an object id encodes
-// `{object, key, method, nonce: idempotencyKey}` — matching invocation-client.ts `mintId`).
+// invocationId wins; otherwise reconstruct the id the original idempotencyKey minted.
 const locateId = (def: AnyDef, payload: InvokePayloadType): Effect.Effect<string, DurableFailure> => {
   if (payload.invocationId !== undefined) return Effect.succeed(payload.invocationId)
   if (payload.idempotencyKey === undefined) {
     return Effect.fail(new DurableFailure({ message: "attach/output requires invocationId or idempotencyKey" }))
   }
-  if (def.kind === "object") {
-    return encodeObjectCallId({ object: payload.name, key: payload.key as string, method: payload.method, nonce: payload.idempotencyKey })
-      .pipe(Effect.mapError(asFailure))
-  }
-  return Effect.succeed(payload.idempotencyKey)
+  return locateInvocationId(payload.method, payload.idempotencyKey, objectIdentity(def, payload.key)).pipe(Effect.mapError(asFailure))
 }
 
 // Resolve the def + the engine id + the engine (the shared head of attach/output).
@@ -109,17 +106,17 @@ const locate = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
 const runAttach = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
   Effect.gen(function*() {
     const { id, resolved, rt } = yield* locate(registry, payload)
-    const output = yield* rt.attach(id, resolved.codec.output)
-    return { output: yield* Schema.encodeEffect(resolved.codec.output)(output) }
+    const output = yield* rt.attach(id, resolved.codecs.output)
+    return { output: yield* Schema.encodeEffect(resolved.codecs.output)(output) }
   }).pipe(Effect.mapError(asFailure))
 
 const runOutput = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
   Effect.gen(function*() {
     const { id, resolved, rt } = yield* locate(registry, payload)
-    const polled = yield* rt.poll(id, resolved.codec.output)
+    const polled = yield* rt.poll(id, resolved.codecs.output)
     return Option.isNone(polled)
       ? { status: "notReady" as const }
-      : { status: "ready" as const, output: yield* Schema.encodeEffect(resolved.codec.output)(polled.value) }
+      : { status: "ready" as const, output: yield* Schema.encodeEffect(resolved.codecs.output)(polled.value) }
   }).pipe(Effect.mapError(asFailure))
 
 /**

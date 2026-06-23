@@ -5,7 +5,8 @@ import { openLog } from "../src/object/log.ts"
 import { DurableExecutionError } from "../src/errors.ts"
 import { DurableEngine } from "../src/engine/api.ts"
 import { object } from "../src/definition.ts"
-import { serviceLayer } from "../src/service-layer.ts"
+import { compileOne } from "../src/definition-compiler.ts"
+import { serviceLayer } from "../src/engine/catalog-layer.ts"
 import { hasS2 } from "./ingress-support.ts"
 import { S2LiteLive } from "./s2lite.ts"
 
@@ -24,7 +25,7 @@ const InfraFailureObject = object({
 })
 
 const engineLayer = serviceLayer(InfraFailureObject)
-const boomHandler = InfraFailureObject.compiled.boom!.handler
+const boomHandler = compileOne(InfraFailureObject, "boom")!.handler
 
 describe.skipIf(!hasS2())("object infrastructure errors", () => {
   it("do not settle the object call as a user-level Completed failure", async () => {

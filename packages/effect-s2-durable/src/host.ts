@@ -23,7 +23,7 @@ import type { DurableExecutionError } from "./errors.ts"
 import { durableIngress } from "./ingress/server.ts"
 import { type DurableEngine } from "./engine/api.ts"
 import type { AnyDef } from "./definition.ts"
-import { serviceLayer } from "./service-layer.ts"
+import { serviceLayer } from "./engine/catalog-layer.ts"
 
 /** Configuration for a single durable host. */
 export interface DurableHostOptions {

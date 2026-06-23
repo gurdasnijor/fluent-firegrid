@@ -14,24 +14,11 @@ export {
   sleep,
   state,
 } from "./primitives.ts"
-export { DurableEngine } from "./engine/api.ts"
-export type { DurableEngineApi } from "./engine/api.ts"
 export {
   object,
   service,
   workflow,
 } from "./definition.ts"
-export {
-  client,
-  objectClient,
-  objectSendClient,
-  sendClient,
-  sharedClient,
-  workflowAttach,
-  workflowRunId,
-  workflowSubmit,
-} from "./invocation-client.ts"
-export { serviceLayer } from "./service-layer.ts"
 export type {
   HandlerInput,
   HandlerOutput,
@@ -43,23 +30,6 @@ export type {
   WorkflowConfig,
   WorkflowDefinition,
 } from "./definition.ts"
-export type {
-  InvokeOptions,
-  SendClient,
-  ServiceClient,
-  SharedClient,
-} from "./invocation-client.ts"
-export {
-  ClockWakeupRow,
-  DeferredRow,
-  ExecutionId,
-  ExecutionRow,
-  RosterDb,
-  RosterRow,
-  StateReadRow,
-  StepRow,
-  WorkflowDb,
-} from "./schema.ts"
 export type {
   AwakeableHandle,
   DeferredHandle,

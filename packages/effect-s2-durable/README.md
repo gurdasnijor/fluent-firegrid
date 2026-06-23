@@ -27,7 +27,9 @@ active-invocation slot and delegate to `DurableEngine` — no `ctx` object.
 ```ts
 import { Duration, Effect, Layer, Schema } from "effect"
 import { S2Client } from "effect-s2"
-import { client, run, service, serviceLayer } from "effect-s2-durable"
+import { run, service } from "effect-s2-durable"
+import { serviceLayer } from "effect-s2-durable/engine"
+import { client } from "effect-s2-durable/invocation"
 
 const greeter = service({
   name: "greeter",
@@ -139,7 +141,8 @@ depend on the call being resident in memory. Persistent user state is a projecti
 events. See the actor SDD for the exact invariants.
 
 ```ts
-import { client, object, state } from "effect-s2-durable"
+import { object, state } from "effect-s2-durable"
+import { client } from "effect-s2-durable/invocation"
 
 class CounterState extends Table<CounterState>("counterState")({
   id: Schema.String.pipe(primaryKey),
@@ -209,7 +212,7 @@ codecs, types — is derived from them.
 **Server** — two layers, each over the same defs:
 
 ```ts
-import { serviceLayer } from "effect-s2-durable"
+import { serviceLayer } from "effect-s2-durable/engine"
 import { durableIngress } from "effect-s2-durable/ingress"
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
 

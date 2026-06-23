@@ -1,8 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- handler input/output are existential at the definition boundary; `any` is required for inference across the handler record (mirrors restate-sdk-gen's define/free). Concrete types are recovered on the client surface via HandlerInput/HandlerOutput. */
-import { Effect, Schema } from "effect"
-import { handler } from "./handler.ts"
-import { handlerRequest } from "./primitives.ts"
-import type { Handler } from "./types.ts"
+import { Schema } from "effect"
 
 /**
  * The ergonomic authoring surface (restate-sdk-gen shape) over the engine
@@ -32,15 +29,24 @@ type SchemasFor<H extends Handlers> = {
   readonly [K in keyof H]?: HandlerSchemas<HandlerInput<H[K]>, HandlerOutput<H[K]>>
 }
 
-export interface Compiled {
-  // self-contained: a registered service handler has no unmet `R` beyond the
-  // engine (provided by `submit`) and surfaces no typed error to the caller.
-  readonly handler: Handler<unknown, unknown, never, never>
-  // input/output codecs narrowed ONCE here from the handler's erased `Schema.Top`
-  // to `Codec<unknown, …>`, so the ingress + clients dispatch without re-casting.
+export interface MethodCodecs {
   readonly input: Schema.Codec<unknown, unknown, never, never>
   readonly output: Schema.Codec<unknown, unknown, never, never>
 }
+
+const methodCodecs = (
+  handlers: Handlers,
+  schemas: Record<string, HandlerSchemas> | undefined,
+): Record<string, MethodCodecs> =>
+  Object.fromEntries(
+    Object.keys(handlers).map((method) => [
+      method,
+      {
+        input: (schemas?.[method]?.input ?? Schema.Unknown) as Schema.Codec<unknown, unknown, never, never>,
+        output: (schemas?.[method]?.output ?? Schema.Unknown) as Schema.Codec<unknown, unknown, never, never>,
+      },
+    ]),
+  )
 
 /** A registerable service definition (stateless — each call a fresh execution). */
 export interface ServiceDefinition<Name extends string, H extends Handlers> {
@@ -48,7 +54,7 @@ export interface ServiceDefinition<Name extends string, H extends Handlers> {
   readonly kind: "service"
   /** Retained for input/output type inference; not a call surface. */
   readonly handlers: H
-  readonly compiled: Record<string, Compiled>
+  readonly codecs: Record<string, MethodCodecs>
 }
 
 export interface ServiceConfig<Name extends string, H extends Handlers> {
@@ -57,31 +63,6 @@ export interface ServiceConfig<Name extends string, H extends Handlers> {
   readonly schemas?: SchemasFor<H>
 }
 
-const compileHandlers = (
-  name: string,
-  handlers: Handlers,
-  schemas: Record<string, HandlerSchemas> | undefined,
-): Record<string, Compiled> =>
-  Object.fromEntries(
-    Object.entries(handlers).map(([method, fn]) => {
-      // narrow the erased schemas to `Codec<unknown, …>` once: the engine + ingress
-      // consume them as codecs, so this is the single place the cast lives.
-      const input = (schemas?.[method]?.input ?? Schema.Unknown) as Schema.Codec<unknown, unknown, never, never>
-      const output = (schemas?.[method]?.output ?? Schema.Unknown) as Schema.Codec<unknown, unknown, never, never>
-      // fetch the decoded input (internal), then run the generator body with it —
-      // the user writes neither `handlerRequest` nor an `Effect.gen` wrapper.
-      const body = Effect.fnUntraced(fn)
-      const program = handlerRequest(input).pipe(Effect.flatMap((decoded) => body(decoded)))
-      const compiledHandler = handler(`${name}/${method}`, { input, output })(program) as Handler<
-        unknown,
-        unknown,
-        never,
-        never
-      >
-      return [method, { handler: compiledHandler, input, output }] as const
-    }),
-  )
-
 /** Define a stateless durable service — each call is a fresh execution. */
 export const service = <const Name extends string, H extends Handlers>(
   config: ServiceConfig<Name, H>,
@@ -89,7 +70,7 @@ export const service = <const Name extends string, H extends Handlers>(
   name: config.name,
   kind: "service",
   handlers: config.handlers,
-  compiled: compileHandlers(config.name, config.handlers, config.schemas as Record<string, HandlerSchemas> | undefined),
+  codecs: methodCodecs(config.handlers, config.schemas as Record<string, HandlerSchemas> | undefined),
 })
 
 /** A keyed virtual-object definition — durable state + exclusive methods (+ shared read-only methods), per key. */
@@ -98,8 +79,8 @@ export interface ObjectDefinition<Name extends string, H extends Handlers, S ext
   readonly kind: "object"
   readonly handlers: H
   readonly shared: S
-  readonly compiled: Record<string, Compiled>
-  readonly compiledShared: Record<string, Compiled>
+  readonly codecs: Record<string, MethodCodecs>
+  readonly sharedCodecs: Record<string, MethodCodecs>
 }
 
 /**
@@ -116,9 +97,8 @@ export const object = <const Name extends string, H extends Handlers, S extends 
   kind: "object",
   handlers: config.handlers,
   shared: (config.shared ?? {}) as S,
-  compiled: compileHandlers(config.name, config.handlers, config.schemas as Record<string, HandlerSchemas> | undefined),
-  compiledShared: compileHandlers(
-    config.name,
+  codecs: methodCodecs(config.handlers, config.schemas as Record<string, HandlerSchemas> | undefined),
+  sharedCodecs: methodCodecs(
     config.shared ?? {},
     config.sharedSchemas as Record<string, HandlerSchemas> | undefined,
   ),
@@ -136,11 +116,11 @@ export interface WorkflowDefinition<Name extends string, R extends HandlerFn, S 
   readonly kind: "workflow"
   readonly run: R
   readonly shared: S
-  /** The single exclusive entrypoint, keyed by the reserved method name `run`. */
-  readonly compiled: Record<string, Compiled>
-  /** The compiled `run` entrypoint (the sole member of `compiled`), typed for direct use. */
-  readonly compiledRun: Compiled
-  readonly compiledShared: Record<string, Compiled>
+  /** The single exclusive entrypoint codecs, keyed by the reserved method name `run`. */
+  readonly codecs: Record<string, MethodCodecs>
+  /** The `run` entrypoint codecs (the sole member of `codecs`), typed for direct use. */
+  readonly runCodecs: MethodCodecs
+  readonly sharedCodecs: Record<string, MethodCodecs>
 }
 
 /** The reserved method name of a workflow's exclusive entrypoint. */
@@ -176,8 +156,7 @@ export const workflow = <const Name extends string, R extends HandlerFn, S exten
   if (config.handlers !== undefined && Object.prototype.hasOwnProperty.call(config.handlers, WORKFLOW_RUN)) {
     throw new Error(`workflow ${JSON.stringify(config.name)}: a shared handler may not be named ${JSON.stringify(WORKFLOW_RUN)} (reserved for the run-once entrypoint)`)
   }
-  const compiledRun = compileHandlers(
-    config.name,
+  const runCodecs = methodCodecs(
     { [WORKFLOW_RUN]: config.run },
     config.runSchema === undefined ? undefined : { [WORKFLOW_RUN]: config.runSchema },
   )
@@ -186,10 +165,9 @@ export const workflow = <const Name extends string, R extends HandlerFn, S exten
     kind: "workflow",
     run: config.run,
     shared: (config.handlers ?? {}) as S,
-    compiled: compiledRun,
-    compiledRun: compiledRun[WORKFLOW_RUN] as Compiled,
-    compiledShared: compileHandlers(
-      config.name,
+    codecs: runCodecs,
+    runCodecs: runCodecs[WORKFLOW_RUN] as MethodCodecs,
+    sharedCodecs: methodCodecs(
       config.handlers ?? {},
       config.sharedSchemas as Record<string, HandlerSchemas> | undefined,
     ),

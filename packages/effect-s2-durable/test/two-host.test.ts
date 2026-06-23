@@ -2,7 +2,8 @@ import { describe, expect, it } from "@effect/vitest"
 import { Context, Effect, Layer, Schema } from "effect"
 import { encodeObjectCallId } from "../src/object/machine/index.ts"
 import { DurableEngine } from "../src/engine/api.ts"
-import { serviceLayer } from "../src/service-layer.ts"
+import { serviceLayer } from "../src/engine/catalog-layer.ts"
+import { compileOne } from "../src/definition-compiler.ts"
 import { Counter, hasS2 } from "./ingress-support.ts"
 import { S2LiteLive } from "./s2lite.ts"
 
@@ -13,7 +14,7 @@ import { S2LiteLive } from "./s2lite.ts"
 
 const engineLayer = serviceLayer(Counter)
 
-const addHandler = Counter.compiled.add!.handler
+const addHandler = compileOne(Counter, "add")!.handler
 const callId = (key: string, nonce: string) =>
   encodeObjectCallId({ object: Counter.name, key, method: "add", nonce })
 

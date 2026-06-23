@@ -16,7 +16,7 @@ export type ExecutionId = typeof ExecutionId.Type
 // ── per-execution tables (WorkflowDb, stream `wf/<execId>`) ───────────────────
 
 /** The execution's own state row (one per db). `input` is the encoded request. */
-export class ExecutionRow extends Table<ExecutionRow>("executions")({
+class ExecutionRow extends Table<ExecutionRow>("executions")({
   executionId: Schema.String.pipe(primaryKey),
   handlerName: Schema.String,
   input: Schema.Unknown,
@@ -32,7 +32,7 @@ export class ExecutionRow extends Table<ExecutionRow>("executions")({
  * `value`/`error` hold the *encoded* outcome. No row = no terminal fact yet, so
  * the action is eligible to run (a crash before this row is written re-runs it).
  */
-export class StepRow extends Table<StepRow>("steps")({
+class StepRow extends Table<StepRow>("steps")({
   stepKey: Schema.String.pipe(primaryKey),
   success: Schema.Boolean,
   value: Schema.optional(Schema.Unknown),
@@ -40,7 +40,7 @@ export class StepRow extends Table<StepRow>("steps")({
 }) {}
 
 /** A durable deferred / signal — `value` present once resolved (slice 3). */
-export class DeferredRow extends Table<DeferredRow>("deferreds")({
+class DeferredRow extends Table<DeferredRow>("deferreds")({
   name: Schema.String.pipe(primaryKey),
   value: Schema.optional(Schema.Unknown),
 }) {}
@@ -51,13 +51,13 @@ export class DeferredRow extends Table<DeferredRow>("deferreds")({
  * suspend/resume recomputes against the value seen on first execution, not the
  * already-mutated durable value. `value` holds the encoded `row | null`.
  */
-export class StateReadRow extends Table<StateReadRow>("stateReads")({
+class StateReadRow extends Table<StateReadRow>("stateReads")({
   readKey: Schema.String.pipe(primaryKey),
   value: Schema.Unknown,
 }) {}
 
 /** A durable timer (`sleep`): a `clockWakeups` row + an in-process arm (slice 2). */
-export class ClockWakeupRow extends Table<ClockWakeupRow>("clockWakeups")({
+class ClockWakeupRow extends Table<ClockWakeupRow>("clockWakeups")({
   name: Schema.String.pipe(primaryKey),
   deadlineMs: Schema.Number,
   status: Schema.Literals(["pending", "fired"]),
@@ -85,7 +85,7 @@ export class WorkflowDb extends StreamDb<WorkflowDb>("wf")({
  * cold-start enumeration source and the home of a completed execution's result
  * after its stream is dropped.
  */
-export class RosterRow extends Table<RosterRow>("roster")({
+class RosterRow extends Table<RosterRow>("roster")({
   executionId: Schema.String.pipe(primaryKey),
   handlerName: Schema.String,
   status: Schema.Literals(["running", "suspended", "completed", "failed"]),

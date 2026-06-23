@@ -1,11 +1,17 @@
-import { Effect, Option, Random, type Schema } from "effect"
+import { Effect, Option, type Schema } from "effect"
 import { DurableEngine, type DurableEngineApi, type WorkflowStartStatus } from "./engine/api.ts"
 import { ActiveInvocation } from "./engine/context.ts"
 import { type DurableExecutionError, durableError } from "./errors.ts"
-import { encodeObjectCallId, OBJECT_ID_PREFIX } from "./object/machine/index.ts"
+import { compileExclusive, compileOne, compileShared, type CompiledMethod } from "./definition-compiler.ts"
+import {
+  type InvokeOptions,
+  objectIdentity,
+  type ObjectIdentity,
+  planInvocationId,
+  workflowRunIdFor,
+} from "./invocation-plan.ts"
 import type {
   AnyDef,
-  Compiled,
   HandlerFn,
   HandlerInput,
   HandlerOutput,
@@ -14,12 +20,7 @@ import type {
   ServiceDefinition,
   WorkflowDefinition,
 } from "./definition.ts"
-import { WORKFLOW_RUN } from "./definition.ts"
-
-export interface InvokeOptions {
-  /** Pin the execution id (idempotent invocation). Default: a fresh id per call. */
-  readonly idempotencyKey?: string
-}
+export type { InvokeOptions } from "./invocation-plan.ts"
 
 // a `void`-input method (e.g. `*get()`) takes no input argument; everything else
 // takes its declared input. `options` is always optional and trailing.
@@ -47,52 +48,9 @@ export type SharedClient<S extends Handlers> = {
   ) => Effect.Effect<HandlerOutput<S[K]>, DurableExecutionError, DurableEngine>
 }
 
-/** A virtual object's identity for a call: its definition name + the typed key. */
-interface ObjectIdentity {
-  readonly name: string
-  readonly key: string
-}
-
-const freshNonce = Effect.map(
-  Effect.all([Random.nextInt, Random.nextInt, Random.nextInt]),
-  (parts) => parts.map((part) => Math.abs(part).toString(36)).join("-"),
-)
-const nonceFor = (options: InvokeOptions | undefined) =>
-  options?.idempotencyKey === undefined ? freshNonce : Effect.succeed(options.idempotencyKey)
-
-// Service ids are an opaque nonce; object ids are a schema-owned call id that
-// carries `{ object, key, method, nonce }` so `attach`/`poll` self-route to the
-// owner stream (no legacy `name:key` delimiter identity).
-const mintId = (
-  method: string,
-  options: InvokeOptions | undefined,
-  object: ObjectIdentity | undefined,
-): Effect.Effect<string, DurableExecutionError> =>
-  object === undefined
-    // a service id IS its idempotencyKey/nonce — reserve the object namespace so a
-    // service id can never be misrouted to an owner stream.
-    ? nonceFor(options).pipe(
-      Effect.flatMap((id) =>
-        id.startsWith(OBJECT_ID_PREFIX)
-          ? Effect.fail(
-            durableError("submit")(
-              new Error(`idempotencyKey must not start with the reserved prefix ${JSON.stringify(OBJECT_ID_PREFIX)}`),
-            ),
-          )
-          : Effect.succeed(id),
-      ),
-    )
-    : nonceFor(options).pipe(
-      Effect.flatMap((nonce) =>
-        encodeObjectCallId({ object: object.name, key: object.key, method, nonce }).pipe(
-          Effect.mapError(durableError("object.callId")),
-        ),
-      ),
-    )
-
 /** Mint the execution id, submit, and hand back the id + engine for the caller to finish. */
 const beginInvoke = (
-  compiled: Compiled,
+  compiled: CompiledMethod,
   method: string,
   input: unknown,
   options: InvokeOptions | undefined,
@@ -111,7 +69,7 @@ const beginInvoke = (
         ),
       )
     }
-    const id = yield* mintId(method, options, object)
+    const id = yield* planInvocationId(method, options, object)
     const rt = yield* DurableEngine
     yield* rt.submit(compiled.handler, id, input)
     return { id, rt }
@@ -119,15 +77,15 @@ const beginInvoke = (
 
 /** Build a per-method proxy over a definition; `finish` decides what each call returns. */
 const makeProxy = <T>(
-  def: { readonly compiled: Record<string, Compiled> },
+  def: AnyDef,
   finish: (
-    compiled: Compiled,
+    compiled: CompiledMethod,
     ctx: { readonly id: string; readonly rt: DurableEngineApi },
   ) => Effect.Effect<T, DurableExecutionError, DurableEngine>,
   object: ObjectIdentity | undefined,
 ): Record<string, (input: unknown, options?: InvokeOptions) => Effect.Effect<T, DurableExecutionError, DurableEngine>> =>
   Object.fromEntries(
-    Object.entries(def.compiled).map(([method, compiled]) =>
+    Object.entries(compileExclusive(def)).map(([method, compiled]) =>
       [
         method,
         (input: unknown, options?: InvokeOptions) =>
@@ -135,12 +93,6 @@ const makeProxy = <T>(
       ] as const,
     ),
   )
-
-/** The object identity for a call, or `undefined` for a stateless service. */
-const objectIdentity = (
-  def: { readonly name: string },
-  key: string | undefined,
-): ObjectIdentity | undefined => key === undefined ? undefined : { name: def.name, key }
 
 /**
  * A typed call client: `client(service).method(input)` for a stateless service, or
@@ -208,7 +160,7 @@ const makeObjectStepProxy = <T>(
     outputCodec: RuntimeCodec,
   ) => Effect.Effect<T, DurableExecutionError, DurableEngine>,
 ): Record<string, (input: unknown) => Effect.Effect<T, DurableExecutionError, DurableEngine>> =>
-  Object.entries(def.compiled).reduce<Record<string, (input: unknown) => Effect.Effect<T, DurableExecutionError, DurableEngine>>>(
+  Object.entries(compileExclusive(def)).reduce<Record<string, (input: unknown) => Effect.Effect<T, DurableExecutionError, DurableEngine>>>(
     (proxy, [method, compiled]) => ({
       ...proxy,
       [method]: (input: unknown) =>
@@ -266,12 +218,12 @@ export function sharedClient<Name extends string, R extends HandlerFn, S extends
   id: string,
 ): SharedClient<S>
 export function sharedClient(
-  def: { readonly name: string; readonly compiledShared: Record<string, Compiled> },
+  def: ObjectDefinition<string, Handlers> | WorkflowDefinition<string, HandlerFn, Handlers>,
   key: string,
 ): Record<string, unknown> {
    
   return Object.fromEntries(
-    Object.entries(def.compiledShared).map(([method, compiled]) =>
+    Object.entries(compileShared(def)).map(([method, compiled]) =>
       [
         method,
         (input: unknown) =>
@@ -300,9 +252,7 @@ export const workflowRunId = <Name extends string, R extends HandlerFn, S extend
   def: WorkflowDefinition<Name, R, S>,
   id: string,
 ): Effect.Effect<string, DurableExecutionError> =>
-  encodeObjectCallId({ object: def.name, key: id, method: WORKFLOW_RUN, nonce: id }).pipe(
-    Effect.mapError(durableError("workflow.runId")),
-  )
+  workflowRunIdFor(def, id)
 
 /**
  * Start a workflow's `run` for `id` (run-once). Returns `"started"` on the first start
@@ -317,7 +267,11 @@ export const workflowSubmit = <Name extends string, R extends HandlerFn, S exten
   Effect.gen(function*() {
     const runCallId = yield* workflowRunId(def, id)
     const rt = yield* DurableEngine
-    return yield* rt.workflowStart(def.compiledRun.handler, runCallId, args[0])
+    const compiledRun = compileOne(def, "run")
+    if (compiledRun === undefined) {
+      return yield* durableError("workflowSubmit")(new Error(`workflow ${def.name} has no run handler`))
+    }
+    return yield* rt.workflowStart(compiledRun.handler, runCallId, args[0])
   })
 
 /** Attach to a running/completed workflow `run` and return its decoded output. */
@@ -329,5 +283,5 @@ export const workflowAttach = <Name extends string, R extends HandlerFn, S exten
     const runCallId = yield* workflowRunId(def, id)
     const rt = yield* DurableEngine
      
-    return (yield* rt.attach(runCallId, def.compiledRun.output)) as HandlerOutput<R>
+    return (yield* rt.attach(runCallId, def.runCodecs.output)) as HandlerOutput<R>
   })

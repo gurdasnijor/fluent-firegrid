@@ -26,6 +26,10 @@
     "./ingress": {
       "types": "./src/ingress/index.ts",
       "default": "./src/ingress/index.ts"
+    },
+    "./invocation": {
+      "types": "./src/invocation-client.ts",
+      "default": "./src/invocation-client.ts"
     }
   },
   "bin": {
