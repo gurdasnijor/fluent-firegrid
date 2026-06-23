@@ -1,5 +1,5 @@
 import type { Effect, Schema } from "effect"
-import type { DurableEngine } from "./engine/api.ts"
+import type { DurableEngine } from "../engine/api.ts"
 import type { Handler } from "./types.ts"
 
 /**

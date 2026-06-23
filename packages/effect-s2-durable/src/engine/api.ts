@@ -1,6 +1,6 @@
 import { Context, type Effect, type Schema } from "effect"
 import type { DurableExecutionError } from "../errors.ts"
-import type { Handler } from "../types.ts"
+import type { Handler } from "../authoring/types.ts"
 import type { HandlerPrimitivesApi } from "./handler-primitives.ts"
 import type { ResolutionRouterApi } from "./resolution-router.ts"
 import type { ResultReaderApi } from "./result-reader.ts"

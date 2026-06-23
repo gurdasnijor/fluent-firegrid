@@ -4,14 +4,14 @@ import type { DurableExecutionError } from "../errors.ts"
 import type { DurableEngine } from "./api.ts"
 import { type ObjectHandlerSeed, type RegisteredHandler } from "./context.ts"
 import { DurableEngineLive } from "./live.ts"
-import { compileExclusive } from "../definition-compiler.ts"
+import { compileExclusive } from "../authoring/compiler.ts"
 import type {
   HandlerFn,
   Handlers,
   ObjectDefinition,
   ServiceDefinition,
   WorkflowDefinition,
-} from "../definition.ts"
+} from "../authoring/definition.ts"
 
 /**
  * The engine layer **seeded with these definitions' handlers** so boot recovery can

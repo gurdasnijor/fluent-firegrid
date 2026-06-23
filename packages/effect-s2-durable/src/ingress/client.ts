@@ -1,8 +1,8 @@
 import { Effect, Option, Schema } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { HttpApiClient } from "effect/unstable/httpapi"
-import type { Handlers, HandlerInput, HandlerOutput, ObjectDefinition, ServiceDefinition } from "../definition.ts"
-import type { InvokeOptions } from "../invocation-plan.ts"
+import type { Handlers, HandlerInput, HandlerOutput, ObjectDefinition, ServiceDefinition } from "../authoring/definition.ts"
+import type { InvokeOptions } from "../invocation/plan.ts"
 import { type AnyDef, asFailure, DurableApi, type DurableFailure, type HandlerCodecs } from "./contract.ts"
 
 // The ingress client depends only on the wire contract + the definition *types*

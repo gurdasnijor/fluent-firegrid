@@ -19,11 +19,11 @@ import * as NodePath from "@effect/platform-node/NodePath"
 import { Config, Effect, Layer } from "effect"
 import { type HttpServerError } from "effect/unstable/http"
 import { S2Client } from "effect-s2"
-import type { DurableExecutionError } from "./errors.ts"
-import { durableIngress } from "./ingress/server.ts"
-import { type DurableEngine } from "./engine/api.ts"
-import type { AnyDef } from "./definition.ts"
-import { serviceLayer } from "./engine/catalog-layer.ts"
+import type { DurableExecutionError } from "../errors.ts"
+import { type DurableEngine } from "../engine/api.ts"
+import { serviceLayer } from "../engine/catalog-layer.ts"
+import { durableIngress } from "../ingress/server.ts"
+import type { AnyDef } from "../authoring/definition.ts"
 
 /** Configuration for a single durable host. */
 export interface DurableHostOptions {

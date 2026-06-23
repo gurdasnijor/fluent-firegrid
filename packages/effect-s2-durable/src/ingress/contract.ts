@@ -16,7 +16,7 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi"
  */
 
 // `AnyDef` is defined with the authoring definitions and re-exported here.
-export type { AnyDef } from "../definition.ts"
+export type { AnyDef } from "../authoring/definition.ts"
 
 /** A handler codec with its static types erased to `unknown` at the wire boundary. */
 type ErasedCodec = Schema.Codec<unknown, unknown, never, never>

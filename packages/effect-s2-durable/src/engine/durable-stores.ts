@@ -2,7 +2,7 @@ import { Context, Effect, Layer } from "effect"
 import { S2Client, type S2ClientApi } from "effect-s2"
 import { ObjectOwnerDriver, type ObjectOwnerDriverApi } from "../object/owner-driver.ts"
 import { type DurableExecutionError } from "../errors.ts"
-import { ExecutionId, RosterDb, WorkflowDb } from "../schema.ts"
+import { ExecutionId, RosterDb, WorkflowDb } from "../storage/service-tables.ts"
 import { toError } from "./helpers.ts"
 import type { WfDb } from "./context.ts"
 

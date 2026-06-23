@@ -44,7 +44,7 @@ import { HandlerPrimitives } from "./handler-primitives.ts"
 import { ResolutionRouter } from "./resolution-router.ts"
 import { DurableStores } from "./durable-stores.ts"
 import { DurableEngine, type CallTarget, type DurableEngineApi } from "./api.ts"
-import type { Handler } from "../types.ts"
+import type { Handler } from "../authoring/types.ts"
 
 const isDurableExecutionError = Schema.is(DurableExecutionError)
 const isObjectInfrastructureError = (error: DurableExecutionError): boolean => error.operation.startsWith("object.")

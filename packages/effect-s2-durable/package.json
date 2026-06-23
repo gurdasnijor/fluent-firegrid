@@ -20,16 +20,16 @@
       "default": "./src/engine/index.ts"
     },
     "./host": {
-      "types": "./src/host.ts",
-      "default": "./src/host.ts"
+      "types": "./src/host/index.ts",
+      "default": "./src/host/index.ts"
     },
     "./ingress": {
       "types": "./src/ingress/index.ts",
       "default": "./src/ingress/index.ts"
     },
     "./invocation": {
-      "types": "./src/invocation-client.ts",
-      "default": "./src/invocation-client.ts"
+      "types": "./src/invocation/index.ts",
+      "default": "./src/invocation/index.ts"
     }
   },
   "bin": {

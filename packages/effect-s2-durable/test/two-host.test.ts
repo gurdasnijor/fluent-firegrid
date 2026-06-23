@@ -3,7 +3,7 @@ import { Context, Effect, Layer, Schema } from "effect"
 import { encodeObjectCallId } from "../src/object/machine/index.ts"
 import { DurableEngine } from "../src/engine/api.ts"
 import { serviceLayer } from "../src/engine/catalog-layer.ts"
-import { compileOne } from "../src/definition-compiler.ts"
+import { compileOne } from "../src/authoring/compiler.ts"
 import { Counter, hasS2 } from "./ingress-support.ts"
 import { S2LiteLive } from "./s2lite.ts"
 

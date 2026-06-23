@@ -1,6 +1,6 @@
 import type { Duration, Effect, Option, Schema } from "effect"
-import type { DurableExecutionError } from "./errors.ts"
-import type { DurableEngine } from "./engine/api.ts"
+import type { DurableExecutionError } from "../errors.ts"
+import type { DurableEngine } from "../engine/api.ts"
 
 /** Retry policy for a `run` step. Controls attempts *before* a terminal fact. */
 export interface RetryPolicy {

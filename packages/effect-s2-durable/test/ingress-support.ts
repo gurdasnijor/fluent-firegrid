@@ -4,10 +4,10 @@ import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient"
 import * as NodeSocketServer from "@effect/platform-node/NodeSocketServer"
 import { Effect, Schema } from "effect"
 import { primaryKey, Table } from "effect-s2-stream-db"
-import { DurableHostLive } from "../src/host.ts"
+import { DurableHostLive } from "../src/host/index.ts"
 import { connect, type DurableIngressClient } from "../src/ingress/client.ts"
 import { object, run, service, state } from "../src/index.ts"
-import { client, objectClient } from "../src/invocation-client.ts"
+import { client, objectClient } from "../src/invocation/client.ts"
 import { S2LiteLive } from "./s2lite.ts"
 
 // A small restate-style "catalog" of durable definitions, each exercising one

@@ -1,15 +1,15 @@
 import { Effect, Option, type Schema } from "effect"
-import { DurableEngine, type DurableEngineApi, type WorkflowStartStatus } from "./engine/api.ts"
-import { ActiveInvocation } from "./engine/context.ts"
-import { type DurableExecutionError, durableError } from "./errors.ts"
-import { compileExclusive, compileOne, compileShared, type CompiledMethod } from "./definition-compiler.ts"
+import { DurableEngine, type DurableEngineApi, type WorkflowStartStatus } from "../engine/api.ts"
+import { ActiveInvocation } from "../engine/context.ts"
+import { type DurableExecutionError, durableError } from "../errors.ts"
+import { compileExclusive, compileOne, compileShared, type CompiledMethod } from "../authoring/compiler.ts"
 import {
   type InvokeOptions,
   objectIdentity,
   type ObjectIdentity,
   planInvocationId,
   workflowRunIdFor,
-} from "./invocation-plan.ts"
+} from "./plan.ts"
 import type {
   AnyDef,
   HandlerFn,
@@ -19,8 +19,7 @@ import type {
   ObjectDefinition,
   ServiceDefinition,
   WorkflowDefinition,
-} from "./definition.ts"
-export type { InvokeOptions } from "./invocation-plan.ts"
+} from "../authoring/definition.ts"
 
 // a `void`-input method (e.g. `*get()`) takes no input argument; everything else
 // takes its declared input. `options` is always optional and trailing.
@@ -122,29 +121,6 @@ export function sendClient<Name extends string, H extends Handlers>(
   // Intentional dynamic proxy cast; see client.
   return makeProxy(def, (_compiled, { id }) => Effect.succeed(id), objectIdentity(def, key)) as unknown as SendClient<H>
 }
-
-/** Erased (no per-method types) request-response dispatch — the ingress server's call surface. */
-export type UntypedClient = Record<
-  string,
-  (input: unknown, options?: InvokeOptions) => Effect.Effect<unknown, DurableExecutionError, DurableEngine>
->
-/** Erased fire-and-forget dispatch — each call returns the execution id. */
-export type UntypedSendClient = Record<
-  string,
-  (input: unknown, options?: InvokeOptions) => Effect.Effect<string, DurableExecutionError, DurableEngine>
->
-
-/**
- * Untyped `client(...)` dispatch for the ingress server. The server sits OUTSIDE any
- * handler, so the `client` footgun guard is satisfied; per-method types are erased
- * (the wire is generic over name/key/method) and recovered on the ingress *client*.
- */
-export const invokeUntyped = (def: AnyDef, key: string | undefined): UntypedClient =>
-  makeProxy(def, (compiled, { id, rt }) => rt.attach(id, compiled.output), objectIdentity(def, key))
-
-/** Untyped `sendClient(...)` dispatch for the ingress server (returns the execution id). */
-export const sendUntyped = (def: AnyDef, key: string | undefined): UntypedSendClient =>
-  makeProxy(def, (_compiled, { id }) => Effect.succeed(id), objectIdentity(def, key))
 
 type RuntimeCodec = Schema.Codec<unknown, unknown, never, never>
 type ObjectCallTarget = { readonly object: string; readonly key: string; readonly method: string }

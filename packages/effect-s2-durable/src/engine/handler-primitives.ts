@@ -2,7 +2,7 @@ import { Cause, Clock, Context, Deferred, Duration, Effect, Exit, HashMap, Layer
 import type { AnyTable, RowOf } from "effect-s2-stream-db"
 import { encodeObjectCallId, stateValue, type ObjectCallIdParts } from "../object/machine/index.ts"
 import type { DurableExecutionError } from "../errors.ts"
-import type { RunOptions } from "../types.ts"
+import type { RunOptions } from "../authoring/types.ts"
 import {
   decode,
   decodeRowFor,

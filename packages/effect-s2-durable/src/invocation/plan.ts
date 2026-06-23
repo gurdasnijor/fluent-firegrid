@@ -1,7 +1,7 @@
 import { Effect, Random } from "effect"
-import type { DurableExecutionError } from "./errors.ts"
-import { durableError } from "./errors.ts"
-import { encodeObjectCallId, OBJECT_ID_PREFIX } from "./object/machine/index.ts"
+import type { DurableExecutionError } from "../errors.ts"
+import { durableError } from "../errors.ts"
+import { encodeObjectCallId, OBJECT_ID_PREFIX } from "../object/machine/index.ts"
 
 export interface InvokeOptions {
   /** Pin the execution id (idempotent invocation). Default: a fresh id per call. */

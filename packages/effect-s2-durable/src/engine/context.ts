@@ -3,8 +3,8 @@ import type { AnyTable, RowOf, TableFacade } from "effect-s2-stream-db"
 import type { ActorSnapshot } from "../object/machine/index.ts"
 import type { ObjectStateBackend } from "../object/owner-driver.ts"
 import type { DurableExecutionError } from "../errors.ts"
-import type { WorkflowDb } from "../schema.ts"
-import type { Handler } from "../types.ts"
+import type { Handler } from "../authoring/types.ts"
+import type { WorkflowDb } from "../storage/service-tables.ts"
 
 /** The opened per-execution db (success type of `WorkflowDb.open`). */
 export type WfDb = Effect.Success<ReturnType<typeof WorkflowDb.open>>

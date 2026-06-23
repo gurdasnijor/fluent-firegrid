@@ -105,7 +105,7 @@ export type ObjectCallIdParts = typeof ObjectCallId.Type
  * Reserved namespace prefix for object call ids. An id is an object call ONLY if it
  * carries this prefix — so a service id / `idempotencyKey` that merely happens to be
  * JSON of the right shape is NOT misrouted to an owner stream. Service id minting
- * rejects this prefix (see `invocation-client.ts`), so the namespaces are disjoint.
+ * rejects this prefix (see `invocation/client.ts`), so the namespaces are disjoint.
  */
 export const OBJECT_ID_PREFIX = "durable.object.v1:"
 
