@@ -25,7 +25,7 @@ env:
 #
 # Gating jobs run in parallel so a slow one (tests) stops gating the fast ones
 # (lint), and each persists its tool cache so unchanged work is skipped:
-#   lint               — eslint + dead-code (knip) + dup (jscpd) + dep boundaries
+#   lint               — oxlint + dprint + dead-code (knip) + dup (jscpd) + dep boundaries
 #   typecheck          — turbo run typecheck
 #   effect-diagnostics — effect-language-service diagnostics
 #   tests              — turbo run test + Cucumber executable specs
@@ -44,7 +44,7 @@ jobs:
       - name: Setup pnpm + Node + install
         uses: ./.github/actions/setup
 
-      - name: Lint (eslint)
+      - name: Lint and format (oxlint + dprint)
         run: pnpm run lint
 
       - name: Dead-code (knip, strict-0)
