@@ -2,8 +2,7 @@ import { Effect, Layer, Option, Schema } from "effect"
 import { HttpRouter } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { encodeObjectCallId } from "../object/machine/index.ts"
-import { invokeUntyped, sendUntyped } from "../service.ts"
-import type { InvokeOptions } from "../service.ts"
+import { invokeUntyped, sendUntyped, type InvokeOptions } from "../invocation-client.ts"
 import { DurableEngine } from "../engine/api.ts"
 import { type AnyDef, asFailure, DurableApi, DurableFailure } from "./contract.ts"
 
@@ -23,7 +22,7 @@ const resolve = (registry: Map<string, AnyDef>, payload: InvokePayloadType) => {
   if (def === undefined) return undefined
   const compiled = def.compiled[payload.method]
   if (compiled === undefined) return undefined
-  // `compiled` already carries narrowed `input`/`output` codecs (see service.ts Compiled).
+  // `compiled` already carries narrowed `input`/`output` codecs (see definition.ts Compiled).
   return { def, codec: compiled }
 }
 
@@ -85,7 +84,7 @@ const runSend = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
 // Resolve the engine execution id from the locate payload: an explicit
 // invocationId wins; otherwise reconstruct the id the original idempotencyKey
 // minted (a service id IS its idempotencyKey; an object id encodes
-// `{object, key, method, nonce: idempotencyKey}` — matching service.ts `mintId`).
+// `{object, key, method, nonce: idempotencyKey}` — matching invocation-client.ts `mintId`).
 const locateId = (def: AnyDef, payload: InvokePayloadType): Effect.Effect<string, DurableFailure> => {
   if (payload.invocationId !== undefined) return Effect.succeed(payload.invocationId)
   if (payload.idempotencyKey === undefined) {

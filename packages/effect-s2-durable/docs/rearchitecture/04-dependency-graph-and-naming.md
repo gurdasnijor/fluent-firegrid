@@ -58,7 +58,7 @@ namespace.
 index.ts / subpath exports
   -> public authoring types, primitives, clients
 
-primitives.ts / service.ts / ingress adapters
+primitives.ts / invocation-client.ts / service-layer.ts / ingress adapters
   -> engine/api.ts
 
 engine/live.ts

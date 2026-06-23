@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest"
 import { Context, Effect, Layer, Schema } from "effect"
 import { encodeObjectCallId } from "../src/object/machine/index.ts"
 import { DurableEngine } from "../src/engine/api.ts"
-import { serviceLayer } from "../src/service.ts"
+import { serviceLayer } from "../src/service-layer.ts"
 import { Counter, hasS2 } from "./ingress-support.ts"
 import { S2LiteLive } from "./s2lite.ts"
 

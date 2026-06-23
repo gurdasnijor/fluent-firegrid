@@ -22,7 +22,8 @@ import { S2Client } from "effect-s2"
 import type { DurableExecutionError } from "./errors.ts"
 import { durableIngress } from "./ingress/server.ts"
 import { type DurableEngine } from "./engine/api.ts"
-import { type AnyDef, serviceLayer } from "./service.ts"
+import type { AnyDef } from "./definition.ts"
+import { serviceLayer } from "./service-layer.ts"
 
 /** Configuration for a single durable host. */
 export interface DurableHostOptions {

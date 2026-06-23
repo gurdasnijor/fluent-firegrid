@@ -9,7 +9,9 @@ This diagram reflects the consolidated layout after moving engine internals unde
 ```mermaid
 flowchart TB
   subgraph Public["Public authoring and host surface"]
-    Service["service.ts\nservice/object/workflow definitions\nclient helpers"]
+    Definition["definition.ts\nservice/object/workflow definitions"]
+    InvocationClient["invocation-client.ts\nin-process clients + workflow helpers"]
+    ServiceLayer["service-layer.ts\ncatalog -> live engine layer"]
     Primitives["primitives.ts\nrun/sleep/state/signal/attach/poll"]
     Ingress["ingress/*\nHTTP contract, server, client"]
     Host["host.ts / bin/host.ts"]
@@ -46,8 +48,8 @@ flowchart TB
     StreamDb["effect-s2-stream-db\nWorkflowDb, roster tables\nfuture EventStream<ActorEvent>"]
   end
 
-  Service --> EngineApi
-  Service --> EngineLive
+  InvocationClient --> EngineApi
+  ServiceLayer --> EngineLive
   Primitives --> EngineApi
   Ingress --> EngineApi
   Host --> EngineApi
@@ -152,7 +154,7 @@ flowchart LR
   Root --> EngineDir["engine/\nengine-local modules"]
   Root --> ObjectDir["object/\nobject owner vertical"]
   Root --> IngressDir["ingress/\nHTTP/client adapters"]
-  Root --> Authoring["service.ts\nprimitives.ts\nhandler.ts\ntypes.ts\nschema.ts"]
+  Root --> Authoring["definition.ts\ninvocation-client.ts\nservice-layer.ts\nprimitives.ts\nhandler.ts\ntypes.ts\nschema.ts"]
 
   EngineDir --> EngineFiles["live.ts\naddress.ts\ncontext.ts\ndurable-stores.ts\nhandler-primitives.ts\nhelpers.ts\nresolution-router.ts\nresult-reader.ts\nservice-deferreds.ts\nstate.ts"]
 

@@ -12,7 +12,8 @@ import {
   signalValue,
   unPathSegment,
 } from "../src/object/machine/index.ts"
-import { workflow, workflowRunId } from "../src/service.ts"
+import { workflow } from "../src/definition.ts"
+import { workflowRunId } from "../src/invocation-client.ts"
 
 // Pure (no S2) invariants for the object call-id routing + projection. S2-backed
 // behaviour is proven in Firelab (effect-s2-durable-object-call); these guard the

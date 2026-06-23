@@ -16,7 +16,7 @@ import { pathToFileURL } from "node:url"
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
 import { Console, Effect, Layer } from "effect"
 import { DurableHostFromConfig } from "../host.ts"
-import type { AnyDef } from "../service.ts"
+import type { AnyDef } from "../definition.ts"
 
 /** The package reference bin serves no app definitions. */
 const catalog: ReadonlyArray<AnyDef> = []

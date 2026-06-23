@@ -55,7 +55,9 @@ implement everything inline.
 ```text
 src/
   primitives.ts
-  service.ts
+  definition.ts
+  invocation-client.ts
+  service-layer.ts
   handler.ts
   types.ts
   schema.ts

@@ -126,6 +126,6 @@ export const poll = <A, I>(
   Effect.flatMap(DurableEngine, (rt) => rt.poll(executionId, schema))
 
 // Durable inter-execution calls are exposed as the TYPED `objectClient(Def, key)` /
-// `objectSendClient(Def, key)` proxies in service.ts (identity derived from the object
+// `objectSendClient(Def, key)` proxies in invocation-client.ts (identity derived from the object
 // definition, not raw strings). The low-level `callStep`/`sendStep` stay internal to
 // the engine API.

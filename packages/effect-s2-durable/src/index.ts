@@ -17,34 +17,38 @@ export {
 export { DurableEngine } from "./engine/api.ts"
 export type { DurableEngineApi } from "./engine/api.ts"
 export {
-  client,
   object,
+  service,
+  workflow,
+} from "./definition.ts"
+export {
+  client,
   objectClient,
   objectSendClient,
   sendClient,
-  service,
-  serviceLayer,
   sharedClient,
-  workflow,
   workflowAttach,
   workflowRunId,
   workflowSubmit,
-} from "./service.ts"
+} from "./invocation-client.ts"
+export { serviceLayer } from "./service-layer.ts"
 export type {
   HandlerInput,
   HandlerOutput,
   Handlers,
   HandlerSchemas,
-  InvokeOptions,
   ObjectDefinition,
-  SendClient,
-  ServiceClient,
   ServiceConfig,
   ServiceDefinition,
-  SharedClient,
   WorkflowConfig,
   WorkflowDefinition,
-} from "./service.ts"
+} from "./definition.ts"
+export type {
+  InvokeOptions,
+  SendClient,
+  ServiceClient,
+  SharedClient,
+} from "./invocation-client.ts"
 export {
   ClockWakeupRow,
   DeferredRow,
