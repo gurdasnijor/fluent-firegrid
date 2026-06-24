@@ -13,6 +13,31 @@ export interface Proof<A = any> {
   readonly makeSpec: (context: ProofContext) => PropertySpec<A>
 }
 
+class ProofBuilder {
+  constructor(private readonly name: string) {}
+
+  describedAs(description: string): DescribedProofBuilder {
+    return new DescribedProofBuilder(this.name, description)
+  }
+}
+
+class DescribedProofBuilder {
+  constructor(
+    private readonly name: string,
+    private readonly description: string
+  ) {}
+
+  spec<A>(makeSpec: (context: ProofContext) => PropertySpec<A>): Proof<A> {
+    return {
+      description: this.description,
+      makeSpec,
+      name: this.name
+    }
+  }
+}
+
+export const proof = (name: string): ProofBuilder => new ProofBuilder(name)
+
 export interface CompletedProof<A = any> {
   readonly proof: Proof<A>
   readonly trial: CompletedTrial<A>

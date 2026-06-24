@@ -2,7 +2,7 @@ import { AppendInput, AppendRecord, SeqNumMismatchError } from "effect-s2"
 import * as Effect from "effect/Effect"
 import * as Stream from "effect/Stream"
 
-import type { Proof } from "../src/Proof.ts"
+import { proof } from "../src/Proof.ts"
 import { expectWorkloadResult, property } from "../src/Property.ts"
 import { traceSql } from "../src/TraceProof.ts"
 import { VerificationError } from "../src/VerificationError.ts"
@@ -14,11 +14,11 @@ const journal = [
 
 const journalTypes = ["StepCompleted", "CheckpointAdvanced"]
 
-export const effectS2CapabilityAProof: Proof = {
-  name: "effect-s2.capability-a.atomic-replay",
-  description:
-    "Proves the Capability A effect-s2 substrate: atomic StepCompleted + checkpoint append under matchSeqNum, stale replay rejected by SeqNumMismatchError, and replay reads only the original batch.",
-  makeSpec: ({ trialId }) => {
+export default proof("effect-s2.capability-a.atomic-replay")
+  .describedAs(
+    "Proves the Capability A effect-s2 substrate: atomic StepCompleted + checkpoint append under matchSeqNum, stale replay rejected by SeqNumMismatchError, and replay reads only the original batch."
+  )
+  .spec(({ trialId }) => {
     const streamName = `invocation-${trialId}`
     return property("capability-a.effect-s2.atomic-replay-proof")
       .s2Lite({ persistence: "local-root" })
@@ -111,5 +111,4 @@ export const effectS2CapabilityAProof: Proof = {
         `
         )
       )
-  }
-}
+  })
