@@ -66,12 +66,14 @@ export interface WaitForSpanOptions {
 
 export class VerificationRuntime extends Context.Service<VerificationRuntime, {
   readonly flush: Effect.Effect<void, VerificationError>
+  readonly hostEnv: Record<string, string>
   readonly waitForSpan: (span: string, options?: WaitForSpanOptions) => Effect.Effect<void, VerificationError>
 }>()("@firegrid/verification/Property/VerificationRuntime") {
   static readonly layer = Layer.succeed(
     this,
     {
       flush: Effect.fail(new VerificationError({ message: "VerificationRuntime.flush is not implemented" })),
+      hostEnv: {},
       waitForSpan: Effect.fn("VerificationRuntime.waitForSpan")(function*(span: string) {
         return yield* new VerificationError({
           message: `VerificationRuntime.waitForSpan(${span}) is not implemented`
@@ -375,6 +377,7 @@ export const runProperty = Effect.fn("runProperty")(function*<A>(
     Effect.gen(function*() {
       const s2Endpoint = yield* startS2Lite(spec.s2Lite, options.s2Lite)
       const supervisedHosts = yield* startProcessHosts(spec.hosts.values(), {
+        hostEnv: runtime.hostEnv,
         trialId,
         ...(s2Endpoint === undefined ? {} : { s2Endpoint })
       })

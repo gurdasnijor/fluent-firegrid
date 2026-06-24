@@ -17,6 +17,7 @@ import { layer as TraceRuntimeLayer } from "../src/TraceRuntime.ts"
 
 const TestRuntimeLayer = Layer.succeed(VerificationRuntime, {
   flush: Effect.void,
+  hostEnv: {},
   waitForSpan: Effect.fn("TestVerificationRuntime.waitForSpan")(() => Effect.void)
 })
 const TestLayer = Layer.mergeAll(ChdbLayer({}), TestRuntimeLayer)

@@ -1,4 +1,8 @@
 {
   "extends": "../../tsconfig.json",
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "compilerOptions": {
+    "rootDir": ".",
+    "tsBuildInfoFile": ".turbo/tsconfig.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts"]
 }

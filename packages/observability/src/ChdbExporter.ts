@@ -31,6 +31,8 @@ export interface ChdbSpanExporterOptions {
   readonly database?: string
 }
 
+export type ChdbSpanRow = Record<string, unknown>
+
 // ── pdata-compatible string mappings (match SpanKind.String()/StatusCode.String()) ──
 
 const SPAN_KIND: Record<number, string> = {
@@ -87,6 +89,39 @@ const scopeOf = (span: ReadableSpan): { name: string; version: string } => {
 const parentIdOf = (span: ReadableSpan): string =>
   span.parentSpanContext?.spanId ?? stringOrEmpty((span as LegacyReadableSpan).parentSpanId)
 
+/** ReadableSpan -> JSONEachRow row matching the contrib column layout. */
+export const spanToChdbRow = (span: ReadableSpan): ChdbSpanRow => {
+  const ctx = span.spanContext()
+  const scope = scopeOf(span)
+  const events = span.events ?? []
+  const links = span.links ?? []
+  return {
+    Timestamp: nanosToDateTime64(hrNanos(span.startTime)),
+    TraceId: ctx.traceId,
+    SpanId: ctx.spanId,
+    ParentSpanId: parentIdOf(span),
+    TraceState: ctx.traceState?.serialize() ?? "",
+    SpanName: span.name,
+    SpanKind: SPAN_KIND[span.kind] ?? "Internal",
+    ServiceName: attrValueToString(span.resource?.attributes?.["service.name"]) || "unknown_service",
+    ResourceAttributes: attrsToObject(span.resource?.attributes),
+    ScopeName: scope.name,
+    ScopeVersion: scope.version,
+    SpanAttributes: attrsToObject(span.attributes),
+    // Duration is nanoseconds (UInt64); a span delta fits in a JS number safely.
+    Duration: Number(hrNanos(span.endTime) - hrNanos(span.startTime)),
+    StatusCode: STATUS_CODE[span.status.code] ?? "Unset",
+    StatusMessage: span.status.message ?? "",
+    "Events.Timestamp": events.map((e) => nanosToDateTime64(hrNanos(e.time))),
+    "Events.Name": events.map((e) => e.name),
+    "Events.Attributes": events.map((e) => attrsToObject(e.attributes)),
+    "Links.TraceId": links.map((l) => l.context.traceId),
+    "Links.SpanId": links.map((l) => l.context.spanId),
+    "Links.TraceState": links.map((l) => l.context.traceState?.serialize() ?? ""),
+    "Links.Attributes": links.map((l) => attrsToObject(l.attributes))
+  }
+}
+
 // ── SQL ──────────────────────────────────────────────────────────────────────
 
 const createTableSql = (qualified: string): string =>
@@ -130,6 +165,72 @@ SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1`
 
 const insertHeader = (qualified: string): string => `INSERT INTO ${qualified} FORMAT JSONEachRow`
 
+const qualifiedTable = (options: {
+  readonly table?: string
+  readonly database?: string
+}): string =>
+  options.database === undefined
+    ? options.table ?? "otel_traces"
+    : `${options.database}.${options.table ?? "otel_traces"}`
+
+export const ensureOtelTracesTable = (
+  session: Session,
+  options: {
+    readonly table?: string
+    readonly database?: string
+  } = {}
+): string => {
+  const qualified = qualifiedTable(options)
+  if (options.database !== undefined) {
+    session.query(`CREATE DATABASE IF NOT EXISTS ${options.database}`)
+  }
+  session.query(createTableSql(qualified))
+  return qualified
+}
+
+export const insertChdbSpanRows = (
+  session: Session,
+  rows: ReadonlyArray<ChdbSpanRow>,
+  options: {
+    readonly table?: string
+    readonly database?: string
+  } = {}
+): void => {
+  if (rows.length === 0) return
+  const qualified = ensureOtelTracesTable(session, options)
+  const ndjson = rows.map((row) => JSON.stringify(row)).join("\n")
+  session.query(`${insertHeader(qualified)}\n${ndjson}`)
+}
+
+export class RemoteChdbSpanExporter implements SpanExporter {
+  constructor(private readonly endpoint: string) {}
+
+  export(spans: Array<ReadableSpan>, resultCallback: (result: ExportResult) => void): void {
+    fetch(this.endpoint, {
+      body: JSON.stringify(spans.map(spanToChdbRow)),
+      headers: {
+        "content-type": "application/json"
+      },
+      method: "POST"
+    }).then((response) => {
+      resultCallback({
+        code: response.ok ? ExportResultCode.SUCCESS : ExportResultCode.FAILED,
+        ...(response.ok ? {} : { error: new Error(`remote span export failed with ${response.status}`) })
+      })
+      return undefined
+    }).catch((cause) => {
+      resultCallback({
+        code: ExportResultCode.FAILED,
+        error: cause instanceof Error ? cause : new Error(String(cause))
+      })
+    })
+  }
+
+  async shutdown(): Promise<void> {}
+
+  async forceFlush(): Promise<void> {}
+}
+
 const pad = (value: number, length: number): string => String(value).padStart(length, "0")
 
 const nanosToDateTime64 = (value: bigint): string => {
@@ -150,12 +251,7 @@ export class ChdbSpanExporter implements SpanExporter {
 
   constructor(options: ChdbSpanExporterOptions) {
     this.session = options.session
-    const table = options.table ?? "otel_traces"
-    const qualified = options.database !== undefined ? `${options.database}.${table}` : table
-    if (options.database !== undefined) {
-      this.session.query(`CREATE DATABASE IF NOT EXISTS ${options.database}`)
-    }
-    this.session.query(createTableSql(qualified))
+    const qualified = ensureOtelTracesTable(this.session, options)
     this.insertHeader = insertHeader(qualified)
   }
 
@@ -165,7 +261,7 @@ export class ChdbSpanExporter implements SpanExporter {
       return
     }
     try {
-      const ndjson = spans.map((span) => JSON.stringify(this.toRow(span))).join("\n")
+      const ndjson = spans.map((span) => JSON.stringify(spanToChdbRow(span))).join("\n")
       this.session.query(`${this.insertHeader}\n${ndjson}`) // synchronous
       resultCallback({ code: ExportResultCode.SUCCESS })
     } catch (e) {
@@ -176,37 +272,4 @@ export class ChdbSpanExporter implements SpanExporter {
   async shutdown(): Promise<void> {}
 
   async forceFlush(): Promise<void> {}
-
-  /** ReadableSpan -> JSONEachRow row matching the contrib column layout. */
-  private toRow(span: ReadableSpan): Record<string, unknown> {
-    const ctx = span.spanContext()
-    const scope = scopeOf(span)
-    const events = span.events ?? []
-    const links = span.links ?? []
-    return {
-      Timestamp: nanosToDateTime64(hrNanos(span.startTime)),
-      TraceId: ctx.traceId,
-      SpanId: ctx.spanId,
-      ParentSpanId: parentIdOf(span),
-      TraceState: ctx.traceState?.serialize() ?? "",
-      SpanName: span.name,
-      SpanKind: SPAN_KIND[span.kind] ?? "Internal",
-      ServiceName: attrValueToString(span.resource?.attributes?.["service.name"]) || "unknown_service",
-      ResourceAttributes: attrsToObject(span.resource?.attributes),
-      ScopeName: scope.name,
-      ScopeVersion: scope.version,
-      SpanAttributes: attrsToObject(span.attributes),
-      // Duration is nanoseconds (UInt64); a span delta fits in a JS number safely.
-      Duration: Number(hrNanos(span.endTime) - hrNanos(span.startTime)),
-      StatusCode: STATUS_CODE[span.status.code] ?? "Unset",
-      StatusMessage: span.status.message ?? "",
-      "Events.Timestamp": events.map((e) => nanosToDateTime64(hrNanos(e.time))),
-      "Events.Name": events.map((e) => e.name),
-      "Events.Attributes": events.map((e) => attrsToObject(e.attributes)),
-      "Links.TraceId": links.map((l) => l.context.traceId),
-      "Links.SpanId": links.map((l) => l.context.spanId),
-      "Links.TraceState": links.map((l) => l.context.traceState?.serialize() ?? ""),
-      "Links.Attributes": links.map((l) => attrsToObject(l.attributes))
-    }
-  }
 }
