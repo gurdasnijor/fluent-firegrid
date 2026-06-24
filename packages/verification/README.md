@@ -14,11 +14,11 @@ Implemented pieces:
 - `.s2Lite({ persistence: "local-root" })` is wired into `runProperty`; tests can override the binary, port, and local root through `runProperty(..., { s2Lite })`.
 - `processHost(config)` marks an otherwise opaque host as runner-owned. The runner starts it in the trial scope, injects `FIREGRID_TRIAL_ID`, `FIREGRID_HOST_ID`, `S2_ENDPOINT`, and OTel resource attributes, and records host lifecycle spans.
 - `Faults` is backed by supervised process hosts: `killHost` sends `SIGKILL`, `restartHost` starts the host again, and `killHostAfterSpan` is trial-scoped `waitForSpan(...)` followed by a real process kill.
+- `runProperty(..., { reportDir })` writes a JSON report with span counts, trace coverage, and failed-check context. Failed checks also include an observed span summary in the thrown `VerificationError`.
 
 Still missing before this should be treated as the complete verification system:
 
-- a packaged shared OTel sink topology for host processes, so `waitForSpan(...)` can see host-emitted spans before killing them without per-host setup;
-- report/counterexample artifacts;
+- host-process SDK/runtime packaging that uses the same `NodeSdk` + `ChdbSpanExporter` pattern as the runner, so host-emitted spans are available to `waitForSpan(...)` without per-host setup;
 - the first durable replay gate against real `s2 lite` and a real crashed host.
 
 Example authoring shape:

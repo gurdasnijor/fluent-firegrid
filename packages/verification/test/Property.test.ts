@@ -1,5 +1,7 @@
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem"
 import { layer as ChdbLayer } from "@firegrid/observability"
 import { Effect, Layer } from "effect"
+import { FileSystem } from "effect/FileSystem"
 import { describe, expect, it } from "vitest"
 
 import {
@@ -236,6 +238,48 @@ describe("property", () => {
       expect(trial.result._tag).toBe("Success")
     }).pipe(
       Effect.provide(LiveTraceLayer),
+      Effect.scoped,
+      Effect.runPromise
+    ))
+
+  it("writes a trial report artifact for passing checks", () =>
+    Effect.gen(function*() {
+      const fs = yield* FileSystem
+      const reportDir = yield* fs.makeTempDirectoryScoped({ prefix: "firegrid-verification-report-pass-" })
+      const spec = property("report-pass")
+        .workload(({ operation }) => operation("report.probe", {}, Effect.succeed("ok"), { operationId: 1 }))
+        .verify(expectWorkloadResult("ok"))
+
+      const trial = yield* runProperty(spec, { trialId: "report-pass", reportDir })
+
+      expect(trial.report?.status).toBe("passed")
+      expect(trial.report?.path).toBe(`${reportDir}/report-pass.json`)
+      const reportJson = yield* fs.readFileString(trial.report!.path!)
+      expect(reportJson).toContain("\"status\": \"passed\"")
+      expect(reportJson).toContain("verification.operation")
+    }).pipe(
+      Effect.provide(Layer.mergeAll(LiveTraceLayer, NodeFileSystem.layer)),
+      Effect.scoped,
+      Effect.runPromise
+    ))
+
+  it("writes a counterexample report when a check fails", () =>
+    Effect.gen(function*() {
+      const fs = yield* FileSystem
+      const reportDir = yield* fs.makeTempDirectoryScoped({ prefix: "firegrid-verification-report-fail-" })
+      const spec = property("report-fail")
+        .workload(({ operation }) => operation("report.probe", {}, Effect.succeed("ok"), { operationId: 1 }))
+        .verify(traceSql("intentional-failure", "SELECT 0 AS ok"))
+
+      const exit = yield* Effect.exit(runProperty(spec, { trialId: "report-fail", reportDir }))
+
+      expect(exit._tag).toBe("Failure")
+      const reportJson = yield* fs.readFileString(`${reportDir}/report-fail.json`)
+      expect(reportJson).toContain("\"status\": \"failed\"")
+      expect(reportJson).toContain("\"failedCheck\": \"intentional-failure\"")
+      expect(reportJson).toContain("verification.operation")
+    }).pipe(
+      Effect.provide(Layer.mergeAll(LiveTraceLayer, NodeFileSystem.layer)),
       Effect.scoped,
       Effect.runPromise
     ))

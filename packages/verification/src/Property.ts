@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer"
 import * as Random from "effect/Random"
 
 import { makeProcessHostFaults, startProcessHosts } from "./ProcessHost.ts"
+import { spanSummary, writeTrialReport, type WrittenTrialReport } from "./Report.ts"
 import { type S2LiteConfig, S2LiteSupervisor } from "./S2LiteSupervisor.ts"
 import { runTraceProof, type TraceProof } from "./TraceProof.ts"
 import { VerificationError } from "./VerificationError.ts"
@@ -72,6 +73,7 @@ export interface CompletedTrial<A> {
   readonly result: Exit.Exit<A, unknown>
   readonly chdb: ChdbClient["Service"]
   readonly reportDir?: string
+  readonly report?: WrittenTrialReport
 }
 
 export interface Check<A> {
@@ -322,8 +324,40 @@ export const runProperty = Effect.fn("runProperty")(function*<A>(
         chdb,
         ...(options.reportDir === undefined ? {} : { reportDir: options.reportDir })
       }
-      yield* Effect.forEach(spec.checks, (check) => check.run(completed), { discard: true })
-      return completed
+      yield* Effect.forEach(spec.checks, (check) =>
+        Effect.gen(function*() {
+          const checkExit = yield* Effect.exit(check.run(completed))
+          if (Exit.isSuccess(checkExit)) return
+          if (options.reportDir === undefined) {
+            return yield* new VerificationError({
+              message: `check ${check.name} failed`,
+              cause: checkExit.cause
+            })
+          }
+          const report = yield* writeTrialReport({
+            trialId,
+            checks: spec.checks.length,
+            status: "failed",
+            reportDir: options.reportDir,
+            failedCheck: check.name,
+            failure: String(checkExit.cause)
+          }).pipe(Effect.provideService(ChdbClient, chdb))
+          const observed = yield* spanSummary(trialId).pipe(Effect.provideService(ChdbClient, chdb))
+          return yield* new VerificationError({
+            message: `check ${check.name} failed${
+              report.path === undefined ? "" : `; report written to ${report.path}`
+            }\n\nObserved spans:\n${observed}`,
+            cause: checkExit.cause
+          })
+        }), { discard: true })
+      if (options.reportDir === undefined) return completed
+      const report = yield* writeTrialReport({
+        trialId,
+        checks: spec.checks.length,
+        status: "passed",
+        reportDir: options.reportDir
+      }).pipe(Effect.provideService(ChdbClient, chdb))
+      return { ...completed, report }
     })
   ).pipe(
     Effect.provideService(TrialId, trialId),
