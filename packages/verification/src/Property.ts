@@ -66,6 +66,7 @@ export interface WorkloadContext {
   readonly faults: Faults
   readonly runtime: VerificationRuntime["Service"]
   readonly operation: typeof operation
+  readonly s2Endpoint?: string
 }
 
 export interface CompletedTrial<A> {
@@ -314,7 +315,8 @@ export const runProperty = Effect.fn("runProperty")(function*<A>(
         spec.workload({
           faults,
           operation,
-          runtime
+          runtime,
+          ...(s2Endpoint === undefined ? {} : { s2Endpoint })
         })
       )
       yield* runtime.flush

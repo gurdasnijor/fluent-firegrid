@@ -11,15 +11,16 @@ Implemented pieces:
 - `trial_spans` expands to every OTel span in any trace that contains the trial marker span.
 - `waitForSpan` is scoped to the active trial id; it cannot satisfy a wait from another trial's spans in the same chDB session.
 - `S2LiteSupervisor` owns a scoped `s2 lite` child process, waits for HTTP readiness, and exposes separate graceful stop and force kill paths.
-- `.s2Lite({ persistence: "local-root" })` is wired into `runProperty`; tests can override the binary, port, and local root through `runProperty(..., { s2Lite })`.
+- `.s2Lite({ persistence: "local-root" })` is wired into `runProperty`; tests can override the binary, port, and local root through `runProperty(..., { s2Lite })`. In-process workloads receive the supervised endpoint as `s2Endpoint`.
 - `processHost(config)` marks an otherwise opaque host as runner-owned. The runner starts it in the trial scope, injects `FIREGRID_TRIAL_ID`, `FIREGRID_HOST_ID`, `S2_ENDPOINT`, and OTel resource attributes, and records host lifecycle spans.
 - `Faults` is backed by supervised process hosts: `killHost` sends `SIGKILL`, `restartHost` starts the host again, and `killHostAfterSpan` is trial-scoped `waitForSpan(...)` followed by a real process kill.
 - `runProperty(..., { reportDir })` writes a JSON report with span counts, trace coverage, and failed-check context. Failed checks also include an observed span summary in the thrown `VerificationError`.
+- `EffectS2CapabilityProof.test.ts` is a live substrate proof for Capability A's `packages/effect-s2` dependency: under real `s2 lite`, an atomic own-journal batch guarded by `matchSeqNum` commits `StepCompleted + CheckpointAdvanced`, the stale replay append is rejected, and replay reads back only the original batch. The proof is verified through workload result checks and trace SQL over the OTel/chDB evidence.
 
 Still missing before this should be treated as the complete verification system:
 
 - host-process SDK/runtime packaging that uses the same `NodeSdk` + `ChdbSpanExporter` pattern as the runner, so host-emitted spans are available to `waitForSpan(...)` without per-host setup;
-- the first durable replay gate against real `s2 lite` and a real crashed host.
+- the higher-level durable replay gate against a real crashed host.
 
 Example authoring shape:
 
