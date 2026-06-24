@@ -1,14 +1,20 @@
+import { AppendInput, AppendRecord, SeqNumMismatchError } from "effect-s2"
+import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
+import * as Exit from "effect/Exit"
+import * as Stream from "effect/Stream"
 
 import type { Proof } from "../src/Proof.ts"
 import { expectWorkloadResult, property } from "../src/Property.ts"
 import { traceOperation } from "../src/TraceProof.ts"
-import { durableJournal, effectS2Journal } from "./support/effect-s2-journal.ts"
+import { VerificationError } from "../src/VerificationError.ts"
 
-const journal = durableJournal([
-  { type: "StepCompleted", body: "step-1:ok" },
-  { type: "CheckpointAdvanced", body: "input-cursor:1" }
-])
+const journal = [
+  AppendRecord.string({ body: "step-1:ok", headers: [["durable.record.type", "StepCompleted"]] }),
+  AppendRecord.string({ body: "input-cursor:1", headers: [["durable.record.type", "CheckpointAdvanced"]] })
+]
+
+const journalTypes = ["StepCompleted", "CheckpointAdvanced"]
 
 export const effectS2CapabilityAProof: Proof = {
   name: "effect-s2.capability-a.atomic-replay",
@@ -21,31 +27,75 @@ export const effectS2CapabilityAProof: Proof = {
       .workload(({ operation, s2 }) =>
         Effect.gen(function*() {
           const stream = yield* s2.stream({ basin: "capability-a-proof", stream: streamName })
-          const effectS2 = effectS2Journal(operation, streamName)
 
-          const initialTail = yield* effectS2.checkTail(stream, "initial")
-
-          const commitAck = yield* effectS2.append(
-            stream,
-            "atomic-journal-commit",
-            journal,
-            initialTail.tail.seqNum
+          const initialTail = yield* operation(
+            "effect-s2.check-tail.initial",
+            { stream: streamName },
+            stream.checkTail(),
+            { operationId: 1, key: streamName }
           )
 
-          const staleReplayError = yield* effectS2.expectStaleReplayRejected(
-            stream,
-            journal,
-            initialTail.tail.seqNum
+          const commitAck = yield* operation(
+            "effect-s2.append.atomic-journal-commit",
+            { matchSeqNum: initialTail.tail.seqNum, records: journalTypes },
+            stream.append(AppendInput.create(journal, { matchSeqNum: initialTail.tail.seqNum })),
+            { operationId: 2, key: streamName }
           )
 
-          const recordTypes = yield* effectS2.readRecordTypes(
-            stream,
-            "replay-fold",
-            journal,
-            commitAck.start.seqNum
+          const staleReplayExit = yield* Effect.exit(
+            operation(
+              "effect-s2.append.stale-replay",
+              { matchSeqNum: initialTail.tail.seqNum, records: journalTypes },
+              stream.append(AppendInput.create(journal, { matchSeqNum: initialTail.tail.seqNum })).pipe(
+                Effect.tapError((error) =>
+                  Effect.annotateCurrentSpan({
+                    "s2.error.code": error.code ?? "",
+                    "s2.error.expected_seq_num": error instanceof SeqNumMismatchError
+                      ? String(error.expectedSeqNum)
+                      : "",
+                    "s2.error.kind": error.name,
+                    "s2.error.status": String(error.status)
+                  })
+                )
+              ),
+              { operationId: 3, key: streamName }
+            )
+          )
+          const staleReplayReason = Exit.isFailure(staleReplayExit)
+            ? staleReplayExit.cause.reasons.find(Cause.isFailReason)
+            : undefined
+          const staleReplayError = staleReplayReason?.error
+          if (!(staleReplayError instanceof SeqNumMismatchError)) {
+            return yield* new VerificationError({
+              message: "expected stale replay append to fail with SeqNumMismatchError",
+              cause: staleReplayExit
+            })
+          }
+
+          const recordTypes = yield* operation(
+            "effect-s2.read-session.replay-fold",
+            { start: commitAck.start.seqNum, count: journal.length },
+            stream.readSession({
+              start: { from: { seqNum: commitAck.start.seqNum } },
+              stop: { limits: { count: journal.length } }
+            }).pipe(
+              Stream.runCollect,
+              Effect.map((records) =>
+                Array.from(
+                  records,
+                  (record) => record.headers.find(([key]) => key === "durable.record.type")?.[1] ?? ""
+                )
+              )
+            ),
+            { operationId: 4, key: streamName }
           )
 
-          const finalTail = yield* effectS2.checkTail(stream, "final")
+          const finalTail = yield* operation(
+            "effect-s2.check-tail.final",
+            { stream: streamName },
+            stream.checkTail(),
+            { operationId: 5, key: streamName }
+          )
 
           return {
             appendStartedAtInitialTail: commitAck.start.seqNum === initialTail.tail.seqNum,
@@ -58,7 +108,7 @@ export const effectS2CapabilityAProof: Proof = {
       .verify(
         expectWorkloadResult({
           appendStartedAtInitialTail: true,
-          replayRecordTypes: journal.types,
+          replayRecordTypes: journalTypes,
           staleReplayRejectedAtSeqNum: 2,
           tailAdvancedBy: 2
         }),
@@ -79,7 +129,7 @@ export const effectS2CapabilityAProof: Proof = {
         traceOperation("replay-fold-read-original-atomic-batch", {
           operation: "effect-s2.read-session.replay-fold",
           status: "ok",
-          outputContains: journal.types
+          outputContains: journalTypes
         })
       )
   }
