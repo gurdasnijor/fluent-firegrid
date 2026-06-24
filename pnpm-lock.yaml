@@ -139,6 +139,34 @@ importers:
         specifier: ^3.2.0
         version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
 
+  packages/verification:
+    dependencies:
+      '@effect/platform-node':
+        specifier: 4.0.0-beta.87
+        version: 4.0.0-beta.87(effect@4.0.0-beta.87)(ioredis@5.11.1)
+      '@firegrid/observability':
+        specifier: workspace:*
+        version: link:../observability
+      effect:
+        specifier: 4.0.0-beta.87
+        version: 4.0.0-beta.87
+    devDependencies:
+      '@effect/language-service':
+        specifier: ^0.86.2
+        version: 0.86.2
+      '@effect/vitest':
+        specifier: 4.0.0-beta.87
+        version: 4.0.0-beta.87(effect@4.0.0-beta.87)(vitest@3.2.6(@types/node@22.19.20)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0))
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.20
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.6(@types/node@22.19.20)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
+
 packages:
 
   '@agentclientprotocol/sdk@0.22.1':
@@ -2541,6 +2569,11 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+
+  '@effect/vitest@4.0.0-beta.87(effect@4.0.0-beta.87)(vitest@3.2.6(@types/node@22.19.20)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0))':
+    dependencies:
+      effect: 4.0.0-beta.87
+      vitest: 3.2.6(@types/node@22.19.20)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
 
   '@effect/vitest@4.0.0-beta.87(effect@4.0.0-beta.87)(vitest@3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0))':
     dependencies:
