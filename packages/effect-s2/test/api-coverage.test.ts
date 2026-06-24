@@ -1,10 +1,5 @@
-import {
-  AppendInput,
-  AppendRecord,
-  S2Client,
-  type S2ClientApi,
-} from "effect-s2"
 import { describe, expect, it } from "@effect/vitest"
+import { AppendInput, AppendRecord, S2Client, type S2ClientApi } from "effect-s2"
 
 const accountOperations = [
   "listBasins",
@@ -23,7 +18,7 @@ const accountOperations = [
   "setDefaultLocation",
   "accountMetrics",
   "basinMetrics",
-  "streamMetrics",
+  "streamMetrics"
 ] as const satisfies ReadonlyArray<keyof S2ClientApi>
 
 const streamOperations = [
@@ -41,7 +36,7 @@ const streamOperations = [
   "read",
   "readBytes",
   "appendSession",
-  "producer",
+  "producer"
 ] as const satisfies ReadonlyArray<keyof S2ClientApi>
 
 describe("effect-s2 SDK surface", () => {

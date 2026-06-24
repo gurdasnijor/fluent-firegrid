@@ -1,4 +1,5 @@
-import { Option, Schema } from "effect"
+import * as Option from "effect/Option"
+import * as Schema from "effect/Schema"
 
 /**
  * Internal object mechanics for `DurableEngine` (consolidation SDD).
@@ -20,7 +21,7 @@ export const ActorExit = Schema.Union([
   Schema.TaggedStruct("Success", { value: Schema.optional(Schema.Unknown) }),
   Schema.TaggedStruct("Failure", { error: Schema.String }),
   Schema.TaggedStruct("Interrupt", {}),
-  Schema.TaggedStruct("Defect", { defect: Schema.String }),
+  Schema.TaggedStruct("Defect", { defect: Schema.String })
 ])
 export type ActorExit = typeof ActorExit.Type
 
@@ -29,7 +30,7 @@ const Accepted = Schema.TaggedStruct("Accepted", {
   callId: Schema.String,
   method: Schema.String,
   // optional: a no-arg method (`*value()`) has `undefined` input (JSON drops it).
-  input: Schema.optional(Schema.Unknown),
+  input: Schema.optional(Schema.Unknown)
 })
 
 /** A durable user-state mutation (`state(Table).set/delete`). */
@@ -37,7 +38,7 @@ const StateChanged = Schema.TaggedStruct("StateChanged", {
   op: Schema.Literals(["set", "delete"]),
   table: Schema.String,
   key: Schema.String,
-  value: Schema.optional(Schema.Unknown),
+  value: Schema.optional(Schema.Unknown)
 })
 
 /**
@@ -52,7 +53,7 @@ const Journaled = Schema.TaggedStruct("Journaled", {
   callId: Schema.String,
   kind: Schema.String,
   step: Schema.String,
-  value: Schema.Unknown,
+  value: Schema.Unknown
 })
 
 /**
@@ -64,13 +65,13 @@ const Journaled = Schema.TaggedStruct("Journaled", {
 const SignalResolved = Schema.TaggedStruct("SignalResolved", {
   callId: Schema.String,
   name: Schema.String,
-  value: Schema.optional(Schema.Unknown),
+  value: Schema.optional(Schema.Unknown)
 })
 
 /** Terminal: the call settled; its result outlives the running fiber. */
 const Completed = Schema.TaggedStruct("Completed", {
   callId: Schema.String,
-  exit: ActorExit,
+  exit: ActorExit
 })
 
 /** The one event type appended to an owner stream. */
@@ -113,14 +114,14 @@ const empty: ActorSnapshot = {
   results: new Map(),
   state: new Map(),
   journal: new Map(),
-  signals: new Map(),
+  signals: new Map()
 }
 
 const setNested = (
   m: ReadonlyMap<string, ReadonlyMap<string, unknown>>,
   outer: string,
   inner: string,
-  value: unknown,
+  value: unknown
 ): ReadonlyMap<string, ReadonlyMap<string, unknown>> => {
   const next = new Map(m)
   const sub = new Map(next.get(outer) ?? [])
@@ -132,7 +133,7 @@ const setNested = (
 const deleteNested = (
   m: ReadonlyMap<string, ReadonlyMap<string, unknown>>,
   outer: string,
-  inner: string,
+  inner: string
 ): ReadonlyMap<string, ReadonlyMap<string, unknown>> => {
   const next = new Map(m)
   const sub = new Map(next.get(outer) ?? [])
@@ -159,10 +160,13 @@ export const transition = (snapshot: ActorSnapshot, entry: LogEntry): ActorSnaps
         ...snapshot,
         state: event.op === "set"
           ? setNested(snapshot.state, event.table, event.key, event.value)
-          : deleteNested(snapshot.state, event.table, event.key),
+          : deleteNested(snapshot.state, event.table, event.key)
       }
     case "Journaled":
-      return { ...snapshot, journal: setNested(snapshot.journal, event.callId, journalKey(event.kind, event.step), event.value) }
+      return {
+        ...snapshot,
+        journal: setNested(snapshot.journal, event.callId, journalKey(event.kind, event.step), event.value)
+      }
     case "SignalResolved": {
       // first-write-wins: a resolution is terminal, a double-resolve is a no-op.
       const sub = snapshot.signals.get(event.callId)
@@ -186,13 +190,13 @@ export const isDone = (snapshot: ActorSnapshot, callId: string): boolean => snap
 /** The latest durable value of `table[key]`, if present. */
 export const stateValue = (snapshot: ActorSnapshot, table: string, key: string): Option.Option<unknown> =>
   Option.fromNullishOr(snapshot.state.get(table)).pipe(
-    Option.flatMap((sub) => (sub.has(key) ? Option.some(sub.get(key)) : Option.none())),
+    Option.flatMap((sub) => (sub.has(key) ? Option.some(sub.get(key)) : Option.none()))
   )
 
 /** A resolved signal's value for `callId`/`name`, if resolved (the value may be `undefined`). */
 export const signalValue = (snapshot: ActorSnapshot, callId: string, name: string): Option.Option<unknown> =>
   Option.fromNullishOr(snapshot.signals.get(callId)).pipe(
-    Option.flatMap((sub) => (sub.has(name) ? Option.some(sub.get(name)) : Option.none())),
+    Option.flatMap((sub) => (sub.has(name) ? Option.some(sub.get(name)) : Option.none()))
   )
 
 /** A journaled `(kind, step)` value for `callId`, if recorded. */
@@ -200,13 +204,13 @@ export const journalValue = (
   snapshot: ActorSnapshot,
   callId: string,
   kind: string,
-  step: string,
+  step: string
 ): Option.Option<unknown> =>
   Option.fromNullishOr(snapshot.journal.get(callId)).pipe(
     Option.flatMap((sub) => {
       const key = journalKey(kind, step)
       return sub.has(key) ? Option.some(sub.get(key)) : Option.none()
-    }),
+    })
   )
 
 /**

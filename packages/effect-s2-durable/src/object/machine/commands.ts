@@ -1,14 +1,14 @@
-import { Option } from "effect"
+import * as Option from "effect/Option"
 import {
   type ActorEvent,
   type ActorExit,
   type ActorSnapshot,
-  callStatus,
   type CallStatus,
+  callStatus,
   isDone,
   journalValue,
   signalValue,
-  stateValue,
+  stateValue
 } from "./model.ts"
 
 /**
@@ -68,9 +68,21 @@ export type ObjectCommand =
   }
   | { readonly _tag: "StateSet"; readonly table: string; readonly key: string; readonly value: unknown }
   | { readonly _tag: "StateDelete"; readonly table: string; readonly key: string }
-  | { readonly _tag: "StateGet"; readonly callId: string; readonly step: string; readonly table: string; readonly key: string }
+  | {
+    readonly _tag: "StateGet"
+    readonly callId: string
+    readonly step: string
+    readonly table: string
+    readonly key: string
+  }
   | { readonly _tag: "JournalGet"; readonly callId: string; readonly kind: string; readonly step: string }
-  | { readonly _tag: "JournalPut"; readonly callId: string; readonly kind: string; readonly step: string; readonly value: unknown }
+  | {
+    readonly _tag: "JournalPut"
+    readonly callId: string
+    readonly kind: string
+    readonly step: string
+    readonly value: unknown
+  }
   | { readonly _tag: "ResolveSignal"; readonly callId: string; readonly name: string; readonly value: unknown }
   | { readonly _tag: "AwaitSignal"; readonly callId: string; readonly name: string }
   | { readonly _tag: "Complete"; readonly callId: string; readonly exit: ActorExit }
@@ -80,7 +92,7 @@ export type ObjectDecision = ObjectApplyResult<unknown>
 const applied = <A>(
   result: A,
   events: ReadonlyArray<ActorEvent> = [],
-  actions: ReadonlyArray<ObjectDriverAction> = [],
+  actions: ReadonlyArray<ObjectDriverAction> = []
 ): ObjectApplyResult<A> => ({ result, events, actions })
 
 export const decide = (snapshot: ActorSnapshot, command: ObjectCommand): ObjectDecision => {
@@ -116,7 +128,7 @@ export const admit = (
     readonly callId: string
     readonly method: string
     readonly input: unknown
-  },
+  }
 ): ObjectApplyResult<AdmitResult> => {
   if (snapshot.order.includes(input.callId)) {
     return applied(snapshot.results.has(input.callId) ? { _tag: "AlreadyCompleted" } : { _tag: "AlreadyPending" })
@@ -124,7 +136,7 @@ export const admit = (
 
   return applied(
     { _tag: "Admitted" },
-    [{ _tag: "Accepted", callId: input.callId, method: input.method, input: input.input }],
+    [{ _tag: "Accepted", callId: input.callId, method: input.method, input: input.input }]
   )
 }
 
@@ -141,7 +153,7 @@ export const acceptedHeads = (events: ReadonlyArray<ActorEvent>): ReadonlyMap<st
 export const selectNextHead = (
   snapshot: ActorSnapshot,
   accepted: ReadonlyMap<string, PendingHead>,
-  local: ObjectLocalState,
+  local: ObjectLocalState
 ): ObjectApplyResult<PendingHead | undefined> => {
   const callId = snapshot.order.find((candidate) => !isDone(snapshot, candidate) && !local.started.has(candidate))
   if (callId === undefined) {
@@ -165,7 +177,7 @@ const stateGet = (
     readonly step: string
     readonly table: string
     readonly key: string
-  },
+  }
 ): ObjectApplyResult<Option.Option<unknown>> => {
   const recorded = journalValue(snapshot, input.callId, "read", input.step)
   if (Option.isSome(recorded)) {
@@ -180,7 +192,7 @@ const stateGet = (
     callId: input.callId,
     kind: "read",
     step: input.step,
-    value: record,
+    value: record
   }])
 }
 
@@ -188,7 +200,7 @@ export const journalGet = (
   snapshot: ActorSnapshot,
   callId: string,
   kind: string,
-  step: string,
+  step: string
 ): Option.Option<unknown> => journalValue(snapshot, callId, kind, step)
 
 const journalPut = (callId: string, kind: string, step: string, value: unknown): ObjectApplyResult<void> =>
@@ -196,7 +208,7 @@ const journalPut = (callId: string, kind: string, step: string, value: unknown):
 
 const resolveSignal = (
   snapshot: ActorSnapshot,
-  input: { readonly callId: string; readonly name: string; readonly value: unknown },
+  input: { readonly callId: string; readonly name: string; readonly value: unknown }
 ): ObjectApplyResult<void> => {
   if (Option.isSome(signalValue(snapshot, input.callId, input.name))) {
     return applied(undefined)
@@ -205,7 +217,7 @@ const resolveSignal = (
   return applied(
     undefined,
     [{ _tag: "SignalResolved", callId: input.callId, name: input.name, value: input.value }],
-    [{ _tag: "NotifySignalWaiter", callId: input.callId, name: input.name }],
+    [{ _tag: "NotifySignalWaiter", callId: input.callId, name: input.name }]
   )
 }
 
@@ -216,7 +228,7 @@ export type AwaitSignalDecision =
 export const awaitSignal = (
   snapshot: ActorSnapshot,
   callId: string,
-  name: string,
+  name: string
 ): ObjectApplyResult<AwaitSignalDecision> => {
   const resolved = signalValue(snapshot, callId, name)
   if (Option.isSome(resolved)) {

@@ -34,4 +34,3 @@ In short:
 - Do not revert unrelated user changes in the worktree.
 - Keep docs and SDDs aligned with the current implementation plan; remove stale
   decisions rather than adding contradictory notes.
-

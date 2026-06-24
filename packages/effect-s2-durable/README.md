@@ -40,11 +40,11 @@ const greeter = service({
       // call); it runs once, its result is journaled and replayed. The name is
       // optional (defaults to the step's journal position).
       const greeting = yield* run(Effect.sync(() => `Hello, ${req.name}!`), {
-        retry: { maxAttempts: 3, initialInterval: Duration.millis(100) },
+        retry: { maxAttempts: 3, initialInterval: Duration.millis(100) }
       })
       return { greeting }
-    },
-  },
+    }
+  }
 })
 
 const program = Effect.gen(function*() {
@@ -55,7 +55,7 @@ const program = Effect.gen(function*() {
 program.pipe(
   // `serviceLayer(greeter)` mounts handlers and builds the live engine layer.
   Effect.provide(serviceLayer(greeter).pipe(Layer.provide(S2Client.layerConfig))),
-  Effect.scoped,
+  Effect.scoped
 )
 ```
 
@@ -86,7 +86,7 @@ these only when you want to manage execution ids yourself.
   on the input and on already-journaled results, never on wall-clock/random/un-journaled
   reads. If a handler can branch non-deterministically, **name the steps** (`run("reserve",
   …)`) so a key tracks identity, not position. (Pinning an id with `idempotencyKey` does
-  **not** weaken this: a second call to a pinned id is *deduplicated* — it returns the
+  **not** weaken this: a second call to a pinned id is _deduplicated_ — it returns the
   first execution's result and never re-runs — so two divergent calls can't alias one
   stream's positional keys.)
 - **Effect Schema is the only serialization boundary.** `output`/`error` are discharged
@@ -109,25 +109,25 @@ import { primaryKey, Table } from "effect-s2-stream-db"
 
 class Cart extends Table<Cart>("cart")({
   cartId: Schema.String.pipe(primaryKey),
-  items: Schema.Array(Schema.String),
+  items: Schema.Array(Schema.String)
 }) {}
 
 export const checkout = service({
   name: "checkout",
   handlers: {
     *go(_req: { user: string }) {
-      const cart = state(Cart)                    // synchronous; reusable as a value
+      const cart = state(Cart) // synchronous; reusable as a value
       yield* cart.set({ cartId: "c1", items: ["apple"] })
-      const current = yield* cart.get("c1")       // read-after-ack sees the write
+      const current = yield* cart.get("c1") // read-after-ack sees the write
       // ...
-    },
-  },
+    }
+  }
 })
 ```
 
 A `run` action **cannot** use durable primitives (`run`/`sleep`/`state`/`signal`):
 its type forbids `CurrentInvocationScope` in `R`, so `run(state(Cart).set(…))`
-is a *compile* error at the `run` call — the Effect analog of Restate's ctx-less
+is a _compile_ error at the `run` call — the Effect analog of Restate's ctx-less
 run closure. Perform durable work in the handler body, not inside a `run` action.
 
 ## Virtual objects (keyed, stateful)
@@ -184,13 +184,14 @@ rebuilt from rows on recovery). Resolve writes the row, **awaits its ack, then p
 (ack-before-poke); park checks the row first (so a resolve-before-await is never lost).
 
 ```ts
-const approval = yield* signal("approval", Approval)        // receiver parks
-yield* resolveSignal(executionId, "approval", Approval, v)  // ingress door resolves
+const approval = yield * signal("approval", Approval) // receiver parks
+yield * resolveSignal(executionId, "approval", Approval, v) // ingress door resolves
 
-const done = deferred("done", Result)                       // handler-resolved promise
-yield* done.resolve(r); const r2 = yield* done.get()
+const done = deferred("done", Result) // handler-resolved promise
+yield * done.resolve(r)
+const r2 = yield * done.get()
 
-const awk = yield* awakeable(Approval)                      // { id, promise }
+const awk = yield * awakeable(Approval) // { id, promise }
 // awk.id is replay-stable (executionId + ordinal); hand it to an ingress client
 ```
 
@@ -213,14 +214,14 @@ codecs, types — is derived from them.
 **Server** — two layers, each over the same defs:
 
 ```ts
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
 import { serviceLayer } from "effect-s2-durable/catalog"
 import { durableIngress } from "effect-s2-durable/ingress"
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer"
 
-durableIngress([Calculator, Counter]).pipe(           // HTTP front: a generic router
-  Layer.provide(serviceLayer(Calculator, Counter)),   // engine: mounts handlers so they run
+durableIngress([Calculator, Counter]).pipe( // HTTP front: a generic router
+  Layer.provide(serviceLayer(Calculator, Counter)), // engine: mounts handlers so they run
   Layer.provide(NodeHttpServer.layer(() => createServer(), { port: 8080 })),
-  Layer.provide(/* S2Client */),
+  Layer.provide() /* S2Client */
 )
 ```
 
@@ -275,6 +276,7 @@ real HTTP + `s2 lite` lives in `test/ingress.test.ts`.
 ## Status
 
 Built and validated through Firelab against `s2 lite` for the current engine surface:
+
 - `handler` / `handlerRequest`; `run` (memoize / retry / typed-failure facts);
   `submit` / `attach` / `poll`; completion ordering.
 - `sleep` (durable timer row, `pending`→`fired`).
@@ -301,5 +303,5 @@ linked above.
 Package-local tests are kept pure; S2-backed behavioral proofs belong in executable specs.
 
 **Not yet:** `resultAcked` is written but not yet consumed (no post-completion reclaim
-sweep). Durable timers (`sleep`) recover their *remaining* delay on boot, but there is no
+sweep). Durable timers (`sleep`) recover their _remaining_ delay on boot, but there is no
 separate timer-wheel fiber re-armed from `clockWakeups` independent of the handler re-run.

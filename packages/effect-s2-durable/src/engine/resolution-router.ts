@@ -1,11 +1,15 @@
-import { Context, Effect, HashMap, Layer, Option, Ref, type Schema } from "effect"
-import { encode, fail } from "./helpers.ts"
-import { EngineState } from "./state.ts"
+import * as Context from "effect/Context"
+import * as Effect from "effect/Effect"
+import * as HashMap from "effect/HashMap"
+import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
+import * as Ref from "effect/Ref"
 import { objectPartsOption } from "./address.ts"
-import { DurableStores } from "./durable-stores.ts"
-import { resolveServiceDeferred } from "./service-deferreds.ts"
-import type { DurableExecutionError } from "../errors.ts"
 import type { ExternalResolution } from "./api.ts"
+import { DurableStores } from "./durable-stores.ts"
+import { encode, fail } from "./helpers.ts"
+import { resolveServiceDeferred } from "./service-deferreds.ts"
+import { EngineState } from "./state.ts"
 
 export interface ResolutionRouterApi {
   readonly resolveExternal: ExternalResolution
@@ -15,12 +19,7 @@ const make: Effect.Effect<ResolutionRouterApi, never, EngineState | DurableStore
   const { running, waiters } = yield* EngineState
   const { objectDriver: store, provideClient } = yield* DurableStores
 
-  const resolveExternal = <A, I>(
-    executionId: string,
-    name: string,
-    schema: Schema.Codec<A, I, never, never>,
-    value: A,
-  ): Effect.Effect<void, DurableExecutionError> =>
+  const resolveExternal: ExternalResolution = (executionId, name, schema, value) =>
     Effect.gen(function*() {
       const parts = yield* objectPartsOption(executionId)
       if (Option.isSome(parts)) {
@@ -33,8 +32,8 @@ const make: Effect.Effect<ResolutionRouterApi, never, EngineState | DurableStore
         onNone: () => fail("resolve", `execution ${executionId} is not running locally`),
         onSome: (entry) =>
           encode(schema, value).pipe(
-            Effect.flatMap((enc) => resolveServiceDeferred(waiters, entry.invocation.db, executionId, name, enc)),
-          ),
+            Effect.flatMap((enc) => resolveServiceDeferred(waiters, entry.invocation.db, executionId, name, enc))
+          )
       })
     })
 
@@ -42,7 +41,10 @@ const make: Effect.Effect<ResolutionRouterApi, never, EngineState | DurableStore
 })
 
 export class ResolutionRouter extends Context.Service<ResolutionRouter, ResolutionRouterApi>()(
-  "effect-s2-durable/engine/resolution-router/ResolutionRouter",
+  "effect-s2-durable/engine/resolution-router/ResolutionRouter"
 ) {
-  static readonly layer: Layer.Layer<ResolutionRouter, never, EngineState | DurableStores> = Layer.effect(ResolutionRouter, make)
+  static readonly layer: Layer.Layer<ResolutionRouter, never, EngineState | DurableStores> = Layer.effect(
+    ResolutionRouter,
+    make
+  )
 }

@@ -1,4 +1,5 @@
-import { Effect, Schema } from "effect"
+import * as Effect from "effect/Effect"
+import * as Schema from "effect/Schema"
 
 /**
  * The Durable Streams State Protocol message vocabulary, Schema-first.
@@ -26,8 +27,8 @@ export const ChangeMessage = Schema.Struct({
   old_value: Schema.optional(Schema.Unknown),
   headers: Schema.Struct({
     operation: Operation,
-    txid: Schema.optional(Schema.String),
-  }),
+    txid: Schema.optional(Schema.String)
+  })
 })
 export type ChangeMessage = typeof ChangeMessage.Type
 
@@ -35,8 +36,8 @@ export type ChangeMessage = typeof ChangeMessage.Type
 export const ControlMessage = Schema.Struct({
   headers: Schema.Struct({
     control: Control,
-    offset: Schema.optional(Schema.String),
-  }),
+    offset: Schema.optional(Schema.String)
+  })
 })
 export type ControlMessage = typeof ControlMessage.Type
 
@@ -48,12 +49,10 @@ export const Message = Schema.Union([ChangeMessage, ControlMessage])
 export type Message = typeof Message.Type
 
 /** Narrow a decoded message to a data change. */
-export const isChange = (message: Message): message is ChangeMessage =>
-  "operation" in message.headers
+export const isChange = (message: Message): message is ChangeMessage => "operation" in message.headers
 
 /** Narrow a decoded message to a control signal. */
-export const isControl = (message: Message): message is ControlMessage =>
-  "control" in message.headers
+export const isControl = (message: Message): message is ControlMessage => "control" in message.headers
 
 const Json = Schema.UnknownFromJsonString
 

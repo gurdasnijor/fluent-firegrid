@@ -1,5 +1,6 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
-import { Console, Effect } from "effect"
+import * as Console from "effect/Console"
+import * as Effect from "effect/Effect"
 import { AppendInput, AppendRecord, S2Client } from "../src/index.ts"
 
 const streamName = `effect-s2-session-cas-${Date.now()}`
@@ -11,7 +12,7 @@ const program = Effect.gen(function*() {
 
   const ack = yield* session.submit(AppendInput.create(
     [AppendRecord.string({ body: "exactly-once" })],
-    { matchSeqNum: tail.tail.seqNum },
+    { matchSeqNum: tail.tail.seqNum }
   ))
 
   yield* Console.log(`committed seqNum range ${ack.start.seqNum}-${ack.end.seqNum}`)

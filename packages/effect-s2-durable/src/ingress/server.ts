@@ -1,9 +1,12 @@
-import { Effect, Layer, Option, Schema } from "effect"
-import { HttpRouter } from "effect/unstable/http"
-import { HttpApiBuilder } from "effect/unstable/httpapi"
+import * as Effect from "effect/Effect"
+import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
+import * as Schema from "effect/Schema"
+import * as HttpRouter from "effect/unstable/http/HttpRouter"
+import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder"
 import { compileOne } from "../catalog/compiler.ts"
 import { DurableEngine } from "../engine/api.ts"
-import { locateInvocationId, objectIdentity, planInvocationId, type InvokeOptions } from "../invocation/plan.ts"
+import { type InvokeOptions, locateInvocationId, objectIdentity, planInvocationId } from "../invocation/plan.ts"
 import { type AnyDef, asFailure, DurableApi, DurableFailure } from "./contract.ts"
 
 // ── definitions registry + helpers ──────────────────────────────────────────
@@ -32,7 +35,9 @@ const validateTarget = (def: AnyDef, payload: InvokePayloadType): Effect.Effect<
     return Effect.fail(new DurableFailure({ message: `object ${payload.name}/${payload.method} requires a key` }))
   }
   if (def.kind === "service" && payload.key !== undefined) {
-    return Effect.fail(new DurableFailure({ message: `service ${payload.name}/${payload.method} must not include a key` }))
+    return Effect.fail(
+      new DurableFailure({ message: `service ${payload.name}/${payload.method} must not include a key` })
+    )
   }
   return Effect.void
 }
@@ -79,7 +84,11 @@ const runSend = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
   Effect.gen(function*() {
     const { input, resolved } = yield* prepare(registry, payload)
     const rt = yield* DurableEngine
-    const invocationId = yield* planInvocationId(payload.method, optionsFor(payload), objectIdentity(resolved.def, payload.key))
+    const invocationId = yield* planInvocationId(
+      payload.method,
+      optionsFor(payload),
+      objectIdentity(resolved.def, payload.key)
+    )
     yield* rt.submit(resolved.compiled.handler, invocationId, input)
     return { invocationId }
   }).pipe(Effect.mapError(asFailure))
@@ -91,7 +100,9 @@ const locateId = (def: AnyDef, payload: InvokePayloadType): Effect.Effect<string
   if (payload.idempotencyKey === undefined) {
     return Effect.fail(new DurableFailure({ message: "attach/output requires invocationId or idempotencyKey" }))
   }
-  return locateInvocationId(payload.method, payload.idempotencyKey, objectIdentity(def, payload.key)).pipe(Effect.mapError(asFailure))
+  return locateInvocationId(payload.method, payload.idempotencyKey, objectIdentity(def, payload.key)).pipe(
+    Effect.mapError(asFailure)
+  )
 }
 
 // Resolve the def + the engine id + the engine (the shared head of attach/output).
@@ -126,29 +137,32 @@ const runOutput = (registry: Map<string, AnyDef>, payload: InvokePayloadType) =>
  */
 export const durableIngress = (defs: ReadonlyArray<AnyDef>) => {
   const registry = new Map(defs.map((def) => [def.name, def] as const))
-  const servicePath = (path: { readonly name: string; readonly method: string }, payload: { readonly input?: unknown; readonly idempotencyKey?: string }): InvokePayloadType => ({
+  const servicePath = (
+    path: { readonly name: string; readonly method: string },
+    payload: { readonly input?: unknown; readonly idempotencyKey?: string }
+  ): InvokePayloadType => ({
     name: path.name,
     method: path.method,
     input: payload.input,
-    ...(payload.idempotencyKey === undefined ? {} : { idempotencyKey: payload.idempotencyKey }),
+    ...(payload.idempotencyKey === undefined ? {} : { idempotencyKey: payload.idempotencyKey })
   })
   const objectPath = (
     path: { readonly name: string; readonly key: string; readonly method: string },
-    payload: { readonly input?: unknown; readonly idempotencyKey?: string },
+    payload: { readonly input?: unknown; readonly idempotencyKey?: string }
   ): InvokePayloadType => ({
     name: path.name,
     key: path.key,
     method: path.method,
     input: payload.input,
-    ...(payload.idempotencyKey === undefined ? {} : { idempotencyKey: payload.idempotencyKey }),
+    ...(payload.idempotencyKey === undefined ? {} : { idempotencyKey: payload.idempotencyKey })
   })
   const serviceLocatePath = (
     path: { readonly name: string; readonly method: string },
-    payload: { readonly invocationId?: string; readonly idempotencyKey?: string },
+    payload: { readonly invocationId?: string; readonly idempotencyKey?: string }
   ): InvokePayloadType => ({ name: path.name, method: path.method, ...payload })
   const objectLocatePath = (
     path: { readonly name: string; readonly key: string; readonly method: string },
-    payload: { readonly invocationId?: string; readonly idempotencyKey?: string },
+    payload: { readonly invocationId?: string; readonly idempotencyKey?: string }
   ): InvokePayloadType => ({ name: path.name, key: path.key, method: path.method, ...payload })
   const InvocationsLive = HttpApiBuilder.group(DurableApi, "invocations", (handlers) =>
     handlers
@@ -160,5 +174,5 @@ export const durableIngress = (defs: ReadonlyArray<AnyDef>) => {
       .handle("objectAttach", ({ params, payload }) => runAttach(registry, objectLocatePath(params, payload)))
       .handle("serviceOutput", ({ params, payload }) => runOutput(registry, serviceLocatePath(params, payload)))
       .handle("objectOutput", ({ params, payload }) => runOutput(registry, objectLocatePath(params, payload))))
-  return HttpRouter.serve(HttpApiBuilder.layer(DurableApi).pipe(Layer.provide(InvocationsLive)))
+  return DurableApi.pipe(HttpApiBuilder.layer, Layer.provide(InvocationsLive), HttpRouter.serve)
 }

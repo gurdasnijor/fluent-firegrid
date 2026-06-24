@@ -1,43 +1,60 @@
-import { Cause, Clock, Context, Deferred, Duration, Effect, Exit, HashMap, Layer, Option, Ref, Schema } from "effect"
 import type { AnyTable, RowOf } from "effect-s2-stream-db"
-import { encodeObjectCallId, type ObjectCallIdParts } from "../object/address.ts"
-import { stateValue } from "../object/machine/index.ts"
-import type { DurableExecutionError } from "../errors.ts"
+import * as Cause from "effect/Cause"
+import * as Clock from "effect/Clock"
+import * as Context from "effect/Context"
+import * as Deferred from "effect/Deferred"
+import * as Duration from "effect/Duration"
+import * as Effect from "effect/Effect"
+import * as Exit from "effect/Exit"
+import * as HashMap from "effect/HashMap"
+import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
+import * as Ref from "effect/Ref"
+import * as Schema from "effect/Schema"
 import type { DurablePromiseResolver, RunOptions, RunStep } from "../authoring/types.ts"
+import type { DurableExecutionError } from "../errors.ts"
+import { encodeObjectCallId, type ObjectCallIdParts } from "../object/address.ts"
+import { stateValue } from "../object/machine/model.ts"
 import {
+  ActiveInvocation,
+  type ObjectInvocation,
+  type ServiceInvocation,
+  type StepRecord,
+  type TimerRecord
+} from "./context.ts"
+import { DurableStores } from "./durable-stores.ts"
+import {
+  asServiceFreeDecoder,
+  asServiceFreeEncoder,
   decode,
   decodeRowFor,
   encode,
   encodeRowFor,
-  asServiceFreeDecoder,
-  asServiceFreeEncoder,
   fail,
   pkOf,
   resolvedValue,
   scheduleOf,
   sharedForbidden,
-  toError,
+  toError
 } from "./helpers.ts"
-import { EngineState } from "./state.ts"
-import { DurableStores } from "./durable-stores.ts"
 import { resolveServiceDeferred, serviceWaiterKey } from "./service-deferreds.ts"
-import { ActiveInvocation, type ObjectInvocation, type ServiceInvocation, type StepRecord, type TimerRecord } from "./context.ts"
+import { EngineState } from "./state.ts"
 
 export interface HandlerPrimitivesApi {
   readonly runStep: RunStep
   readonly handlerRequest: <A, I>(
-    schema: Schema.Codec<A, I, never, never>,
+    schema: Schema.Codec<A, I, never, never>
   ) => Effect.Effect<A, DurableExecutionError>
   readonly sleepStep: (name: string, duration: Duration.Duration) => Effect.Effect<void, DurableExecutionError>
   readonly stateGet: <Tbl extends AnyTable>(
     table: Tbl,
-    key: string,
+    key: string
   ) => Effect.Effect<Option.Option<RowOf<Tbl>>, DurableExecutionError>
   readonly stateSet: <Tbl extends AnyTable>(table: Tbl, row: RowOf<Tbl>) => Effect.Effect<void, DurableExecutionError>
   readonly stateDelete: <Tbl extends AnyTable>(table: Tbl, key: string) => Effect.Effect<void, DurableExecutionError>
   readonly awaitDeferred: <A, I>(
     name: string,
-    schema: Schema.Codec<A, I, never, never>,
+    schema: Schema.Codec<A, I, never, never>
   ) => Effect.Effect<A, DurableExecutionError>
   readonly resolveLocal: DurablePromiseResolver
   readonly resolvePromise: DurablePromiseResolver
@@ -45,8 +62,11 @@ export interface HandlerPrimitivesApi {
 }
 
 const withActive = (operation: string) =>
-  Effect.flatMap(ActiveInvocation, (opt) =>
-    Option.isNone(opt) ? fail(operation, `${operation} called outside an active handler`) : Effect.succeed(opt.value))
+  Effect.flatMap(
+    ActiveInvocation,
+    (opt) =>
+      Option.isNone(opt) ? fail(operation, `${operation} called outside an active handler`) : Effect.succeed(opt.value)
+  )
 
 const make: Effect.Effect<HandlerPrimitivesApi, never, EngineState | DurableStores> = Effect.gen(function*() {
   const engineState = yield* EngineState
@@ -60,23 +80,25 @@ const make: Effect.Effect<HandlerPrimitivesApi, never, EngineState | DurableStor
         get: (step: string): Effect.Effect<Option.Option<StepRecord>, DurableExecutionError> =>
           provideClient(active.state.journal.get("run", step)).pipe(Effect.map((o) => o as Option.Option<StepRecord>)),
         put: (step: string, record: StepRecord): Effect.Effect<void, DurableExecutionError> =>
-          provideClient(active.state.journal.put("run", step, record)),
+          provideClient(active.state.journal.put("run", step, record))
       }
       : {
         get: (step: string): Effect.Effect<Option.Option<StepRecord>, DurableExecutionError> =>
           active.db.steps.get(`${active.executionId}/${step}`).pipe(
             Effect.mapError(toError("run")),
-            Effect.map((o) => Option.map(o, (r): StepRecord => ({ success: r.success, value: r.value, error: r.error }))),
+            Effect.map((o) =>
+              Option.map(o, (r): StepRecord => ({ success: r.success, value: r.value, error: r.error }))
+            )
           ),
         put: (step: string, record: StepRecord): Effect.Effect<void, DurableExecutionError> =>
           active.db.steps.insert({ stepKey: `${active.executionId}/${step}`, ...record }).pipe(
-            Effect.mapError(toError("run")),
-          ),
+            Effect.mapError(toError("run"))
+          )
       }
 
   const runStep = <A, E, R, EncodedA, EncodedE>(
     action: Effect.Effect<A, E, R>,
-    options?: RunOptions<A, E, EncodedA, EncodedE>,
+    options?: RunOptions<A, E, EncodedA, EncodedE>
   ): Effect.Effect<A, E | DurableExecutionError, R> =>
     withActive("run").pipe(Effect.flatMap((active) =>
       Effect.gen(function*() {
@@ -87,14 +109,18 @@ const make: Effect.Effect<HandlerPrimitivesApi, never, EngineState | DurableStor
         const existing = yield* journal.get(stepName)
         if (Option.isSome(existing)) {
           const row = existing.value
-          if (row.success) return options?.output !== undefined ? yield* decode(options.output, row.value) : (row.value as A)
+          if (row.success) {
+            return options?.output !== undefined
+              ? yield* decode(options.output, row.value)
+              : (row.value as A)
+          }
           const error = options?.error !== undefined ? yield* decode(options.error, row.error) : (row.error as E)
           return yield* Effect.fail(error)
         }
 
         const attempted = options?.retry !== undefined
           ? action.pipe(
-            Effect.retry({ schedule: scheduleOf(options.retry), times: Math.max(0, options.retry.maxAttempts - 1) }),
+            Effect.retry({ schedule: scheduleOf(options.retry), times: Math.max(0, options.retry.maxAttempts - 1) })
           )
           : action
         const outcome = yield* Effect.exit(attempted)
@@ -109,7 +135,7 @@ const make: Effect.Effect<HandlerPrimitivesApi, never, EngineState | DurableStor
           yield* journal.put(stepName, { success: false, error })
         }
         return yield* outcome
-      }),
+      })
     ))
 
   const handlerRequest = <A, I>(schema: Schema.Codec<A, I, never, never>): Effect.Effect<A, DurableExecutionError> =>
@@ -119,21 +145,23 @@ const make: Effect.Effect<HandlerPrimitivesApi, never, EngineState | DurableStor
     active.kind === "object"
       ? {
         get: (name: string): Effect.Effect<Option.Option<TimerRecord>, DurableExecutionError> =>
-          provideClient(active.state.journal.get("sleep", name)).pipe(Effect.map((o) => o as Option.Option<TimerRecord>)),
+          provideClient(active.state.journal.get("sleep", name)).pipe(
+            Effect.map((o) => o as Option.Option<TimerRecord>)
+          ),
         put: (name: string, record: TimerRecord): Effect.Effect<void, DurableExecutionError> =>
-          provideClient(active.state.journal.put("sleep", name, record)),
+          provideClient(active.state.journal.put("sleep", name, record))
       }
       : {
         get: (name: string): Effect.Effect<Option.Option<TimerRecord>, DurableExecutionError> =>
           active.db.clockWakeups.get(name).pipe(
             Effect.mapError(toError("sleep")),
-            Effect.map((o) => Option.map(o, (r): TimerRecord => ({ deadlineMs: r.deadlineMs, status: r.status }))),
+            Effect.map((o) => Option.map(o, (r): TimerRecord => ({ deadlineMs: r.deadlineMs, status: r.status })))
           ),
         put: (name: string, record: TimerRecord): Effect.Effect<void, DurableExecutionError> =>
           (record.status === "pending"
             ? active.db.clockWakeups.insert({ name, deadlineMs: record.deadlineMs, status: "pending" })
             : active.db.clockWakeups.upsert({ name, deadlineMs: record.deadlineMs, status: "fired" }))
-            .pipe(Effect.mapError(toError("sleep"))),
+            .pipe(Effect.mapError(toError("sleep")))
       }
 
   const sleepStep = (name: string, duration: Duration.Duration): Effect.Effect<void, DurableExecutionError> =>
@@ -151,30 +179,28 @@ const make: Effect.Effect<HandlerPrimitivesApi, never, EngineState | DurableStor
         const remaining = Math.max(0, deadlineMs - now)
         if (remaining > 0) yield* Effect.sleep(Duration.millis(remaining))
         yield* timer.put(name, { deadlineMs, status: "fired" })
-      }),
+      })
     ))
+
+  const decodeOptionalRow = <Tbl extends AnyTable>(
+    table: Tbl,
+    encoded: Option.Option<unknown>
+  ): Effect.Effect<Option.Option<RowOf<Tbl>>, DurableExecutionError> =>
+    Option.match(encoded, {
+      onNone: () => Effect.succeedNone,
+      onSome: (value) => decodeRowFor(table, value).pipe(Effect.map((row) => Option.some(row as RowOf<Tbl>)))
+    })
 
   const stateGet = <Tbl extends AnyTable>(
     table: Tbl,
-    key: string,
+    key: string
   ): Effect.Effect<Option.Option<RowOf<Tbl>>, DurableExecutionError> =>
     withActive("state.get").pipe(Effect.flatMap((active) =>
       active.kind === "shared"
-        ? Option.match(stateValue(active.snapshot, table.tableName, key), {
-          onNone: () => Effect.succeedNone,
-          onSome: (encoded) => decodeRowFor(table, encoded).pipe(Effect.map((row) => Option.some(row as RowOf<Tbl>))),
-        })
+        ? decodeOptionalRow(table, stateValue(active.snapshot, table.tableName, key))
         : active.kind === "object"
         ? provideClient(
-          active.state.get(table.tableName, key).pipe(
-            Effect.flatMap((opt) =>
-              Option.match(opt, {
-                onNone: () => Effect.succeedNone,
-                onSome: (encoded) =>
-                  decodeRowFor(table, encoded).pipe(Effect.map((row) => Option.some(row as RowOf<Tbl>))),
-              }),
-            ),
-          ),
+          active.state.get(table.tableName, key).pipe(Effect.flatMap((opt) => decodeOptionalRow(table, opt)))
         )
         : Effect.gen(function*() {
           const ordinal = yield* Ref.getAndUpdate(active.readSeq, (n) => n + 1)
@@ -183,12 +209,12 @@ const make: Effect.Effect<HandlerPrimitivesApi, never, EngineState | DurableStor
           const decodeRead = (encoded: unknown) =>
             Effect.try({
               try: () => Schema.decodeUnknownSync(asServiceFreeDecoder(readCodec))(encoded),
-              catch: toError("state.get"),
+              catch: toError("state.get")
             })
           const encodeRead = (value: RowOf<Tbl> | null) =>
             Effect.try({
               try: () => Schema.encodeUnknownSync(asServiceFreeEncoder(readCodec))(value),
-              catch: toError("state.get"),
+              catch: toError("state.get")
             })
 
           const recorded = yield* active.db.stateReads.get(readKey).pipe(Effect.mapError(toError("state.get")))
@@ -196,10 +222,10 @@ const make: Effect.Effect<HandlerPrimitivesApi, never, EngineState | DurableStor
             return Option.fromNullishOr(yield* decodeRead(recorded.value.value))
           }
           const current = yield* active.stateDb.table(table).get(key).pipe(Effect.mapError(toError("state.get")))
-          const encoded = yield* encodeRead(Option.getOrNull(current))
+          const encoded = yield* current.pipe(Option.getOrNull, encodeRead)
           yield* active.db.stateReads.insert({ readKey, value: encoded }).pipe(Effect.mapError(toError("state.get")))
           return current
-        }),
+        })
     ))
 
   const stateSet = <Tbl extends AnyTable>(table: Tbl, row: RowOf<Tbl>): Effect.Effect<void, DurableExecutionError> =>
@@ -209,10 +235,10 @@ const make: Effect.Effect<HandlerPrimitivesApi, never, EngineState | DurableStor
         : active.kind === "object"
         ? provideClient(
           encodeRowFor(table, row).pipe(
-            Effect.flatMap((encoded) => active.state.set(table.tableName, pkOf(table, row), encoded)),
-          ),
+            Effect.flatMap((encoded) => active.state.set(table.tableName, pkOf(table, row), encoded))
+          )
         )
-        : active.stateDb.table(table).upsert(row).pipe(Effect.mapError(toError("state.set"))),
+        : active.stateDb.table(table).upsert(row).pipe(Effect.mapError(toError("state.set")))
     ))
 
   const stateDelete = <Tbl extends AnyTable>(table: Tbl, key: string): Effect.Effect<void, DurableExecutionError> =>
@@ -221,10 +247,13 @@ const make: Effect.Effect<HandlerPrimitivesApi, never, EngineState | DurableStor
         ? sharedForbidden("state.delete")
         : active.kind === "object"
         ? provideClient(active.state.delete(table.tableName, key))
-        : active.stateDb.table(table).delete(key).pipe(Effect.mapError(toError("state.delete"))),
+        : active.stateDb.table(table).delete(key).pipe(Effect.mapError(toError("state.delete")))
     ))
 
-  const markSuspended = (active: ServiceInvocation, kind: "deferred-wait" | "pending-clock"): Effect.Effect<void, never> =>
+  const markSuspended = (
+    active: ServiceInvocation,
+    kind: "deferred-wait" | "pending-clock"
+  ): Effect.Effect<void, never> =>
     Clock.currentTimeMillis.pipe(
       Effect.flatMap((now) =>
         Effect.all([
@@ -234,23 +263,23 @@ const make: Effect.Effect<HandlerPrimitivesApi, never, EngineState | DurableStor
             status: "suspended",
             objectKey: undefined,
             suspendKind: kind,
-            updatedMs: now,
+            updatedMs: now
           }),
           active.db.executions.upsert({
             executionId: active.executionId,
             handlerName: active.handlerName,
             input: active.inputEncoded,
             status: "suspended",
-            suspended: true,
-          }),
-        ], { discard: true }),
+            suspended: true
+          })
+        ], { discard: true })
       ),
-      Effect.ignore,
+      Effect.ignore
     )
 
   const awaitDeferred = <A, I>(
     name: string,
-    schema: Schema.Codec<A, I, never, never>,
+    schema: Schema.Codec<A, I, never, never>
   ): Effect.Effect<A, DurableExecutionError> =>
     withActive("await").pipe(Effect.flatMap((active) =>
       active.kind === "shared"
@@ -275,7 +304,7 @@ const make: Effect.Effect<HandlerPrimitivesApi, never, EngineState | DurableStor
               ? yield* decode(schema, resolved.value)
               : yield* fail("await", `deferred ${JSON.stringify(name)} woke without a value`)
           }).pipe(Effect.ensuring(Ref.update(waiters, HashMap.remove(key))))
-        }),
+        })
     ))
 
   const resolveLocal: HandlerPrimitivesApi["resolveLocal"] = (name, schema, value) =>
@@ -285,8 +314,8 @@ const make: Effect.Effect<HandlerPrimitivesApi, never, EngineState | DurableStor
         : active.kind === "object"
         ? encode(schema, value).pipe(Effect.flatMap((enc) => provideClient(active.state.signal.resolve(name, enc))))
         : encode(schema, value).pipe(
-          Effect.flatMap((enc) => resolveServiceDeferred(waiters, active.db, active.executionId, name, enc)),
-        ),
+          Effect.flatMap((enc) => resolveServiceDeferred(waiters, active.db, active.executionId, name, enc))
+        )
     ))
 
   const resolvePromise: HandlerPrimitivesApi["resolvePromise"] = (name, schema, value) =>
@@ -294,11 +323,16 @@ const make: Effect.Effect<HandlerPrimitivesApi, never, EngineState | DurableStor
       active.kind !== "shared"
         ? fail("resolvePromise", "resolvePromise is only valid inside a shared workflow handler")
         : Effect.gen(function*() {
-          const runParts: ObjectCallIdParts = { object: active.object, key: active.key, method: "run", nonce: active.key }
+          const runParts: ObjectCallIdParts = {
+            object: active.object,
+            key: active.key,
+            method: "run",
+            nonce: active.key
+          }
           const runCallId = yield* encodeObjectCallId(runParts).pipe(Effect.mapError(toError("resolvePromise")))
           const enc = yield* encode(schema, value)
           yield* provideClient(store.resolveSignal(runCallId, runParts, name, enc))
-        }),
+        })
     ))
 
   const nextAwakeableId: Effect.Effect<string, DurableExecutionError> = withActive("awakeable").pipe(
@@ -306,9 +340,13 @@ const make: Effect.Effect<HandlerPrimitivesApi, never, EngineState | DurableStor
       active.kind === "shared"
         ? sharedForbidden("awakeable")
         : active.kind === "object"
-        ? Ref.getAndUpdate(active.awakeSeq, (n) => n + 1).pipe(Effect.map((ordinal) => `${active.callId}/awk/${ordinal}`))
-        : Ref.getAndUpdate(active.awakeSeq, (n) => n + 1).pipe(Effect.map((ordinal) => `${active.executionId}/awk/${ordinal}`)),
-    ),
+        ? Ref.getAndUpdate(active.awakeSeq, (n) => n + 1).pipe(
+          Effect.map((ordinal) => `${active.callId}/awk/${ordinal}`)
+        )
+        : Ref.getAndUpdate(active.awakeSeq, (n) => n + 1).pipe(
+          Effect.map((ordinal) => `${active.executionId}/awk/${ordinal}`)
+        )
+    )
   )
 
   return {
@@ -321,15 +359,15 @@ const make: Effect.Effect<HandlerPrimitivesApi, never, EngineState | DurableStor
     awaitDeferred,
     resolveLocal,
     resolvePromise,
-    nextAwakeableId,
+    nextAwakeableId
   }
 })
 
 export class HandlerPrimitives extends Context.Service<HandlerPrimitives, HandlerPrimitivesApi>()(
-  "effect-s2-durable/engine/handler-primitives/HandlerPrimitives",
+  "effect-s2-durable/engine/handler-primitives/HandlerPrimitives"
 ) {
   static readonly layer: Layer.Layer<HandlerPrimitives, never, EngineState | DurableStores> = Layer.effect(
     HandlerPrimitives,
-    make,
+    make
   )
 }

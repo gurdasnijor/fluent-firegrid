@@ -1,12 +1,13 @@
 // @effect-diagnostics effect/nodeBuiltinImport:off effect/multipleEffectProvide:off -- edge integration support: node:child_process probes for the `s2` binary, and the chained provides are the intentional edge wiring (HttpClient → DurableHostLive (ingress → engine → server → S2)).
-import { execSync } from "node:child_process"
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient"
 import * as NodeSocketServer from "@effect/platform-node/NodeSocketServer"
-import { Effect, Schema } from "effect"
 import { primaryKey, Table } from "effect-s2-stream-db"
+import * as Effect from "effect/Effect"
+import * as Schema from "effect/Schema"
+import { execSync } from "node:child_process"
 import { DurableHostLive } from "../src/host/index.ts"
-import { connect, type DurableIngressClient } from "../src/ingress/client.ts"
 import { object, run, service, state } from "../src/index.ts"
+import { connect, type DurableIngressClient } from "../src/ingress/client.ts"
 import { client, objectClient, serviceClient } from "../src/invocation/client.ts"
 import { S2LiteLive } from "./s2lite.ts"
 
@@ -20,14 +21,14 @@ export const Calculator = service({
   handlers: {
     *double(input: number) {
       return yield* run("double", Effect.succeed(input * 2), { output: Schema.Number })
-    },
+    }
   },
-  schemas: { double: { input: Schema.Number, output: Schema.Number } },
+  schemas: { double: { input: Schema.Number, output: Schema.Number } }
 })
 
 class CounterRow extends Table<CounterRow>("ingress-counter")({
   id: Schema.String.pipe(primaryKey),
-  value: Schema.Number,
+  value: Schema.Number
 }) {}
 
 /** Keyed virtual object: per-key durable state (`add`). */
@@ -39,9 +40,9 @@ export const Counter = object({
       const next = (current._tag === "Some" ? current.value.value : 0) + amount
       yield* state(CounterRow).set({ id: "v", value: next })
       return next
-    },
+    }
   },
-  schemas: { add: { input: Schema.Number, output: Schema.Number } },
+  schemas: { add: { input: Schema.Number, output: Schema.Number } }
 })
 
 /**
@@ -54,9 +55,9 @@ export const Proxy = service({
   handlers: {
     *bump(amount: number) {
       return yield* objectClient(Counter, "proxy-key").add(amount)
-    },
+    }
   },
-  schemas: { bump: { input: Schema.Number, output: Schema.Number } },
+  schemas: { bump: { input: Schema.Number, output: Schema.Number } }
 })
 
 /**
@@ -69,9 +70,9 @@ export const ServiceProxy = service({
   handlers: {
     *doubleViaService(amount: number) {
       return yield* serviceClient(Calculator).double(amount)
-    },
+    }
   },
-  schemas: { doubleViaService: { input: Schema.Number, output: Schema.Number } },
+  schemas: { doubleViaService: { input: Schema.Number, output: Schema.Number } }
 })
 
 /**
@@ -84,9 +85,9 @@ export const Footgun = service({
   handlers: {
     *callTopLevel(amount: number) {
       return yield* client(Calculator).double(amount)
-    },
+    }
   },
-  schemas: { callTopLevel: { input: Schema.Number, output: Schema.Number } },
+  schemas: { callTopLevel: { input: Schema.Number, output: Schema.Number } }
 })
 
 /** The whole catalog — passed explicitly to the host (no global registry). */
@@ -97,7 +98,7 @@ const freePort = Effect.scoped(
   Effect.gen(function*() {
     const server = yield* NodeSocketServer.make({ port: 0, host: "127.0.0.1" })
     return server.address._tag === "TcpAddress" ? server.address.port : 0
-  }),
+  })
 ).pipe(Effect.orDie)
 
 /** True when the `s2` CLI is on PATH (the S2-backed tests skip without it). */
@@ -118,7 +119,7 @@ export const hasS2 = (): boolean => {
  * connected ingress client and return its result.
  */
 export const runIngress = <A, E>(
-  program: (ingress: DurableIngressClient) => Effect.Effect<A, E>,
+  program: (ingress: DurableIngressClient) => Effect.Effect<A, E>
 ): Promise<A> =>
   freePort.pipe(
     Effect.flatMap((port) =>
@@ -132,10 +133,11 @@ export const runIngress = <A, E>(
             catalog,
             namespace: "effect-s2-durable-test",
             ingress: { port },
-            s2: S2LiteLive,
-          }),
+            s2: S2LiteLive
+          })
         ),
-        Effect.scoped,
-      )),
-    Effect.runPromise,
+        Effect.scoped
+      )
+    ),
+    Effect.runPromise
   )

@@ -1,4 +1,5 @@
-import { Effect, Match } from "effect"
+import * as Effect from "effect/Effect"
+import * as Match from "effect/Match"
 import { AcpProcessError, type AgentSpec } from "./types.ts"
 
 export interface ResolvedAgent {
@@ -15,7 +16,7 @@ export interface ResolvedAgent {
  * - `codex`  -> `@zed-industries/codex-acp`
  */
 export const resolveAgent = (
-  agent: AgentSpec,
+  agent: AgentSpec
 ): Effect.Effect<ResolvedAgent, AcpProcessError> =>
   Match.value(agent).pipe(
     Match.when(Match.string, (key) =>
@@ -23,29 +24,26 @@ export const resolveAgent = (
         Match.when("claude", () =>
           Effect.succeed<ResolvedAgent>({
             command: "npx",
-            args: ["-y", "@zed-industries/claude-code-acp"],
-          }),
-        ),
+            args: ["-y", "@zed-industries/claude-code-acp"]
+          })),
         Match.when("codex", () =>
           Effect.succeed<ResolvedAgent>({
             command: "npx",
-            args: ["-y", "@zed-industries/codex-acp"],
-          }),
-        ),
+            args: ["-y", "@zed-industries/codex-acp"]
+          })),
         Match.orElse((unknown) =>
           Effect.fail(
             new AcpProcessError({
               op: "resolve",
-              message: `Unknown agent: ${unknown}`,
-            }),
-          ),
-        ),
-      ),
-    ),
+              message: `Unknown agent: ${unknown}`
+            })
+          )
+        )
+      )),
     Match.orElse((spec) =>
       Effect.succeed<ResolvedAgent>({
         command: spec.command,
-        args: spec.args ?? [],
-      }),
-    ),
+        args: spec.args ?? []
+      })
+    )
   )

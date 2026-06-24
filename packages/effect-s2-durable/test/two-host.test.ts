@@ -1,9 +1,12 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Context, Effect, Layer, Schema } from "effect"
-import { encodeObjectCallId } from "../src/object/address.ts"
-import { DurableEngine } from "../src/engine/api.ts"
+import * as Context from "effect/Context"
+import * as Effect from "effect/Effect"
+import * as Layer from "effect/Layer"
+import * as Schema from "effect/Schema"
 import { compileOne } from "../src/catalog/compiler.ts"
 import { serviceLayer } from "../src/catalog/layer.ts"
+import { DurableEngine } from "../src/engine/api.ts"
+import { encodeObjectCallId } from "../src/object/address.ts"
 import { Counter, hasS2 } from "./ingress-support.ts"
 import { S2LiteLive } from "./s2lite.ts"
 
@@ -15,15 +18,14 @@ import { S2LiteLive } from "./s2lite.ts"
 const engineLayer = serviceLayer(Counter)
 
 const addHandler = compileOne(Counter, "add")!.handler
-const callId = (key: string, nonce: string) =>
-  encodeObjectCallId({ object: Counter.name, key, method: "add", nonce })
+const callId = (key: string, nonce: string) => encodeObjectCallId({ object: Counter.name, key, method: "add", nonce })
 
 /** Build two engines sharing one s2-lite S2Client, run `program(e1, e2)`. */
 const runTwoHosts = <A, E>(
   program: (
     e1: typeof DurableEngine.Service,
-    e2: typeof DurableEngine.Service,
-  ) => Effect.Effect<A, E>,
+    e2: typeof DurableEngine.Service
+  ) => Effect.Effect<A, E>
 ): Promise<A> =>
   Effect.gen(function*() {
     const ctx1 = yield* Layer.build(engineLayer)
@@ -46,7 +48,7 @@ describe.skipIf(!hasS2())("two hosts over shared S2 (fenced ownership)", () => {
         yield* e2.submit(addHandler, id2, 3)
         const second = yield* e2.attach(id2, Schema.Number)
         return { first, second }
-      }),
+      })
     )
     expect(result).toEqual({ first: 5, second: 8 })
   }, 60_000)
@@ -59,14 +61,14 @@ describe.skipIf(!hasS2())("two hosts over shared S2 (fenced ownership)", () => {
       Effect.gen(function*() {
         const id = yield* callId("race", "n1")
         yield* Effect.all([e1.submit(addHandler, id, 5), e2.submit(addHandler, id, 5)], {
-          concurrency: "unbounded",
+          concurrency: "unbounded"
         })
         const [r1, r2] = yield* Effect.all([
           e1.attach(id, Schema.Number),
-          e2.attach(id, Schema.Number),
+          e2.attach(id, Schema.Number)
         ], { concurrency: "unbounded" })
         return { r1, r2 }
-      }),
+      })
     )
     expect(result).toEqual({ r1: 5, r2: 5 })
   }, 60_000)

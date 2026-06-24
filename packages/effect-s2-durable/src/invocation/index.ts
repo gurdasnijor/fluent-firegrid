@@ -8,11 +8,7 @@ export {
   sharedClient,
   workflowAttach,
   workflowRunId,
-  workflowSubmit,
+  workflowSubmit
 } from "./client.ts"
-export type {
-  SendClient,
-  ServiceClient,
-  SharedClient,
-} from "./client.ts"
+export type { SendClient, ServiceClient, SharedClient } from "./client.ts"
 export type { InvokeOptions } from "./plan.ts"

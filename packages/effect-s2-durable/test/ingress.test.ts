@@ -1,4 +1,5 @@
-import { Effect, Option } from "effect"
+import * as Effect from "effect/Effect"
+import * as Option from "effect/Option"
 import { describe, expect, it } from "vitest"
 import { Calculator, Counter, hasS2, runIngress } from "./ingress-support.ts"
 
@@ -19,8 +20,15 @@ describe.skipIf(!hasS2())("durable ingress over HTTP (S2 + node http)", () => {
         const attached = yield* handle.attach
         // non-blocking output: once attached, the handle's output is ready
         const polled = yield* handle.output
-        return { doubled, added, invocationIdPresent: handle.invocationId.length > 0, attached, polled: Option.getOrNull(polled) }
-      }))
+        return {
+          doubled,
+          added,
+          invocationIdPresent: handle.invocationId.length > 0,
+          attached,
+          polled: Option.getOrNull(polled)
+        }
+      })
+    )
 
     expect(result).toEqual({ doubled: 42, added: 5, invocationIdPresent: true, attached: 20, polled: 20 })
   }, 60_000)
@@ -36,7 +44,8 @@ describe.skipIf(!hasS2())("durable ingress over HTTP (S2 + node http)", () => {
         const attached = yield* ingress.objectAttachClient(Counter, "wishlist").add({ idempotencyKey })
         const polled = yield* ingress.objectOutputClient(Counter, "wishlist").add({ idempotencyKey })
         return { attached, polled: Option.getOrNull(polled) }
-      }))
+      })
+    )
 
     expect(result).toEqual({ attached: 7, polled: 7 })
   }, 60_000)
@@ -54,7 +63,8 @@ describe.skipIf(!hasS2())("durable ingress over HTTP (S2 + node http)", () => {
         // an invocation that was never sent reads back as not-ready (Option.none / wire "notReady")
         const unknown = yield* ingress.serviceOutputClient(Calculator).double({ idempotencyKey: "ingress-never-sent" })
         return { attached, ready: Option.getOrNull(ready), unknown: Option.getOrNull(unknown) }
-      }))
+      })
+    )
 
     expect(result).toEqual({ attached: 18, ready: 18, unknown: null })
   }, 60_000)

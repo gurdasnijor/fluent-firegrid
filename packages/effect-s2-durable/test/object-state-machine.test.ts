@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Option } from "effect"
-import { type ActorEvent, replay, type LogEntry } from "../src/object/machine/index.ts"
+import * as Option from "effect/Option"
+import { type ActorEvent, type LogEntry, replay } from "../src/object/machine/index.ts"
 import * as Machine from "../src/object/machine/index.ts"
 
 const snapshot = (events: ReadonlyArray<ActorEvent>) =>
@@ -12,7 +12,7 @@ describe("object state machine", () => {
       _tag: "Admit",
       callId: "c1",
       method: "add",
-      input: 5,
+      input: 5
     })
 
     expect(accepted.result).toEqual({ _tag: "Admitted" })
@@ -22,7 +22,7 @@ describe("object state machine", () => {
     const selected = Machine.decide(snapshot(events), {
       _tag: "SelectNextHead",
       accepted: Machine.acceptedHeads(events),
-      local: { started: new Set() },
+      local: { started: new Set() }
     })
 
     expect(selected.actions).toEqual([{ _tag: "RunHead", head: { callId: "c1", method: "add", input: 5 } }])
@@ -42,18 +42,18 @@ describe("object state machine", () => {
     expect(Machine.admit(snap, { callId: "c1", method: "add", input: 5 })).toEqual({
       result: { _tag: "AlreadyPending" },
       events: [],
-      actions: [],
+      actions: []
     })
   })
 
   it("admit returns AlreadyCompleted for a completed call", () => {
     const snap = snapshot([
       { _tag: "Accepted", callId: "c1", method: "add", input: 5 },
-      { _tag: "Completed", callId: "c1", exit: { _tag: "Success", value: 5 } },
+      { _tag: "Completed", callId: "c1", exit: { _tag: "Success", value: 5 } }
     ])
 
     expect(Machine.admit(snap, { callId: "c1", method: "add", input: 5 }).result).toEqual({
-      _tag: "AlreadyCompleted",
+      _tag: "AlreadyCompleted"
     })
   })
 
@@ -62,10 +62,10 @@ describe("object state machine", () => {
       { _tag: "Accepted", callId: "c1", method: "add", input: 1 },
       { _tag: "Accepted", callId: "c2", method: "add", input: 2 },
       { _tag: "Accepted", callId: "c3", method: "add", input: 3 },
-      { _tag: "Completed", callId: "c1", exit: { _tag: "Success", value: 1 } },
+      { _tag: "Completed", callId: "c1", exit: { _tag: "Success", value: 1 } }
     ]
     const result = Machine.selectNextHead(snapshot(events), Machine.acceptedHeads(events), {
-      started: new Set(["c2"]),
+      started: new Set(["c2"])
     })
 
     expect(result.result).toEqual({ callId: "c3", method: "add", input: 3 })
@@ -76,12 +76,14 @@ describe("object state machine", () => {
     const events: ReadonlyArray<ActorEvent> = [
       { _tag: "Accepted", callId: "c1", method: "add", input: 1 },
       { _tag: "Accepted", callId: "c2", method: "add", input: 2 },
-      { _tag: "Completed", callId: "c1", exit: { _tag: "Success", value: 1 } },
+      { _tag: "Completed", callId: "c1", exit: { _tag: "Success", value: 1 } }
     ]
 
-    expect(Machine.selectNextHead(snapshot(events), Machine.acceptedHeads(events), {
-      started: new Set(["c2"]),
-    }).result).toBeUndefined()
+    expect(
+      Machine.selectNextHead(snapshot(events), Machine.acceptedHeads(events), {
+        started: new Set(["c2"])
+      }).result
+    ).toBeUndefined()
   })
 
   it("stateGet returns a live value and emits a read journal when no journal exists", () => {
@@ -94,7 +96,7 @@ describe("object state machine", () => {
       callId: "c1",
       kind: "read",
       step: "0",
-      value: { present: true, value: 42 },
+      value: { present: true, value: 42 }
     }])
   })
 
@@ -106,9 +108,9 @@ describe("object state machine", () => {
         callId: "c1",
         kind: "read",
         step: "0",
-        value: { present: true, value: 42 },
+        value: { present: true, value: 42 }
       },
-      { _tag: "StateChanged", op: "set", table: "counters", key: "a", value: 99 },
+      { _tag: "StateChanged", op: "set", table: "counters", key: "a", value: 99 }
     ])
 
     const result = Machine.decide(snap, { _tag: "StateGet", callId: "c1", step: "0", table: "counters", key: "a" })
@@ -130,7 +132,7 @@ describe("object state machine", () => {
     expect(Machine.decide(snap, { _tag: "ResolveSignal", callId: "c1", name: "approved", value: false })).toEqual({
       result: undefined,
       events: [],
-      actions: [],
+      actions: []
     })
   })
 

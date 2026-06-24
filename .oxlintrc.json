@@ -1,0 +1,34 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
+  "extends": ["./tools/oxc/oxlintrc.json"],
+  "ignorePatterns": [
+    "LLMS.md",
+    "**/dist",
+    "**/build",
+    "**/coverage",
+    "**/.tsbuildinfo",
+    ".jscpd-report",
+    ".turbo",
+    "docs",
+    "node_modules",
+    "repos"
+  ],
+  "jsPlugins": ["./tools/oxc/oxlint-plugin.js"],
+  "overrides": [
+    {
+      "files": ["**/{test,tests,__tests__,examples,scripts}/**", "**/*.test.ts", "**/*.test.tsx"],
+      "rules": {
+        "effect/no-bigint-literals": "off",
+        "eslint/no-console": "off",
+        "effect/no-import-from-barrel-package": "off",
+        "effect/restricted-syntax": "off"
+      }
+    },
+    {
+      "files": ["tools/oxc/**"],
+      "rules": {
+        "effect/restricted-syntax": "off"
+      }
+    }
+  ]
+}

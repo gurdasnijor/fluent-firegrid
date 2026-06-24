@@ -1,4 +1,5 @@
-import type { Effect, Schema } from "effect"
+import type * as Effect from "effect/Effect"
+import type * as Schema from "effect/Schema"
 import type { CurrentInvocationScope } from "../invocation/scope.ts"
 import type { Handler } from "./types.ts"
 
@@ -23,11 +24,11 @@ export const handler = <Name extends string, I, O>(
   schemas: {
     readonly input: Schema.Codec<I, unknown, never, never>
     readonly output: Schema.Codec<O, unknown, never, never>
-  },
+  }
 ) =>
 <E = never, R = never>(program: Effect.Effect<O, E, R | CurrentInvocationScope>): Handler<I, O, E, R> => ({
   name,
   input: schemas.input,
   output: schemas.output,
-  program,
+  program
 })

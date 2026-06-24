@@ -18,12 +18,12 @@ export const toS2Record = (record: ReadRecord<"string">): S2Record => ({
   seqNum: record.seqNum,
   timestamp: record.timestamp.getTime(),
   headers: record.headers,
-  body: record.body,
+  body: record.body
 })
 
 export const toS2RecordBytes = (record: ReadRecord<"bytes">): S2RecordBytes => ({
   seqNum: record.seqNum,
   timestamp: record.timestamp.getTime(),
   headers: record.headers,
-  body: record.body,
+  body: record.body
 })

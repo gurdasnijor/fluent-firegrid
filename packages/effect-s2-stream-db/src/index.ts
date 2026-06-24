@@ -1,6 +1,6 @@
 export * as ChangeMessage from "./ChangeMessage.ts"
-export { MaterializedState } from "./MaterializedState.ts"
 export { S2StreamDbError } from "./errors.ts"
+export { MaterializedState } from "./MaterializedState.ts"
 export { primaryKey, StreamDb, Table } from "./StreamDb.ts"
 export type {
   AnyTable,
@@ -13,5 +13,5 @@ export type {
   TableClass,
   TableFacade,
   Tables,
-  Transaction,
+  Transaction
 } from "./StreamDb.ts"

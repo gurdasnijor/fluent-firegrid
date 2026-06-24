@@ -1,4 +1,15 @@
-export { DurableExecutionError } from "./errors.ts"
+export { object, service, workflow } from "./authoring/definition.ts"
+export type {
+  HandlerInput,
+  HandlerOutput,
+  Handlers,
+  HandlerSchemas,
+  ObjectDefinition,
+  ServiceConfig,
+  ServiceDefinition,
+  WorkflowConfig,
+  WorkflowDefinition
+} from "./authoring/definition.ts"
 export { handler } from "./authoring/handler.ts"
 export {
   attach,
@@ -12,24 +23,8 @@ export {
   run,
   signal,
   sleep,
-  state,
+  state
 } from "./authoring/primitives.ts"
-export {
-  object,
-  service,
-  workflow,
-} from "./authoring/definition.ts"
-export type {
-  HandlerInput,
-  HandlerOutput,
-  Handlers,
-  HandlerSchemas,
-  ObjectDefinition,
-  ServiceConfig,
-  ServiceDefinition,
-  WorkflowConfig,
-  WorkflowDefinition,
-} from "./authoring/definition.ts"
 export type {
   AwakeableHandle,
   DeferredHandle,
@@ -39,5 +34,6 @@ export type {
   Run,
   RunActionViolation,
   RunOptions,
-  StateBinding,
+  StateBinding
 } from "./authoring/types.ts"
+export { DurableExecutionError } from "./errors.ts"

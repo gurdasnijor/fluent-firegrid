@@ -1,5 +1,7 @@
 import type * as acp from "@agentclientprotocol/sdk"
-import { Data, type Effect, type Scope } from "effect"
+import * as Data from "effect/Data"
+import type * as Effect from "effect/Effect"
+import type * as Scope from "effect/Scope"
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 
 /**
@@ -56,7 +58,7 @@ export class AcpProcessError extends Data.TaggedError("AcpProcessError")<{
  */
 export interface AcpHarnessProcessOwnerService {
   readonly spawn: (
-    input: AcpSpawnInput,
+    input: AcpSpawnInput
   ) => Effect.Effect<
     AcpProcessHandle,
     AcpProcessError,

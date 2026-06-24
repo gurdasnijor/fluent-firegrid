@@ -1,4 +1,5 @@
-import { Effect, Schema } from "effect"
+import * as Effect from "effect/Effect"
+import * as Schema from "effect/Schema"
 import { primaryKey, StreamDb, Table } from "../src/index.ts"
 
 // A Table is fully described by its Schema: the row fields, its relative path
@@ -8,13 +9,13 @@ import { primaryKey, StreamDb, Table } from "../src/index.ts"
 
 class Activity extends Table<Activity>("activities")({
   activityKey: Schema.String.pipe(primaryKey),
-  result: Schema.Unknown,
+  result: Schema.Unknown
 }) {}
 
 class ClockWakeup extends Table<ClockWakeup>("clockWakeups")({
   clockKey: Schema.String.pipe(primaryKey),
   deadlineMs: Schema.Number,
-  status: Schema.Literals(["pending", "fired"]),
+  status: Schema.Literals(["pending", "fired"])
 }) {}
 
 // The instance key is itself schema-typed; `open` validates it and derives the
@@ -23,7 +24,7 @@ const ExecutionId = Schema.String.pipe(Schema.brand("ExecutionId"))
 
 class WorkflowDb extends StreamDb<WorkflowDb>("wf")({
   activities: Activity,
-  clockWakeups: ClockWakeup,
+  clockWakeups: ClockWakeup
 }, ExecutionId) {}
 
 export const program = Effect.gen(function*() {
