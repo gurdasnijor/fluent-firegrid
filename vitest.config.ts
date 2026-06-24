@@ -30,6 +30,18 @@ export default defineConfig({
             "effect-s2": path.resolve(__dirname, "./packages/effect-s2/src/index.ts")
           }
         }
+      }),
+      defineProject({
+        test: {
+          name: "effect-s2-flow",
+          include: ["packages/effect-s2-flow/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"]
+        },
+        resolve: {
+          alias: {
+            "effect-s2-flow": path.resolve(__dirname, "./packages/effect-s2-flow/src/index.ts")
+          }
+        }
       })
     ]
   }
