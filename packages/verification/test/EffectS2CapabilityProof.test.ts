@@ -1,5 +1,13 @@
-import { AppendInput, AppendRecord, basin, basins, layer as S2Layer, stream as s2Stream } from "effect-s2"
-import { Clock, Effect, Exit, Stream } from "effect"
+import {
+  AppendInput,
+  AppendRecord,
+  basin,
+  basins,
+  layer as S2Layer,
+  SeqNumMismatchError,
+  stream as s2Stream
+} from "effect-s2"
+import { Cause, Clock, Effect, Exit, Stream } from "effect"
 import { describe, expect, it } from "vitest"
 
 import { expectWorkloadResult, property, runProperty, traceSql, VerificationError } from "../src/index.ts"
@@ -10,7 +18,8 @@ const LiveTraceLayer = TraceRuntimeLayer({ serviceName: "firegrid-verification-e
 
 interface CapabilityAProofResult {
   readonly appendStartedAtInitialTail: boolean
-  readonly duplicateRejected: boolean
+  readonly duplicateRejectedBySeqNum: boolean
+  readonly duplicateExpectedSeqNum: number
   readonly readRecordTypes: ReadonlyArray<string>
   readonly recordCount: number
   readonly tailAdvancedBy: number
@@ -36,6 +45,12 @@ const headerValue = (
   headers: ReadonlyArray<readonly [string, string]>,
   name: string
 ): string | undefined => headers.find(([key]) => key === name)?.[1]
+
+const seqNumMismatchFromExit = (exit: Exit.Exit<unknown, unknown>): SeqNumMismatchError | undefined => {
+  if (!Exit.isFailure(exit)) return undefined
+  const failReason = exit.cause.reasons.find(Cause.isFailReason)
+  return failReason?.error instanceof SeqNumMismatchError ? failReason.error : undefined
+}
 
 describe("effect-s2 capability proof", () => {
   it("proves atomic own-journal commit and replay CAS rejection against real s2 lite", () =>
@@ -87,10 +102,22 @@ describe("effect-s2 capability proof", () => {
                   stream.append(AppendInput.create([
                     durableRecord("StepCompleted", "step-1:ok"),
                     durableRecord("CheckpointAdvanced", "input-cursor:1")
-                  ], { matchSeqNum: initialTail.tail.seqNum })),
+                  ], { matchSeqNum: initialTail.tail.seqNum })).pipe(
+                    Effect.tapError((error) =>
+                      Effect.annotateCurrentSpan({
+                        "s2.error.code": error.code ?? "",
+                        "s2.error.expected_seq_num": error instanceof SeqNumMismatchError
+                          ? String(error.expectedSeqNum)
+                          : "",
+                        "s2.error.kind": error.name,
+                        "s2.error.status": String(error.status)
+                      })
+                    )
+                  ),
                   { operationId: 3, key: streamName }
                 )
               )
+              const duplicateError = seqNumMismatchFromExit(duplicateExit)
 
               const readRecords = yield* operation(
                 "effect-s2.read-session.replay-fold",
@@ -120,7 +147,8 @@ describe("effect-s2 capability proof", () => {
 
               return {
                 appendStartedAtInitialTail: commitAck.start.seqNum === initialTail.tail.seqNum,
-                duplicateRejected: Exit.isFailure(duplicateExit),
+                duplicateExpectedSeqNum: duplicateError?.expectedSeqNum ?? -1,
+                duplicateRejectedBySeqNum: duplicateError !== undefined,
                 readRecordTypes: readRecords.map((record) => record.type),
                 recordCount: readRecords.length,
                 tailAdvancedBy: finalTail.tail.seqNum - initialTail.tail.seqNum
@@ -131,7 +159,8 @@ describe("effect-s2 capability proof", () => {
         .verify(
           expectWorkloadResult<CapabilityAProofResult>({
             appendStartedAtInitialTail: true,
-            duplicateRejected: true,
+            duplicateExpectedSeqNum: 2,
+            duplicateRejectedBySeqNum: true,
             readRecordTypes: ["StepCompleted", "CheckpointAdvanced"],
             recordCount: 2,
             tailAdvancedBy: 2
@@ -154,6 +183,10 @@ describe("effect-s2 capability proof", () => {
               SpanName = 'verification.operation'
               AND SpanAttributes['firegrid.operation.name'] = 'effect-s2.append.replay-duplicate'
               AND SpanAttributes['firegrid.operation.status'] = 'error'
+              AND SpanAttributes['s2.error.kind'] = 'SeqNumMismatchError'
+              AND SpanAttributes['s2.error.code'] = 'APPEND_CONDITION_FAILED'
+              AND SpanAttributes['s2.error.status'] = '412'
+              AND SpanAttributes['s2.error.expected_seq_num'] = '2'
             ) = 1 AS ok
             FROM trial_spans
           `
