@@ -4,12 +4,14 @@
     "packages/*": {
       "project": [
         "src/**/*.ts!",
+        "proofs/**/*.ts!",
         "test/**/*.ts"
       ]
     },
     "packages/fluent-acp-process": {
       "project": [
         "src/**/*.ts!",
+        "proofs/**/*.ts!",
         "test/**/*.ts"
       ]
     },

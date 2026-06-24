@@ -15,7 +15,8 @@ Implemented pieces:
 - `processHost(config)` marks an otherwise opaque host as runner-owned. The runner starts it in the trial scope, injects `FIREGRID_TRIAL_ID`, `FIREGRID_HOST_ID`, `S2_ENDPOINT`, and OTel resource attributes, and records host lifecycle spans.
 - `Faults` is backed by supervised process hosts: `killHost` sends `SIGKILL`, `restartHost` starts the host again, and `killHostAfterSpan` is trial-scoped `waitForSpan(...)` followed by a real process kill.
 - `runProperty(..., { reportDir })` writes a JSON report with span counts, trace coverage, and failed-check context. Failed checks also include an observed span summary in the thrown `VerificationError`.
-- `EffectS2CapabilityProof.test.ts` is a live substrate proof for Capability A's `packages/effect-s2` dependency: under real `s2 lite`, an atomic own-journal batch guarded by `matchSeqNum` commits `StepCompleted + CheckpointAdvanced`, the stale replay append is rejected, and replay reads back only the original batch. The proof is verified through workload result checks and trace SQL over the OTel/chDB evidence.
+- `proofs/effect-s2-capability-a.ts` is a live substrate proof for Capability A's `packages/effect-s2` dependency: under real `s2 lite`, an atomic own-journal batch guarded by `matchSeqNum` commits `StepCompleted + CheckpointAdvanced`, the stale replay append is rejected by `SeqNumMismatchError`, and replay reads back only the original batch. The proof is verified through workload result checks and trace SQL over the OTel/chDB evidence.
+- `tsx src/main.ts proof run all` runs registered proofs through the verification system. `proof list` shows available proofs; `proof run <name> --report-dir <dir>` writes JSON trial reports.
 
 Still missing before this should be treated as the complete verification system:
 

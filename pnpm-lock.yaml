@@ -181,6 +181,9 @@ importers:
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.20
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -3733,7 +3736,6 @@ snapshots:
       '@esbuild/win32-arm64': 0.28.0
       '@esbuild/win32-ia32': 0.28.0
       '@esbuild/win32-x64': 0.28.0
-    optional: true
 
   estree-walker@3.0.3:
     dependencies:
@@ -4559,7 +4561,6 @@ snapshots:
       esbuild: 0.28.0
     optionalDependencies:
       fsevents: 2.3.3
-    optional: true
 
   turbo@2.9.16:
     optionalDependencies:

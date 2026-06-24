@@ -5,6 +5,7 @@ export {
   type ProcessHostDescriptor,
   type ProcessHostLaunchContext
 } from "./ProcessHost.ts"
+export * from "./Proof.ts"
 export * from "./Property.ts"
 export * from "./Report.ts"
 export * from "./S2LiteSupervisor.ts"

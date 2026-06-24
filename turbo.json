@@ -8,7 +8,7 @@
     },
     "typecheck": {
       "dependsOn": ["^typecheck"],
-      "inputs": ["src/**", "test/**", "examples/**", "tsconfig.json", "../../tsconfig.json"],
+      "inputs": ["src/**", "test/**", "proofs/**", "examples/**", "tsconfig.json", "../../tsconfig.json"],
       "outputs": []
     },
     "diagnostics": {
@@ -16,6 +16,7 @@
       "inputs": [
         "src/**",
         "test/**",
+        "proofs/**",
         "examples/**",
         "tsconfig.json",
         "../../tsconfig.json"
@@ -27,6 +28,7 @@
       "inputs": [
         "src/**",
         "test/**",
+        "proofs/**",
         "examples/**",
         "tsconfig.json",
         "../../.oxlintrc.json",
@@ -38,11 +40,16 @@
     },
     "test": {
       "dependsOn": ["^build"],
-      "inputs": ["src/**", "test/**", "examples/**", "tsconfig.json", "../../vitest.config.ts"],
+      "inputs": ["src/**", "test/**", "proofs/**", "examples/**", "tsconfig.json", "../../vitest.config.ts"],
+      "outputs": []
+    },
+    "proofs": {
+      "dependsOn": ["^build"],
+      "inputs": ["src/**", "proofs/**", "tsconfig.json", "../../tsconfig.json"],
       "outputs": []
     },
     "check": {
-      "dependsOn": ["lint", "typecheck", "diagnostics", "test"],
+      "dependsOn": ["lint", "typecheck", "diagnostics", "test", "proofs"],
       "outputs": []
     },
     "//#lint:dead": {
