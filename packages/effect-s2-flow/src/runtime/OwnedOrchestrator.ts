@@ -68,7 +68,7 @@ export const make = Effect.fn("OwnedOrchestrator.make")(function*<S, A>(options:
     readonly writeId: number
     readonly reply: Deferred.Deferred<AppendAck<A>, FlowError>
   }>(config.writeCapacity)
-  const changes = yield* PubSub.dropping<FlowRecord<A>>(config.changesCapacity)
+  const changes = yield* PubSub.dropping<Internal.AppliedChange<S, A>>(config.changesCapacity)
   const appliedRef = yield* Ref.make(options.fromSeqNum ?? 0)
   const stateRef = yield* Ref.make(options.initial)
   const pendingOwnRef = yield* Ref.make<ReadonlyMap<number, PendingOwn<A>>>(new Map())

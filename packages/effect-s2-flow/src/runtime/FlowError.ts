@@ -1,6 +1,8 @@
 import * as Data from "effect/Data"
 
 export type FlowErrorReason =
+  | "decode"
+  | "encode"
   | "check-tail"
   | "read-session"
   | "read-timeout"

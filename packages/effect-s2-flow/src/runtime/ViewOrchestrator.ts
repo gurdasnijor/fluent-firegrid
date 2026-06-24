@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect"
 import * as PubSub from "effect/PubSub"
 import * as Queue from "effect/Queue"
 import * as Ref from "effect/Ref"
-import * as Stream from "effect/Stream"
+import type * as Stream from "effect/Stream"
 
 import { type FlowError, flowError } from "./FlowError.ts"
 import * as Internal from "./Internal.ts"
@@ -47,6 +47,7 @@ export interface ViewOrchestrator<S, A> {
   readonly readStrong: <B>(project: (state: S, applied: number) => B) => Effect.Effect<B, FlowError>
   readonly applied: Effect.Effect<number>
   readonly changes: Stream.Stream<FlowRecord<A>>
+  readonly appliedChanges: Stream.Stream<Internal.AppliedChange<S, A>>
 }
 
 export interface ViewOrchestratorOptions<S, A> {
@@ -60,7 +61,7 @@ export interface ViewOrchestratorOptions<S, A> {
 export const make = Effect.fn("ViewOrchestrator.make")(function*<S, A>(options: ViewOrchestratorOptions<S, A>) {
   const config = { ...defaultConfig, ...options.config }
   const events = yield* Queue.bounded<Event<S, A>>(config.commandCapacity)
-  const changes = yield* PubSub.dropping<FlowRecord<A>>(config.changesCapacity)
+  const changes = yield* PubSub.dropping<Internal.AppliedChange<S, A>>(config.changesCapacity)
   const appliedRef = yield* Ref.make(options.fromSeqNum ?? 0)
   const stateRef = yield* Ref.make(options.initial)
   const pendingRef = yield* Ref.make<ReadonlyArray<PendingRead<S>>>([])
@@ -100,7 +101,8 @@ export const make = Effect.fn("ViewOrchestrator.make")(function*<S, A>(options: 
         return value as B
       }),
     applied: Ref.get(appliedRef),
-    changes: Stream.fromPubSub(changes)
+    changes: Internal.changesStream(changes),
+    appliedChanges: Internal.appliedChangesStream(changes)
   } satisfies ViewOrchestrator<S, A>
 })
 

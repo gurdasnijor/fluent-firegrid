@@ -17,9 +17,15 @@ export interface RecordEvent<A> {
 
 export interface StateCursor<S, A> {
   readonly appliedRef: Ref.Ref<number>
-  readonly changes: PubSub.PubSub<FlowRecord<A>>
+  readonly changes: PubSub.PubSub<AppliedChange<S, A>>
   readonly reduce: (state: S, record: FlowRecord<A>) => S
   readonly stateRef: Ref.Ref<S>
+}
+
+export interface AppliedChange<S, A> {
+  readonly record: FlowRecord<A>
+  readonly state: S
+  readonly applied: number
 }
 
 export interface ApplyResult<S> {
@@ -30,7 +36,12 @@ export interface ApplyResult<S> {
 
 export type Changes<A> = Stream.Stream<FlowRecord<A>>
 
-export const changesStream = <A>(changes: PubSub.PubSub<FlowRecord<A>>): Changes<A> => Stream.fromPubSub(changes)
+export const appliedChangesStream = <S, A>(
+  changes: PubSub.PubSub<AppliedChange<S, A>>
+): Stream.Stream<AppliedChange<S, A>> => Stream.fromPubSub(changes)
+
+export const changesStream = <S, A>(changes: PubSub.PubSub<AppliedChange<S, A>>): Changes<A> =>
+  appliedChangesStream(changes).pipe(Stream.map((change) => change.record))
 
 const forkRecords = <A, Event, E, R>(
   records: Stream.Stream<FlowRecord<A>, E, R>,
@@ -94,7 +105,7 @@ export const applyRecord = <S, A>(
     if (afterApply !== undefined) {
       yield* afterApply(record)
     }
-    yield* PubSub.publish(cursor.changes, record)
+    yield* PubSub.publish(cursor.changes, { applied, record, state })
     return {
       applied,
       appliedNow: true,
