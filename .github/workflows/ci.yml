@@ -133,12 +133,11 @@ jobs:
         run: |
           set -euo pipefail
           curl --fail --location --silent --show-error \
-            --output /tmp/s2.zip \
-            https://github.com/s2-streamstore/s2/releases/download/s2-cli-v0.36.6/s2-x86_64-unknown-linux-gnu.zip
-          echo "ea181584c8568a8fc607da894f5299225345268cb7419dfd488baef251eea04e  /tmp/s2.zip" | sha256sum --check
-          unzip -q /tmp/s2.zip -d /tmp/s2
-          sudo install -m 0755 /tmp/s2/s2 /usr/local/bin/s2
-          s2 --version
+            --output /tmp/install-s2.sh \
+            https://s2.dev/install.sh
+          VERSION=0.37.1 sh /tmp/install-s2.sh
+          "$HOME/.s2/bin/s2" --version | grep --fixed-strings --line-regexp "s2 0.37.1"
+          echo "S2_LITE_BIN=$HOME/.s2/bin/s2" >> "$GITHUB_ENV"
 
       - name: Prepare chDB native binding
         run: |

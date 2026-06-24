@@ -5,8 +5,11 @@ import * as Queue from "effect/Queue"
 import * as Ref from "effect/Ref"
 import type * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
+import type * as S2 from "effect-s2"
 
+import type { FlowError } from "./FlowError.ts"
 import type { FlowRecord } from "./Record.ts"
+import * as Tail from "./Tail.ts"
 
 export type Project<S> = (state: S, applied: number) => unknown
 
@@ -43,7 +46,7 @@ const forkRecords = <Event, E, R>(
     Effect.asVoid
   )
 
-export const forkRecordEvents = <Event, E, R>(
+const forkRecordEvents = <Event, E, R>(
   records: Stream.Stream<FlowRecord, E, R>,
   events: Queue.Queue<Event>
 ): Effect.Effect<void, never, Scope.Scope | R> =>
@@ -59,6 +62,17 @@ export const forkEvents = <Event, E, R>(
     Effect.forkScoped,
     Effect.asVoid
   )
+
+export const startTail = <Event>(
+  stream: S2.StreamApi,
+  fromSeqNum: number,
+  applyCaughtUpRecord: (record: FlowRecord) => Effect.Effect<void>,
+  events: Queue.Queue<Event>
+): Effect.Effect<void, FlowError, Scope.Scope> =>
+  Effect.gen(function*() {
+    const cursor = yield* Tail.catchUp(stream, fromSeqNum, applyCaughtUpRecord)
+    yield* forkRecordEvents(Tail.follow(stream, cursor), events)
+  })
 
 export const completeProjectedRead = Effect.fn("completeProjectedRead")(function*<S>(
   stateRef: Ref.Ref<S>,

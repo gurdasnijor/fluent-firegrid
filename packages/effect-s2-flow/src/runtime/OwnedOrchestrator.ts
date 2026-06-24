@@ -11,7 +11,6 @@ import { FlowError, flowError } from "./FlowError.ts"
 import * as Internal from "./Internal.ts"
 import type { FlowRecord, OwnedAppendAck, StringFlowAppendRecord } from "./Record.ts"
 import * as RuntimeRecord from "./Record.ts"
-import * as Tail from "./Tail.ts"
 
 export interface OwnedOrchestratorConfig {
   readonly commandCapacity: number
@@ -97,9 +96,7 @@ export const make = Effect.fn("OwnedOrchestrator.make")(function*<S>(options: Ow
       reduce: options.reduce,
       stateRef
     }).pipe(Effect.asVoid)
-  const cursor = yield* Tail.catchUp(s2, options.fromSeqNum ?? 0, applyCaughtUpRecord)
-
-  yield* Internal.forkRecordEvents(Tail.follow(s2, cursor), events)
+  yield* Internal.startTail(s2, options.fromSeqNum ?? 0, applyCaughtUpRecord, events)
 
   yield* Queue.take(writes).pipe(
     Effect.flatMap(({ records, writeId, reply }) => {

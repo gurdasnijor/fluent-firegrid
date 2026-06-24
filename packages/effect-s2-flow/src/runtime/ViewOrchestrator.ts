@@ -10,7 +10,6 @@ import * as S2 from "effect-s2"
 import { type FlowError, flowError } from "./FlowError.ts"
 import * as Internal from "./Internal.ts"
 import type { FlowRecord } from "./Record.ts"
-import * as Tail from "./Tail.ts"
 
 export interface OrchestratorConfig {
   readonly commandCapacity: number
@@ -79,9 +78,7 @@ export const make = Effect.fn("ViewOrchestrator.make")(function*<S>(options: Vie
       reduce: options.reduce,
       stateRef
     }).pipe(Effect.asVoid)
-  const cursor = yield* Tail.catchUp(s2, options.fromSeqNum ?? 0, applyCaughtUpRecord)
-
-  yield* Internal.forkRecordEvents(Tail.follow(s2, cursor), events)
+  yield* Internal.startTail(s2, options.fromSeqNum ?? 0, applyCaughtUpRecord, events)
 
   yield* Internal.forkEvents(events, (event) =>
     handleEvent(event, {

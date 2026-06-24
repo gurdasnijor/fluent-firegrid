@@ -23,7 +23,7 @@ export const fromReadRecord = (record: ReadRecord<"string">): FlowRecord => ({
   headers: record.headers
 })
 
-export const stringRecord = (
+const stringRecord = (
   body: string,
   headers?: ReadonlyArray<readonly [string, string]>
 ): StringFlowAppendRecord =>

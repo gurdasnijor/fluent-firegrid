@@ -22,7 +22,8 @@ interface S2LiteProcess {
   readonly stderr: { readonly on: (event: "data", listener: (chunk: Buffer) => void) => void } | null
   readonly exitCode: number | null
   readonly kill: (signal: "SIGTERM" | "SIGKILL") => boolean
-  readonly once: (event: "exit", listener: () => void) => void
+  readonly on: (event: "exit", listener: () => void) => void
+  readonly off: (event: "exit", listener: () => void) => void
 }
 
 let server: S2LiteProcess | undefined
@@ -90,10 +91,10 @@ beforeAll(async () => {
 
   const port = await availablePort()
   endpoint = `http://127.0.0.1:${port}`
-  server = spawn(s2LiteBin, ["lite", "--port", String(port)], {
+  const currentServer: S2LiteProcess = spawn(s2LiteBin, ["lite", "--port", String(port)], {
     stdio: ["ignore", "pipe", "pipe"]
   })
-  const currentServer = server
+  server = currentServer
   const killOnExit = () => {
     if (currentServer.exitCode === null) {
       currentServer.kill("SIGKILL")
@@ -343,8 +344,12 @@ const installFence = (names: { readonly basin: string; readonly stream: string }
 const availablePort = (): Promise<number> =>
   new Promise((resolve, reject) => {
     const probe = createServer()
-    probe.once("error", reject)
-    probe.listen(0, "127.0.0.1", () => {
+    const onError = (error: Error) => {
+      probe.off("listening", onListening)
+      reject(error)
+    }
+    const onListening = () => {
+      probe.off("error", onError)
       const address = probe.address()
       if (address === null || typeof address === "string") {
         probe.close(() => reject(new Error("failed to allocate TCP port")))
@@ -352,7 +357,10 @@ const availablePort = (): Promise<number> =>
       }
       const port = address.port
       probe.close(() => resolve(port))
-    })
+    }
+    probe.on("error", onError)
+    probe.on("listening", onListening)
+    probe.listen(0, "127.0.0.1")
   })
 
 const waitForHealth = async (url: string): Promise<void> => {
@@ -401,9 +409,10 @@ const stopS2Lite = async (): Promise<void> => {
       done()
     }, 1_000)
     timeout.unref()
-    child.once("exit", () => {
+    const onExit = () => {
       clearTimeout(timeout)
       done()
-    })
+    }
+    child.on("exit", onExit)
   })
 }
