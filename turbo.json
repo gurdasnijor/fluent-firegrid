@@ -29,7 +29,9 @@
         "test/**",
         "examples/**",
         "tsconfig.json",
-        "../../eslint.config.js",
+        "../../.oxlintrc.json",
+        "../../dprint.json",
+        "../../tools/oxc/**",
         "../../tsconfig.json"
       ],
       "outputs": []
@@ -57,7 +59,10 @@
     },
     "//#lint:root": {
       "inputs": [
-        "eslint.config.js",
+        ".oxlintrc.json",
+        "dprint.json",
+        "package.json",
+        "tools/oxc/**",
         "tsconfig.json"
       ],
       "outputs": []

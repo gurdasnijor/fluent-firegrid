@@ -23,7 +23,6 @@ export { DurableFailure } from "./contract.ts"
 // differing arities of call/send (input + options) and attach/output (locator),
 // recovered to the precise typed surface via `as DurableIngressClient` below. This
 // heterogeneous-arity union is the one spot that genuinely needs `any`.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- erased method arity; recovered as DurableIngressClient
 type IngressMethod = (...args: ReadonlyArray<any>) => Effect.Effect<unknown, DurableFailure, never>
 
 type InvocationEndpointPair<P, A, E> = {
