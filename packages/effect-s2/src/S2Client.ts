@@ -1,965 +1,567 @@
-import * as Config from "effect/Config"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
-import * as Redacted from "effect/Redacted"
+import * as Option from "effect/Option"
 import type * as Scope from "effect/Scope"
-import * as Sink from "effect/Sink"
 import * as Stream from "effect/Stream"
-import type { S2Record, S2RecordBytes } from "./internal/record.ts"
-import { toS2Record, toS2RecordBytes } from "./internal/record.ts"
+
+import { serialization as PatternSerialization } from "@s2-dev/streamstore-patterns"
 import {
-  type AccessTokenInfo,
-  type AccountMetricsInput,
-  type AppendAck,
-  type AppendSessionOptions,
-  type BasinConfig,
-  type BasinInfo,
-  type BasinMetricsInput,
+  AppendInput,
+  AppendRecord,
   BatchTransform,
-  type BatchTransformOptions,
-  type CreateBasinInput,
-  type CreateBasinResponse,
-  type CreateStreamInput,
-  type CreateStreamResponse,
-  type DeleteBasinInput,
-  type DeleteStreamInput,
-  type EnsureBasinInput,
-  type EnsureBasinResponse,
-  type EnsureStreamInput,
-  type EnsureStreamResponse,
-  type GetBasinConfigInput,
-  type GetStreamConfigInput,
-  type IssueAccessTokenInput,
-  type IssueAccessTokenResponse,
-  type ListAccessTokensInput,
-  type ListAccessTokensResponse,
-  type ListAllAccessTokensInput,
-  type ListAllBasinsInput,
-  type ListAllStreamsInput,
-  type ListBasinsInput,
-  type ListBasinsResponse,
-  type ListLocationsResponse,
-  type ListStreamsInput,
-  type ListStreamsResponse,
-  type LocationInfo,
-  type MetricSetResponse,
-  Producer,
-  type ReadBatch,
-  type ReadOptions,
-  type ReconfigureBasinInput,
-  type ReconfigureBasinResponse,
-  type ReconfigureStreamInput,
-  type ReconfigureStreamResponse,
-  type RevokeAccessTokenInput,
+  FencingTokenMismatchError,
+  IndexedAppendAck,
+  MAX_APPEND_BYTES,
+  MAX_APPEND_RECORDS,
+  meteredBytes,
+  Producer as SdkProducer,
+  randomToken,
+  RangeNotSatisfiableError,
   S2,
-  type S2EndpointsInit,
   S2Environment,
-  type S2RequestOptions,
-  type S2RetryConfig,
-  type SdkAppendInput,
-  type SdkAppendRecord,
-  type SetDefaultLocationInput,
-  type SetDefaultLocationResponse,
-  type StreamConfig,
-  type StreamInfo,
-  type StreamMetricsInput,
-  type StreamOptions,
-  type Tail
-} from "./internal/sdk.ts"
-import { fromUnknown, type S2ClientError } from "./S2Error.ts"
+  S2Error,
+  SeqNumMismatchError,
+  utf8ByteLength
+} from "@s2-dev/streamstore"
+import type {
+  AccessTokenInfo,
+  AccountMetricsInput,
+  AppendAck,
+  AppendSession,
+  AppendSessionOptions,
+  BasinInfo,
+  BasinMetricsInput,
+  CreateBasinInput,
+  CreateStreamInput,
+  DeleteBasinInput,
+  DeleteStreamInput,
+  EncryptionKeyInput,
+  EnsureBasinInput,
+  EnsureStreamInput,
+  GetBasinConfigInput,
+  GetDefaultLocationResponse,
+  GetStreamConfigInput,
+  IssueAccessTokenInput,
+  IssueAccessTokenResponse,
+  ListAccessTokensInput,
+  ListAccessTokensResponse,
+  ListAllAccessTokensInput,
+  ListAllBasinsInput,
+  ListAllStreamsInput,
+  ListBasinsInput,
+  ListBasinsResponse,
+  ListLocationsResponse,
+  ListStreamsInput,
+  ListStreamsResponse,
+  MetricSetResponse,
+  ReadBatch,
+  ReadInput,
+  ReadRecord,
+  ReadSession,
+  ReconfigureBasinInput,
+  ReconfigureBasinResponse,
+  ReconfigureStreamInput,
+  ReconfigureStreamResponse,
+  RevokeAccessTokenInput,
+  S2ClientOptions,
+  S2RequestOptions,
+  SetDefaultLocationInput,
+  SetDefaultLocationResponse,
+  StreamInfo,
+  StreamMetricsInput,
+  StreamOptions,
+  TailResponse
+} from "@s2-dev/streamstore"
+
+export {
+  AppendInput,
+  AppendRecord,
+  BatchTransform,
+  FencingTokenMismatchError,
+  IndexedAppendAck,
+  MAX_APPEND_BYTES,
+  MAX_APPEND_RECORDS,
+  meteredBytes,
+  PatternSerialization as S2Patterns,
+  randomToken,
+  RangeNotSatisfiableError,
+  S2,
+  S2Environment,
+  S2Error,
+  SdkProducer as Producer,
+  SeqNumMismatchError,
+  utf8ByteLength
+}
+
+type SdkBasin = ReturnType<S2["basin"]>
+type SdkStream = ReturnType<SdkBasin["stream"]>
+type ReadFormat = "string" | "bytes"
+type MessageRange = { readonly start: number; readonly end: number }
 
 export interface AppendOptions {
   readonly matchSeqNum?: number
   readonly fencingToken?: string
 }
 
-export interface ProducerConfig {
-  readonly lingerDurationMillis?: number
-  readonly maxBatchRecords?: number
-  readonly maxBatchBytes?: number
-  readonly maxInflightBytes?: number
-  readonly maxInflightBatches?: number
-  /** Fencing token enforced on every batch (static across batches). */
-  readonly fencingToken?: string
-  /** Expected seq-num for the first batch; the producer auto-increments it per batch. */
-  readonly matchSeqNum?: number
-}
+const toS2Error = (error: unknown): S2Error =>
+  error instanceof S2Error
+    ? error
+    : new S2Error({
+      message: error instanceof Error ? error.message : String(error),
+      data: error,
+      origin: "sdk",
+      status: 0
+    })
 
-/** A producer's per-record acknowledgement: the record's own `seqNum` plus its enclosing batch ack. */
-export interface S2ProducerAck {
-  readonly seqNum: number
-  readonly batch: AppendAck
-}
+const trySync = <A>(evaluate: () => A): Effect.Effect<A, S2Error> => Effect.try({ try: evaluate, catch: toS2Error })
 
-export interface S2Producer {
-  readonly submit: (record: SdkAppendRecord) => Effect.Effect<S2ProducerAck, S2ClientError>
-}
+const tryPromise = <A>(evaluate: () => PromiseLike<A>): Effect.Effect<A, S2Error> =>
+  Effect.tryPromise({ try: evaluate, catch: toS2Error })
 
-export interface AppendSessionConfig {
-  readonly maxInflightBytes?: number
-  readonly maxInflightBatches?: number
-}
+const wrapPromise =
+  <Args extends Array<unknown>, A>(evaluate: (...args: Args) => PromiseLike<A>) =>
+  (...args: Args): Effect.Effect<A, S2Error> => tryPromise(() => evaluate(...args))
 
-export interface S2AppendSession {
-  readonly submit: (input: SdkAppendInput) => Effect.Effect<AppendAck, S2ClientError>
-}
+const wrapAsyncIterable =
+  <Args extends Array<unknown>, A>(evaluate: (...args: Args) => AsyncIterable<A>) =>
+  (...args: Args): Stream.Stream<A, S2Error> => Stream.fromAsyncIterable(evaluate(...args), toS2Error)
 
-export interface S2OperationOptions {
-  readonly basinName?: string
-  readonly request?: S2RequestOptions
-  readonly stream?: StreamOptions
-}
+const ignoreFinalizerError = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<void, never, R> =>
+  Effect.ignore(effect)
 
 export interface S2ClientApi {
-  readonly listBasins: (
-    args?: ListBasinsInput,
-    options?: S2RequestOptions
-  ) => Effect.Effect<ListBasinsResponse, S2ClientError>
-  readonly listAllBasins: (
-    args?: ListAllBasinsInput,
-    options?: S2RequestOptions
-  ) => Stream.Stream<BasinInfo, S2ClientError>
-  readonly createBasin: (
-    args: CreateBasinInput,
-    options?: S2RequestOptions
-  ) => Effect.Effect<CreateBasinResponse, S2ClientError>
-  readonly getBasinConfig: (
+  readonly raw: S2
+  readonly basins: BasinsApi
+  readonly accessTokens: AccessTokensApi
+  readonly locations: LocationsApi
+  readonly metrics: MetricsApi
+  readonly basin: (name: string) => Effect.Effect<BasinApi, S2Error>
+  readonly stream: (basin: string, stream: string, options?: StreamOptions) => Effect.Effect<StreamApi, S2Error>
+}
+
+export interface BasinApi {
+  readonly raw: SdkBasin
+  readonly name: string
+  readonly streams: StreamsApi
+  readonly stream: (name: string, options?: StreamOptions) => Effect.Effect<StreamApi, S2Error>
+}
+
+export interface BasinsApi {
+  readonly list: (args?: ListBasinsInput, options?: S2RequestOptions) => Effect.Effect<ListBasinsResponse, S2Error>
+  readonly listAll: (args?: ListAllBasinsInput, options?: S2RequestOptions) => Stream.Stream<BasinInfo, S2Error>
+  readonly create: (args: CreateBasinInput, options?: S2RequestOptions) => Effect.Effect<BasinInfo, S2Error>
+  readonly getConfig: (
     args: GetBasinConfigInput,
     options?: S2RequestOptions
-  ) => Effect.Effect<BasinConfig, S2ClientError>
-  readonly deleteBasin: (
-    args: DeleteBasinInput,
-    options?: S2RequestOptions
-  ) => Effect.Effect<void, S2ClientError>
-  readonly ensureBasin: (
+  ) => Effect.Effect<Awaited<ReturnType<S2["basins"]["getConfig"]>>, S2Error>
+  readonly delete: (args: DeleteBasinInput, options?: S2RequestOptions) => Effect.Effect<void, S2Error>
+  readonly ensure: (
     args: EnsureBasinInput,
     options?: S2RequestOptions
-  ) => Effect.Effect<EnsureBasinResponse, S2ClientError>
-  readonly reconfigureBasin: (
+  ) => Effect.Effect<Awaited<ReturnType<S2["basins"]["ensure"]>>, S2Error>
+  readonly reconfigure: (
     args: ReconfigureBasinInput,
     options?: S2RequestOptions
-  ) => Effect.Effect<ReconfigureBasinResponse, S2ClientError>
-  readonly listAccessTokens: (
+  ) => Effect.Effect<ReconfigureBasinResponse, S2Error>
+}
+
+export interface StreamsApi {
+  readonly list: (args?: ListStreamsInput, options?: S2RequestOptions) => Effect.Effect<ListStreamsResponse, S2Error>
+  readonly listAll: (args?: ListAllStreamsInput, options?: S2RequestOptions) => Stream.Stream<StreamInfo, S2Error>
+  readonly create: (
+    args: CreateStreamInput,
+    options?: S2RequestOptions
+  ) => Effect.Effect<Awaited<ReturnType<SdkBasin["streams"]["create"]>>, S2Error>
+  readonly getConfig: (
+    args: GetStreamConfigInput,
+    options?: S2RequestOptions
+  ) => Effect.Effect<Awaited<ReturnType<SdkBasin["streams"]["getConfig"]>>, S2Error>
+  readonly delete: (args: DeleteStreamInput, options?: S2RequestOptions) => Effect.Effect<void, S2Error>
+  readonly ensure: (
+    args: EnsureStreamInput,
+    options?: S2RequestOptions
+  ) => Effect.Effect<Awaited<ReturnType<SdkBasin["streams"]["ensure"]>>, S2Error>
+  readonly reconfigure: (
+    args: ReconfigureStreamInput,
+    options?: S2RequestOptions
+  ) => Effect.Effect<ReconfigureStreamResponse, S2Error>
+}
+
+export interface AccessTokensApi {
+  readonly list: (
     args?: ListAccessTokensInput,
     options?: S2RequestOptions
-  ) => Effect.Effect<ListAccessTokensResponse, S2ClientError>
-  readonly listAllAccessTokens: (
+  ) => Effect.Effect<ListAccessTokensResponse, S2Error>
+  readonly listAll: (
     args?: ListAllAccessTokensInput,
     options?: S2RequestOptions
-  ) => Stream.Stream<AccessTokenInfo, S2ClientError>
-  readonly issueAccessToken: (
+  ) => Stream.Stream<AccessTokenInfo, S2Error>
+  readonly issue: (
     args: IssueAccessTokenInput,
     options?: S2RequestOptions
-  ) => Effect.Effect<IssueAccessTokenResponse, S2ClientError>
-  readonly revokeAccessToken: (
-    args: RevokeAccessTokenInput,
-    options?: S2RequestOptions
-  ) => Effect.Effect<void, S2ClientError>
-  readonly listLocations: (options?: S2RequestOptions) => Effect.Effect<ListLocationsResponse, S2ClientError>
-  readonly getDefaultLocation: (options?: S2RequestOptions) => Effect.Effect<LocationInfo, S2ClientError>
-  readonly setDefaultLocation: (
+  ) => Effect.Effect<IssueAccessTokenResponse, S2Error>
+  readonly revoke: (args: RevokeAccessTokenInput, options?: S2RequestOptions) => Effect.Effect<void, S2Error>
+}
+
+export interface LocationsApi {
+  readonly list: (options?: S2RequestOptions) => Effect.Effect<ListLocationsResponse, S2Error>
+  readonly getDefault: (options?: S2RequestOptions) => Effect.Effect<GetDefaultLocationResponse, S2Error>
+  readonly setDefault: (
     args: SetDefaultLocationInput,
     options?: S2RequestOptions
-  ) => Effect.Effect<SetDefaultLocationResponse, S2ClientError>
-  readonly accountMetrics: (
-    args: AccountMetricsInput,
-    options?: S2RequestOptions
-  ) => Effect.Effect<MetricSetResponse, S2ClientError>
-  readonly basinMetrics: (
-    args: BasinMetricsInput,
-    options?: S2RequestOptions
-  ) => Effect.Effect<MetricSetResponse, S2ClientError>
-  readonly streamMetrics: (
-    args: StreamMetricsInput,
-    options?: S2RequestOptions
-  ) => Effect.Effect<MetricSetResponse, S2ClientError>
-  readonly listStreams: (
-    args?: ListStreamsInput,
-    options?: S2OperationOptions
-  ) => Effect.Effect<ListStreamsResponse, S2ClientError>
-  readonly listAllStreams: (
-    args?: ListAllStreamsInput,
-    options?: S2OperationOptions
-  ) => Stream.Stream<StreamInfo, S2ClientError>
-  readonly createStream: (
-    args: CreateStreamInput,
-    options?: S2OperationOptions
-  ) => Effect.Effect<CreateStreamResponse, S2ClientError>
-  readonly getStreamConfig: (
-    args: GetStreamConfigInput,
-    options?: S2OperationOptions
-  ) => Effect.Effect<StreamConfig, S2ClientError>
-  readonly deleteStream: (
-    args: DeleteStreamInput,
-    options?: S2OperationOptions
-  ) => Effect.Effect<void, S2ClientError>
-  readonly ensureStream: (
-    args: EnsureStreamInput,
-    options?: S2OperationOptions
-  ) => Effect.Effect<EnsureStreamResponse, S2ClientError>
-  readonly reconfigureStream: (
-    args: ReconfigureStreamInput,
-    options?: S2OperationOptions
-  ) => Effect.Effect<ReconfigureStreamResponse, S2ClientError>
-  readonly checkTail: (
-    name: string,
-    options?: S2OperationOptions
-  ) => Effect.Effect<Tail, S2ClientError>
-  readonly append: (
-    name: string,
-    input: SdkAppendInput,
-    operationOptions?: S2OperationOptions
-  ) => Effect.Effect<AppendAck, S2ClientError>
-  readonly readBatch: (
-    name: string,
-    options?: ReadOptions,
-    operationOptions?: S2OperationOptions
-  ) => Effect.Effect<ReadBatch<"string">, S2ClientError>
-  readonly readBatchBytes: (
-    name: string,
-    options?: ReadOptions,
-    operationOptions?: S2OperationOptions
-  ) => Effect.Effect<ReadBatch<"bytes">, S2ClientError>
-  readonly read: (
-    name: string,
-    options: ReadOptions,
-    operationOptions?: S2OperationOptions
-  ) => Stream.Stream<S2Record, S2ClientError>
-  readonly readBytes: (
-    name: string,
-    options: ReadOptions,
-    operationOptions?: S2OperationOptions
-  ) => Stream.Stream<S2RecordBytes, S2ClientError>
+  ) => Effect.Effect<SetDefaultLocationResponse, S2Error>
+}
+
+export interface MetricsApi {
+  readonly account: (args: AccountMetricsInput, options?: S2RequestOptions) => Effect.Effect<MetricSetResponse, S2Error>
+  readonly basin: (args: BasinMetricsInput, options?: S2RequestOptions) => Effect.Effect<MetricSetResponse, S2Error>
+  readonly stream: (args: StreamMetricsInput, options?: S2RequestOptions) => Effect.Effect<MetricSetResponse, S2Error>
+}
+
+export interface StreamApi {
+  readonly raw: SdkStream
+  readonly name: string
+  readonly checkTail: (options?: S2RequestOptions) => Effect.Effect<TailResponse, S2Error>
+  readonly read: <Format extends ReadFormat = "string">(
+    input?: ReadInput,
+    options?: S2RequestOptions & { readonly as?: Format }
+  ) => Effect.Effect<ReadBatch<Format>, S2Error>
+  readonly readSession: <Format extends ReadFormat = "string">(
+    input?: ReadInput,
+    options?: S2RequestOptions & { readonly as?: Format }
+  ) => Stream.Stream<ReadRecord<Format>, S2Error>
+  readonly append: (input: AppendInput, options?: S2RequestOptions) => Effect.Effect<AppendAck, S2Error>
   readonly appendSession: (
-    name: string,
-    config?: AppendSessionConfig,
-    options?: S2OperationOptions
-  ) => Effect.Effect<S2AppendSession, S2ClientError, Scope.Scope>
+    sessionOptions?: AppendSessionOptions,
+    requestOptions?: S2RequestOptions
+  ) => Effect.Effect<AppendSessionApi, S2Error, Scope.Scope>
   readonly producer: (
-    name: string,
-    config?: ProducerConfig,
-    options?: S2OperationOptions
-  ) => Effect.Effect<S2Producer, S2ClientError, Scope.Scope>
+    sessionOptions?: AppendSessionOptions,
+    requestOptions?: S2RequestOptions
+  ) => Effect.Effect<ProducerApi, S2Error, Scope.Scope>
+  readonly serialization: StreamSerializationApi
+  readonly withEncryptionKey: (key: EncryptionKeyInput) => StreamApi
+  readonly close: Effect.Effect<void>
 }
 
-export class S2Client extends Context.Service<S2Client, S2ClientApi>()("effect-s2/S2Client") {
-  static readonly listBasins = (
-    args?: ListBasinsInput,
-    options?: S2RequestOptions
-  ): Effect.Effect<ListBasinsResponse, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.listBasins(args, options))
-
-  static readonly listAllBasins = (
-    args?: ListAllBasinsInput,
-    options?: S2RequestOptions
-  ): Stream.Stream<BasinInfo, S2ClientError, S2Client> =>
-    Stream.unwrap(Effect.map(this, (client) => client.listAllBasins(args, options)))
-
-  static readonly createBasin = (
-    args: CreateBasinInput,
-    options?: S2RequestOptions
-  ): Effect.Effect<CreateBasinResponse, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.createBasin(args, options))
-
-  static readonly getBasinConfig = (
-    args: GetBasinConfigInput,
-    options?: S2RequestOptions
-  ): Effect.Effect<BasinConfig, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.getBasinConfig(args, options))
-
-  static readonly deleteBasin = (
-    args: DeleteBasinInput,
-    options?: S2RequestOptions
-  ): Effect.Effect<void, S2ClientError, S2Client> => Effect.flatMap(this, (client) => client.deleteBasin(args, options))
-
-  static readonly ensureBasin = (
-    args: EnsureBasinInput,
-    options?: S2RequestOptions
-  ): Effect.Effect<EnsureBasinResponse, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.ensureBasin(args, options))
-
-  static readonly reconfigureBasin = (
-    args: ReconfigureBasinInput,
-    options?: S2RequestOptions
-  ): Effect.Effect<ReconfigureBasinResponse, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.reconfigureBasin(args, options))
-
-  static readonly listAccessTokens = (
-    args?: ListAccessTokensInput,
-    options?: S2RequestOptions
-  ): Effect.Effect<ListAccessTokensResponse, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.listAccessTokens(args, options))
-
-  static readonly listAllAccessTokens = (
-    args?: ListAllAccessTokensInput,
-    options?: S2RequestOptions
-  ): Stream.Stream<AccessTokenInfo, S2ClientError, S2Client> =>
-    Stream.unwrap(Effect.map(this, (client) => client.listAllAccessTokens(args, options)))
-
-  static readonly issueAccessToken = (
-    args: IssueAccessTokenInput,
-    options?: S2RequestOptions
-  ): Effect.Effect<IssueAccessTokenResponse, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.issueAccessToken(args, options))
-
-  static readonly revokeAccessToken = (
-    args: RevokeAccessTokenInput,
-    options?: S2RequestOptions
-  ): Effect.Effect<void, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.revokeAccessToken(args, options))
-
-  static readonly listLocations = (
-    options?: S2RequestOptions
-  ): Effect.Effect<ListLocationsResponse, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.listLocations(options))
-
-  static readonly getDefaultLocation = (
-    options?: S2RequestOptions
-  ): Effect.Effect<LocationInfo, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.getDefaultLocation(options))
-
-  static readonly setDefaultLocation = (
-    args: SetDefaultLocationInput,
-    options?: S2RequestOptions
-  ): Effect.Effect<SetDefaultLocationResponse, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.setDefaultLocation(args, options))
-
-  static readonly accountMetrics = (
-    args: AccountMetricsInput,
-    options?: S2RequestOptions
-  ): Effect.Effect<MetricSetResponse, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.accountMetrics(args, options))
-
-  static readonly basinMetrics = (
-    args: BasinMetricsInput,
-    options?: S2RequestOptions
-  ): Effect.Effect<MetricSetResponse, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.basinMetrics(args, options))
-
-  static readonly streamMetrics = (
-    args: StreamMetricsInput,
-    options?: S2RequestOptions
-  ): Effect.Effect<MetricSetResponse, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.streamMetrics(args, options))
-
-  static readonly listStreams = (
-    args?: ListStreamsInput,
-    options?: S2OperationOptions
-  ): Effect.Effect<ListStreamsResponse, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.listStreams(args, options))
-
-  static readonly listAllStreams = (
-    args?: ListAllStreamsInput,
-    options?: S2OperationOptions
-  ): Stream.Stream<StreamInfo, S2ClientError, S2Client> =>
-    Stream.unwrap(Effect.map(this, (client) => client.listAllStreams(args, options)))
-
-  static readonly createStream = (
-    args: CreateStreamInput,
-    options?: S2OperationOptions
-  ): Effect.Effect<CreateStreamResponse, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.createStream(args, options))
-
-  static readonly getStreamConfig = (
-    args: GetStreamConfigInput,
-    options?: S2OperationOptions
-  ): Effect.Effect<StreamConfig, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.getStreamConfig(args, options))
-
-  static readonly deleteStream = (
-    args: DeleteStreamInput,
-    options?: S2OperationOptions
-  ): Effect.Effect<void, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.deleteStream(args, options))
-
-  static readonly ensureStream = (
-    args: EnsureStreamInput,
-    options?: S2OperationOptions
-  ): Effect.Effect<EnsureStreamResponse, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.ensureStream(args, options))
-
-  static readonly reconfigureStream = (
-    args: ReconfigureStreamInput,
-    options?: S2OperationOptions
-  ): Effect.Effect<ReconfigureStreamResponse, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.reconfigureStream(args, options))
-
-  static readonly checkTail = (
-    name: string,
-    options?: S2OperationOptions
-  ): Effect.Effect<Tail, S2ClientError, S2Client> => Effect.flatMap(this, (client) => client.checkTail(name, options))
-
-  static readonly append = (
-    name: string,
-    input: SdkAppendInput,
-    operationOptions?: S2OperationOptions
-  ): Effect.Effect<AppendAck, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.append(name, input, operationOptions))
-
-  static readonly readBatch = (
-    name: string,
-    options: ReadOptions = {},
-    operationOptions?: S2OperationOptions
-  ): Effect.Effect<ReadBatch<"string">, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.readBatch(name, options, operationOptions))
-
-  static readonly readBatchBytes = (
-    name: string,
-    options: ReadOptions = {},
-    operationOptions?: S2OperationOptions
-  ): Effect.Effect<ReadBatch<"bytes">, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.readBatchBytes(name, options, operationOptions))
-
-  static readonly read = (
-    name: string,
-    options: ReadOptions,
-    operationOptions?: S2OperationOptions
-  ): Stream.Stream<S2Record, S2ClientError, S2Client> =>
-    Stream.unwrap(Effect.map(this, (client) => client.read(name, options, operationOptions)))
-
-  static readonly readBytes = (
-    name: string,
-    options: ReadOptions,
-    operationOptions?: S2OperationOptions
-  ): Stream.Stream<S2RecordBytes, S2ClientError, S2Client> =>
-    Stream.unwrap(Effect.map(this, (client) => client.readBytes(name, options, operationOptions)))
-
-  static readonly appendSession = (
-    name: string,
-    config: AppendSessionConfig = {},
-    options?: S2OperationOptions
-  ): Effect.Effect<S2AppendSession, S2ClientError, S2Client | Scope.Scope> =>
-    Effect.flatMap(this, (client) => client.appendSession(name, config, options))
-
-  static readonly producer = (
-    name: string,
-    config: ProducerConfig = {},
-    options?: S2OperationOptions
-  ): Effect.Effect<S2Producer, S2ClientError, S2Client | Scope.Scope> =>
-    Effect.flatMap(this, (client) => client.producer(name, config, options))
-
-  static readonly sink = (
-    s2Producer: S2Producer
-  ): Sink.Sink<void, SdkAppendRecord, never, S2ClientError> => Sink.forEach(s2Producer.submit)
-
-  static get layerConfig(): Layer.Layer<S2Client, Config.ConfigError> {
-    return layer({
-      accessToken: Config.redacted("S2_ACCESS_TOKEN"),
-      basinName: Config.string("S2_BASIN")
-    })
-  }
-
-  static readonly layer = layer
+export interface AppendSessionApi {
+  readonly raw: AppendSession
+  readonly readable: Stream.Stream<AppendAck, S2Error>
+  readonly submit: (input: AppendInput) => Effect.Effect<BatchSubmitTicketApi, S2Error>
+  readonly acks: Stream.Stream<AppendAck, S2Error>
+  readonly lastAckedPosition: Effect.Effect<Option.Option<AppendAck>>
+  readonly failureCause: Effect.Effect<Option.Option<S2Error>>
+  readonly close: Effect.Effect<void, S2Error>
 }
 
-const resolveOption = <A>(value: Config.Config<A> | A): Effect.Effect<A, Config.ConfigError> =>
-  Config.isConfig(value) ? value : Effect.succeed(value)
+export interface BatchSubmitTicketApi {
+  readonly bytes: number
+  readonly numRecords: number
+  readonly ack: Effect.Effect<AppendAck, S2Error>
+}
 
-const streamHandleOptions = (
-  forceTransport: "fetch" | "s2s" | undefined,
+export interface ProducerApi {
+  readonly raw: InstanceType<typeof SdkProducer>
+  readonly readable: Stream.Stream<IndexedAppendAck, S2Error>
+  readonly submit: (record: AppendRecord) => Effect.Effect<RecordSubmitTicketApi, S2Error>
+  readonly close: Effect.Effect<void, S2Error>
+}
+
+export interface RecordSubmitTicketApi {
+  readonly ack: Effect.Effect<IndexedAppendAck, S2Error>
+}
+
+export interface SerializingAppendSessionApi<Message> {
+  readonly raw: PatternSerialization.SerializingAppendSession<Message>
+  readonly submit: (message: Message) => Effect.Effect<MessageRange, S2Error>
+}
+
+export interface StreamSerializationApi {
+  readonly appendSession: <Message>(
+    serializer: (message: Message) => Uint8Array,
+    options?: PatternSerialization.SerializingAppendSessionOptions,
+    sessionOptions?: AppendSessionOptions,
+    requestOptions?: S2RequestOptions
+  ) => Effect.Effect<SerializingAppendSessionApi<Message>, S2Error, Scope.Scope>
+  readonly readSession: <Message>(
+    deserialize: (payload: Uint8Array) => Message,
+    input?: ReadInput,
+    requestOptions?: S2RequestOptions,
+    options?: PatternSerialization.DeserializingReadSessionOptions
+  ) => Stream.Stream<Message, S2Error>
+}
+
+export class S2Config extends Context.Service<S2Config, S2ClientOptions>()("effect-s2/S2Client/S2Config") {}
+
+export class S2Client extends Context.Service<S2Client, S2ClientApi>()("effect-s2/S2Client") {}
+
+export const make = Effect.fn("S2Client.make")(function*(options: S2ClientOptions) {
+  return makeClient(new S2(options))
+})
+
+export const clientLayer = Layer.effect(S2Client, Effect.map(S2Config, (options) => makeClient(new S2(options))))
+
+export const layer = (options: S2ClientOptions) => clientLayer.pipe(Layer.provide(Layer.succeed(S2Config, options)))
+
+export const basin = Effect.fn("S2Client.basin")(function*(name: string) {
+  const client = yield* S2Client
+  return yield* client.basin(name)
+})
+
+export const stream = Effect.fn("S2Client.stream")(function*(
+  basinName: string,
+  streamName: string,
   options?: StreamOptions
-): StreamOptions => ({
-  ...(forceTransport === undefined ? {} : { forceTransport }),
-  ...(options === undefined ? {} : options)
+) {
+  const client = yield* S2Client
+  return yield* client.stream(basinName, streamName, options)
 })
 
-const trySdk = <A>(
-  operation: string,
-  promise: () => Promise<A>
-): Effect.Effect<A, S2ClientError> =>
-  Effect.tryPromise({
-    try: promise,
-    catch: fromUnknown(operation)
-  })
-
-type TraceAttributeValue = string | number | boolean
-type TraceAttributes = Record<string, TraceAttributeValue>
-
-const encodeTraceArgs = (args: unknown): string | undefined => {
-  if (args === undefined) return undefined
-  try {
-    return JSON.stringify(args)
-  } catch {
-    return typeof args === "string"
-      ? args
-      : typeof args === "number" || typeof args === "boolean" || typeof args === "bigint"
-      ? args.toString()
-      : Object.prototype.toString.call(args)
-  }
+export const basins = {
+  list: (...args: Parameters<BasinsApi["list"]>) => Effect.flatMap(S2Client, (client) => client.basins.list(...args)),
+  listAll: (...args: Parameters<BasinsApi["listAll"]>) =>
+    Stream.unwrap(Effect.map(S2Client, (client) => client.basins.listAll(...args))),
+  create: (...args: Parameters<BasinsApi["create"]>) =>
+    Effect.flatMap(S2Client, (client) => client.basins.create(...args)),
+  getConfig: (...args: Parameters<BasinsApi["getConfig"]>) =>
+    Effect.flatMap(S2Client, (client) => client.basins.getConfig(...args)),
+  delete: (...args: Parameters<BasinsApi["delete"]>) =>
+    Effect.flatMap(S2Client, (client) => client.basins.delete(...args)),
+  ensure: (...args: Parameters<BasinsApi["ensure"]>) =>
+    Effect.flatMap(S2Client, (client) => client.basins.ensure(...args)),
+  reconfigure: (...args: Parameters<BasinsApi["reconfigure"]>) =>
+    Effect.flatMap(S2Client, (client) => client.basins.reconfigure(...args))
 }
 
-const traceAttributes = (
-  args?: unknown,
-  extra?: TraceAttributes
-): TraceAttributes => {
-  const attributes: TraceAttributes = { ...extra }
-  const encodedArgs = encodeTraceArgs(args)
-  if (encodedArgs !== undefined) attributes.args = encodedArgs
-  return attributes
+export const accessTokens = {
+  list: (...args: Parameters<AccessTokensApi["list"]>) =>
+    Effect.flatMap(S2Client, (client) => client.accessTokens.list(...args)),
+  listAll: (...args: Parameters<AccessTokensApi["listAll"]>) =>
+    Stream.unwrap(Effect.map(S2Client, (client) => client.accessTokens.listAll(...args))),
+  issue: (...args: Parameters<AccessTokensApi["issue"]>) =>
+    Effect.flatMap(S2Client, (client) => client.accessTokens.issue(...args)),
+  revoke: (...args: Parameters<AccessTokensApi["revoke"]>) =>
+    Effect.flatMap(S2Client, (client) => client.accessTokens.revoke(...args))
 }
 
-const withSdkSpan = <A, E, R>(
-  operation: string,
-  attributes: TraceAttributes,
-  effect: Effect.Effect<A, E, R>
-): Effect.Effect<A, E, R> => effect.pipe(Effect.withSpan(`S2.${operation}`, { attributes }))
+export const locations = {
+  list: (...args: Parameters<LocationsApi["list"]>) =>
+    Effect.flatMap(S2Client, (client) => client.locations.list(...args)),
+  getDefault: (...args: Parameters<LocationsApi["getDefault"]>) =>
+    Effect.flatMap(S2Client, (client) => client.locations.getDefault(...args)),
+  setDefault: (...args: Parameters<LocationsApi["setDefault"]>) =>
+    Effect.flatMap(S2Client, (client) => client.locations.setDefault(...args))
+}
 
-const tracedSdk = <A>(
-  operation: string,
-  args: unknown,
-  promise: () => Promise<A>,
-  extra?: TraceAttributes
-): Effect.Effect<A, S2ClientError> => withSdkSpan(operation, traceAttributes(args, extra), trySdk(operation, promise))
+export const metrics = {
+  account: (...args: Parameters<MetricsApi["account"]>) =>
+    Effect.flatMap(S2Client, (client) => client.metrics.account(...args)),
+  basin: (...args: Parameters<MetricsApi["basin"]>) =>
+    Effect.flatMap(S2Client, (client) => client.metrics.basin(...args)),
+  stream: (...args: Parameters<MetricsApi["stream"]>) =>
+    Effect.flatMap(S2Client, (client) => client.metrics.stream(...args))
+}
 
-const tracedSdkStream = <A>(
-  operation: string,
-  args: unknown,
-  iterable: AsyncIterable<A>,
-  extra?: TraceAttributes
-): Stream.Stream<A, S2ClientError> =>
-  Stream.fromAsyncIterable(iterable, fromUnknown(operation)).pipe(
-    Stream.withSpan(`S2.${operation}`, { attributes: traceAttributes(args, extra) })
-  )
+export const patterns = {
+  constants: {
+    DEDUPE_SEQ_HEADER: PatternSerialization.DEDUPE_SEQ_HEADER,
+    DEDUPE_SEQ_HEADER_BYTES: PatternSerialization.DEDUPE_SEQ_HEADER_BYTES,
+    DEDUPE_WRITER_UNIQ_ID: PatternSerialization.DEDUPE_WRITER_UNIQ_ID,
+    FRAME_BYTES_HEADER: PatternSerialization.FRAME_BYTES_HEADER,
+    FRAME_BYTES_HEADER_BYTES: PatternSerialization.FRAME_BYTES_HEADER_BYTES,
+    FRAME_RECORDS_HEADER: PatternSerialization.FRAME_RECORDS_HEADER,
+    FRAME_RECORDS_HEADER_BYTES: PatternSerialization.FRAME_RECORDS_HEADER_BYTES,
+    WRITER_UNIQ_ID: PatternSerialization.WRITER_UNIQ_ID
+  },
+  u64: {
+    encode: (value: bigint | number) => trySync(() => PatternSerialization.encodeU64(value)),
+    decode: (bytes: Uint8Array) => trySync(() => PatternSerialization.decodeU64(bytes))
+  },
+  chunkBytes: (bytes: Uint8Array, maxChunkSize?: number) =>
+    trySync(() => PatternSerialization.chunkBytes(bytes, maxChunkSize)),
+  frameChunksToRecords: (chunks: ReadonlyArray<Uint8Array>) =>
+    trySync(() => PatternSerialization.frameChunksToRecords([...chunks])),
+  frameAssembler: (options?: PatternSerialization.FrameAssemblerOptions) =>
+    Effect.sync(() => new PatternSerialization.FrameAssembler(options)),
+  pushFrameRecord: (
+    assembler: PatternSerialization.FrameAssembler,
+    record: Parameters<PatternSerialization.FrameAssembler["push"]>[0]
+  ) => trySync(() => assembler.push(record)),
+  dedupeFilter: () => Effect.sync(() => new PatternSerialization.DedupeFilter()),
+  extractDedupeSeq: (...args: Parameters<typeof PatternSerialization.extractDedupeSeq>) =>
+    trySync(() => PatternSerialization.extractDedupeSeq(...args)),
+  injectDedupeHeaders: (...args: Parameters<typeof PatternSerialization.injectDedupeHeaders>) =>
+    trySync(() => PatternSerialization.injectDedupeHeaders(...args)),
+  serializingAppendSession: <Message>(
+    session: AppendSession,
+    serializer: (message: Message) => Uint8Array,
+    options?: PatternSerialization.SerializingAppendSessionOptions
+  ) =>
+    Effect.sync(() =>
+      wrapSerializingAppendSession(new PatternSerialization.SerializingAppendSession(session, serializer, options))
+    ),
+  deserializingReadSession: <Message>(
+    session: ReadSession<"bytes">,
+    deserialize: (payload: Uint8Array) => Message,
+    options?: PatternSerialization.DeserializingReadSessionOptions
+  ) =>
+    Stream.fromReadableStream({
+      evaluate: () => new PatternSerialization.DeserializingReadSession(session, deserialize, options),
+      onError: toS2Error
+    })
+}
 
-const batchTransformOptions = (config: ProducerConfig): BatchTransformOptions => ({
-  ...(config.lingerDurationMillis === undefined
-    ? {}
-    : { lingerDurationMillis: config.lingerDurationMillis }),
-  ...(config.maxBatchRecords === undefined ? {} : { maxBatchRecords: config.maxBatchRecords }),
-  ...(config.maxBatchBytes === undefined ? {} : { maxBatchBytes: config.maxBatchBytes }),
-  ...(config.fencingToken === undefined ? {} : { fencingToken: config.fencingToken }),
-  ...(config.matchSeqNum === undefined ? {} : { matchSeqNum: config.matchSeqNum })
+const makeClient = (raw: S2): S2ClientApi => ({
+  raw,
+  basins: makeBasins(raw.basins),
+  accessTokens: makeAccessTokens(raw.accessTokens),
+  locations: makeLocations(raw.locations),
+  metrics: makeMetrics(raw.metrics),
+  basin: (name) => Effect.map(trySync(() => raw.basin(name)), makeBasin),
+  stream: (basinName, streamName, options) =>
+    Effect.map(trySync(() => raw.basin(basinName).stream(streamName, options)), makeStream)
 })
 
-const appendSessionOptions = (config: AppendSessionConfig): AppendSessionOptions => ({
-  ...(config.maxInflightBytes === undefined ? {} : { maxInflightBytes: config.maxInflightBytes }),
-  ...(config.maxInflightBatches === undefined
-    ? {}
-    : { maxInflightBatches: config.maxInflightBatches })
+const makeBasin = (raw: SdkBasin): BasinApi => ({
+  raw,
+  name: raw.name,
+  streams: makeStreams(raw.streams),
+  stream: (name, options) => Effect.map(trySync(() => raw.stream(name, options)), makeStream)
 })
 
-const liveOptions = (options: {
-  readonly accessToken: Redacted.Redacted<string>
-  readonly basinName: string
-  readonly endpoints?: S2EndpointsInit
-  readonly retry?: S2RetryConfig
-  readonly forceTransport?: "fetch" | "s2s"
-}) => ({
-  accessToken: options.accessToken,
-  basinName: options.basinName,
-  ...optionalLiveOptions(options)
+const makeBasins = (raw: S2["basins"]): BasinsApi => ({
+  list: wrapPromise(raw.list.bind(raw)),
+  listAll: wrapAsyncIterable(raw.listAll.bind(raw)),
+  create: wrapPromise(raw.create.bind(raw)),
+  getConfig: wrapPromise(raw.getConfig.bind(raw)),
+  delete: wrapPromise(raw.delete.bind(raw)),
+  ensure: wrapPromise(raw.ensure.bind(raw)),
+  reconfigure: wrapPromise(raw.reconfigure.bind(raw))
 })
 
-const optionalLiveOptions = (options: {
-  readonly endpoints?: S2EndpointsInit
-  readonly retry?: S2RetryConfig
-  readonly forceTransport?: "fetch" | "s2s"
-}) => ({
-  ...(options.endpoints === undefined ? {} : { endpoints: options.endpoints }),
-  ...(options.retry === undefined ? {} : { retry: options.retry }),
-  ...(options.forceTransport === undefined ? {} : { forceTransport: options.forceTransport })
+const makeStreams = (raw: SdkBasin["streams"]): StreamsApi => {
+  const list = wrapPromise(raw.list.bind(raw))
+  const listAll = wrapAsyncIterable(raw.listAll.bind(raw))
+  const create = wrapPromise(raw.create.bind(raw))
+  const getConfig = wrapPromise(raw.getConfig.bind(raw))
+  const deleteStream = wrapPromise(raw.delete.bind(raw))
+  const ensure = wrapPromise(raw.ensure.bind(raw))
+  const reconfigure = wrapPromise(raw.reconfigure.bind(raw))
+
+  return { create, delete: deleteStream, ensure, getConfig, list, listAll, reconfigure }
+}
+
+const makeAccessTokens = (raw: S2["accessTokens"]): AccessTokensApi => ({
+  list: (args, options) => tryPromise(() => raw.list(args, options)),
+  listAll: (args, options) => Stream.fromAsyncIterable(raw.listAll(args, options), toS2Error),
+  issue: (args, options) => tryPromise(() => raw.issue(args, options)),
+  revoke: (args, options) => tryPromise(() => raw.revoke(args, options))
 })
 
-const makeLiveApi = (input: {
-  readonly accessToken: Redacted.Redacted<string>
-  readonly basinName: string
-  readonly endpoints?: S2EndpointsInit
-  readonly retry?: S2RetryConfig
-  readonly forceTransport?: "fetch" | "s2s"
-}): S2ClientApi => {
-  const environment = S2Environment.parse()
-  const retry: S2RetryConfig = {
-    ...input.retry,
-    appendRetryPolicy: input.retry?.appendRetryPolicy ?? "noSideEffects"
-  }
-  const client = new S2({
-    ...environment,
-    accessToken: Redacted.value(input.accessToken),
-    ...(input.endpoints === undefined ? {} : { endpoints: input.endpoints }),
-    retry
-  })
-  const basinHandle = (name?: string) => client.basin(name ?? input.basinName)
-  const defaultBasinName = input.basinName
-  const selectedStreamHandle = (name: string, options?: S2OperationOptions) =>
-    basinHandle(options?.basinName).stream(
-      name,
-      streamHandleOptions(input.forceTransport, options?.stream)
-    )
-  type StreamReadRequestOptions = Parameters<ReturnType<typeof selectedStreamHandle>["read"]>[1]
+const makeLocations = (raw: S2["locations"]): LocationsApi => ({
+  list: (options) => tryPromise(() => raw.list(options)),
+  getDefault: (options) => tryPromise(() => raw.getDefault(options)),
+  setDefault: (args, options) => tryPromise(() => raw.setDefault(args, options))
+})
 
-  const listBasins = (args?: ListBasinsInput, options?: S2RequestOptions) =>
-    tracedSdk("listBasins", args, () => client.basins.list(args, options))
+const makeMetrics = (raw: S2["metrics"]): MetricsApi => ({
+  account: (args, options) => tryPromise(() => raw.account(args, options)),
+  basin: (args, options) => tryPromise(() => raw.basin(args, options)),
+  stream: (args, options) => tryPromise(() => raw.stream(args, options))
+})
 
-  const listAllBasins = (
-    args?: ListAllBasinsInput,
-    options?: S2RequestOptions
-  ): Stream.Stream<BasinInfo, S2ClientError> =>
-    tracedSdkStream("listAllBasins", args, client.basins.listAll(args, options))
-
-  const createBasin = (args: CreateBasinInput, options?: S2RequestOptions) =>
-    tracedSdk("createBasin", args, () => client.basins.create(args, options))
-
-  const getBasinConfig = (args: GetBasinConfigInput, options?: S2RequestOptions) =>
-    tracedSdk("getBasinConfig", args, () => client.basins.getConfig(args, options))
-
-  const deleteBasin = (args: DeleteBasinInput, options?: S2RequestOptions) =>
-    tracedSdk("deleteBasin", args, () => client.basins.delete(args, options))
-
-  const ensureBasin = (args: EnsureBasinInput, options?: S2RequestOptions) =>
-    tracedSdk("ensureBasin", args, () => client.basins.ensure(args, options))
-
-  const reconfigureBasin = (args: ReconfigureBasinInput, options?: S2RequestOptions) =>
-    tracedSdk("reconfigureBasin", args, () => client.basins.reconfigure(args, options))
-
-  const listAccessTokens = (args?: ListAccessTokensInput, options?: S2RequestOptions) =>
-    tracedSdk("listAccessTokens", args, () => client.accessTokens.list(args, options))
-
-  const listAllAccessTokens = (
-    args?: ListAllAccessTokensInput,
-    options?: S2RequestOptions
-  ): Stream.Stream<AccessTokenInfo, S2ClientError> =>
-    tracedSdkStream("listAllAccessTokens", args, client.accessTokens.listAll(args, options))
-
-  const issueAccessToken = (args: IssueAccessTokenInput, options?: S2RequestOptions) =>
-    tracedSdk("issueAccessToken", args, () => client.accessTokens.issue(args, options))
-
-  const revokeAccessToken = (args: RevokeAccessTokenInput, options?: S2RequestOptions) =>
-    tracedSdk("revokeAccessToken", args, () => client.accessTokens.revoke(args, options))
-
-  const listLocations = (options?: S2RequestOptions) =>
-    tracedSdk("listLocations", undefined, () => client.locations.list(options))
-
-  const getDefaultLocation = (options?: S2RequestOptions) =>
-    tracedSdk("getDefaultLocation", undefined, () => client.locations.getDefault(options))
-
-  const setDefaultLocation = (args: SetDefaultLocationInput, options?: S2RequestOptions) =>
-    tracedSdk("setDefaultLocation", args, () => client.locations.setDefault(args, options))
-
-  const accountMetrics = (args: AccountMetricsInput, options?: S2RequestOptions) =>
-    tracedSdk("accountMetrics", args, () => client.metrics.account(args, options))
-
-  const basinMetrics = (args: BasinMetricsInput, options?: S2RequestOptions) =>
-    tracedSdk("basinMetrics", args, () => client.metrics.basin(args, options))
-
-  const streamMetrics = (args: StreamMetricsInput, options?: S2RequestOptions) =>
-    tracedSdk("streamMetrics", args, () => client.metrics.stream(args, options))
-
-  const listStreams = (args?: ListStreamsInput, options?: S2OperationOptions) =>
-    tracedSdk("listStreams", args, () => basinHandle(options?.basinName).streams.list(args, options?.request), {
-      basin: options?.basinName ?? defaultBasinName
-    })
-
-  const listAllStreams = (
-    args?: ListAllStreamsInput,
-    options?: S2OperationOptions
-  ): Stream.Stream<StreamInfo, S2ClientError> =>
-    tracedSdkStream(
-      "listAllStreams",
-      args,
-      basinHandle(options?.basinName).streams.listAll(args, options?.request),
-      { basin: options?.basinName ?? defaultBasinName, prefix: args?.prefix ?? "" }
-    )
-
-  const createStream = (
-    args: CreateStreamInput,
-    options?: S2OperationOptions
-  ) =>
-    tracedSdk("createStream", args, () => basinHandle(options?.basinName).streams.create(args, options?.request), {
-      basin: options?.basinName ?? defaultBasinName,
-      stream: args.stream
-    })
-
-  const getStreamConfig = (args: GetStreamConfigInput, options?: S2OperationOptions) =>
-    tracedSdk(
-      "getStreamConfig",
-      args,
-      () => basinHandle(options?.basinName).streams.getConfig(args, options?.request),
-      { basin: options?.basinName ?? defaultBasinName, stream: args.stream }
-    )
-
-  const deleteStream = (
-    args: DeleteStreamInput,
-    options?: S2OperationOptions
-  ) =>
-    tracedSdk("deleteStream", args, () => basinHandle(options?.basinName).streams.delete(args, options?.request), {
-      basin: options?.basinName ?? defaultBasinName,
-      stream: args.stream
-    })
-
-  const ensureStream = (
-    args: EnsureStreamInput,
-    options?: S2OperationOptions
-  ) =>
-    tracedSdk("ensureStream", args, () => basinHandle(options?.basinName).streams.ensure(args, options?.request), {
-      basin: options?.basinName ?? defaultBasinName,
-      stream: args.stream
-    })
-
-  const reconfigureStream = (args: ReconfigureStreamInput, options?: S2OperationOptions) =>
-    tracedSdk(
-      "reconfigureStream",
-      args,
-      () => basinHandle(options?.basinName).streams.reconfigure(args, options?.request),
-      { basin: options?.basinName ?? defaultBasinName, stream: args.stream }
-    )
-
-  const checkTail = (
-    name: string,
-    options?: S2OperationOptions
-  ) =>
-    tracedSdk("checkTail", { stream: name }, () => selectedStreamHandle(name, options).checkTail(options?.request), {
-      basin: options?.basinName ?? defaultBasinName,
-      stream: name
-    })
-
-  const append = (
-    name: string,
-    input: SdkAppendInput,
-    operationOptions?: S2OperationOptions
-  ) =>
-    withSdkSpan(
-      "append",
-      traceAttributes(
-        { stream: name, recordCount: input.records.length, matchSeqNum: input.matchSeqNum },
-        { basin: operationOptions?.basinName ?? defaultBasinName, stream: name }
-      ),
-      Effect.gen(function*() {
-        const ack = yield* trySdk("append", () =>
-          selectedStreamHandle(name, operationOptions).append(input, operationOptions?.request))
-        yield* Effect.annotateCurrentSpan({ seqNum: ack.start.seqNum })
-        return ack
-      })
-    )
-
-  const readBatchFrom = <Encoding extends "string" | "bytes">(
-    operation: string,
-    name: string,
-    options: ReadOptions,
-    operationOptions: S2OperationOptions | undefined,
-    request: StreamReadRequestOptions
-  ): Effect.Effect<ReadBatch<Encoding>, S2ClientError> =>
-    withSdkSpan(
-      operation,
-      traceAttributes(options, {
-        basin: operationOptions?.basinName ?? defaultBasinName,
-        stream: name
-      }),
-      trySdk(operation, () => selectedStreamHandle(name, operationOptions).read(options, request)) as Effect.Effect<
-        ReadBatch<Encoding>,
-        S2ClientError
-      >
-    )
-
-  const readBatch = (
-    name: string,
-    options: ReadOptions = {},
-    operationOptions?: S2OperationOptions
-  ) => readBatchFrom("readBatch", name, options, operationOptions, operationOptions?.request)
-
-  const readBatchBytes = (
-    name: string,
-    options: ReadOptions = {},
-    operationOptions?: S2OperationOptions
-  ) =>
-    readBatchFrom("readBatchBytes", name, options, operationOptions, {
-      ...operationOptions?.request,
-      as: "bytes"
-    })
-
-  const read = (
-    name: string,
-    options: ReadOptions,
-    operationOptions?: S2OperationOptions
-  ): Stream.Stream<S2Record, S2ClientError> =>
-    readStream(
-      name,
-      "read",
-      options,
-      operationOptions,
-      Effect.tryPromise({
-        try: () => selectedStreamHandle(name, operationOptions).readSession(options, operationOptions?.request),
-        catch: fromUnknown("readSession")
-      }),
-      toS2Record
-    )
-
-  const readStream = <Record, A>(
-    name: string,
-    operation: string,
-    options: ReadOptions,
-    operationOptions: S2OperationOptions | undefined,
-    acquireSession: Effect.Effect<AsyncIterable<Record> & { cancel: () => Promise<void> }, S2ClientError>,
-    mapRecord: (record: Record) => A
-  ): Stream.Stream<A, S2ClientError> =>
+const makeStream = (raw: SdkStream): StreamApi => ({
+  raw,
+  name: raw.name,
+  checkTail: (options) => tryPromise(() => raw.checkTail(options)),
+  read: (input, options) => tryPromise(() => raw.read(input, options)),
+  readSession: (input, options) =>
     Stream.unwrap(
-      Effect.gen(function*() {
-        const session = yield* Effect.acquireRelease(
-          acquireSession,
-          (readSession) => Effect.promise(() => readSession.cancel())
-        )
-        return Stream.fromAsyncIterable(session, fromUnknown("read")).pipe(
-          Stream.map(mapRecord)
-        )
-      })
-    ).pipe(
-      Stream.withSpan(`S2.${operation}`, {
-        attributes: traceAttributes(options, {
-          basin: operationOptions?.basinName ?? defaultBasinName,
-          stream: name
-        })
-      })
-    )
+      Effect.map(acquireReadSession(raw, input, options), (session) => Stream.fromAsyncIterable(session, toS2Error))
+    ),
+  append: (input, options) => tryPromise(() => raw.append(input, options)),
+  appendSession: (sessionOptions, requestOptions) =>
+    Effect.map(acquireAppendSession(raw, sessionOptions, requestOptions), wrapAppendSession),
+  producer: (sessionOptions, requestOptions) =>
+    Effect.map(acquireProducer(raw, sessionOptions, requestOptions), wrapProducer),
+  serialization: makeStreamSerialization(raw),
+  withEncryptionKey: (key) => makeStream(raw.withEncryptionKey(key)),
+  close: Effect.promise(() => raw.close())
+})
 
-  const readBytes = (
-    name: string,
-    options: ReadOptions,
-    operationOptions?: S2OperationOptions
-  ): Stream.Stream<S2RecordBytes, S2ClientError> =>
-    readStream(
-      name,
-      "readBytes",
-      options,
-      operationOptions,
-      Effect.tryPromise({
-        try: () =>
-          selectedStreamHandle(name, operationOptions).readSession(
-            options,
-            { ...operationOptions?.request, as: "bytes" }
-          ),
-        catch: fromUnknown("readSession")
-      }),
-      toS2RecordBytes
-    )
-
-  const appendSession = (
-    name: string,
-    config: AppendSessionConfig = {},
-    options?: S2OperationOptions
-  ) =>
-    withSdkSpan(
-      "appendSession",
-      traceAttributes(config, { basin: options?.basinName ?? defaultBasinName, stream: name }),
-      Effect.gen(function*() {
-        const handle = selectedStreamHandle(name, options)
-        const sdkSession = yield* Effect.acquireRelease(
-          trySdk("appendSession", () => handle.appendSession(appendSessionOptions(config), options?.request)),
-          (session) => Effect.promise(() => session.close())
-        )
-
-        const submit = (input: SdkAppendInput) =>
-          withSdkSpan(
-            "appendSession.submit",
-            traceAttributes(
-              { stream: name, recordCount: input.records.length, matchSeqNum: input.matchSeqNum },
-              { basin: options?.basinName ?? defaultBasinName, stream: name }
-            ),
-            Effect.gen(function*() {
-              const ticket = yield* trySdk("appendSession.submit", () => sdkSession.submit(input))
-              const ack = yield* trySdk("appendSession.ack", () => ticket.ack())
-              yield* Effect.annotateCurrentSpan({ seqNum: ack.start.seqNum })
-              return ack
-            })
-          )
-
-        return { submit }
-      })
-    )
-
-  const producer = (
-    name: string,
-    config: ProducerConfig = {},
-    options?: S2OperationOptions
-  ) =>
-    withSdkSpan(
-      "producer",
-      traceAttributes(config, { basin: options?.basinName ?? defaultBasinName, stream: name }),
-      Effect.gen(function*() {
-        const handle = selectedStreamHandle(name, options)
-        const sdkProducer = yield* Effect.acquireRelease(
-          trySdk("producer", async () =>
-            new Producer(
-              new BatchTransform(batchTransformOptions(config)),
-              await handle.appendSession(appendSessionOptions(config), options?.request),
-              name
-            )),
-          (p) => Effect.promise(() => p.close())
-        )
-
-        const submit = (record: SdkAppendRecord) =>
-          withSdkSpan(
-            "producer.submit",
-            traceAttributes(undefined, { basin: options?.basinName ?? defaultBasinName, stream: name }),
-            Effect.gen(function*() {
-              const ticket = yield* trySdk("producer.submit", () => sdkProducer.submit(record))
-              const ack = yield* trySdk("producer.ack", () => ticket.ack())
-              const seqNum = ack.seqNum()
-              yield* Effect.annotateCurrentSpan({ seqNum })
-              // preserve the upstream per-record coordinate alongside the batch ack —
-              // a batched owner write still knows its own assigned seq-num.
-              return { seqNum, batch: ack.batchAppendAck() }
-            })
-          )
-
-        return { submit }
-      })
-    )
-
-  return {
-    listBasins,
-    listAllBasins,
-    createBasin,
-    getBasinConfig,
-    deleteBasin,
-    ensureBasin,
-    reconfigureBasin,
-    listAccessTokens,
-    listAllAccessTokens,
-    issueAccessToken,
-    revokeAccessToken,
-    listLocations,
-    getDefaultLocation,
-    setDefaultLocation,
-    accountMetrics,
-    basinMetrics,
-    streamMetrics,
-    listStreams,
-    listAllStreams,
-    createStream,
-    getStreamConfig,
-    deleteStream,
-    ensureStream,
-    reconfigureStream,
-    checkTail,
-    append,
-    readBatch,
-    readBatchBytes,
-    read,
-    readBytes,
-    appendSession,
-    producer
-  }
-}
-
-export function layer(options: {
-  readonly accessToken: Config.Config<Redacted.Redacted<string>> | Redacted.Redacted<string>
-  readonly basinName: Config.Config<string> | string
-  readonly endpoints?: S2EndpointsInit
-  readonly retry?: S2RetryConfig
-  readonly forceTransport?: "fetch" | "s2s"
-}): Layer.Layer<S2Client, Config.ConfigError> {
-  return Layer.effect(
-    S2Client,
-    Effect.gen(function*() {
-      const accessToken = yield* resolveOption(options.accessToken)
-      const basinName = yield* resolveOption(options.basinName)
-      return makeLiveApi(
-        liveOptions({
-          accessToken,
-          basinName,
-          ...optionalLiveOptions(options)
-        })
-      )
-    })
+const acquireReadSession = <Format extends ReadFormat>(
+  raw: SdkStream,
+  input?: ReadInput,
+  options?: S2RequestOptions & { readonly as?: Format }
+) =>
+  Effect.acquireRelease(
+    tryPromise(() => raw.readSession(input, options)),
+    (session) => ignoreFinalizerError(Effect.promise(() => session[Symbol.asyncDispose]()))
   )
-}
+
+const acquireAppendSession = (
+  raw: SdkStream,
+  sessionOptions?: AppendSessionOptions,
+  requestOptions?: S2RequestOptions
+) =>
+  Effect.acquireRelease(
+    tryPromise(() => raw.appendSession(sessionOptions, requestOptions)),
+    (session) => ignoreFinalizerError(tryPromise(() => session.close()))
+  )
+
+const acquireProducer = (
+  raw: SdkStream,
+  sessionOptions?: AppendSessionOptions,
+  requestOptions?: S2RequestOptions
+) =>
+  Effect.acquireRelease(
+    Effect.map(acquireAppendSession(raw, sessionOptions, requestOptions), (session) =>
+      new SdkProducer(new BatchTransform(), session)),
+    (producer) =>
+      ignoreFinalizerError(tryPromise(() => producer.close()))
+  )
+
+const wrapAppendSession = (session: AppendSession): AppendSessionApi => ({
+  raw: session,
+  readable: Stream.fromReadableStream({ evaluate: () => session.readable, onError: toS2Error }),
+  submit: (input) =>
+    Effect.map(tryPromise(() => session.submit(input)), (ticket) => ({
+      bytes: ticket.bytes,
+      numRecords: ticket.numRecords,
+      ack: tryPromise(() => ticket.ack())
+    })),
+  acks: Stream.fromAsyncIterable(session.acks(), toS2Error),
+  lastAckedPosition: Effect.sync(() => Option.fromNullishOr(session.lastAckedPosition())),
+  failureCause: Effect.sync(() => Option.fromNullishOr(session.failureCause())),
+  close: tryPromise(() => session.close())
+})
+
+const wrapProducer = (producer: InstanceType<typeof SdkProducer>): ProducerApi => ({
+  raw: producer,
+  readable: Stream.fromReadableStream({ evaluate: () => producer.readable, onError: toS2Error }),
+  submit: (record) =>
+    Effect.map(tryPromise(() => producer.submit(record)), (ticket) => ({ ack: tryPromise(() => ticket.ack()) })),
+  close: tryPromise(() => producer.close())
+})
+
+const makeStreamSerialization = (raw: SdkStream): StreamSerializationApi => ({
+  appendSession: (serializer, options, sessionOptions, requestOptions) =>
+    Effect.map(
+      acquireAppendSession(raw, sessionOptions, requestOptions),
+      (session) =>
+        wrapSerializingAppendSession(new PatternSerialization.SerializingAppendSession(session, serializer, options))
+    ),
+  readSession: (deserialize, input, requestOptions, options) =>
+    Stream.unwrap(
+      Effect.map(acquireReadSession(raw, input, { ...requestOptions, as: "bytes" as const }), (session) =>
+        patterns.deserializingReadSession(session, deserialize, options))
+    )
+})
+
+const wrapSerializingAppendSession = <Message>(
+  session: PatternSerialization.SerializingAppendSession<Message>
+): SerializingAppendSessionApi<Message> => ({
+  raw: session,
+  submit: (message) => tryPromise(() => session.submit(message))
+})
