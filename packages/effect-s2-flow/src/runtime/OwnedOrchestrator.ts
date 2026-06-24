@@ -1,11 +1,11 @@
 import * as Deferred from "effect/Deferred"
+import type { Input as DurationInput } from "effect/Duration"
 import * as Effect from "effect/Effect"
 import * as PubSub from "effect/PubSub"
 import * as Queue from "effect/Queue"
 import * as Ref from "effect/Ref"
-import * as Stream from "effect/Stream"
 
-import type { FlowError } from "./FlowError.ts"
+import { type FlowError, flowError } from "./FlowError.ts"
 import * as Internal from "./Internal.ts"
 import type { AppendAck, FlowRecord, StreamStore } from "./StreamStore.ts"
 
@@ -13,12 +13,14 @@ export interface OwnedOrchestratorConfig {
   readonly commandCapacity: number
   readonly changesCapacity: number
   readonly writeCapacity: number
+  readonly writeTimeout: DurationInput
 }
 
 const defaultConfig: OwnedOrchestratorConfig = {
   commandCapacity: 64,
   changesCapacity: 256,
-  writeCapacity: 64
+  writeCapacity: 64,
+  writeTimeout: "1 second"
 }
 
 type Event<S, A> =
@@ -45,7 +47,7 @@ export interface OwnedOrchestrator<S, A> {
   readonly write: (values: ReadonlyArray<A>) => Effect.Effect<AppendAck<A>, FlowError>
   readonly read: <B>(project: (state: S, applied: number) => B) => Effect.Effect<B>
   readonly applied: Effect.Effect<number>
-  readonly changes: Stream.Stream<FlowRecord<A>>
+  readonly changes: Internal.Changes<A>
 }
 
 export interface OwnedOrchestratorOptions<S, A> {
@@ -110,7 +112,14 @@ export const make = Effect.fn("OwnedOrchestrator.make")(function*<S, A>(options:
         const reply = yield* Deferred.make<AppendAck<A>, FlowError>()
         const writeId = yield* Ref.updateAndGet(writeIdRef, (id) => id + 1)
         yield* Queue.offer(writes, { values, writeId, reply })
-        return yield* Deferred.await(reply)
+        return yield* Deferred.await(reply).pipe(
+          Effect.timeoutOption(config.writeTimeout),
+          Effect.flatMap((option) =>
+            option._tag === "Some"
+              ? Effect.succeed(option.value)
+              : Effect.fail(flowError("write-timeout", "owned write was not applied before the deadline"))
+          )
+        )
       }),
     read: <B>(project: (state: S, applied: number) => B) =>
       Effect.gen(function*() {
@@ -120,7 +129,7 @@ export const make = Effect.fn("OwnedOrchestrator.make")(function*<S, A>(options:
         return value as B
       }),
     applied: Ref.get(appliedRef),
-    changes: Stream.fromPubSub(changes)
+    changes: Internal.changesStream(changes)
   } satisfies OwnedOrchestrator<S, A>
 })
 
