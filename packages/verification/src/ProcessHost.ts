@@ -16,6 +16,7 @@ const ProcessHostTypeId = Symbol.for("@firegrid/verification/ProcessHost")
 export interface ProcessHostLaunchContext {
   readonly trialId: string
   readonly hostId: string
+  readonly hostEnv?: Record<string, string>
   readonly s2Endpoint?: string
 }
 
@@ -88,6 +89,7 @@ const processEnv = (
   const configured = resolve(config.env, context, {})
   return {
     ...configured,
+    ...context.hostEnv,
     FIREGRID_HOST_ID: context.hostId,
     FIREGRID_TRIAL_ID: context.trialId,
     ...(context.s2Endpoint === undefined ? {} : { S2_ENDPOINT: context.s2Endpoint }),

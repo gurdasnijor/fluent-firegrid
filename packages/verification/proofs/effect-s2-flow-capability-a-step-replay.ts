@@ -1,34 +1,12 @@
-import { client, run, service } from "effect-s2-flow"
+import { greeter } from "effect-s2-flow/capability-a-greeter"
+import { client, FlowRuntime } from "effect-s2-flow"
 import * as Effect from "effect/Effect"
 import * as Fiber from "effect/Fiber"
 
 import { processHost } from "../src/ProcessHost.ts"
 import { proof } from "../src/Proof.ts"
+import { VerificationError } from "../src/VerificationError.ts"
 
-const greeter = service({
-  name: "greeter",
-  handlers: {
-    *process(input: { readonly name: string }) {
-      const greeting = yield* run(
-        "step-1",
-        Effect.sync(() => `Hello, ${input.name}`)
-      )
-      return yield* run(
-        "step-2",
-        Effect.succeed({ greeting: `${greeting}!` })
-      )
-    }
-  }
-})
-
-/**
- * PDD forcing proof for Capability A.
- *
- * This proof is intentionally not registered in `proofs/main.ts` yet. It is the
- * target contract for the next runtime slice: when run directly through
- * `runProof`, it should stay red until `effect-s2-flow` provides a real host,
- * client, durable `run`, journal append, checkpoint, and replay path.
- */
 export default proof("effect-s2-flow.capability-a.step-replay")
   .describedAs(
     "Proves durable function execution: a two-step handler survives kill -9 after step 1 is durably acknowledged without re-running step 1."
@@ -44,13 +22,21 @@ export default proof("effect-s2-flow.capability-a.step-replay")
             "--filter",
             "effect-s2-flow",
             "host"
-          ]
+          ],
+          stderr: "inherit"
         })
       )
-      .workload(({ hosts }) =>
+      .workload(({ hosts, s2Endpoint }) =>
         Effect.gen(function*() {
+          if (s2Endpoint === undefined) {
+            return yield* new VerificationError({
+              message: "Capability A step-replay proof requires s2Lite"
+            })
+          }
           const pending = yield* Effect.forkDetach(
-            client(greeter).process({ name: "Ada" })
+            client(greeter, { invocationId: "capability-a-step-replay" }).process({ name: "Ada" }).pipe(
+              Effect.provide(FlowRuntime.layer({ s2Endpoint }))
+            )
           )
 
           yield* hosts.killAfterSpan("worker", {

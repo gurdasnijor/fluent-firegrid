@@ -11,6 +11,10 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./capability-a-greeter": {
+      "types": "./src/CapabilityAGreeter.ts",
+      "default": "./src/CapabilityAGreeter.ts"
     }
   },
   "files": ["src", "README.md"],
@@ -23,6 +27,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@effect/opentelemetry": "4.0.0-beta.87",
+    "@effect/platform-node": "4.0.0-beta.87",
+    "@firegrid/observability": "workspace:*",
+    "@opentelemetry/sdk-trace-base": "^2.8.0",
+    "effect-s2": "workspace:*",
     "effect": "4.0.0-beta.87"
   },
   "devDependencies": {

@@ -8,10 +8,18 @@
         "test/**/*.ts"
       ]
     },
+    "packages/effect-s2-flow": {
+      "entry": [
+        "src/HostMain.ts!"
+      ],
+      "project": [
+        "src/**/*.ts!",
+        "test/**/*.ts"
+      ]
+    },
     "packages/verification": {
       "entry": [
-        "proofs/main.ts!",
-        "proofs/effect-s2-flow-capability-a-step-replay.ts!"
+        "proofs/main.ts!"
       ],
       "project": [
         "src/**/*.ts!",
