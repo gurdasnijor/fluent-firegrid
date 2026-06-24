@@ -37,6 +37,7 @@
     "@opentelemetry/sdk-trace-base": "^2.8.0",
     "@opentelemetry/sdk-trace-node": "^2.8.0",
     "effect": "4.0.0-beta.87",
+    "effect-s2-flow": "workspace:*",
     "effect-s2": "workspace:*"
   },
   "devDependencies": {

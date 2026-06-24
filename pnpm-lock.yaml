@@ -79,12 +79,21 @@ importers:
         specifier: 4.0.0-beta.87
         version: 4.0.0-beta.87
     devDependencies:
+      '@effect/language-service':
+        specifier: ^0.86.2
+        version: 0.86.2
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.20
+      tsx:
+        specifier: ^4.22.4
+        version: 4.22.4
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
       vitest:
         specifier: ^3.2.0
-        version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
+        version: 3.2.6(@types/node@22.19.20)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
 
   packages/fluent-acp-process:
     dependencies:
@@ -174,6 +183,9 @@ importers:
       effect-s2:
         specifier: workspace:*
         version: link:../effect-s2
+      effect-s2-flow:
+        specifier: workspace:*
+        version: link:../effect-s2-flow
     devDependencies:
       '@effect/language-service':
         specifier: ^0.86.2

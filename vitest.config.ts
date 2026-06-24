@@ -47,7 +47,8 @@ export default defineConfig({
         test: {
           name: "effect-s2-flow",
           include: ["packages/effect-s2-flow/test/**/*.test.ts"],
-          exclude: ["**/node_modules/**"]
+          exclude: ["**/node_modules/**"],
+          passWithNoTests: true
         },
         resolve: {
           alias: {

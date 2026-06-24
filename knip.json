@@ -10,7 +10,8 @@
     },
     "packages/verification": {
       "entry": [
-        "proofs/main.ts!"
+        "proofs/main.ts!",
+        "proofs/effect-s2-flow-capability-a-step-replay.ts!"
       ],
       "project": [
         "src/**/*.ts!",
