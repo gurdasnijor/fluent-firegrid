@@ -25,7 +25,10 @@ const spanMatchSql = (
   return `
 SELECT count() > 0 AS ok
 FROM otel_traces
-WHERE SpanAttributes['firegrid.trial.id'] = {trial_id:String}
+WHERE (
+  SpanAttributes['firegrid.trial.id'] = {trial_id:String}
+  OR ResourceAttributes['firegrid.trial.id'] = {trial_id:String}
+)
 AND SpanName = '${escapeString(span)}'
 ${attrPredicates === "" ? "" : `AND ${attrPredicates}`}
 `

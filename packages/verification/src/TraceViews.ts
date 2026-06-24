@@ -11,6 +11,7 @@ export const trialSpansSql = `
     SELECT TraceId
     FROM otel_traces
     WHERE SpanAttributes['firegrid.trial.id'] = {trial_id:String}
+       OR ResourceAttributes['firegrid.trial.id'] = {trial_id:String}
   )
 )
 `

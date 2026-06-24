@@ -2,7 +2,14 @@ import { layer as ChdbLayer } from "@firegrid/observability"
 import { Effect, Layer } from "effect"
 import { describe, expect, it } from "vitest"
 
-import { expectWorkloadResult, property, runProperty, traceSql, VerificationRuntime } from "../src/index.ts"
+import {
+  expectWorkloadResult,
+  processHost,
+  property,
+  runProperty,
+  traceSql,
+  VerificationRuntime
+} from "../src/index.ts"
 import { layer as TraceRuntimeLayer } from "../src/TraceRuntime.ts"
 
 const TestRuntimeLayer = Layer.succeed(VerificationRuntime, {
@@ -104,6 +111,129 @@ describe("property", () => {
       const exit = yield* Effect.exit(runProperty(second, { trialId: "second-trial" }))
 
       expect(exit._tag).toBe("Failure")
+    }).pipe(
+      Effect.provide(LiveTraceLayer),
+      Effect.scoped,
+      Effect.runPromise
+    ))
+
+  it("kills and restarts a supervised process host after a trial-scoped span", () =>
+    Effect.gen(function*() {
+      const spec = property("supervised-host-fault")
+        .host(
+          "worker",
+          processHost({
+            command: "node",
+            args: ["-e", "setInterval(() => undefined, 1000)"]
+          })
+        )
+        .workload(({ faults, operation }) =>
+          Effect.gen(function*() {
+            const result = yield* operation(
+              "fault.probe",
+              { host: "worker" },
+              Effect.succeed("ok"),
+              { operationId: 1 }
+            )
+            yield* faults.killHostAfterSpan("worker", {
+              span: "verification.operation",
+              attributes: { "firegrid.operation.name": "fault.probe" }
+            })
+            yield* faults.restartHost("worker")
+            yield* faults.killHost("worker")
+            return result
+          })
+        )
+        .verify(
+          expectWorkloadResult("ok"),
+          traceSql(
+            "host-killed-after-span",
+            `
+            SELECT countIf(
+              SpanName = 'verification.host.kill'
+              AND SpanAttributes['firegrid.host.id'] = 'worker'
+              AND SpanAttributes['verification.signal'] = 'SIGKILL'
+            ) = 2 AS ok
+            FROM trial_spans
+          `
+          ),
+          traceSql(
+            "host-restarted",
+            `
+            SELECT countIf(SpanName = 'verification.host.start') = 2
+              AND countIf(SpanName = 'verification.host.restart') = 1 AS ok
+            FROM trial_spans
+          `
+          )
+        )
+
+      const trial = yield* runProperty(spec, { trialId: "supervised-host-fault" })
+
+      expect(trial.result._tag).toBe("Success")
+    }).pipe(
+      Effect.provide(LiveTraceLayer),
+      Effect.scoped,
+      Effect.runPromise
+    ))
+
+  it("starts configured s2 lite and injects trial host environment into process hosts", () =>
+    Effect.gen(function*() {
+      const s2Port = 32201
+      const hostPort = 32202
+      const spec = property("s2-env-injection")
+        .s2Lite({ persistence: "local-root" })
+        .host(
+          "worker",
+          processHost({
+            command: "node",
+            args: [
+              "-e",
+              `
+              if (process.env.FIREGRID_TRIAL_ID !== "s2-env-injection") process.exit(1)
+              if (process.env.FIREGRID_HOST_ID !== "worker") process.exit(1)
+              if (process.env.S2_ENDPOINT !== "http://127.0.0.1:${s2Port}") process.exit(1)
+              require("node:http").createServer((_, res) => res.end("ok")).listen(${hostPort})
+            `
+            ],
+            readiness: {
+              url: `http://127.0.0.1:${hostPort}`,
+              attempts: 80,
+              interval: "25 millis"
+            }
+          })
+        )
+        .workload(({ faults }) =>
+          Effect.gen(function*() {
+            yield* faults.killHost("worker")
+            return "ok"
+          })
+        )
+        .verify(
+          expectWorkloadResult("ok"),
+          traceSql(
+            "host-started-with-s2-env",
+            `
+            SELECT countIf(SpanName = 'verification.host.start') = 1
+              AND countIf(SpanName = 'verification.host.kill') = 1 AS ok
+            FROM trial_spans
+          `
+          )
+        )
+
+      const trial = yield* runProperty(spec, {
+        trialId: "s2-env-injection",
+        s2Lite: {
+          bin: "node",
+          args: (cfg) => [
+            "-e",
+            `require("node:http").createServer((_, res) => res.end("ok")).listen(${cfg.port})`
+          ],
+          port: s2Port,
+          localRoot: "/tmp/firegrid-verification-s2-env-injection"
+        }
+      })
+
+      expect(trial.result._tag).toBe("Success")
     }).pipe(
       Effect.provide(LiveTraceLayer),
       Effect.scoped,

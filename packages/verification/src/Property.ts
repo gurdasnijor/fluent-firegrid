@@ -1,12 +1,17 @@
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem"
+import * as NodeSocketServer from "@effect/platform-node/NodeSocketServer"
 import { ChdbClient } from "@firegrid/observability"
 import * as Context from "effect/Context"
 import type * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
 import * as Equal from "effect/Equal"
 import * as Exit from "effect/Exit"
+import { FileSystem } from "effect/FileSystem"
 import * as Layer from "effect/Layer"
 import * as Random from "effect/Random"
 
+import { makeProcessHostFaults, startProcessHosts } from "./ProcessHost.ts"
+import { type S2LiteConfig, S2LiteSupervisor } from "./S2LiteSupervisor.ts"
 import { runTraceProof, type TraceProof } from "./TraceProof.ts"
 import { VerificationError } from "./VerificationError.ts"
 
@@ -232,9 +237,59 @@ export interface RunPropertyOptions {
   readonly trialId?: string
   readonly faults?: Faults
   readonly reportDir?: string
+  readonly s2Lite?: Partial<S2LiteConfig>
 }
 
 const trialIdFromName = (name: string): string => name.replace(/[^A-Za-z0-9_.-]/g, "-")
+
+const allocatePort = Effect.fn("runProperty.allocatePort")(function*() {
+  return yield* Effect.scoped(
+    Effect.gen(function*() {
+      const server = yield* NodeSocketServer.make({ host: "127.0.0.1", port: 0 }).pipe(
+        Effect.mapError((cause) => new VerificationError({ message: "failed to allocate a local port", cause }))
+      )
+      if (server.address._tag !== "TcpAddress") {
+        return yield* new VerificationError({ message: "allocated a non-TCP socket for s2 lite" })
+      }
+      return server.address.port
+    })
+  )
+})
+
+const makeLocalRoot = Effect.fn("runProperty.makeLocalRoot")(function*() {
+  const fs = yield* FileSystem
+  return yield* fs.makeTempDirectoryScoped({ prefix: "firegrid-verification-s2lite-" }).pipe(
+    Effect.mapError((cause) => new VerificationError({ message: "failed to create s2 lite local root", cause }))
+  )
+})
+
+const resolveS2LiteConfig = Effect.fn("runProperty.resolveS2LiteConfig")(function*(
+  options: Partial<S2LiteConfig> | undefined
+) {
+  const port = options?.port ?? (yield* allocatePort())
+  const localRoot = options?.localRoot ?? (yield* makeLocalRoot().pipe(Effect.provide(NodeFileSystem.layer)))
+  return {
+    ...options,
+    port,
+    localRoot
+  } satisfies S2LiteConfig
+})
+
+const startS2Lite = Effect.fn("runProperty.startS2Lite")(function*(
+  spec: S2LiteSpec | undefined,
+  options: Partial<S2LiteConfig> | undefined
+) {
+  if (spec === undefined) return undefined
+  const config = yield* resolveS2LiteConfig(options)
+  return yield* Effect.gen(function*() {
+    const supervisor = yield* S2LiteSupervisor
+    yield* supervisor.start
+    return yield* supervisor.endpoint
+  }).pipe(
+    Effect.provide(S2LiteSupervisor.layer(config)),
+    Effect.mapError((cause) => new VerificationError({ message: "failed to start s2 lite", cause }))
+  )
+})
 
 export const runProperty = Effect.fn("runProperty")(function*<A>(
   spec: PropertySpec<A>,
@@ -243,32 +298,44 @@ export const runProperty = Effect.fn("runProperty")(function*<A>(
   const chdb = yield* ChdbClient
   const runtime = yield* VerificationRuntime
   const trialId = options.trialId ?? trialIdFromName(spec.name)
-  const result = yield* Effect.exit(
-    spec.workload({
-      faults: options.faults ?? defaultFaults,
-      operation,
-      runtime
-    }).pipe(
-      Effect.provideService(TrialId, trialId),
-      Effect.annotateSpans({
+  return yield* Effect.scoped(
+    Effect.gen(function*() {
+      const s2Endpoint = yield* startS2Lite(spec.s2Lite, options.s2Lite)
+      const supervisedHosts = yield* startProcessHosts(spec.hosts.values(), {
+        trialId,
+        ...(s2Endpoint === undefined ? {} : { s2Endpoint })
+      })
+      const faults = options.faults ?? (
+        supervisedHosts.size === 0 ? defaultFaults : makeProcessHostFaults(supervisedHosts, runtime)
+      )
+      const result = yield* Effect.exit(
+        spec.workload({
+          faults,
+          operation,
+          runtime
+        })
+      )
+      yield* runtime.flush
+      const completed: CompletedTrial<A> = {
+        trialId,
+        result,
+        chdb,
+        ...(options.reportDir === undefined ? {} : { reportDir: options.reportDir })
+      }
+      yield* Effect.forEach(spec.checks, (check) => check.run(completed), { discard: true })
+      return completed
+    })
+  ).pipe(
+    Effect.provideService(TrialId, trialId),
+    Effect.annotateSpans({
+      "firegrid.property.name": spec.name,
+      "firegrid.trial.id": trialId
+    }),
+    Effect.withSpan("verification.trial", {
+      attributes: {
         "firegrid.property.name": spec.name,
         "firegrid.trial.id": trialId
-      }),
-      Effect.withSpan("verification.trial", {
-        attributes: {
-          "firegrid.property.name": spec.name,
-          "firegrid.trial.id": trialId
-        }
-      })
-    )
+      }
+    })
   )
-  yield* runtime.flush
-  const completed: CompletedTrial<A> = {
-    trialId,
-    result,
-    chdb,
-    ...(options.reportDir === undefined ? {} : { reportDir: options.reportDir })
-  }
-  yield* Effect.forEach(spec.checks, (check) => check.run(completed), { discard: true })
-  return completed
 })
