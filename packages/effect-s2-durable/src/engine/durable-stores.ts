@@ -1,10 +1,12 @@
-import { Context, Effect, Layer } from "effect"
 import { S2Client, type S2ClientApi } from "effect-s2"
+import * as Context from "effect/Context"
+import * as Effect from "effect/Effect"
+import * as Layer from "effect/Layer"
+import type { DurableExecutionError } from "../errors.ts"
 import { ObjectOwnerDriver, type ObjectOwnerDriverApi } from "../object/owner-driver.ts"
-import { type DurableExecutionError } from "../errors.ts"
 import { ExecutionId, RosterDb, WorkflowDb } from "../storage/service-tables.ts"
-import { toError } from "./helpers.ts"
 import type { WfDb } from "./context.ts"
+import { toError } from "./helpers.ts"
 
 export interface DurableStoresApi {
   readonly client: S2ClientApi
@@ -27,10 +29,10 @@ const make = (): Effect.Effect<DurableStoresApi, DurableExecutionError, S2Client
   })
 
 export class DurableStores extends Context.Service<DurableStores, DurableStoresApi>()(
-  "effect-s2-durable/engine/durable-stores/DurableStores",
+  "effect-s2-durable/engine/durable-stores/DurableStores"
 ) {
   static readonly layer: Layer.Layer<DurableStores, DurableExecutionError, S2Client> = Layer.effect(
     DurableStores,
-    make(),
+    make()
   ).pipe(Layer.provide(ObjectOwnerDriver.layer))
 }

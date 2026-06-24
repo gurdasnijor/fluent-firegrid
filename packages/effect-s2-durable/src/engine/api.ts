@@ -1,6 +1,8 @@
-import { Context, type Effect, type Schema } from "effect"
-import type { DurableExecutionError } from "../errors.ts"
+import * as Context from "effect/Context"
+import type * as Effect from "effect/Effect"
+import type * as Schema from "effect/Schema"
 import type { Handler } from "../authoring/types.ts"
+import type { DurableExecutionError } from "../errors.ts"
 import type { ResultReaderApi } from "./result-reader.ts"
 
 /**
@@ -15,14 +17,14 @@ export type DurableQuery = <A, I>(
   object: string,
   key: string,
   input: unknown,
-  schema: Schema.Codec<A, I, never, never>,
+  schema: Schema.Codec<A, I, never, never>
 ) => Effect.Effect<A, DurableExecutionError>
 
 export type ExternalResolution = <A, I>(
   executionId: string,
   name: string,
   schema: Schema.Codec<A, I, never, never>,
-  value: A,
+  value: A
 ) => Effect.Effect<void, DurableExecutionError>
 
 /** The public durable engine surface that authoring APIs and primitives target. */
@@ -30,7 +32,7 @@ export interface DurableEngineApi {
   readonly submit: <I, O, E, R>(
     handler: Handler<I, O, E, R>,
     executionId: string,
-    input: I,
+    input: I
   ) => Effect.Effect<void, DurableExecutionError, R>
   readonly attach: ResultReaderApi["attach"]
   readonly poll: ResultReaderApi["poll"]
@@ -40,10 +42,10 @@ export interface DurableEngineApi {
   readonly workflowStart: <I, O, E, R>(
     handler: Handler<I, O, E, R>,
     runCallId: string,
-    input: I,
+    input: I
   ) => Effect.Effect<WorkflowStartStatus, DurableExecutionError, R>
 }
 
 export class DurableEngine extends Context.Service<DurableEngine, DurableEngineApi>()(
-  "effect-s2-durable/engine/api/DurableEngine",
+  "effect-s2-durable/engine/api/DurableEngine"
 ) {}

@@ -26,12 +26,12 @@ import { primaryKey, StreamDb, Table } from "effect-s2-stream-db"
 
 class Activity extends Table<Activity>("activities")({
   activityKey: Schema.String.pipe(primaryKey),
-  result: Schema.Unknown,
+  result: Schema.Unknown
 }) {}
 
 class ClockWakeup extends Table<ClockWakeup>("clockWakeups")({
   clockKey: Schema.String.pipe(primaryKey),
-  deadlineMs: Schema.Number,
+  deadlineMs: Schema.Number
 }) {}
 
 // optional: a schema-typed instance key (defaults to Schema.String)
@@ -39,7 +39,7 @@ const ExecutionId = Schema.String.pipe(Schema.brand("ExecutionId"))
 
 class WorkflowDb extends StreamDb<WorkflowDb>("wf")({
   activities: Activity,
-  clockWakeups: ClockWakeup,
+  clockWakeups: ClockWakeup
 }, ExecutionId) {}
 
 const program = Effect.gen(function*() {
@@ -70,7 +70,7 @@ const program = Effect.gen(function*() {
   (`ChangeMessage` + `MaterializedState`). The same fold runs for live apply-on-ack
   and cold replay, so the in-memory view never diverges from the durable log.
 - **Writes** are atomic: a transaction buffers its mutations and commits them as one
-  conditional S2 batch, then applies them to the in-memory view *after* the ack.
+  conditional S2 batch, then applies them to the in-memory view _after_ the ack.
 - **Compaction** is S2-native: `db.compact` (in-stream snapshot + trim, bounding
   preload cost to live-key count) or `db.drop` (delete the stream).
 - **Single-writer** per stream: one owner per db. Positional CAS never contends, so

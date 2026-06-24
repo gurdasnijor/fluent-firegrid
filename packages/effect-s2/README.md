@@ -61,7 +61,7 @@ import { AppendRecord, S2Client } from "effect-s2"
 const program = Effect.gen(function*() {
   yield* S2Client.createStream("events")
   yield* S2Client.append("events", [
-    AppendRecord.string({ body: "hello" }),
+    AppendRecord.string({ body: "hello" })
   ])
 }).pipe(Effect.provide(S2Client.layerConfig))
 
@@ -80,12 +80,12 @@ const program = Effect.gen(function*() {
   yield* S2Client.createStream("events")
   yield* S2Client.append("events", [
     AppendRecord.string({ body: "a" }),
-    AppendRecord.string({ body: "b" }),
+    AppendRecord.string({ body: "b" })
   ])
 
   const records = yield* S2Client.read("events", {
     start: { from: { seqNum: 0 } },
-    stop: { limits: { count: 2 } },
+    stop: { limits: { count: 2 } }
   }).pipe(Stream.runCollect)
 
   return records.map((record) => record.body)
@@ -109,25 +109,25 @@ const program = Effect.scoped(
     yield* S2Client.createStream("session-events")
     const session = yield* S2Client.appendSession("session-events", {
       maxInflightBytes: 1024 * 1024,
-      maxInflightBatches: 4,
+      maxInflightBatches: 4
     })
 
     const ack = yield* session.submit([
       AppendRecord.string({ body: "a" }),
-      AppendRecord.string({ body: "b" }),
+      AppendRecord.string({ body: "b" })
     ])
 
     return [ack.start.seqNum, ack.end.seqNum]
-  }),
+  })
 )
 ```
 
 Append sessions also accept conditional append options:
 
 ```ts
-yield* session.submit(
+yield * session.submit(
   [AppendRecord.string({ body: "exactly-once" })],
-  { matchSeqNum: expectedSeqNum },
+  { matchSeqNum: expectedSeqNum }
 )
 ```
 
@@ -147,14 +147,14 @@ const program = Effect.scoped(
       lingerDurationMillis: 5,
       maxBatchRecords: 100,
       maxBatchBytes: 1024 * 1024,
-      maxInflightBytes: 3 * 1024 * 1024,
+      maxInflightBytes: 3 * 1024 * 1024
     })
 
     yield* Stream.fromIterable([
       AppendRecord.string({ body: "one" }),
-      AppendRecord.string({ body: "two" }),
+      AppendRecord.string({ body: "two" })
     ]).pipe(Stream.run(S2Client.sink(producer)))
-  }),
+  })
 )
 ```
 
@@ -174,13 +174,13 @@ const program = Effect.gen(function*() {
   yield* S2Client.append("bytes", [
     AppendRecord.bytes({
       body: new Uint8Array([0, 1, 2, 255]),
-      headers: [[new Uint8Array([1]), new Uint8Array([2])]],
-    }),
+      headers: [[new Uint8Array([1]), new Uint8Array([2])]]
+    })
   ])
 
   const records = yield* S2Client.readBytes("bytes", {
     start: { from: { seqNum: 0 } },
-    stop: { limits: { count: 1 } },
+    stop: { limits: { count: 1 } }
   }).pipe(Stream.runCollect)
 
   return records
@@ -194,11 +194,11 @@ They are intentionally small and do not add a separate framing protocol.
 
 ```ts
 import { Effect, Schema, Stream } from "effect"
-import { S2Client, publish, readDecoded } from "effect-s2"
+import { publish, readDecoded, S2Client } from "effect-s2"
 
 class Order extends Schema.Class<Order>("Order")({
   id: Schema.String,
-  total: Schema.Number,
+  total: Schema.Number
 }) {}
 
 const program = Effect.gen(function*() {
@@ -207,7 +207,7 @@ const program = Effect.gen(function*() {
 
   const records = yield* readDecoded("orders", Order, {
     start: { from: { seqNum: 0 } },
-    stop: { limits: { count: 1 } },
+    stop: { limits: { count: 1 } }
   }).pipe(Stream.runCollect)
 
   return records.map((record) => [record.seqNum, record.value])

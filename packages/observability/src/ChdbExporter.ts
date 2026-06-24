@@ -38,19 +38,19 @@ const SPAN_KIND: Record<number, string> = {
   [SpanKind.SERVER]: "Server",
   [SpanKind.CLIENT]: "Client",
   [SpanKind.PRODUCER]: "Producer",
-  [SpanKind.CONSUMER]: "Consumer",
+  [SpanKind.CONSUMER]: "Consumer"
 }
 
 const STATUS_CODE: Record<number, string> = {
   [SpanStatusCode.UNSET]: "Unset",
   [SpanStatusCode.OK]: "Ok",
-  [SpanStatusCode.ERROR]: "Error",
+  [SpanStatusCode.ERROR]: "Error"
 }
 
 // ── value coercion ───────────────────────────────────────────────────────────
 
 /** epoch nanoseconds as bigint (avoids JS-number precision loss on absolute ns). */
-const hrNanos = ([seconds, nanos]: HrTime): bigint => BigInt(seconds) * 1_000_000_000n + BigInt(nanos)
+const hrNanos = ([seconds, nanos]: HrTime): bigint => BigInt(seconds) * BigInt(1000000000) + BigInt(nanos)
 
 /** Map(String, String) requires string values; stringify everything else. */
 const attrValueToString = (v: AttributeValue | undefined): string =>
@@ -78,8 +78,7 @@ interface LegacyReadableSpan {
   readonly parentSpanId?: unknown
 }
 
-const stringOrEmpty = (value: unknown): string =>
-  typeof value === "string" ? value : ""
+const stringOrEmpty = (value: unknown): string => typeof value === "string" ? value : ""
 
 const scopeOf = (span: ReadableSpan): { name: string; version: string } => {
   const scope = span.instrumentationScope ?? (span as LegacyReadableSpan).instrumentationLibrary
@@ -129,17 +128,18 @@ PARTITION BY toDate(Timestamp)
 ORDER BY (ServiceName, SpanName, toDateTime(Timestamp))
 SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1`
 
-const insertHeader = (qualified: string): string =>
-  `INSERT INTO ${qualified} FORMAT JSONEachRow`
+const insertHeader = (qualified: string): string => `INSERT INTO ${qualified} FORMAT JSONEachRow`
 
 const pad = (value: number, length: number): string => String(value).padStart(length, "0")
 
 const nanosToDateTime64 = (value: bigint): string => {
-  const millis = value / 1_000_000n
-  const nanos = value % 1_000_000_000n
+  const millis = value / BigInt(1000000)
+  const nanos = value % BigInt(1000000000)
   const date = new Date(Number(millis))
   return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1, 2)}-${pad(date.getUTCDate(), 2)} `
-    + `${pad(date.getUTCHours(), 2)}:${pad(date.getUTCMinutes(), 2)}:${pad(date.getUTCSeconds(), 2)}.${pad(Number(nanos), 9)}`
+    + `${pad(date.getUTCHours(), 2)}:${pad(date.getUTCMinutes(), 2)}:${pad(date.getUTCSeconds(), 2)}.${
+      pad(Number(nanos), 9)
+    }`
 }
 
 // ── exporter ─────────────────────────────────────────────────────────────────
@@ -159,7 +159,7 @@ export class ChdbSpanExporter implements SpanExporter {
     this.insertHeader = insertHeader(qualified)
   }
 
-  export(spans: ReadableSpan[], resultCallback: (result: ExportResult) => void): void {
+  export(spans: Array<ReadableSpan>, resultCallback: (result: ExportResult) => void): void {
     if (spans.length === 0) {
       resultCallback({ code: ExportResultCode.SUCCESS })
       return
@@ -206,7 +206,7 @@ export class ChdbSpanExporter implements SpanExporter {
       "Links.TraceId": links.map((l) => l.context.traceId),
       "Links.SpanId": links.map((l) => l.context.spanId),
       "Links.TraceState": links.map((l) => l.context.traceState?.serialize() ?? ""),
-      "Links.Attributes": links.map((l) => attrsToObject(l.attributes)),
+      "Links.Attributes": links.map((l) => attrsToObject(l.attributes))
     }
   }
 }

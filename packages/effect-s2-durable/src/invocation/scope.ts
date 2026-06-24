@@ -1,10 +1,12 @@
-import { Context, type Duration, type Effect, type Schema } from "effect"
 import type { AnyTable, RowOf } from "effect-s2-stream-db"
+import * as Context from "effect/Context"
+import type * as Duration from "effect/Duration"
+import type * as Effect from "effect/Effect"
+import type * as Schema from "effect/Schema"
 import type { MethodCodecs } from "../authoring/definition.ts"
-import type { DurablePromiseResolver, RunStep, StateBinding } from "../authoring/types.ts"
-import type { DurableExecutionError } from "../errors.ts"
-import type { Handler } from "../authoring/types.ts"
+import type { DurablePromiseResolver, Handler, RunStep, StateBinding } from "../authoring/types.ts"
 import type { DurableQuery } from "../engine/api.ts"
+import type { DurableExecutionError } from "../errors.ts"
 
 export interface ServiceCallTarget {
   readonly service: string
@@ -19,7 +21,7 @@ export interface ObjectCallTarget {
 
 interface HandlerRequestAccess {
   readonly input: <A, I>(
-    schema: Schema.Codec<A, I, never, never>,
+    schema: Schema.Codec<A, I, never, never>
   ) => Effect.Effect<A, DurableExecutionError>
 }
 
@@ -37,7 +39,7 @@ interface DurableStateFactory {
 
 interface Awakeables {
   readonly create: <A, I>(
-    schema: Schema.Codec<A, I, never, never>,
+    schema: Schema.Codec<A, I, never, never>
   ) => Effect.Effect<{
     readonly id: string
     readonly promise: Effect.Effect<A, DurableExecutionError>
@@ -47,7 +49,7 @@ interface Awakeables {
 interface DurablePromises {
   readonly await: <A, I>(
     name: string,
-    schema: Schema.Codec<A, I, never, never>,
+    schema: Schema.Codec<A, I, never, never>
   ) => Effect.Effect<A, DurableExecutionError>
   readonly resolve: DurablePromiseResolver
   readonly resolveWorkflow: DurablePromiseResolver
@@ -58,23 +60,23 @@ interface ServiceCommunication {
     handler: Handler<unknown, unknown, never, never>,
     target: ServiceCallTarget,
     input: unknown,
-    schema: Schema.Codec<A, I, never, never>,
+    schema: Schema.Codec<A, I, never, never>
   ) => Effect.Effect<A, DurableExecutionError>
   readonly sendService: (
     handler: Handler<unknown, unknown, never, never>,
     target: ServiceCallTarget,
-    input: unknown,
+    input: unknown
   ) => Effect.Effect<string, DurableExecutionError>
   readonly callObject: <A, I>(
     target: ObjectCallTarget,
     input: unknown,
     inputSchema: MethodCodecs["input"],
-    schema: Schema.Codec<A, I, never, never>,
+    schema: Schema.Codec<A, I, never, never>
   ) => Effect.Effect<A, DurableExecutionError>
   readonly sendObject: (
     target: ObjectCallTarget,
     input: unknown,
-    inputSchema: MethodCodecs["input"],
+    inputSchema: MethodCodecs["input"]
   ) => Effect.Effect<string, DurableExecutionError>
   readonly sharedObject: DurableQuery
 }
@@ -90,5 +92,5 @@ export interface InvocationScope {
 }
 
 export class CurrentInvocationScope extends Context.Service<CurrentInvocationScope, InvocationScope>()(
-  "effect-s2-durable/invocation/scope/CurrentInvocationScope",
+  "effect-s2-durable/invocation/scope/CurrentInvocationScope"
 ) {}

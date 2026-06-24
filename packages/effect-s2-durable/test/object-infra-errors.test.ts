@@ -1,13 +1,17 @@
 import { describe, expect, it } from "@effect/vitest"
-import { Context, Duration, Effect, Layer, Schema } from "effect"
-import { encodeObjectCallId } from "../src/object/address.ts"
-import { pathSegment } from "../src/object/machine/index.ts"
-import { openLog } from "../src/object/log.ts"
-import { DurableExecutionError } from "../src/errors.ts"
-import { DurableEngine } from "../src/engine/api.ts"
-import { compileOne } from "../src/catalog/compiler.ts"
+import * as Context from "effect/Context"
+import * as Duration from "effect/Duration"
+import * as Effect from "effect/Effect"
+import * as Layer from "effect/Layer"
+import * as Schema from "effect/Schema"
 import { object } from "../src/authoring/definition.ts"
+import { compileOne } from "../src/catalog/compiler.ts"
 import { serviceLayer } from "../src/catalog/layer.ts"
+import { DurableEngine } from "../src/engine/api.ts"
+import { DurableExecutionError } from "../src/errors.ts"
+import { encodeObjectCallId } from "../src/object/address.ts"
+import { openLog } from "../src/object/log.ts"
+import { pathSegment } from "../src/object/machine/index.ts"
 import { hasS2 } from "./ingress-support.ts"
 import { S2LiteLive } from "./s2lite.ts"
 
@@ -18,11 +22,11 @@ const InfraFailureObject = object({
       return yield* new DurableExecutionError({
         operation: "object.syntheticInfrastructure",
         message: "synthetic infrastructure failure",
-        cause: undefined,
+        cause: undefined
       })
-    },
+    }
   },
-  schemas: { boom: { input: Schema.Void, output: Schema.Never } },
+  schemas: { boom: { input: Schema.Void, output: Schema.Never } }
 })
 
 const engineLayer = serviceLayer(InfraFailureObject)
@@ -37,7 +41,7 @@ describe.skipIf(!hasS2())("object infrastructure errors", () => {
         object: InfraFailureObject.name,
         key: "k",
         method: "boom",
-        nonce: "n1",
+        nonce: "n1"
       })
 
       yield* engine.submit(boomHandler, callId, undefined)

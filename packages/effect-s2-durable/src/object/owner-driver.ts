@@ -1,8 +1,18 @@
-import { Context, Deferred, Effect, Layer, Option, Ref, Schema, Semaphore } from "effect"
-import { type S2Client } from "effect-s2"
+import type { S2Client } from "effect-s2"
 import { StreamDb } from "effect-s2-stream-db"
-import { DurableExecutionError, durableError as toError } from "../errors.ts"
+import * as Context from "effect/Context"
+import * as Deferred from "effect/Deferred"
+import * as Effect from "effect/Effect"
+import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
+import * as Ref from "effect/Ref"
+import * as Schema from "effect/Schema"
+import * as Semaphore from "effect/Semaphore"
+import { durableError as toError, DurableExecutionError } from "../errors.ts"
 import type { ObjectCallIdParts } from "./address.ts"
+import { ensureStream, FenceLost, freshHostToken, openOwnerDriveSession } from "./drive-session.ts"
+import { type ActorLog, openLog } from "./log.ts"
+import * as ObjectMachine from "./machine/commands.ts"
 import {
   type ActorEvent,
   type ActorExit,
@@ -10,11 +20,8 @@ import {
   pathSegment,
   replay,
   transition,
-  unPathSegment,
-} from "./machine/index.ts"
-import { ensureStream, FenceLost, freshHostToken, openOwnerDriveSession } from "./drive-session.ts"
-import { type ActorLog, openLog } from "./log.ts"
-import * as ObjectMachine from "./machine/index.ts"
+  unPathSegment
+} from "./machine/model.ts"
 
 /**
  * `ObjectOwnerDriver` interprets pure `ObjectMachine` decisions against the S2
@@ -43,7 +50,7 @@ export interface ObjectStateBackend {
     readonly put: (
       kind: string,
       step: string,
-      value: unknown,
+      value: unknown
     ) => Effect.Effect<void, DurableExecutionError, S2Client>
   }
   /**
@@ -78,18 +85,18 @@ export interface ObjectOwnerDriverApi {
   readonly admit: (
     callId: string,
     parts: ObjectCallIdParts,
-    input: unknown,
+    input: unknown
   ) => Effect.Effect<AdmitResult, DurableExecutionError, S2Client>
   /** Read a call's status from the owner projection (no residency). */
   readonly status: (
     callId: string,
-    parts: ObjectCallIdParts,
+    parts: ObjectCallIdParts
   ) => Effect.Effect<CallStatus, DurableExecutionError, S2Client>
   /** Drain an owner's FIFO to quiescence under its exclusive per-key lock. */
   readonly drain: (
     object: string,
     key: string,
-    runHead: RunHead,
+    runHead: RunHead
   ) => Effect.Effect<void, DurableExecutionError, S2Client>
   /**
    * Residency-independent ingress: append a `SignalResolved` to the owner stream
@@ -100,7 +107,7 @@ export interface ObjectOwnerDriverApi {
     callId: string,
     parts: ObjectCallIdParts,
     name: string,
-    value: unknown,
+    value: unknown
   ) => Effect.Effect<void, DurableExecutionError, S2Client>
   /**
    * Enumerate the existing owner keys for an object NAME (boot recovery) — reuses
@@ -114,7 +121,7 @@ export interface ObjectOwnerDriverApi {
    */
   readonly readSnapshot: (
     object: string,
-    key: string,
+    key: string
   ) => Effect.Effect<ReturnType<typeof replay>, DurableExecutionError, S2Client>
 }
 
@@ -127,11 +134,12 @@ const ownerKeyCodec = Schema.String
 const ownerStream = (object: string, key: string): Effect.Effect<string, DurableExecutionError> =>
   Schema.encodeEffect(ownerKeyCodec)(key).pipe(
     Effect.map((segment) => `obj/${pathSegment(object)}/${pathSegment(segment)}`),
-    Effect.mapError(toError("object.ownerStream")),
+    Effect.mapError(toError("object.ownerStream"))
   )
 
 const isFenceLostCause = (cause: unknown): cause is FenceLost =>
-  cause instanceof FenceLost || (typeof cause === "object" && cause !== null && "_tag" in cause && cause._tag === "FenceLost")
+  cause instanceof FenceLost ||
+  (typeof cause === "object" && cause !== null && "_tag" in cause && cause._tag === "FenceLost")
 
 // The journaled state context for a running call: reads record a `Journaled` fact
 // and replay verbatim (crash-stable RMW); writes append `StateChanged` and advance
@@ -144,46 +152,46 @@ const makeBackend = (
   snapshotRef: Ref.Ref<ReturnType<typeof replay>>,
   callId: string,
   readCounter: Ref.Ref<number>,
-  signalPort: SignalPort,
-	): ObjectStateBackend => {
-	  const decide = (
-	    snapshot: ReturnType<typeof replay>,
-	    command: ObjectMachine.ObjectCommand,
-	  ): ObjectMachine.ObjectDecision => ObjectMachine.decide(snapshot, command)
-	
-	  const appendAndApply = (event: ActorEvent): Effect.Effect<void, DurableExecutionError, S2Client> =>
-	    Effect.gen(function*() {
-	      const seqNum = yield* append(event)
-	      yield* Ref.update(snapshotRef, (snapshot) => transition(snapshot, { seqNum, event }))
-	    })
-	
-	  const appendEvents = (events: ReadonlyArray<ActorEvent>): Effect.Effect<void, DurableExecutionError, S2Client> =>
-	    Effect.forEach(events, appendAndApply, { discard: true })
-	
-	  const write = (
-	    op: "set" | "delete",
-	    table: string,
+  signalPort: SignalPort
+): ObjectStateBackend => {
+  const decide = (
+    snapshot: ReturnType<typeof replay>,
+    command: ObjectMachine.ObjectCommand
+  ): ObjectMachine.ObjectDecision => ObjectMachine.decide(snapshot, command)
+
+  const appendAndApply = (event: ActorEvent): Effect.Effect<void, DurableExecutionError, S2Client> =>
+    Effect.gen(function*() {
+      const seqNum = yield* append(event)
+      yield* Ref.update(snapshotRef, (snapshot) => transition(snapshot, { seqNum, event }))
+    })
+
+  const appendEvents = (events: ReadonlyArray<ActorEvent>): Effect.Effect<void, DurableExecutionError, S2Client> =>
+    Effect.forEach(events, appendAndApply, { discard: true })
+
+  const write = (
+    op: "set" | "delete",
+    table: string,
     key: string,
-    value: unknown,
-	  ): Effect.Effect<void, DurableExecutionError, S2Client> =>
-	    Effect.gen(function*() {
-	      const snapshot = yield* Ref.get(snapshotRef)
-	      const result = decide(
-	        snapshot,
-	        op === "set" ? { _tag: "StateSet", table, key, value } : { _tag: "StateDelete", table, key },
-	      )
-	      yield* appendEvents(result.events)
-	    })
+    value: unknown
+  ): Effect.Effect<void, DurableExecutionError, S2Client> =>
+    Effect.gen(function*() {
+      const snapshot = yield* Ref.get(snapshotRef)
+      const result = decide(
+        snapshot,
+        op === "set" ? { _tag: "StateSet", table, key, value } : { _tag: "StateDelete", table, key }
+      )
+      yield* appendEvents(result.events)
+    })
 
   return {
     get: (table, key) =>
       Effect.gen(function*() {
-	        const step = String(yield* Ref.getAndUpdate(readCounter, (n) => n + 1))
-	        const snapshot = yield* Ref.get(snapshotRef)
-	        const result = decide(snapshot, { _tag: "StateGet", callId, step, table, key })
-	        yield* appendEvents(result.events)
-	        return result.result as Option.Option<unknown>
-	      }),
+        const step = String(yield* Ref.getAndUpdate(readCounter, (n) => n + 1))
+        const snapshot = yield* Ref.get(snapshotRef)
+        const result = decide(snapshot, { _tag: "StateGet", callId, step, table, key })
+        yield* appendEvents(result.events)
+        return result.result as Option.Option<unknown>
+      }),
     set: (table, key, value) => write("set", table, key, value),
     delete: (table, key) => write("delete", table, key, undefined),
     // the durable-primitive journal, namespaced by `kind` (`run`, `sleep`, …) so a
@@ -191,12 +199,12 @@ const makeBackend = (
     journal: {
       get: (kind, step) =>
         Ref.get(snapshotRef).pipe(Effect.map((snapshot) => ObjectMachine.journalGet(snapshot, callId, kind, step))),
-	      put: (kind, step, value) =>
-	        Effect.gen(function*() {
-	          const snapshot = yield* Ref.get(snapshotRef)
-	          const result = decide(snapshot, { _tag: "JournalPut", callId, kind, step, value })
-	          yield* appendEvents(result.events)
-	        }),
+      put: (kind, step, value) =>
+        Effect.gen(function*() {
+          const snapshot = yield* Ref.get(snapshotRef)
+          const result = decide(snapshot, { _tag: "JournalPut", callId, kind, step, value })
+          yield* appendEvents(result.events)
+        })
     },
     signal: {
       await: (name) => {
@@ -229,10 +237,10 @@ const makeBackend = (
         return loop()
       },
       resolve: (name, value) =>
-	        Effect.gen(function*() {
-	          const snapshot = yield* Ref.get(snapshotRef)
-	          const result = decide(snapshot, { _tag: "ResolveSignal", callId, name, value })
-	          yield* appendEvents(result.events)
+        Effect.gen(function*() {
+          const snapshot = yield* Ref.get(snapshotRef)
+          const result = decide(snapshot, { _tag: "ResolveSignal", callId, name, value })
+          yield* appendEvents(result.events)
           yield* Effect.forEach(
             result.actions,
             (action) =>
@@ -241,10 +249,10 @@ const makeBackend = (
                   yield* signalPort.poke(action.callId, action.name)
                 }
               }),
-            { discard: true },
+            { discard: true }
           )
-        }),
-    },
+        })
+    }
   }
 }
 
@@ -298,7 +306,7 @@ const make = (): Effect.Effect<ObjectOwnerDriverApi> =>
           const next = new Map(m)
           next.delete(waiterKey(callId, name))
           return next
-        }),
+        })
     }
 
     const lockCreation = yield* Semaphore.make(1)
@@ -312,13 +320,13 @@ const make = (): Effect.Effect<ObjectOwnerDriverApi> =>
           const created = yield* Semaphore.make(1)
           yield* Ref.update(locks, (map) => new Map(map).set(stream, created))
           return created
-        }),
+        })
       )
 
     const admit = (
       callId: string,
       parts: ObjectCallIdParts,
-      input: unknown,
+      input: unknown
     ): Effect.Effect<AdmitResult, DurableExecutionError, S2Client> =>
       Effect.gen(function*() {
         const stream = yield* ownerStream(parts.object, parts.key)
@@ -342,7 +350,7 @@ const make = (): Effect.Effect<ObjectOwnerDriverApi> =>
               return yield* new DurableExecutionError({
                 operation: "object.admit",
                 message: "admission CAS exhausted",
-                cause: undefined,
+                cause: undefined
               })
             }
             return yield* attempt(remaining - 1) // a concurrent writer won; re-read and retry
@@ -352,17 +360,19 @@ const make = (): Effect.Effect<ObjectOwnerDriverApi> =>
 
     const status = (
       callId: string,
-      parts: ObjectCallIdParts,
+      parts: ObjectCallIdParts
     ): Effect.Effect<CallStatus, DurableExecutionError, S2Client> =>
       Effect.gen(function*() {
         const log = openLog(yield* ownerStream(parts.object, parts.key))
         return ObjectMachine.status(replay(yield* log.read()), callId)
-      }).pipe(Effect.withSpan("effect-s2-durable.object.status", { attributes: { object: parts.object, key: parts.key } }))
+      }).pipe(
+        Effect.withSpan("effect-s2-durable.object.status", { attributes: { object: parts.object, key: parts.key } })
+      )
 
     const drain = (
       object: string,
       key: string,
-      runHead: RunHead,
+      runHead: RunHead
     ): Effect.Effect<void, DurableExecutionError, S2Client> =>
       Effect.gen(function*() {
         const stream = yield* ownerStream(object, key)
@@ -380,7 +390,7 @@ const make = (): Effect.Effect<ObjectOwnerDriverApi> =>
               ? replay(entries)
               : entries.reduce(
                 (s, e) => (e.event._tag === "Accepted" && !s.order.includes(e.event.callId) ? transition(s, e) : s),
-                cached,
+                cached
               )
             // No pending head → don't fence a quiescent stream (boot recovery and
             // redundant drains would otherwise cause ownership churn). Read/replay
@@ -406,15 +416,15 @@ const make = (): Effect.Effect<ObjectOwnerDriverApi> =>
                     new DurableExecutionError({
                       operation: "object.driveAppend",
                       message: `owner fence lost on ${lost.stream}`,
-                      cause: lost,
-                    }),
-                  )),
+                      cause: lost
+                    })
+                  ))
               )
 
             // Run one head, advancing the in-memory snapshot by its writes + `Completed`.
             const runOne = (
               snapshot: ReturnType<typeof replay>,
-              head: ObjectMachine.PendingHead,
+              head: ObjectMachine.PendingHead
             ): Effect.Effect<ReturnType<typeof replay>, DurableExecutionError | FenceLost, S2Client> =>
               Effect.gen(function*() {
                 const snapshotRef = yield* Ref.make(snapshot)
@@ -424,11 +434,13 @@ const make = (): Effect.Effect<ObjectOwnerDriverApi> =>
                   callId: head.callId,
                   method: head.method,
                   input: head.input,
-                  state: backend,
+                  state: backend
                 }).pipe(
-                  Effect.catchTag("DurableExecutionError", (error): Effect.Effect<never, DurableExecutionError | FenceLost> =>
-                    isFenceLostCause(error.cause) ? Effect.fail(error.cause) : Effect.fail(error),
-                  ),
+                  Effect.catchTag(
+                    "DurableExecutionError",
+                    (error): Effect.Effect<never, DurableExecutionError | FenceLost> =>
+                      isFenceLostCause(error.cause) ? Effect.fail(error.cause) : Effect.fail(error)
+                  )
                 )
                 const result = ObjectMachine.complete(yield* Ref.get(snapshotRef), head.callId, exit)
                 const event = result.events[0]
@@ -443,7 +455,7 @@ const make = (): Effect.Effect<ObjectOwnerDriverApi> =>
               })
 
             const drainFrom = (
-              snapshot: ReturnType<typeof replay>,
+              snapshot: ReturnType<typeof replay>
             ): Effect.Effect<ReturnType<typeof replay>, DurableExecutionError | FenceLost, S2Client> =>
               Effect.gen(function*() {
                 const selected = ObjectMachine.selectNextHead(snapshot, acceptedHeads, { started: startedSet })
@@ -453,7 +465,7 @@ const make = (): Effect.Effect<ObjectOwnerDriverApi> =>
                 }
                 startedSet.add(head.callId) // mark BEFORE running — never selected again
                 const advanced = yield* runOne(snapshot, head).pipe(
-                  Effect.tapError(() => Effect.sync(() => startedSet.delete(head.callId))), // a failed start may retry
+                  Effect.tapError(() => Effect.sync(() => startedSet.delete(head.callId))) // a failed start may retry
                 )
                 return yield* drainFrom(advanced)
               })
@@ -470,22 +482,22 @@ const make = (): Effect.Effect<ObjectOwnerDriverApi> =>
                   const next = new Map(m)
                   next.delete(stream)
                   return next
-                })),
-              )),
-          ),
+                }))
+              ))
+          )
         )
       }).pipe(
         // A forked drainer's failure is otherwise swallowed (attach just times out);
         // surface it so an owner-driver crash is visible.
         Effect.tapCause((cause) => Effect.logError("effect-s2-durable: object drainer failed", cause)),
-        Effect.withSpan("effect-s2-durable.object.drain", { attributes: { object, key } }),
+        Effect.withSpan("effect-s2-durable.object.drain", { attributes: { object, key } })
       )
 
     const resolveSignal = (
       callId: string,
       parts: ObjectCallIdParts,
       name: string,
-      value: unknown,
+      value: unknown
     ): Effect.Effect<void, DurableExecutionError, S2Client> =>
       Effect.gen(function*() {
         const log = openLog(yield* ownerStream(parts.object, parts.key))
@@ -504,12 +516,12 @@ const make = (): Effect.Effect<ObjectOwnerDriverApi> =>
         return segments.map(unPathSegment)
       }).pipe(
         Effect.mapError(toError("object.ownerKeys")),
-        Effect.withSpan("effect-s2-durable.object.ownerKeys", { attributes: { object } }),
+        Effect.withSpan("effect-s2-durable.object.ownerKeys", { attributes: { object } })
       )
 
     const readSnapshot = (
       object: string,
-      key: string,
+      key: string
     ): Effect.Effect<ReturnType<typeof replay>, DurableExecutionError, S2Client> =>
       Effect.gen(function*() {
         const log = openLog(yield* ownerStream(object, key))
@@ -520,7 +532,7 @@ const make = (): Effect.Effect<ObjectOwnerDriverApi> =>
   })
 
 export class ObjectOwnerDriver extends Context.Service<ObjectOwnerDriver, ObjectOwnerDriverApi>()(
-  "effect-s2-durable/object/owner-driver/ObjectOwnerDriver",
+  "effect-s2-durable/object/owner-driver/ObjectOwnerDriver"
 ) {
   static readonly layer = Layer.effect(ObjectOwnerDriver, make())
 }

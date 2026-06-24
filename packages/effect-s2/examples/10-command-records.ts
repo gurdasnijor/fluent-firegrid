@@ -1,5 +1,6 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
-import { Console, Effect } from "effect"
+import * as Console from "effect/Console"
+import * as Effect from "effect/Effect"
 import { AppendInput, AppendRecord, S2Client } from "../src/index.ts"
 
 const streamName = `effect-s2-commands-${Date.now()}`
@@ -11,15 +12,15 @@ const program = Effect.gen(function*() {
     streamName,
     AppendInput.create(
       [AppendRecord.string({ body: "guarded write" })],
-      { fencingToken: "writer-a" },
-    ),
+      { fencingToken: "writer-a" }
+    )
   )
   yield* S2Client.append(streamName, AppendInput.create([AppendRecord.trim(1)]))
 
   const batch = yield* S2Client.readBatch(streamName, {
     start: { from: { seqNum: 0 } },
     stop: { limits: { count: 10 } },
-    ignoreCommandRecords: true,
+    ignoreCommandRecords: true
   })
 
   yield* S2Client.deleteStream({ stream: streamName })

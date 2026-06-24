@@ -1,4 +1,3 @@
-import { Data, Effect, Schema } from "effect"
 import {
   AppendInput,
   AppendRecord,
@@ -7,10 +6,13 @@ import {
   randomToken,
   S2Client,
   S2Conflict,
-  S2NotFound,
+  S2NotFound
 } from "effect-s2"
-import { type DurableExecutionError, durableError as toError } from "../errors.ts"
-import { ActorEvent } from "./machine/index.ts"
+import * as Data from "effect/Data"
+import * as Effect from "effect/Effect"
+import * as Schema from "effect/Schema"
+import { durableError as toError, type DurableExecutionError } from "../errors.ts"
+import { ActorEvent } from "./machine/model.ts"
 
 /**
  * The scoped owner-drive session: the ONE place that combines fencing with owner
@@ -77,7 +79,7 @@ export const ensureStream = (stream: string): Effect.Effect<void, DurableExecuti
     Effect.asVoid,
     Effect.catch((cause) => (isS2Conflict(cause) ? Effect.void : Effect.fail(cause))),
     Effect.andThen(S2Client.checkTail(stream).pipe(Effect.retry({ while: isAbsent, times: 100 }), Effect.asVoid)),
-    Effect.mapError(toError("object.ensureStream")),
+    Effect.mapError(toError("object.ensureStream"))
   )
 
 // Claim the stream by stamping the fence (a fence command targets an existing
@@ -85,7 +87,7 @@ export const ensureStream = (stream: string): Effect.Effect<void, DurableExecuti
 const claim = (stream: string, token: string): Effect.Effect<void, DurableExecutionError, S2Client> =>
   S2Client.append(stream, AppendInput.create([AppendRecord.fence(token)])).pipe(
     Effect.asVoid,
-    Effect.mapError(toError("object.driveSession.claim")),
+    Effect.mapError(toError("object.driveSession.claim"))
   )
 
 /**
@@ -94,7 +96,7 @@ const claim = (stream: string, token: string): Effect.Effect<void, DurableExecut
  */
 export const openOwnerDriveSession = (
   stream: string,
-  token: string,
+  token: string
 ): Effect.Effect<OwnerDriveSession, DurableExecutionError, S2Client> =>
   Effect.gen(function*() {
     yield* ensureStream(stream)
@@ -105,9 +107,9 @@ export const openOwnerDriveSession = (
         Effect.catch((cause): Effect.Effect<never, DurableExecutionError | FenceLost> =>
           isFenceLoss(cause)
             ? Effect.fail(new FenceLost({ stream }))
-            : Effect.fail(toError("object.driveSession.append")(cause)),
+            : Effect.fail(toError("object.driveSession.append")(cause))
         ),
-        Effect.withSpan("effect-s2-durable.driveSession.append", { attributes: { stream, tag: event._tag } }),
+        Effect.withSpan("effect-s2-durable.driveSession.append", { attributes: { stream, tag: event._tag } })
       )
     return { token, append }
   }).pipe(Effect.withSpan("effect-s2-durable.driveSession.open", { attributes: { stream, token } }))

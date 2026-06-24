@@ -1,7 +1,10 @@
-import { type Duration, Effect, type Option, type Schema } from "effect"
 import type { AnyTable, RowOf } from "effect-s2-stream-db"
-import type { DurableExecutionError } from "../errors.ts"
+import type * as Duration from "effect/Duration"
+import * as Effect from "effect/Effect"
+import type * as Option from "effect/Option"
+import type * as Schema from "effect/Schema"
 import { DurableEngine } from "../engine/api.ts"
+import type { DurableExecutionError } from "../errors.ts"
 import { CurrentInvocationScope } from "../invocation/scope.ts"
 import type { AwakeableHandle, DeferredHandle, IngressResolve, Run, RunOptions, StateBinding } from "./types.ts"
 
@@ -23,7 +26,7 @@ type RunImplOptions = RunOptions<unknown, unknown, unknown, unknown>
 export const run: Run = ((
   actionOrName: Effect.Effect<unknown, unknown, never> | string,
   actionOrOptions?: Effect.Effect<unknown, unknown, never> | RunImplOptions,
-  options?: RunImplOptions,
+  options?: RunImplOptions
 ) =>
   Effect.flatMap(CurrentInvocationScope, (scope) => {
     if (typeof actionOrName === "string") {
@@ -35,14 +38,14 @@ export const run: Run = ((
 
 /** The decoded handler request (the active invocation's input). */
 export const handlerRequest = <A, I>(
-  schema: Schema.Codec<A, I, never, never>,
+  schema: Schema.Codec<A, I, never, never>
 ): Effect.Effect<A, DurableExecutionError, CurrentInvocationScope> =>
   Effect.flatMap(CurrentInvocationScope, (scope) => scope.request.input(schema))
 
 /** A durable timer: suspend the step until `duration` has elapsed (replay-safe). */
 export const sleep = (
   name: string,
-  duration: Duration.Duration,
+  duration: Duration.Duration
 ): Effect.Effect<void, DurableExecutionError, CurrentInvocationScope> =>
   Effect.flatMap(CurrentInvocationScope, (scope) => scope.clock.sleep(name, duration))
 
@@ -54,7 +57,7 @@ export const sleep = (
 export const state = <Tbl extends AnyTable>(table: Tbl): StateBinding<RowOf<Tbl>> => ({
   get: (key) => Effect.flatMap(CurrentInvocationScope, (scope) => scope.state.table(table).get(key)),
   set: (row) => Effect.flatMap(CurrentInvocationScope, (scope) => scope.state.table(table).set(row)),
-  delete: (key) => Effect.flatMap(CurrentInvocationScope, (scope) => scope.state.table(table).delete(key)),
+  delete: (key) => Effect.flatMap(CurrentInvocationScope, (scope) => scope.state.table(table).delete(key))
 })
 
 /**
@@ -63,7 +66,7 @@ export const state = <Tbl extends AnyTable>(table: Tbl): StateBinding<RowOf<Tbl>
  */
 export const signal = <A, I>(
   name: string,
-  schema: Schema.Codec<A, I, never, never>,
+  schema: Schema.Codec<A, I, never, never>
 ): Effect.Effect<A, DurableExecutionError, CurrentInvocationScope> =>
   Effect.flatMap(CurrentInvocationScope, (scope) => scope.durablePromises.await(name, schema))
 
@@ -72,8 +75,9 @@ export const signal = <A, I>(
  * Returned synchronously; `resolve`/`get` are Effects.
  */
 export const deferred = <A, I>(name: string, schema: Schema.Codec<A, I, never, never>): DeferredHandle<A> => ({
-  resolve: (value) => Effect.flatMap(CurrentInvocationScope, (scope) => scope.durablePromises.resolve(name, schema, value)),
-  get: () => Effect.flatMap(CurrentInvocationScope, (scope) => scope.durablePromises.await(name, schema)),
+  resolve: (value) =>
+    Effect.flatMap(CurrentInvocationScope, (scope) => scope.durablePromises.resolve(name, schema, value)),
+  get: () => Effect.flatMap(CurrentInvocationScope, (scope) => scope.durablePromises.await(name, schema))
 })
 
 /**
@@ -81,12 +85,12 @@ export const deferred = <A, I>(name: string, schema: Schema.Codec<A, I, never, n
  * ingress client; `promise` parks until `resolveAwakeable(executionId, id, …)`.
  */
 export const awakeable = <A, I>(
-  schema: Schema.Codec<A, I, never, never>,
+  schema: Schema.Codec<A, I, never, never>
 ): Effect.Effect<AwakeableHandle<A>, DurableExecutionError, CurrentInvocationScope> =>
   Effect.flatMap(CurrentInvocationScope, (scope) =>
     Effect.map(scope.awakeables.create(schema), (handle) => ({
       id: handle.id,
-      promise: handle.promise,
+      promise: handle.promise
     })))
 
 /** Ingress door: resolve a receiver-side `signal(name)` on `executionId`. */
@@ -103,7 +107,7 @@ export const resolveSignal: IngressResolve = (executionId, name, schema, value) 
 export const resolvePromise = <A, I>(
   name: string,
   schema: Schema.Codec<A, I, never, never>,
-  value: A,
+  value: A
 ): Effect.Effect<void, DurableExecutionError, CurrentInvocationScope> =>
   Effect.flatMap(CurrentInvocationScope, (scope) => scope.durablePromises.resolveWorkflow(name, schema, value))
 
@@ -114,14 +118,14 @@ export const resolveAwakeable: IngressResolve = (executionId, id, schema, value)
 /** Block until `executionId` finishes, decoding its output via `schema` (restate's `attach`). */
 export const attach = <A, I>(
   executionId: string,
-  schema: Schema.Codec<A, I, never, never>,
+  schema: Schema.Codec<A, I, never, never>
 ): Effect.Effect<A, DurableExecutionError, DurableEngine> =>
   Effect.flatMap(DurableEngine, (rt) => rt.attach(executionId, schema))
 
 /** Non-blocking read of `executionId`'s completed output, decoded via `schema`. */
 export const poll = <A, I>(
   executionId: string,
-  schema: Schema.Codec<A, I, never, never>,
+  schema: Schema.Codec<A, I, never, never>
 ): Effect.Effect<Option.Option<A>, DurableExecutionError, DurableEngine> =>
   Effect.flatMap(DurableEngine, (rt) => rt.poll(executionId, schema))
 

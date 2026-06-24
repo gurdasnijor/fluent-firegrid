@@ -1,4 +1,3 @@
-import { Effect, Option, Schema, Stream } from "effect"
 import {
   conditionalAppend,
   publish,
@@ -7,10 +6,14 @@ import {
   S2Conflict,
   S2NotFound,
   S2RangeNotSatisfiable,
-  SeqNumMismatchError,
+  SeqNumMismatchError
 } from "effect-s2"
-import { DurableExecutionError, durableError as toError } from "../errors.ts"
-import { ActorEvent, type LogEntry } from "./machine/index.ts"
+import * as Effect from "effect/Effect"
+import * as Option from "effect/Option"
+import * as Schema from "effect/Schema"
+import * as Stream from "effect/Stream"
+import { durableError as toError, DurableExecutionError } from "../errors.ts"
+import { ActorEvent, type LogEntry } from "./machine/model.ts"
 
 const isS2Conflict = Schema.is(S2Conflict)
 const isS2NotFound = Schema.is(S2NotFound)
@@ -30,7 +33,7 @@ export interface ActorLog {
   /** CAS append at `matchSeqNum`; `None` means a concurrent writer won (re-read + retry). */
   readonly casAppend: (
     event: ActorEvent,
-    matchSeqNum: number,
+    matchSeqNum: number
   ) => Effect.Effect<Option.Option<number>, DurableExecutionError, S2Client>
   /** The next `seq_num` the stream will assign (`0` for an absent/empty stream). */
   readonly tailSeqNum: Effect.Effect<number, DurableExecutionError, S2Client>
@@ -54,14 +57,14 @@ export const openLog = (streamName: string): ActorLog => {
     Effect.map((tail) => tail.tail.seqNum),
     Effect.catch((cause) => (isMissing(cause) ? Effect.succeed(0) : Effect.fail(cause))),
     Effect.mapError(toError("object.tailSeqNum")),
-    Effect.withSpan("effect-s2-durable.log.tailSeqNum", { attributes: { stream: streamName } }),
+    Effect.withSpan("effect-s2-durable.log.tailSeqNum", { attributes: { stream: streamName } })
   )
 
   const readFrom = (from: number): Effect.Effect<ReadonlyArray<LogEntry>, DurableExecutionError, S2Client> =>
     readDecoded(streamName, ActorEvent, {
       start: { from: { seqNum: from }, clamp: true },
       stop: { waitSecs: 0 },
-      ignoreCommandRecords: true,
+      ignoreCommandRecords: true
     }).pipe(
       Stream.map((record): LogEntry => ({ seqNum: record.seqNum, event: record.value })),
       Stream.runCollect,
@@ -72,10 +75,10 @@ export const openLog = (streamName: string): ActorLog => {
           ? new DurableExecutionError({
             operation: "object.decode",
             message: `malformed ActorEvent on ${streamName}: ${cause.message}`,
-            cause,
+            cause
           })
-          : toError("object.read")(cause),
-      ),
+          : toError("object.read")(cause)
+      )
     )
 
   const read = (): Effect.Effect<ReadonlyArray<LogEntry>, DurableExecutionError, S2Client> =>
@@ -83,27 +86,27 @@ export const openLog = (streamName: string): ActorLog => {
     // (whose 404 can escape as an unmapped S2Error).
     tailSeqNum.pipe(
       Effect.flatMap((tail) => (tail <= 0 ? Effect.succeed<ReadonlyArray<LogEntry>>([]) : readFrom(0))),
-      Effect.withSpan("effect-s2-durable.log.read", { attributes: { stream: streamName } }),
+      Effect.withSpan("effect-s2-durable.log.read", { attributes: { stream: streamName } })
     )
 
   const append = (event: ActorEvent): Effect.Effect<number, DurableExecutionError, S2Client> =>
     publish(streamName, ActorEvent, event).pipe(
       Effect.map((ack) => ack.start.seqNum),
       Effect.mapError(toError("object.append")),
-      Effect.withSpan("effect-s2-durable.log.append", { attributes: { stream: streamName, tag: event._tag } }),
+      Effect.withSpan("effect-s2-durable.log.append", { attributes: { stream: streamName, tag: event._tag } })
     )
 
   const casAppend = (
     event: ActorEvent,
-    matchSeqNum: number,
+    matchSeqNum: number
   ): Effect.Effect<Option.Option<number>, DurableExecutionError, S2Client> =>
     conditionalAppend(streamName, ActorEvent, event, matchSeqNum).pipe(
       Effect.map((ack) => Option.some(ack.start.seqNum)),
       Effect.catch((cause) => (isCasLoss(cause) ? Effect.succeedNone : Effect.fail(cause))),
       Effect.mapError(toError("object.casAppend")),
       Effect.withSpan("effect-s2-durable.log.casAppend", {
-        attributes: { stream: streamName, tag: event._tag, matchSeqNum },
-      }),
+        attributes: { stream: streamName, tag: event._tag, matchSeqNum }
+      })
     )
 
   return { streamName, read, append, casAppend, tailSeqNum }

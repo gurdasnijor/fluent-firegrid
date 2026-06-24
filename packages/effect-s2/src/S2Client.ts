@@ -1,21 +1,23 @@
+import * as Config from "effect/Config"
+import * as Context from "effect/Context"
+import * as Effect from "effect/Effect"
+import * as Layer from "effect/Layer"
+import * as Redacted from "effect/Redacted"
+import type * as Scope from "effect/Scope"
+import * as Sink from "effect/Sink"
+import * as Stream from "effect/Stream"
+import type { S2Record, S2RecordBytes } from "./internal/record.ts"
+import { toS2Record, toS2RecordBytes } from "./internal/record.ts"
 import {
-  BatchTransform,
-  Producer,
-  S2,
-  S2Environment,
   type AccessTokenInfo,
   type AccountMetricsInput,
   type AppendAck,
-  type ReadOptions,
-  type S2RetryConfig,
-  type S2EndpointsInit,
-  type SdkAppendInput,
-  type SdkAppendRecord,
-  type BatchTransformOptions,
   type AppendSessionOptions,
   type BasinConfig,
   type BasinInfo,
   type BasinMetricsInput,
+  BatchTransform,
+  type BatchTransformOptions,
   type CreateBasinInput,
   type CreateBasinResponse,
   type CreateStreamInput,
@@ -42,25 +44,30 @@ import {
   type ListStreamsResponse,
   type LocationInfo,
   type MetricSetResponse,
+  Producer,
   type ReadBatch,
+  type ReadOptions,
   type ReconfigureBasinInput,
   type ReconfigureBasinResponse,
   type ReconfigureStreamInput,
   type ReconfigureStreamResponse,
   type RevokeAccessTokenInput,
+  S2,
+  type S2EndpointsInit,
+  S2Environment,
   type S2RequestOptions,
+  type S2RetryConfig,
+  type SdkAppendInput,
+  type SdkAppendRecord,
   type SetDefaultLocationInput,
   type SetDefaultLocationResponse,
   type StreamConfig,
+  type StreamInfo,
   type StreamMetricsInput,
   type StreamOptions,
-  type StreamInfo,
-  type Tail,
+  type Tail
 } from "./internal/sdk.ts"
-import type { S2Record, S2RecordBytes } from "./internal/record.ts"
-import { toS2Record, toS2RecordBytes } from "./internal/record.ts"
 import { fromUnknown, type S2ClientError } from "./S2Error.ts"
-import { Config, Context, Effect, Layer, Redacted, Sink, Stream, type Scope } from "effect"
 
 export interface AppendOptions {
   readonly matchSeqNum?: number
@@ -107,341 +114,339 @@ export interface S2OperationOptions {
 export interface S2ClientApi {
   readonly listBasins: (
     args?: ListBasinsInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ) => Effect.Effect<ListBasinsResponse, S2ClientError>
   readonly listAllBasins: (
     args?: ListAllBasinsInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ) => Stream.Stream<BasinInfo, S2ClientError>
   readonly createBasin: (
     args: CreateBasinInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ) => Effect.Effect<CreateBasinResponse, S2ClientError>
   readonly getBasinConfig: (
     args: GetBasinConfigInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ) => Effect.Effect<BasinConfig, S2ClientError>
   readonly deleteBasin: (
     args: DeleteBasinInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ) => Effect.Effect<void, S2ClientError>
   readonly ensureBasin: (
     args: EnsureBasinInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ) => Effect.Effect<EnsureBasinResponse, S2ClientError>
   readonly reconfigureBasin: (
     args: ReconfigureBasinInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ) => Effect.Effect<ReconfigureBasinResponse, S2ClientError>
   readonly listAccessTokens: (
     args?: ListAccessTokensInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ) => Effect.Effect<ListAccessTokensResponse, S2ClientError>
   readonly listAllAccessTokens: (
     args?: ListAllAccessTokensInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ) => Stream.Stream<AccessTokenInfo, S2ClientError>
   readonly issueAccessToken: (
     args: IssueAccessTokenInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ) => Effect.Effect<IssueAccessTokenResponse, S2ClientError>
   readonly revokeAccessToken: (
     args: RevokeAccessTokenInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ) => Effect.Effect<void, S2ClientError>
   readonly listLocations: (options?: S2RequestOptions) => Effect.Effect<ListLocationsResponse, S2ClientError>
   readonly getDefaultLocation: (options?: S2RequestOptions) => Effect.Effect<LocationInfo, S2ClientError>
   readonly setDefaultLocation: (
     args: SetDefaultLocationInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ) => Effect.Effect<SetDefaultLocationResponse, S2ClientError>
   readonly accountMetrics: (
     args: AccountMetricsInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ) => Effect.Effect<MetricSetResponse, S2ClientError>
   readonly basinMetrics: (
     args: BasinMetricsInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ) => Effect.Effect<MetricSetResponse, S2ClientError>
   readonly streamMetrics: (
     args: StreamMetricsInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ) => Effect.Effect<MetricSetResponse, S2ClientError>
   readonly listStreams: (
     args?: ListStreamsInput,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ) => Effect.Effect<ListStreamsResponse, S2ClientError>
   readonly listAllStreams: (
     args?: ListAllStreamsInput,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ) => Stream.Stream<StreamInfo, S2ClientError>
   readonly createStream: (
     args: CreateStreamInput,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ) => Effect.Effect<CreateStreamResponse, S2ClientError>
   readonly getStreamConfig: (
     args: GetStreamConfigInput,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ) => Effect.Effect<StreamConfig, S2ClientError>
   readonly deleteStream: (
     args: DeleteStreamInput,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ) => Effect.Effect<void, S2ClientError>
   readonly ensureStream: (
     args: EnsureStreamInput,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ) => Effect.Effect<EnsureStreamResponse, S2ClientError>
   readonly reconfigureStream: (
     args: ReconfigureStreamInput,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ) => Effect.Effect<ReconfigureStreamResponse, S2ClientError>
   readonly checkTail: (
     name: string,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ) => Effect.Effect<Tail, S2ClientError>
   readonly append: (
     name: string,
     input: SdkAppendInput,
-    operationOptions?: S2OperationOptions,
+    operationOptions?: S2OperationOptions
   ) => Effect.Effect<AppendAck, S2ClientError>
   readonly readBatch: (
     name: string,
     options?: ReadOptions,
-    operationOptions?: S2OperationOptions,
+    operationOptions?: S2OperationOptions
   ) => Effect.Effect<ReadBatch<"string">, S2ClientError>
   readonly readBatchBytes: (
     name: string,
     options?: ReadOptions,
-    operationOptions?: S2OperationOptions,
+    operationOptions?: S2OperationOptions
   ) => Effect.Effect<ReadBatch<"bytes">, S2ClientError>
   readonly read: (
     name: string,
     options: ReadOptions,
-    operationOptions?: S2OperationOptions,
+    operationOptions?: S2OperationOptions
   ) => Stream.Stream<S2Record, S2ClientError>
   readonly readBytes: (
     name: string,
     options: ReadOptions,
-    operationOptions?: S2OperationOptions,
+    operationOptions?: S2OperationOptions
   ) => Stream.Stream<S2RecordBytes, S2ClientError>
   readonly appendSession: (
     name: string,
     config?: AppendSessionConfig,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ) => Effect.Effect<S2AppendSession, S2ClientError, Scope.Scope>
   readonly producer: (
     name: string,
     config?: ProducerConfig,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ) => Effect.Effect<S2Producer, S2ClientError, Scope.Scope>
 }
 
 export class S2Client extends Context.Service<S2Client, S2ClientApi>()("effect-s2/S2Client") {
   static readonly listBasins = (
     args?: ListBasinsInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ): Effect.Effect<ListBasinsResponse, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.listBasins(args, options))
 
   static readonly listAllBasins = (
     args?: ListAllBasinsInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ): Stream.Stream<BasinInfo, S2ClientError, S2Client> =>
     Stream.unwrap(Effect.map(this, (client) => client.listAllBasins(args, options)))
 
   static readonly createBasin = (
     args: CreateBasinInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ): Effect.Effect<CreateBasinResponse, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.createBasin(args, options))
 
   static readonly getBasinConfig = (
     args: GetBasinConfigInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ): Effect.Effect<BasinConfig, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.getBasinConfig(args, options))
 
   static readonly deleteBasin = (
     args: DeleteBasinInput,
-    options?: S2RequestOptions,
-  ): Effect.Effect<void, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.deleteBasin(args, options))
+    options?: S2RequestOptions
+  ): Effect.Effect<void, S2ClientError, S2Client> => Effect.flatMap(this, (client) => client.deleteBasin(args, options))
 
   static readonly ensureBasin = (
     args: EnsureBasinInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ): Effect.Effect<EnsureBasinResponse, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.ensureBasin(args, options))
 
   static readonly reconfigureBasin = (
     args: ReconfigureBasinInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ): Effect.Effect<ReconfigureBasinResponse, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.reconfigureBasin(args, options))
 
   static readonly listAccessTokens = (
     args?: ListAccessTokensInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ): Effect.Effect<ListAccessTokensResponse, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.listAccessTokens(args, options))
 
   static readonly listAllAccessTokens = (
     args?: ListAllAccessTokensInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ): Stream.Stream<AccessTokenInfo, S2ClientError, S2Client> =>
     Stream.unwrap(Effect.map(this, (client) => client.listAllAccessTokens(args, options)))
 
   static readonly issueAccessToken = (
     args: IssueAccessTokenInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ): Effect.Effect<IssueAccessTokenResponse, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.issueAccessToken(args, options))
 
   static readonly revokeAccessToken = (
     args: RevokeAccessTokenInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ): Effect.Effect<void, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.revokeAccessToken(args, options))
 
   static readonly listLocations = (
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ): Effect.Effect<ListLocationsResponse, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.listLocations(options))
 
   static readonly getDefaultLocation = (
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ): Effect.Effect<LocationInfo, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.getDefaultLocation(options))
 
   static readonly setDefaultLocation = (
     args: SetDefaultLocationInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ): Effect.Effect<SetDefaultLocationResponse, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.setDefaultLocation(args, options))
 
   static readonly accountMetrics = (
     args: AccountMetricsInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ): Effect.Effect<MetricSetResponse, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.accountMetrics(args, options))
 
   static readonly basinMetrics = (
     args: BasinMetricsInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ): Effect.Effect<MetricSetResponse, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.basinMetrics(args, options))
 
   static readonly streamMetrics = (
     args: StreamMetricsInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ): Effect.Effect<MetricSetResponse, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.streamMetrics(args, options))
 
   static readonly listStreams = (
     args?: ListStreamsInput,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ): Effect.Effect<ListStreamsResponse, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.listStreams(args, options))
 
   static readonly listAllStreams = (
     args?: ListAllStreamsInput,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ): Stream.Stream<StreamInfo, S2ClientError, S2Client> =>
     Stream.unwrap(Effect.map(this, (client) => client.listAllStreams(args, options)))
 
   static readonly createStream = (
     args: CreateStreamInput,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ): Effect.Effect<CreateStreamResponse, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.createStream(args, options))
 
   static readonly getStreamConfig = (
     args: GetStreamConfigInput,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ): Effect.Effect<StreamConfig, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.getStreamConfig(args, options))
 
   static readonly deleteStream = (
     args: DeleteStreamInput,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ): Effect.Effect<void, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.deleteStream(args, options))
 
   static readonly ensureStream = (
     args: EnsureStreamInput,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ): Effect.Effect<EnsureStreamResponse, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.ensureStream(args, options))
 
   static readonly reconfigureStream = (
     args: ReconfigureStreamInput,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ): Effect.Effect<ReconfigureStreamResponse, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.reconfigureStream(args, options))
 
   static readonly checkTail = (
     name: string,
-    options?: S2OperationOptions,
-  ): Effect.Effect<Tail, S2ClientError, S2Client> =>
-    Effect.flatMap(this, (client) => client.checkTail(name, options))
+    options?: S2OperationOptions
+  ): Effect.Effect<Tail, S2ClientError, S2Client> => Effect.flatMap(this, (client) => client.checkTail(name, options))
 
   static readonly append = (
     name: string,
     input: SdkAppendInput,
-    operationOptions?: S2OperationOptions,
+    operationOptions?: S2OperationOptions
   ): Effect.Effect<AppendAck, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.append(name, input, operationOptions))
 
   static readonly readBatch = (
     name: string,
     options: ReadOptions = {},
-    operationOptions?: S2OperationOptions,
+    operationOptions?: S2OperationOptions
   ): Effect.Effect<ReadBatch<"string">, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.readBatch(name, options, operationOptions))
 
   static readonly readBatchBytes = (
     name: string,
     options: ReadOptions = {},
-    operationOptions?: S2OperationOptions,
+    operationOptions?: S2OperationOptions
   ): Effect.Effect<ReadBatch<"bytes">, S2ClientError, S2Client> =>
     Effect.flatMap(this, (client) => client.readBatchBytes(name, options, operationOptions))
 
   static readonly read = (
     name: string,
     options: ReadOptions,
-    operationOptions?: S2OperationOptions,
+    operationOptions?: S2OperationOptions
   ): Stream.Stream<S2Record, S2ClientError, S2Client> =>
     Stream.unwrap(Effect.map(this, (client) => client.read(name, options, operationOptions)))
 
   static readonly readBytes = (
     name: string,
     options: ReadOptions,
-    operationOptions?: S2OperationOptions,
+    operationOptions?: S2OperationOptions
   ): Stream.Stream<S2RecordBytes, S2ClientError, S2Client> =>
     Stream.unwrap(Effect.map(this, (client) => client.readBytes(name, options, operationOptions)))
 
   static readonly appendSession = (
     name: string,
     config: AppendSessionConfig = {},
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ): Effect.Effect<S2AppendSession, S2ClientError, S2Client | Scope.Scope> =>
     Effect.flatMap(this, (client) => client.appendSession(name, config, options))
 
   static readonly producer = (
     name: string,
     config: ProducerConfig = {},
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ): Effect.Effect<S2Producer, S2ClientError, S2Client | Scope.Scope> =>
     Effect.flatMap(this, (client) => client.producer(name, config, options))
 
   static readonly sink = (
-    s2Producer: S2Producer,
+    s2Producer: S2Producer
   ): Sink.Sink<void, SdkAppendRecord, never, S2ClientError> => Sink.forEach(s2Producer.submit)
 
   static get layerConfig(): Layer.Layer<S2Client, Config.ConfigError> {
     return layer({
       accessToken: Config.redacted("S2_ACCESS_TOKEN"),
-      basinName: Config.string("S2_BASIN"),
+      basinName: Config.string("S2_BASIN")
     })
   }
 
@@ -453,19 +458,19 @@ const resolveOption = <A>(value: Config.Config<A> | A): Effect.Effect<A, Config.
 
 const streamHandleOptions = (
   forceTransport: "fetch" | "s2s" | undefined,
-  options?: StreamOptions,
+  options?: StreamOptions
 ): StreamOptions => ({
   ...(forceTransport === undefined ? {} : { forceTransport }),
-  ...(options === undefined ? {} : options),
+  ...(options === undefined ? {} : options)
 })
 
 const trySdk = <A>(
   operation: string,
-  promise: () => Promise<A>,
+  promise: () => Promise<A>
 ): Effect.Effect<A, S2ClientError> =>
   Effect.tryPromise({
     try: promise,
-    catch: fromUnknown(operation),
+    catch: fromUnknown(operation)
   })
 
 type TraceAttributeValue = string | number | boolean
@@ -479,16 +484,16 @@ const encodeTraceArgs = (args: unknown): string | undefined => {
     return typeof args === "string"
       ? args
       : typeof args === "number" || typeof args === "boolean" || typeof args === "bigint"
-        ? args.toString()
-        : Object.prototype.toString.call(args)
+      ? args.toString()
+      : Object.prototype.toString.call(args)
   }
 }
 
 const traceAttributes = (
   args?: unknown,
-  extra?: TraceAttributes,
+  extra?: TraceAttributes
 ): TraceAttributes => {
-  const attributes: TraceAttributes = { ...(extra ?? {}) }
+  const attributes: TraceAttributes = { ...extra }
   const encodedArgs = encodeTraceArgs(args)
   if (encodedArgs !== undefined) attributes.args = encodedArgs
   return attributes
@@ -497,26 +502,24 @@ const traceAttributes = (
 const withSdkSpan = <A, E, R>(
   operation: string,
   attributes: TraceAttributes,
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> =>
-  effect.pipe(Effect.withSpan(`S2.${operation}`, { attributes }))
+  effect: Effect.Effect<A, E, R>
+): Effect.Effect<A, E, R> => effect.pipe(Effect.withSpan(`S2.${operation}`, { attributes }))
 
 const tracedSdk = <A>(
   operation: string,
   args: unknown,
   promise: () => Promise<A>,
-  extra?: TraceAttributes,
-): Effect.Effect<A, S2ClientError> =>
-  withSdkSpan(operation, traceAttributes(args, extra), trySdk(operation, promise))
+  extra?: TraceAttributes
+): Effect.Effect<A, S2ClientError> => withSdkSpan(operation, traceAttributes(args, extra), trySdk(operation, promise))
 
 const tracedSdkStream = <A>(
   operation: string,
   args: unknown,
   iterable: AsyncIterable<A>,
-  extra?: TraceAttributes,
+  extra?: TraceAttributes
 ): Stream.Stream<A, S2ClientError> =>
   Stream.fromAsyncIterable(iterable, fromUnknown(operation)).pipe(
-    Stream.withSpan(`S2.${operation}`, { attributes: traceAttributes(args, extra) }),
+    Stream.withSpan(`S2.${operation}`, { attributes: traceAttributes(args, extra) })
   )
 
 const batchTransformOptions = (config: ProducerConfig): BatchTransformOptions => ({
@@ -526,14 +529,14 @@ const batchTransformOptions = (config: ProducerConfig): BatchTransformOptions =>
   ...(config.maxBatchRecords === undefined ? {} : { maxBatchRecords: config.maxBatchRecords }),
   ...(config.maxBatchBytes === undefined ? {} : { maxBatchBytes: config.maxBatchBytes }),
   ...(config.fencingToken === undefined ? {} : { fencingToken: config.fencingToken }),
-  ...(config.matchSeqNum === undefined ? {} : { matchSeqNum: config.matchSeqNum }),
+  ...(config.matchSeqNum === undefined ? {} : { matchSeqNum: config.matchSeqNum })
 })
 
 const appendSessionOptions = (config: AppendSessionConfig): AppendSessionOptions => ({
   ...(config.maxInflightBytes === undefined ? {} : { maxInflightBytes: config.maxInflightBytes }),
   ...(config.maxInflightBatches === undefined
     ? {}
-    : { maxInflightBatches: config.maxInflightBatches }),
+    : { maxInflightBatches: config.maxInflightBatches })
 })
 
 const liveOptions = (options: {
@@ -545,7 +548,7 @@ const liveOptions = (options: {
 }) => ({
   accessToken: options.accessToken,
   basinName: options.basinName,
-  ...optionalLiveOptions(options),
+  ...optionalLiveOptions(options)
 })
 
 const optionalLiveOptions = (options: {
@@ -555,7 +558,7 @@ const optionalLiveOptions = (options: {
 }) => ({
   ...(options.endpoints === undefined ? {} : { endpoints: options.endpoints }),
   ...(options.retry === undefined ? {} : { retry: options.retry }),
-  ...(options.forceTransport === undefined ? {} : { forceTransport: options.forceTransport }),
+  ...(options.forceTransport === undefined ? {} : { forceTransport: options.forceTransport })
 })
 
 const makeLiveApi = (input: {
@@ -568,20 +571,20 @@ const makeLiveApi = (input: {
   const environment = S2Environment.parse()
   const retry: S2RetryConfig = {
     ...input.retry,
-    appendRetryPolicy: input.retry?.appendRetryPolicy ?? "noSideEffects",
+    appendRetryPolicy: input.retry?.appendRetryPolicy ?? "noSideEffects"
   }
   const client = new S2({
     ...environment,
     accessToken: Redacted.value(input.accessToken),
     ...(input.endpoints === undefined ? {} : { endpoints: input.endpoints }),
-    retry,
+    retry
   })
   const basinHandle = (name?: string) => client.basin(name ?? input.basinName)
   const defaultBasinName = input.basinName
   const selectedStreamHandle = (name: string, options?: S2OperationOptions) =>
     basinHandle(options?.basinName).stream(
       name,
-      streamHandleOptions(input.forceTransport, options?.stream),
+      streamHandleOptions(input.forceTransport, options?.stream)
     )
   type StreamReadRequestOptions = Parameters<ReturnType<typeof selectedStreamHandle>["read"]>[1]
 
@@ -590,7 +593,7 @@ const makeLiveApi = (input: {
 
   const listAllBasins = (
     args?: ListAllBasinsInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ): Stream.Stream<BasinInfo, S2ClientError> =>
     tracedSdkStream("listAllBasins", args, client.basins.listAll(args, options))
 
@@ -614,7 +617,7 @@ const makeLiveApi = (input: {
 
   const listAllAccessTokens = (
     args?: ListAllAccessTokensInput,
-    options?: S2RequestOptions,
+    options?: S2RequestOptions
   ): Stream.Stream<AccessTokenInfo, S2ClientError> =>
     tracedSdkStream("listAllAccessTokens", args, client.accessTokens.listAll(args, options))
 
@@ -643,88 +646,90 @@ const makeLiveApi = (input: {
     tracedSdk("streamMetrics", args, () => client.metrics.stream(args, options))
 
   const listStreams = (args?: ListStreamsInput, options?: S2OperationOptions) =>
-    tracedSdk("listStreams", args, () =>
-      basinHandle(options?.basinName).streams.list(args, options?.request),
-      { basin: options?.basinName ?? defaultBasinName },
-    )
+    tracedSdk("listStreams", args, () => basinHandle(options?.basinName).streams.list(args, options?.request), {
+      basin: options?.basinName ?? defaultBasinName
+    })
 
   const listAllStreams = (
     args?: ListAllStreamsInput,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ): Stream.Stream<StreamInfo, S2ClientError> =>
     tracedSdkStream(
       "listAllStreams",
       args,
       basinHandle(options?.basinName).streams.listAll(args, options?.request),
-      { basin: options?.basinName ?? defaultBasinName, prefix: args?.prefix ?? "" },
+      { basin: options?.basinName ?? defaultBasinName, prefix: args?.prefix ?? "" }
     )
 
   const createStream = (
     args: CreateStreamInput,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ) =>
-    tracedSdk("createStream", args, () =>
-      basinHandle(options?.basinName).streams.create(args, options?.request),
-      { basin: options?.basinName ?? defaultBasinName, stream: args.stream },
-    )
+    tracedSdk("createStream", args, () => basinHandle(options?.basinName).streams.create(args, options?.request), {
+      basin: options?.basinName ?? defaultBasinName,
+      stream: args.stream
+    })
 
   const getStreamConfig = (args: GetStreamConfigInput, options?: S2OperationOptions) =>
-    tracedSdk("getStreamConfig", args, () =>
-      basinHandle(options?.basinName).streams.getConfig(args, options?.request),
-      { basin: options?.basinName ?? defaultBasinName, stream: args.stream },
+    tracedSdk(
+      "getStreamConfig",
+      args,
+      () => basinHandle(options?.basinName).streams.getConfig(args, options?.request),
+      { basin: options?.basinName ?? defaultBasinName, stream: args.stream }
     )
 
   const deleteStream = (
     args: DeleteStreamInput,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ) =>
-    tracedSdk("deleteStream", args, () =>
-      basinHandle(options?.basinName).streams.delete(args, options?.request),
-      { basin: options?.basinName ?? defaultBasinName, stream: args.stream },
-    )
+    tracedSdk("deleteStream", args, () => basinHandle(options?.basinName).streams.delete(args, options?.request), {
+      basin: options?.basinName ?? defaultBasinName,
+      stream: args.stream
+    })
 
   const ensureStream = (
     args: EnsureStreamInput,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ) =>
-    tracedSdk("ensureStream", args, () =>
-      basinHandle(options?.basinName).streams.ensure(args, options?.request),
-      { basin: options?.basinName ?? defaultBasinName, stream: args.stream },
-    )
+    tracedSdk("ensureStream", args, () => basinHandle(options?.basinName).streams.ensure(args, options?.request), {
+      basin: options?.basinName ?? defaultBasinName,
+      stream: args.stream
+    })
 
   const reconfigureStream = (args: ReconfigureStreamInput, options?: S2OperationOptions) =>
-    tracedSdk("reconfigureStream", args, () =>
-      basinHandle(options?.basinName).streams.reconfigure(args, options?.request),
-      { basin: options?.basinName ?? defaultBasinName, stream: args.stream },
+    tracedSdk(
+      "reconfigureStream",
+      args,
+      () => basinHandle(options?.basinName).streams.reconfigure(args, options?.request),
+      { basin: options?.basinName ?? defaultBasinName, stream: args.stream }
     )
 
   const checkTail = (
     name: string,
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ) =>
-    tracedSdk("checkTail", { stream: name }, () =>
-      selectedStreamHandle(name, options).checkTail(options?.request),
-      { basin: options?.basinName ?? defaultBasinName, stream: name },
-    )
+    tracedSdk("checkTail", { stream: name }, () => selectedStreamHandle(name, options).checkTail(options?.request), {
+      basin: options?.basinName ?? defaultBasinName,
+      stream: name
+    })
 
   const append = (
     name: string,
     input: SdkAppendInput,
-    operationOptions?: S2OperationOptions,
+    operationOptions?: S2OperationOptions
   ) =>
     withSdkSpan(
       "append",
       traceAttributes(
         { stream: name, recordCount: input.records.length, matchSeqNum: input.matchSeqNum },
-        { basin: operationOptions?.basinName ?? defaultBasinName, stream: name },
+        { basin: operationOptions?.basinName ?? defaultBasinName, stream: name }
       ),
       Effect.gen(function*() {
         const ack = yield* trySdk("append", () =>
-          selectedStreamHandle(name, operationOptions).append(input, operationOptions?.request),
-        )
+          selectedStreamHandle(name, operationOptions).append(input, operationOptions?.request))
         yield* Effect.annotateCurrentSpan({ seqNum: ack.start.seqNum })
         return ack
-      }),
+      })
     )
 
   const readBatchFrom = <Encoding extends "string" | "bytes">(
@@ -732,39 +737,40 @@ const makeLiveApi = (input: {
     name: string,
     options: ReadOptions,
     operationOptions: S2OperationOptions | undefined,
-    request: StreamReadRequestOptions,
+    request: StreamReadRequestOptions
   ): Effect.Effect<ReadBatch<Encoding>, S2ClientError> =>
     withSdkSpan(
       operation,
       traceAttributes(options, {
         basin: operationOptions?.basinName ?? defaultBasinName,
-        stream: name,
+        stream: name
       }),
-      trySdk(operation, () =>
-        selectedStreamHandle(name, operationOptions).read(options, request),
-      ) as Effect.Effect<ReadBatch<Encoding>, S2ClientError>,
+      trySdk(operation, () => selectedStreamHandle(name, operationOptions).read(options, request)) as Effect.Effect<
+        ReadBatch<Encoding>,
+        S2ClientError
+      >
     )
 
   const readBatch = (
     name: string,
     options: ReadOptions = {},
-    operationOptions?: S2OperationOptions,
+    operationOptions?: S2OperationOptions
   ) => readBatchFrom("readBatch", name, options, operationOptions, operationOptions?.request)
 
   const readBatchBytes = (
     name: string,
     options: ReadOptions = {},
-    operationOptions?: S2OperationOptions,
+    operationOptions?: S2OperationOptions
   ) =>
     readBatchFrom("readBatchBytes", name, options, operationOptions, {
       ...operationOptions?.request,
-      as: "bytes",
+      as: "bytes"
     })
 
   const read = (
     name: string,
     options: ReadOptions,
-    operationOptions?: S2OperationOptions,
+    operationOptions?: S2OperationOptions
   ): Stream.Stream<S2Record, S2ClientError> =>
     readStream(
       name,
@@ -773,9 +779,9 @@ const makeLiveApi = (input: {
       operationOptions,
       Effect.tryPromise({
         try: () => selectedStreamHandle(name, operationOptions).readSession(options, operationOptions?.request),
-        catch: fromUnknown("readSession"),
+        catch: fromUnknown("readSession")
       }),
-      toS2Record,
+      toS2Record
     )
 
   const readStream = <Record, A>(
@@ -784,31 +790,31 @@ const makeLiveApi = (input: {
     options: ReadOptions,
     operationOptions: S2OperationOptions | undefined,
     acquireSession: Effect.Effect<AsyncIterable<Record> & { cancel: () => Promise<void> }, S2ClientError>,
-    mapRecord: (record: Record) => A,
+    mapRecord: (record: Record) => A
   ): Stream.Stream<A, S2ClientError> =>
     Stream.unwrap(
       Effect.gen(function*() {
         const session = yield* Effect.acquireRelease(
           acquireSession,
-          (readSession) => Effect.promise(() => readSession.cancel()),
+          (readSession) => Effect.promise(() => readSession.cancel())
         )
         return Stream.fromAsyncIterable(session, fromUnknown("read")).pipe(
-          Stream.map(mapRecord),
+          Stream.map(mapRecord)
         )
-      }),
+      })
     ).pipe(
       Stream.withSpan(`S2.${operation}`, {
         attributes: traceAttributes(options, {
           basin: operationOptions?.basinName ?? defaultBasinName,
-          stream: name,
-        }),
-      }),
+          stream: name
+        })
+      })
     )
 
   const readBytes = (
     name: string,
     options: ReadOptions,
-    operationOptions?: S2OperationOptions,
+    operationOptions?: S2OperationOptions
   ): Stream.Stream<S2RecordBytes, S2ClientError> =>
     readStream(
       name,
@@ -819,17 +825,17 @@ const makeLiveApi = (input: {
         try: () =>
           selectedStreamHandle(name, operationOptions).readSession(
             options,
-            { ...operationOptions?.request, as: "bytes" },
+            { ...operationOptions?.request, as: "bytes" }
           ),
-        catch: fromUnknown("readSession"),
+        catch: fromUnknown("readSession")
       }),
-      toS2RecordBytes,
+      toS2RecordBytes
     )
 
   const appendSession = (
     name: string,
     config: AppendSessionConfig = {},
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ) =>
     withSdkSpan(
       "appendSession",
@@ -838,7 +844,7 @@ const makeLiveApi = (input: {
         const handle = selectedStreamHandle(name, options)
         const sdkSession = yield* Effect.acquireRelease(
           trySdk("appendSession", () => handle.appendSession(appendSessionOptions(config), options?.request)),
-          (session) => Effect.promise(() => session.close()),
+          (session) => Effect.promise(() => session.close())
         )
 
         const submit = (input: SdkAppendInput) =>
@@ -846,24 +852,24 @@ const makeLiveApi = (input: {
             "appendSession.submit",
             traceAttributes(
               { stream: name, recordCount: input.records.length, matchSeqNum: input.matchSeqNum },
-              { basin: options?.basinName ?? defaultBasinName, stream: name },
+              { basin: options?.basinName ?? defaultBasinName, stream: name }
             ),
             Effect.gen(function*() {
               const ticket = yield* trySdk("appendSession.submit", () => sdkSession.submit(input))
               const ack = yield* trySdk("appendSession.ack", () => ticket.ack())
               yield* Effect.annotateCurrentSpan({ seqNum: ack.start.seqNum })
               return ack
-            }),
+            })
           )
 
         return { submit }
-      }),
+      })
     )
 
   const producer = (
     name: string,
     config: ProducerConfig = {},
-    options?: S2OperationOptions,
+    options?: S2OperationOptions
   ) =>
     withSdkSpan(
       "producer",
@@ -875,10 +881,9 @@ const makeLiveApi = (input: {
             new Producer(
               new BatchTransform(batchTransformOptions(config)),
               await handle.appendSession(appendSessionOptions(config), options?.request),
-              name,
-            ),
-          ),
-          (p) => Effect.promise(() => p.close()),
+              name
+            )),
+          (p) => Effect.promise(() => p.close())
         )
 
         const submit = (record: SdkAppendRecord) =>
@@ -893,11 +898,11 @@ const makeLiveApi = (input: {
               // preserve the upstream per-record coordinate alongside the batch ack —
               // a batched owner write still knows its own assigned seq-num.
               return { seqNum, batch: ack.batchAppendAck() }
-            }),
+            })
           )
 
         return { submit }
-      }),
+      })
     )
 
   return {
@@ -932,7 +937,7 @@ const makeLiveApi = (input: {
     read,
     readBytes,
     appendSession,
-    producer,
+    producer
   }
 }
 
@@ -952,9 +957,9 @@ export function layer(options: {
         liveOptions({
           accessToken,
           basinName,
-          ...optionalLiveOptions(options),
-        }),
+          ...optionalLiveOptions(options)
+        })
       )
-    }),
+    })
   )
 }
