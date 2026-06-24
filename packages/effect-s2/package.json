@@ -10,6 +10,10 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./generated": {
+      "types": "./src/generated/index.ts",
+      "default": "./src/generated/index.ts"
     }
   },
   "files": [
@@ -23,6 +27,7 @@
   "scripts": {
     "build": "tsc",
     "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
+    "generate:openapi": "openapi-ts -f openapi-ts.config.ts && pnpm --dir ../.. exec dprint fmt 'packages/effect-s2/src/generated/*.ts' && oxlint -f unix --config ../../.oxlintrc.json src/generated",
     "lint": "oxlint -f unix --config ../../.oxlintrc.json .",
     "test": "vitest run --root ../.. --project effect-s2",
     "typecheck": "tsc --noEmit"
@@ -34,6 +39,7 @@
   "devDependencies": {
     "@effect/platform-node": "4.0.0-beta.87",
     "@effect/vitest": "4.0.0-beta.87",
+    "@hey-api/openapi-ts": "0.99.0",
     "typescript": "^5.7.0",
     "vitest": "^3.2.0"
   }
