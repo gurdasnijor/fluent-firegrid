@@ -7,6 +7,7 @@ Implemented pieces:
 - `property(name)` defines a trial, opaque hosts, an ordinary Effect workload, and post-run checks.
 - `TraceRuntime.layer()` wires `@effect/opentelemetry`, `BatchSpanProcessor`, `ChdbSpanExporter`, and chDB. `VerificationRuntime.flush` calls the real processor.
 - `operation(name, input, effect, options)` is an optional runner-owned client-boundary span for properties that need externally observed call/return evidence. Production code should still use normal Effect tracing with `Effect.withSpan`, `Effect.annotateSpans`, and package-local instrumentation.
+- `.verify(({ expect, traceSql, traceOperation }) => [...])` is the preferred authoring shape. The property builder provides verifier helpers so proof files do not need to import individual checker constructors.
 - `traceSql(name, sql)` verifies the OTel/chDB evidence dataset with one read-only query.
 - `traceOperation(name, match)` is the common helper for asserting a `verification.operation` span by operation name, status, attributes, output fragments, and expected count.
 - `trial_spans` expands to every OTel span in any trace that contains the trial marker span.
@@ -54,8 +55,8 @@ const stepReplay = property("durable.step-replay")
       return yield* Fiber.join(pending)
     })
   )
-  .verify(
-    expectWorkloadResult({ greeting: "Hello, Ada!" }),
+  .verify(({ expect, traceSql }) => [
+    expect.workloadResult({ greeting: "Hello, Ada!" }),
     traceSql(
       "step-1-side-effect-once",
       `
@@ -66,7 +67,7 @@ const stepReplay = property("durable.step-replay")
       FROM trial_spans
     `
     )
-  )
+  ])
 ```
 
 Proof queries must be a single `SELECT` or `WITH` query and must return either

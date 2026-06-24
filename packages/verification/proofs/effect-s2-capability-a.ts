@@ -3,8 +3,7 @@ import * as Effect from "effect/Effect"
 import * as Stream from "effect/Stream"
 
 import { proof } from "../src/Proof.ts"
-import { expectWorkloadResult, property } from "../src/Property.ts"
-import { traceSql } from "../src/TraceProof.ts"
+import { property } from "../src/Property.ts"
 import { VerificationError } from "../src/VerificationError.ts"
 
 const journal = [
@@ -71,8 +70,8 @@ export default proof("effect-s2.capability-a.atomic-replay")
           }
         })
       )
-      .verify(
-        expectWorkloadResult({
+      .verify(({ expect, traceSql }) => [
+        expect.workloadResult({
           appendStartedAtInitialTail: true,
           replayRecordTypes: journalTypes,
           staleReplayRejectedAtSeqNum: 2,
@@ -110,5 +109,5 @@ export default proof("effect-s2.capability-a.atomic-replay")
           FROM trial_spans
         `
         )
-      )
+      ])
   })

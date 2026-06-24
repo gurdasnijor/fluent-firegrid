@@ -14,7 +14,7 @@ import { makeProcessHostFaults, startProcessHosts } from "./ProcessHost.ts"
 import { spanSummary, writeTrialReport, type WrittenTrialReport } from "./Report.ts"
 import { makeS2Runtime, type S2Runtime } from "./S2Runtime.ts"
 import { type S2LiteConfig, S2LiteSupervisor } from "./S2LiteSupervisor.ts"
-import { runTraceProof, type TraceProof } from "./TraceProof.ts"
+import { runTraceProof, traceOperation, type TraceOperationMatch, type TraceProof, traceSql } from "./TraceProof.ts"
 import { VerificationError } from "./VerificationError.ts"
 
 export interface HostDescriptor {
@@ -103,6 +103,18 @@ export interface Check<A> {
   readonly run: (trial: CompletedTrial<A>) => Effect.Effect<void, VerificationError>
 }
 
+export interface Verifiers<A> {
+  readonly expect: {
+    readonly workloadResult: (expected: unknown) => Check<A>
+  }
+  readonly traceOperation: (name: string, match: TraceOperationMatch) => TraceProof
+  readonly traceSql: (name: string, sql: string) => TraceProof
+}
+
+type Verification<A> = Check<A> | TraceProof
+type VerificationCollection<A> = ReadonlyArray<Verification<A>> | Record<string, Verification<A>>
+type VerificationFactory<A> = (verifiers: Verifiers<A>) => VerificationCollection<A>
+
 export interface S2LiteSpec {
   readonly persistence: "local-root"
 }
@@ -150,10 +162,17 @@ class PropertyBuilder<A> {
     })
   }
 
-  verify(...checks: ReadonlyArray<Check<A> | TraceProof>): PropertySpec<A> {
+  verify(factory: VerificationFactory<A>): PropertySpec<A>
+  verify(collection: VerificationCollection<A>): PropertySpec<A>
+  verify(...checks: ReadonlyArray<Verification<A>>): PropertySpec<A>
+  verify(
+    first?: Verification<A> | VerificationCollection<A> | VerificationFactory<A>,
+    ...rest: ReadonlyArray<Verification<A>>
+  ): PropertySpec<A> {
     if (this.spec.workload === undefined) {
       throw new VerificationError({ message: `property ${this.spec.name} is missing a workload` })
     }
+    const checks = verificationEntries(first, rest, verifiers<A>())
     return {
       name: this.spec.name,
       hosts: this.spec.hosts,
@@ -181,7 +200,36 @@ const asCheck = <A>(check: Check<A> | TraceProof): Check<A> => {
   }
 }
 
-export const expectWorkloadResult = (expected: unknown): Check<unknown> => ({
+const verifiers = <A>(): Verifiers<A> => ({
+  expect: {
+    workloadResult: expectWorkloadResult<A>
+  },
+  traceOperation,
+  traceSql
+})
+
+const isVerification = <A>(value: unknown): value is Verification<A> =>
+  typeof value === "object"
+  && value !== null
+  && "name" in value
+  && ("run" in value || "sql" in value)
+
+const verificationEntries = <A>(
+  first: Verification<A> | VerificationCollection<A> | VerificationFactory<A> | undefined,
+  rest: ReadonlyArray<Verification<A>>,
+  helpers: Verifiers<A>
+): ReadonlyArray<Verification<A>> => {
+  if (first === undefined) return rest
+  if (typeof first === "function") return collectionEntries(first(helpers))
+  if (rest.length > 0) return [first as Verification<A>, ...rest]
+  if (isVerification<A>(first)) return [first]
+  return collectionEntries(first)
+}
+
+const collectionEntries = <A>(collection: VerificationCollection<A>): ReadonlyArray<Verification<A>> =>
+  Array.isArray(collection) ? collection : Object.values(collection)
+
+export const expectWorkloadResult = <A = unknown>(expected: unknown): Check<A> => ({
   name: "expectWorkloadResult",
   run: (trial) =>
     Effect.gen(function*() {
