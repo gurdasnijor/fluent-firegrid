@@ -47,6 +47,9 @@ importers:
       '@s2-dev/streamstore':
         specifier: 0.24.1
         version: 0.24.1
+      '@s2-dev/streamstore-patterns':
+        specifier: 2.1.3
+        version: 2.1.3(@s2-dev/streamstore@0.24.1)
       effect:
         specifier: 4.0.0-beta.87
         version: 4.0.0-beta.87
@@ -1122,6 +1125,11 @@ packages:
     resolution: {integrity: sha512-X+zaP2x+j4RXGfbp/seSoRHWnPxzApilDszisZxbYH5C/jTxFhCtDNdPGZb9lJyYPs24wGxruPF7Y+sIXt9Gzw==}
     cpu: [x64]
     os: [win32]
+
+  '@s2-dev/streamstore-patterns@2.1.3':
+    resolution: {integrity: sha512-31ngaB9sYDDnNRDQDt8nzRdzVNwsmNqnxX9ODBEREj2AVJNQEBwzy3sKcWHnyB9fBQf96X61IzG0XRHLfrFLgA==}
+    peerDependencies:
+      '@s2-dev/streamstore': '>=0.21.0'
 
   '@s2-dev/streamstore@0.24.1':
     resolution: {integrity: sha512-TjKPgyL3BKCB5LciUDbqEs5CoFlG5cGedsOux00oHvaQCrfoQlGnQoTlFx3x+2K6bhbk9KkCwJBRyxbmrEXT+g==}
@@ -3083,6 +3091,11 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.61.1':
     optional: true
+
+  '@s2-dev/streamstore-patterns@2.1.3(@s2-dev/streamstore@0.24.1)':
+    dependencies:
+      '@s2-dev/streamstore': 0.24.1
+      nanoid: 3.3.12
 
   '@s2-dev/streamstore@0.24.1':
     dependencies:
