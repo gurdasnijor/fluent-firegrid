@@ -12,6 +12,7 @@ import * as Random from "effect/Random"
 
 import { makeProcessHostFaults, startProcessHosts } from "./ProcessHost.ts"
 import { spanSummary, writeTrialReport, type WrittenTrialReport } from "./Report.ts"
+import { makeS2Runtime, type S2Runtime } from "./S2Runtime.ts"
 import { type S2LiteConfig, S2LiteSupervisor } from "./S2LiteSupervisor.ts"
 import { runTraceProof, type TraceProof } from "./TraceProof.ts"
 import { VerificationError } from "./VerificationError.ts"
@@ -39,6 +40,24 @@ export interface Faults {
   ) => Effect.Effect<void, VerificationError>
 }
 
+export interface Hosts {
+  readonly kill: (name: string) => Effect.Effect<void, VerificationError>
+  readonly restart: (name: string) => Effect.Effect<void, VerificationError>
+  readonly killAfterSpan: (
+    name: string,
+    match: {
+      readonly span: string
+      readonly attributes?: Record<string, string>
+    }
+  ) => Effect.Effect<void, VerificationError>
+}
+
+const hostsFromFaults = (faults: Faults): Hosts => ({
+  kill: faults.killHost,
+  restart: faults.restartHost,
+  killAfterSpan: faults.killHostAfterSpan
+})
+
 export interface WaitForSpanOptions {
   readonly attributes?: Record<string, string>
   readonly attempts?: number
@@ -63,6 +82,8 @@ export class VerificationRuntime extends Context.Service<VerificationRuntime, {
 }
 
 export interface WorkloadContext {
+  readonly s2: S2Runtime
+  readonly hosts: Hosts
   readonly faults: Faults
   readonly runtime: VerificationRuntime["Service"]
   readonly operation: typeof operation
@@ -311,11 +332,15 @@ export const runProperty = Effect.fn("runProperty")(function*<A>(
       const faults = options.faults ?? (
         supervisedHosts.size === 0 ? defaultFaults : makeProcessHostFaults(supervisedHosts, runtime)
       )
+      const hosts = hostsFromFaults(faults)
+      const s2 = makeS2Runtime(s2Endpoint)
       const result = yield* Effect.exit(
         spec.workload({
           faults,
+          hosts,
           operation,
           runtime,
+          s2,
           ...(s2Endpoint === undefined ? {} : { s2Endpoint })
         })
       )

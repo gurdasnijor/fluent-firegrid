@@ -11,9 +11,9 @@ Implemented pieces:
 - `trial_spans` expands to every OTel span in any trace that contains the trial marker span.
 - `waitForSpan` is scoped to the active trial id; it cannot satisfy a wait from another trial's spans in the same chDB session.
 - `S2LiteSupervisor` owns a scoped `s2 lite` child process, waits for HTTP readiness, and exposes separate graceful stop and force kill paths.
-- `.s2Lite({ persistence: "local-root" })` is wired into `runProperty`; tests can override the binary, port, and local root through `runProperty(..., { s2Lite })`. In-process workloads receive the supervised endpoint as `s2Endpoint`.
+- `.s2Lite({ persistence: "local-root" })` is wired into `runProperty`; tests can override the binary, port, and local root through `runProperty(..., { s2Lite })`. Workloads receive `s2`, a low-level handle to the supervised S2 endpoint for substrate proofs.
 - `processHost(config)` marks an otherwise opaque host as runner-owned. The runner starts it in the trial scope, injects `FIREGRID_TRIAL_ID`, `FIREGRID_HOST_ID`, `S2_ENDPOINT`, and OTel resource attributes, and records host lifecycle spans.
-- `Faults` is backed by supervised process hosts: `killHost` sends `SIGKILL`, `restartHost` starts the host again, and `killHostAfterSpan` is trial-scoped `waitForSpan(...)` followed by a real process kill.
+- `hosts` is backed by supervised process hosts: `hosts.kill` sends `SIGKILL`, `hosts.restart` starts the host again, and `hosts.killAfterSpan` is trial-scoped `waitForSpan(...)` followed by a real process kill. `faults` remains as a compatibility alias for the older method names.
 - `runProperty(..., { reportDir })` writes a JSON report with span counts, trace coverage, and failed-check context. Failed checks also include an observed span summary in the thrown `VerificationError`.
 - `proofs/effect-s2-capability-a.ts` is a live substrate proof for Capability A's `packages/effect-s2` dependency: under real `s2 lite`, an atomic own-journal batch guarded by `matchSeqNum` commits `StepCompleted + CheckpointAdvanced`, the stale replay append is rejected by `SeqNumMismatchError`, and replay reads back only the original batch. The proof is verified through workload result checks and trace SQL over the OTel/chDB evidence.
 - `tsx src/main.ts proof run all` runs registered proofs through the verification system. `proof list` shows available proofs; `proof run <name> --report-dir <dir>` writes JSON trial reports.
@@ -35,13 +35,13 @@ const stepReplay = property("durable.step-replay")
       args: ["dist/worker.js"]
     })
   )
-  .workload(({ faults, operation }) =>
+  .workload(({ hosts, operation }) =>
     Effect.gen(function*() {
       const pending = yield* Effect.fork(
         operation("greeter.process", { name: "Ada" }, client(greeter).process({ name: "Ada" }))
       )
 
-      yield* faults.killHostAfterSpan("worker", {
+      yield* hosts.killAfterSpan("worker", {
         span: "durable.journal.append.ack",
         attributes: {
           "durable.record.type": "StepCompleted",
@@ -49,7 +49,7 @@ const stepReplay = property("durable.step-replay")
         }
       })
 
-      yield* faults.restartHost("worker")
+      yield* hosts.restart("worker")
       return yield* Fiber.join(pending)
     })
   )
