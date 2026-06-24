@@ -93,7 +93,6 @@ export {
   SeqNumMismatchError,
   utf8ByteLength
 }
-export type * from "@s2-dev/streamstore"
 
 type SdkBasin = ReturnType<S2["basin"]>
 type SdkStream = ReturnType<SdkBasin["stream"]>

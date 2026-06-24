@@ -5,8 +5,8 @@
 |                       |                                                                                                   |
 | --------------------- | ------------------------------------------------------------------------------------------------- |
 | Status                | Draft for implementation                                                                          |
-| Date                  | 2026-06-23                                                                                         |
-| Packages (provisional) | `effect-s2` (transport) · the orchestrator + `TableView` **substrate** — incubates in `effect-s2-stream-db`, graduates to `effect-s2-flow` only once proven (see Packaging) · `effect-s2-durable` (authoring). *The layering is firm; the package cut is deliberately deferred.* |
+| Date                  | 2026-06-24                                                                                         |
+| Packages             | `effect-s2` (transport) · `effect-s2-flow` (runtime substrate: L1-L7, starting with orchestrators only) · authoring surface later. `effect-s2-stream-db` and `effect-s2-durable` are not active packages in this checkout; archived branches may be used as references only. |
 | Supersedes            | `effect-s2-flow-sdd.md` (folded in as Layers 0–6) and the processor portion of the prior stream-db SDD |
 | Reference vocabulary  | Pulsar (Functions, transactions, IO, TableView, schema); the S2 shared-log KV demo; Restate / `restate-sdk-gen` |
 | effect-smol           | Effect v4 (`Context.Service`, `Layer`, `Stream`, `Queue`, `PubSub`, `Deferred`, `Fiber`, `FiberRef`, `RequestResolver`, `LayerMap`, cluster entities) |
@@ -35,6 +35,26 @@ Layer 11  Worked examples              greeter · basics · counter · blockAndW
 
 **The thesis.** Pulsar centralizes four mechanisms in a broker (dispatch, transaction coordinator, schema registry, compaction); the S2 KV demo shows the materialization/orchestration engine; the baseline `StreamDb` is the locally-serialized CAS writer (the fenced-multi-writer generalization is the work here). Compose them and you get a **per-key stream as the unit of everything**, with the conditional append as the coordination primitive and `Schema` as the schema system. Layered up, that substrate bottoms out a Restate-style durable-execution authoring surface **without re-implementing a scheduler** — Effect *is* the scheduler `restate-sdk-gen` hand-builds. `Effect` is the `Operation`, `Fiber` is the `Future`, and the durable layer is a thin set of primitives plus three flow extensions. "Effect all the way down" stays literally true because flow's primitives are themselves Effects.
 
+## Current checkpoint and next PR
+
+**Phase 0 is done enough. Stop hardening generation before L1.** The active checkout has a clean `effect-s2` production surface and no longer contains active `effect-s2-stream-db` or `effect-s2-durable` packages. The generated `effect-s2/src/generated` artifacts are contract/drift detection for the S2 protocol; the runtime should build on `effect-s2/src/S2Client.ts` semantic capabilities. Do not reintroduce snapshot generator infrastructure, `src/heyapi-client.ts`, `Channel.ts`, or broad legacy adapter packages just to continue.
+
+**Next PR: `Introduce effect-s2-flow L1 orchestrator substrate`.** Create a narrow `packages/effect-s2-flow` package unless another branch intentionally restores a compatible runtime package before this work starts. Scope the package to runtime primitives only:
+
+- `src/runtime/ViewOrchestrator.ts`
+- `src/runtime/OwnedOrchestrator.ts`
+- `src/runtime/CheckTail.ts`
+- `src/runtime/FlowError.ts`
+- test support with a deterministic in-memory S2-like stream model
+
+Build order for that PR:
+
+1. `ViewOrchestrator` first: apply-on-tail only; `getStrong = checkTail + wait until applied >= tail`.
+2. `OwnedOrchestrator` second: fenced writes, pending-own ack ordering, no double-apply from the tail reader, write replies only after ordered local apply.
+3. Model/property tests against the in-memory stream model, not upstream S2 snapshot tests.
+
+Do **not** build `TableView`, `Processor`, durable primitives, authoring APIs, or Cloudflare/Durable Object integrations in the L1 PR. The success condition is that the two orchestrators exist as scoped Effect services/factories and their behavior is proven against deterministic fake streams.
+
 ---
 
 # Layer -1 — `effect-s2` Fidelity
@@ -51,7 +71,9 @@ Before building flow/durable semantics, `effect-s2` must stop being a manually-c
 
 This is not "manual wrapper versus codegen." Codegen is the spine. The correction is that **HeyAPI remains the parser/plugin orchestrator** because it already owns the OpenAPI normalization and symbol pipeline, while the local plugins emit Effect-native artifacts directly. Do **not** post-process generated code, keep `src/heyapi-client.ts` deleted, and do **not** hand-maintain a giant `S2ClientApi` to compensate for generator gaps.
 
-**Initial clean-generator result (2026-06-23).** `effect-s2` now has a local HeyAPI generation path pinned to `s2-specs@329de93f7b240a4daef9edbeb98ced0699aab7d0/s2/v1/openapi.json`. The generator emits `src/generated/effect-schema.gen.ts` from the local `effect-schema` plugin and `src/generated/client-effect.gen.ts` from the local `client-effect` plugin. It does not emit HeyAPI plain TypeScript models or a post-processed runtime adapter. The generated client module defines `S2Api` with Effect `HttpApi`/`HttpApiEndpoint` groups, including the S2 read endpoint's `text/event-stream` success alternative, derives `S2ProtocolClientApi` with `HttpApiClient.ForApi`, and exposes `make`/`layer` for the grouped derived client shape documented by Effect. Snapshot tests follow HeyAPI's own `openapi-ts-tests` file-snapshot pattern and generate from the pinned upstream URL rather than a checked-in spec file.
+**Initial clean-generator result (2026-06-23).** `effect-s2` now has a local HeyAPI generation path pinned to `s2-specs@329de93f7b240a4daef9edbeb98ced0699aab7d0/s2/v1/openapi.json`. The generator emits `src/generated/effect-schema.gen.ts` from the local `effect-schema` plugin and `src/generated/client-effect.gen.ts` from the local `client-effect` plugin. It does not emit HeyAPI plain TypeScript models or a post-processed runtime adapter. The generated client module defines `S2Api` with Effect `HttpApi`/`HttpApiEndpoint` groups, including the S2 read endpoint's `text/event-stream` success alternative, derives `S2ProtocolClientApi` with `HttpApiClient.ForApi`, and exposes `make`/`layer` for the grouped derived client shape documented by Effect. Generator snapshot tests were removed because they were not part of the runtime substrate; the generated checked-in artifacts plus package typecheck/diagnostics/preflight are the current guardrail.
+
+**Generated schema usage.** `src/generated/effect-schema.gen.ts` is not a separate runtime facade. It is the schema module consumed by `src/generated/client-effect.gen.ts` (`import * as Schemas`) to build every generated `HttpApiEndpoint` payload, params, success response, protocol error, and SSE event schema. The handwritten `S2Client.ts` semantic surface does not import it today; L1 should not depend on generated schema internals unless it is intentionally working at the protocol-contract layer.
 
 **Layer-0 cutover result (2026-06-24).** `effect-s2` now exposes a single production semantic surface from `src/S2Client.ts`; the legacy `Channel.ts`, local SDK shim, local tagged-error wrapper, and `S2ClientAlt` spike are deleted. The public surface is grouped around `basins`, `accessTokens`, `locations`, `metrics`, `basin(name)`, and `stream(basin, name)`. The stream capability exposes one-shot `append`, `read`, `readSession`, `checkTail`, scoped `appendSession`, scoped `producer`, command-record constructors (`AppendRecord.fence` / `trim`), and integrated upstream `@s2-dev/streamstore-patterns` APIs (`u64`, chunking/framing, dedupe headers, serializing append sessions, deserializing read sessions). This is the Layer-0 API the runtime should build on. The generated protocol remains the protocol contract and drift detector; the runtime substrate uses the upstream SDK-backed semantic capabilities for behaviors the OpenAPI contract cannot express.
 
@@ -99,7 +121,7 @@ interface SerializingAppendSession<A> {
 - Exact u64 boundary handling: `encodeU64` / `decodeU64`.
 - Fencing and CAS: pass through `fencingToken` and `matchSeqNum` on every append path, including one-shot append, append session, Producer, and serialized writer.
 
-**Conformance gate L-1.** The generator emits the protocol module from the pinned S2 OpenAPI spec through HeyAPI and local Effect-native plugins. The generated output typechecks, includes the load-bearing operations and schemas, and has file snapshots for a focused append/read/checkTail/list-basins slice. The semantic layer exposes the native SDK behavior flow depends on: `matchSeqNum`, `fencingToken`, append-session ticketing/backpressure, Producer per-record seqnums, serialization roundtrip, dedupe headers, and u64 encode/decode. The current gate is sufficient to start Layer 1 implementation; add live/contract tests for those semantics before claiming the full L-1 behavioral gate.
+**Conformance gate L-1.** The generator emits the protocol module from the pinned S2 OpenAPI spec through HeyAPI and local Effect-native plugins. The generated output typechecks and includes the load-bearing operations and schemas. The semantic layer exposes the native SDK behavior flow depends on: `matchSeqNum`, `fencingToken`, append-session ticketing/backpressure, Producer per-record seqnums, serialization roundtrip, dedupe headers, and u64 encode/decode. The current gate is sufficient to start Layer 1 implementation; add live/contract tests for those semantics before claiming the full L-1 behavioral gate. Do not rebuild snapshot infrastructure as a prerequisite for L1.
 
 ---
 
@@ -251,7 +273,7 @@ const CheckTailResolver = RequestResolver.makeBatched((reqs: ReadonlyArray<Check
 ).pipe(RequestResolver.batchN(256))
 ```
 
-**Conformance gate L1.** Reproduce the KV demo's externally observable semantics on a single stream: strong vs eventual reads, in-order write acks, recover-from-cursor. If the Effect loop passes the demo's behavior as a harness, the core is sound.
+**Conformance gate L1.** Prove the orchestrators against a deterministic in-memory S2-like stream model. `ViewOrchestrator` must pass eventual read, strong read (`checkTail` barrier), tail folding, pending-read timeout, and recovery-from-cursor tests. `OwnedOrchestrator` must pass read-your-writes, own write applied once, ordered pending-own ack handling, and the foreign-record-before-own-ack case: if a foreign record lands at seq `N` and an own ack arrives at `N+1`, the owner must not reorder state. Add model/property tests for interleaved writes and strong reads so strong reads are linearizable, eventual reads may lag, and owned writes preserve stream order.
 
 ---
 
@@ -284,7 +306,7 @@ interface SinkDef<K, A> { readonly name: string; readonly input: EventStream<K, 
 
 Wire-format sources/sinks use `Stream.pipeThroughChannel` with the `Ndjson`/`Msgpack` channels as the codec stage.
 
-**`ChangeMessage` stays in `stream-db`.** Flow streams carry domain facts in flow's own typed event envelope; flow **never imports `ChangeMessage`**, which is the table-changelog protocol layered *above* the engine (Layer 3 note).
+**Legacy `ChangeMessage` is not part of flow.** Flow streams carry domain facts in flow's own typed event envelope; flow **never imports legacy `ChangeMessage`**, which belonged to the old table-changelog layer above the engine.
 
 **Conformance gate L2.** Schema encode/decode errors are typed (`FlowError reason="decode"`); missing and empty streams resolve consistently (a 404 vs a tail-0 416 both mean "nothing to fold"); `matchSeqNum` / `fencingToken` options pass through to `effect-s2` on every guarded owner write.
 
@@ -292,7 +314,7 @@ Wire-format sources/sinks use `Stream.pipeThroughChannel` with the `Ndjson`/`Msg
 
 # Layer 3 — State Materialization (TableView)
 
-The orchestrator, fold-only, exposed as a `Schema`-typed service. This is the KV demo's read path, generalized over the reducer — and the seed that **moves down** from `stream-db`'s `MaterializedState`.
+The orchestrator, fold-only, exposed as a `Schema`-typed service. This is the KV demo's read path, generalized over the reducer. It replaces the old `stream-db` materialization direction; do not restore that package just to get a table abstraction.
 
 ```ts
 // table/TableView.ts
@@ -458,7 +480,7 @@ interface Activator {
 
 # Layer 7 — Durable-Execution Extensions
 
-flow as specced (Layers 0–6) is a stream processor. Three additions turn it into a durable-execution substrate. **None touch the orchestrator core** — they are additions at the Processor-runner and host level. These are the only things standing between the existing `effect-s2-durable` engine and running on flow.
+flow as specced (Layers 0–6) is a stream processor. Three additions turn it into a durable-execution substrate. **None touch the orchestrator core** — they are additions at the Processor-runner and host level. The old `effect-s2-durable` package is archived reference material only; the active path is to rebuild these semantics on top of flow after L1-L7 are in place.
 
 The shared shape: durable waiting is **fact-driven**. A handler that awaits something unresolved parks; the resolving event is journaled onto the invocation stream; folding it resumes the handler. The three extensions are three sources of resolving facts (timers, promises/signals, child results) plus the runner machinery that parks and resumes.
 
@@ -570,7 +592,7 @@ Invoke = { method: string; input: unknown; replyTo?: { stream: string; key: stri
 
 # Layer 8 — CurrentInvocationScope (the seam)
 
-This is the single point where the durable-execution authoring layer meets flow. The ergonomic surface (Layer 10) needs **no** `Durable.*` ceremony because the free primitives (`run`/`state`/`sleep`/`signal`/`awakeable`/`deferred`) require `CurrentInvocationScope` in their `R`, and the **Processor runner discharges it per invocation**. Re-targeting the existing `effect-s2-durable` engine onto flow is *only* re-implementing this one service in terms of flow primitives — the authoring layer above does not change.
+This is the single point where the durable-execution authoring layer meets flow. The ergonomic surface (Layer 10) needs **no** `Durable.*` ceremony because the free primitives (`run`/`state`/`sleep`/`signal`/`awakeable`/`deferred`) require `CurrentInvocationScope` in their `R`, and the **Processor runner discharges it per invocation**. The archived `effect-s2-durable` engine is useful prior art, but the active implementation target is flow-native primitives over this service.
 
 The reason the swap is clean: the existing owner-stream model already *is* flow. "One schema-addressed S2 stream per object key, ordered ActorEvent log, serial drainer by seq_num, completion from a Completed event, signals as ingress appends, state as a StateChanged projection, single in-process owner per execution" — that is a flow fenced `Processor` over a per-key `EventStream` with a `TableView` projection, term for term. flow is the extraction of that machinery.
 
@@ -580,7 +602,7 @@ class CurrentInvocationScope extends Context.Service<CurrentInvocationScope, {
   readonly key:       string             // object/workflow key (execution id for services)
   readonly stream:    OwnerStream         // this execution's fenced writer (the orchestrator's single consumer = the serial drainer)
   readonly steps:     StepView            // journaled StepCompleted facts — the replay boundary for `run`
-  readonly tables:    TableBindings        // stream-db Tables folded over the same stream — user `state()`
+  readonly tables:    TableBindings        // flow TableViews folded over the same stream — user `state()`
   readonly deferreds: DeferredRegistry     // park/resume (Layer 7.2) for signal · awakeable · deferred · child
   readonly timers:    TimerService         // sleep (Layer 7.1)
   readonly children:  ChildEmitter         // serviceClient · objectClient (Layer 7.3)
@@ -601,7 +623,7 @@ Thin primitives over `CurrentInvocationScope`. `Effect` is the `Operation` (lazy
 | Primitive | Lowering |
 | --- | --- |
 | `run(action, { name?, retry? })` | check `steps` by name (else journal position): present ⇒ return recorded value / replay recorded typed failure, **no re-run**; absent ⇒ run action under the retry `Schedule`, guarded-append `StepCompleted(key, encode(result))` (effectively-once via owner fence + `match_seq_num`), fold. Crash-before-append re-runs (at-least-once). |
-| `state(Table).get/set/delete` | binding over the execution stream's fold for that table (`stream-db` reducer in flow's generic `TableView`). `set`⇒`StateChanged` append + fold; `get`⇒read the **owned** fold (apply-on-ack ⇒ read-after-ack sees the write); `delete`⇒delete change. |
+| `state(Table).get/set/delete` | binding over the execution stream's fold for that table (`TableView` reducer). `set`⇒`StateChanged` append + fold; `get`⇒read the **owned** fold (apply-on-ack ⇒ read-after-ack sees the write); `delete`⇒delete change. |
 | `sleep(name, d)` | `timers.schedule` ⇒ `TimerSet` + `TimerScheduled` (ack) ⇒ park ⇒ `TimerFired` folds ⇒ resume (Layer 7.1). |
 | `deferred(name)` / `awakeable()` | `DurablePromise` stream + resolution view; `get` folds (parks via `deferreds` if unresolved); `resolve`/`reject` appends `Resolved`/`Rejected` (idempotent, first wins). |
 | `signal(name, payload)` | unfenced `Flow.submit` to the target stream (ingress append) — folded by the target's drainer, **no resident call required**. |
@@ -624,7 +646,7 @@ restate-sdk-gen-shaped: group handlers as **bare generator methods** (`*greet(in
 ```ts
 export const Flow = { /* Layers 2–6 facade: eventStream, tableView, processor, source, sink, submit, transaction, runners, assignment, Guarantee */ }
 
-// effect-s2-durable — the authoring surface (no Durable.* namespace; free primitives over CurrentInvocationScope)
+// effect-s2-flow/authoring — future authoring surface (no Durable.* namespace; free primitives over CurrentInvocationScope)
 export { service, object, workflow }                       // declarations → flow Processor (+ TableView for objects)
 export { run, state, sharedState, sleep, signal, awakeable, deferred }  // free durable primitives
 export { all, allSettled, race, select, any, spawn }       // combinators (all/allSettled = pure Effect; race/select/any journaled)
@@ -655,8 +677,8 @@ The cited surfaces, **byte-for-byte the authoring code**, with the lowering anno
 
 ```ts
 import { Duration, Effect } from "effect"
-import { run, service } from "effect-s2-durable"
-import { client } from "effect-s2-durable/invocation"
+import { run, service } from "effect-s2-flow/authoring"
+import { client } from "effect-s2-flow/invocation"
 
 const greeter = service({
   name: "greeter",
@@ -678,7 +700,7 @@ const greeter = service({
 ### 11.2 basics — combinators (pure Effect vs journaled)
 
 ```ts
-import { service, run, all, race, select } from "effect-s2-durable"
+import { service, run, all, race, select } from "effect-s2-flow/authoring"
 
 const basics = service({
   name: "basics",
@@ -708,9 +730,9 @@ const basics = service({
 ### 11.3 counter — virtual object, exclusive write / shared read
 
 ```ts
-import { object, state, sharedState } from "effect-s2-durable"
-import { primaryKey, Table } from "effect-s2-stream-db"
-import { client } from "effect-s2-durable/invocation"
+import { object, state, sharedState } from "effect-s2-flow/authoring"
+import { primaryKey, Table } from "effect-s2-flow/table"
+import { client } from "effect-s2-flow/invocation"
 
 class CounterState extends Table<CounterState>("counterState")({ id: Schema.String.pipe(primaryKey), value: Schema.Number }) {}
 
@@ -737,8 +759,8 @@ yield* client(counter, "user-2").value()   // → 0   (different key = different
 ### 11.4 checkout — durable state + the run-action boundary
 
 ```ts
-import { service, state, run } from "effect-s2-durable"
-import { primaryKey, Table } from "effect-s2-stream-db"
+import { service, state, run } from "effect-s2-flow/authoring"
+import { primaryKey, Table } from "effect-s2-flow/table"
 
 class Cart extends Table<Cart>("cart")({ cartId: Schema.String.pipe(primaryKey), items: Schema.Array(Schema.String) }) {}
 
@@ -759,7 +781,7 @@ const checkout = service({
 ### 11.5 blockAndWait — durable promise + suspend/resume (exercises Layer 7.2)
 
 ```ts
-import { workflow, state, sharedState, deferred } from "effect-s2-durable"
+import { workflow, state, sharedState, deferred } from "effect-s2-flow/authoring"
 
 class WfState extends Table<WfState>("wf")({ id: Schema.String.pipe(primaryKey), input: Schema.String }) {}
 
@@ -786,7 +808,7 @@ const blockAndWait = workflow({
 ### 11.6 orchestration — child calls + sleep (exercises Layers 7.1 and 7.3)
 
 ```ts
-import { service, run, sleep, serviceClient, all } from "effect-s2-durable"
+import { service, run, sleep, serviceClient, all } from "effect-s2-flow/authoring"
 
 const saga = service({
   name: "saga",
@@ -815,9 +837,9 @@ const saga = service({
 
 Each step is gated by its layer's conformance check; do not start a layer until the one below passes.
 
--1. **`effect-s2` fidelity spike — generate first, wrap second.** Pin `s2-streamstore/s2-specs` to commit `329de93f7b240a4daef9edbeb98ced0699aab7d0`, run HeyAPI into `effect-s2/src/generated` with local `effect-schema` and `client-effect` plugins, and do not check in the OpenAPI spec. The generated protocol must be an Effect `HttpApi` contract plus `HttpApiClient`-derived client, not a custom fetch/request runtime. The public Effect layer is handwritten only around semantics OpenAPI cannot represent: auth/config layers, upstream S2 domain errors, append-session ticketing/backpressure, Producer, serialization/framing, dedupe headers, u64 codecs, fencing/CAS helpers. Gate: generation is reproducible; generated output typechecks; generated Effect output includes `append`/`read`/`checkTail`, `Schema` model declarations, and typed protocol errors; the semantic surface exposes `matchSeqNum`, `fencingToken`, append-session tickets, Producer per-record seqnums, serialization roundtrip, dedupe headers, and u64 encode/decode. Live semantic tests for those behaviors harden L1/L6; they do not require reintroducing wrapper workarounds. This step explicitly replaces the old broad hand-maintained `S2ClientApi` with generated protocol + narrow semantic capabilities.
-0. **Decide packaging + `stream-db`'s fate first** (before any TableView code). The orchestrator + TableView are the primitive substrate; resolve whether they incubate inside `effect-s2-stream-db` or graduate to `effect-s2-flow` (see Resolved Decisions / Packaging) so flow's `TableView` and stream-db's `Table` do not coexist with two concurrency models mid-build. Also land **"thread `fencingToken` through `StreamDb`/keyed-store appends"** as a concrete item — the baseline is CAS-only today.
-1. **L1 Orchestrator — two implementations.** `ViewOrchestrator` (apply-on-tail) *and* `OwnedOrchestrator` (apply-on-ack own writes + own-record-filtered tail reader). Bounded queues + drop policy on `changes` + deadline on pending reads. Gate: reproduce the KV-demo observable semantics **and** the property-based linearizability checker below; own-write RYW holds on `OwnedOrchestrator`; the tail reader never double-applies own records.
+-1. **`effect-s2` fidelity spike — generate first, wrap second.** Pin `s2-streamstore/s2-specs` to commit `329de93f7b240a4daef9edbeb98ced0699aab7d0`, run HeyAPI into `effect-s2/src/generated` with local `effect-schema` and `client-effect` plugins, and do not check in the OpenAPI spec. The generated protocol must be an Effect `HttpApi` contract plus `HttpApiClient`-derived client, not a custom fetch/request runtime. The public Effect layer is handwritten only around semantics OpenAPI cannot represent: auth/config layers, upstream S2 domain errors, append-session ticketing/backpressure, Producer, serialization/framing, dedupe headers, u64 codecs, fencing/CAS helpers. Gate: generation is reproducible; generated output typechecks; generated Effect output includes `append`/`read`/`checkTail`, `Schema` model declarations, and typed protocol errors; the semantic surface exposes `matchSeqNum`, `fencingToken`, append-session tickets, Producer per-record seqnums, serialization roundtrip, dedupe headers, and u64 encode/decode. Live semantic tests for those behaviors harden L1/L6; they do not require reintroducing wrapper workarounds or generator snapshot infrastructure. This step explicitly replaces the old broad hand-maintained S2 wrapper with generated protocol + narrow semantic capabilities. **Status: complete enough to move to L1.**
+0. **Package boundary for L1 — resolved for this checkout.** Build the runtime substrate in a new narrow `packages/effect-s2-flow` package because active `effect-s2-stream-db` / `effect-s2-durable` packages were removed from this branch. If another branch intentionally restores a compatible runtime package before this starts, reassess; otherwise do not restore legacy packages just to have a destination. Scope step 0 to package scaffold + test harness only.
+1. **L1 Orchestrator substrate — next PR.** Add `runtime/ViewOrchestrator.ts`, `runtime/OwnedOrchestrator.ts`, `runtime/CheckTail.ts`, `runtime/FlowError.ts`, and deterministic in-memory S2-like test support. Implement `ViewOrchestrator` first (apply-on-tail; strong read = `checkTail` + wait), then `OwnedOrchestrator` (fenced writes; pending-own ack ordering; no double-apply; reply after ordered local apply). Bounded queues + drop policy on `changes` + deadline on pending reads. Gate: in-memory model tests prove View eventual/strong reads, recovery from cursor, Owned RYW, own write applied once, and no reorder when foreign seq `N` precedes own ack `N+1`.
    - **Property-based linearizability checker (gate on steps 1–3, not optional).** Replaying the demo's *example* trace won't catch a concurrency violation, and linearizability is the headline claim. Generate interleaved `submit`/`read-strong`/`read-eventual` histories and check the strong path is linearizable (eventual no worse than sequentially consistent) with a Porcupine/Knossos-style checker — model the orchestrator + fence as a register `(tail, last_record_hash, fence_token)`, model `match_seq_num`, and set an **indefinitely-failed append's end-time after all other ops** (the Jepsen gotcha that `match_seq_num`-retry resolves; mirror `s2-streamstore/s2-verification`). This is the gate that *earns* the Layer 1 claim.
 2. **L2 Streams** — `EventStream`/`Record`/`Source`/`Sink` over direct `effect-s2` stream capabilities plus local `Schema` codecs. Gate: typed codec errors; consistent empty/missing.
 3. **L3 TableView** — fold + `getStrong` + `changes` + `Checkpoint`. Gate: linearizable read after concurrent write (checker above); cold-start-from-snapshot equals full replay.
@@ -843,7 +865,7 @@ Each step is gated by its layer's conformance check; do not start a layer until 
 
 **Effect ≙ restate-sdk-gen.** `Operation`=`Effect` · `Future`=`Fiber` · `spawn`=`Effect.fork` · `task.interrupt`=`Fiber.interrupt` · `onMainExit:"abandon"`=fork-in-handler-scope · `onMainExit:"join"`=`Fiber.join` · `contextLocal`=`FiberRef` · the epoch guard / `won` flag / stale-waiter pruning = **gone** (Effect's runtime owns fiber lifecycle). Cancellation = typed `Cancelled` error (recoverable) + `Fiber.interrupt` for I/O.
 
-**Layer map (logical, not a package decree).** `transport` (S2 client) → `runtime` orchestrator + streams + materialization (L1–7) → `authoring` (L8–10). Physically: transport = `effect-s2`; runtime + authoring incubate where the substrate already lives (`effect-s2-stream-db`) and graduate to `effect-s2-flow` only once proven (see Packaging). The arrows are dependency direction, not a mandate to create packages now.
+**Layer map.** `transport` (S2 client) → `runtime` orchestrator + streams + materialization (L1-L7) → `authoring` (L8-L10). Physically in this checkout: transport = `effect-s2`; runtime starts in `effect-s2-flow`; authoring is later and must not be added to the L1 PR. The arrows are dependency direction, not permission to rebuild deleted legacy packages.
 
 **Use generated S2 protocol + SDK patterns, don't re-implement transport.** The raw control/data-plane protocol is generated from `s2-specs` with HeyAPI plus local Effect-native plugins, not manually mirrored and not post-processed. Ordered + backpressured writes ⇒ S2 SDK **append session / Producer API** (`maxInflightBytes` backpressure, per-record ordered ack with exact `seqNum`). Downstream idempotency ⇒ SDK **dedupe headers** (`injectDedupeHeaders` / `DedupeFilter`). Large (>1 MiB) messages ⇒ SDK **chunking + framing** (note: a framed message spans multiple records and is *not* atomic if it exceeds a batch). Exact seqnums ⇒ SDK **`encodeU64`/`decodeU64`** (use these; do not depend on the f64 `number`). The `effect-s2` public surface is semantic capabilities over those generated/pattern primitives, not a giant hand-maintained client bag.
 
@@ -870,8 +892,8 @@ The prior open questions are now decided (numbering preserved):
 5. **Ownership / placement (L6) — the `y-s2` distributed-mutex recipe; `cluster.Entity` not adopted** (see the S2 Research Alignment section). The lease/fence is authoritative; placement is advisory.
 6. *(was: cluster entity API)* — resolved by #5: **do not build on `cluster.Entity`** (RPC-and-mailbox-persistence, a redundant second transport). S2 fence + per-key stream is the substrate; cluster `Sharding` is an optional advisory placement layer later.
 7. **`seqNum` — `SeqNum(u64)` via the SDK's `encodeU64`/`decodeU64`.** Prefer the SDK codec over the f64 `number`; exposure is negligible under per-key sharding anyway (2^53 ≈ millennia per stream). Flag upstream, don't gate.
-8. **`stream-db` / packaging — the *layering* is firm, the *package cut* is deferred.** `TableView` is a substrate-level (orchestrator) primitive; whether it lives in `effect-s2-stream-db` or a graduated `effect-s2-flow` is decided **before** TableView work begins (Build Plan step 0), not mid-build — so two concurrency models never coexist.
-9. **Naming — `effect-s2-flow`** stands for the *layer*, used here for the substrate whether or not it becomes a standalone package.
+8. **Packaging — L1 starts in `effect-s2-flow` for this checkout.** The layering remains the firm commitment, and the current package cut is now explicit: `effect-s2-flow` owns the runtime substrate. `effect-s2-stream-db` is not active here; do not rebuild its old `Table` model beside flow's `TableView`.
+9. **Naming — `effect-s2-flow`** is the active runtime substrate package name for L1-L7 work.
 
 Round-2 review (stream-crossing correctness):
 
@@ -883,7 +905,7 @@ Round-2 review (stream-crossing correctness):
 
 The remaining genuinely-open item: **cross-key transactions (L5)** stay deferred — reserve the per-key atomic boundary now; build the transactional-outbox + read-committed isolation only against a real cross-key-atomic case.
 
-**Packaging (reviewer-raised — resolve before step 0).** Two reviewers flagged that a broad new `effect-s2-flow` package risks becoming "the new runtime drawer," and that `TableView` (flow) coexisting with `Table` (stream-db) reconstructs the two-concurrency-model hazard the design exists to prevent. The resolution: **the layering is the firm commitment; the package boundary is not.** Recommended path — **incubate the orchestrator + `TableView` inside `effect-s2-stream-db`** (as the substrate beneath its relational/IVM surface) and **graduate to `effect-s2-flow` only once the primitive has proven out**, rather than standing up the broad package on day one. This honors the greenfield-cutover principle (decide the *data/concurrency* model before building — which is step 0) without paying premature-package cost. If the user's existing stream-db substrate work already wants the split, take it; the SDD does not mandate the package, only the layering.
+**Packaging (current resolution).** Earlier drafts considered incubating the runtime under `effect-s2-stream-db`, but that package is no longer active in this checkout. The current resolution is to create a deliberately narrow `packages/effect-s2-flow` for the runtime substrate. Keep it boring: L1 orchestrators and their in-memory model tests first; no TableView, Processor, durable primitives, or authoring API until the lower gate passes. This avoids the two-concurrency-model hazard without spending time fixing packages that are being rebuilt.
 
 # S2 Research Alignment
 
@@ -920,4 +942,4 @@ The design intentionally tracks S2's own published research; the load-bearing ma
 - Restate — `restate-sdk-gen` (authoring shape, Operation/Future, cancellation/interrupt): `restatedev/sdk-typescript` › `packages/libs/restate-sdk-gen`
 - Restate — service communication (child-call model): https://docs.restate.dev/develop/ts/service-communication
 - Companion SDDs: `effect-s2-flow-sdd.md` (folded in here), `effect-durable-execution-sdd.md`, `effect-s2-durable-consolidation-sdd.md`
-- Baseline: `effect-s2/S2Client.ts`, `effect-s2-stream-db/{StreamDb,MaterializedState,ChangeMessage}.ts`
+- Baseline: `effect-s2/S2Client.ts`; archived legacy references may be consulted from `archive/effect-s2-legacy-durable-stream-db`, but they are not active implementation targets.
