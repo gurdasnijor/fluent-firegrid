@@ -7,7 +7,6 @@ import * as Argument from "effect/unstable/cli/Argument"
 import * as Command from "effect/unstable/cli/Command"
 import * as Flag from "effect/unstable/cli/Flag"
 
-import { effectS2CapabilityAProof } from "../proofs/effect-s2-capability-a.ts"
 import { type CompletedProof, type Proof, runProof } from "./Proof.ts"
 import { layer as TraceRuntimeLayer } from "./TraceRuntime.ts"
 import { VerificationError } from "./VerificationError.ts"
@@ -30,15 +29,12 @@ const proof = Command.make("proof").pipe(
   Command.withDescription("List and run verification proofs")
 )
 
-const proofs = [
-  effectS2CapabilityAProof
-] as const satisfies ReadonlyArray<Proof<any>>
-
-const findProof = (name: string): Proof<any> | undefined => proofs.find((proof) => proof.name === name)
-
-const selectedProofs = (name: string): Effect.Effect<ReadonlyArray<Proof<any>>, VerificationError> => {
+const selectedProofs = (
+  proofs: ReadonlyArray<Proof<any>>,
+  name: string
+): Effect.Effect<ReadonlyArray<Proof<any>>, VerificationError> => {
   if (name === "all") return Effect.succeed(proofs)
-  const found = findProof(name)
+  const found = proofs.find((proof) => proof.name === name)
   if (found !== undefined) return Effect.succeed([found])
   return new VerificationError({ message: `unknown proof ${name}` })
 }
@@ -65,73 +61,77 @@ const printCompletedProof = Effect.fn("verification.cli.printCompletedProof")(fu
   }
 })
 
-const list = Command.make(
-  "list",
-  {},
-  Effect.fn("verification.cli.proof.list")(function*() {
-    const root = yield* verification
-    if (root.output === "json") {
-      yield* Console.log(JSON.stringify(
-        proofs.map((proof) => ({
-          name: proof.name,
-          description: proof.description
-        })),
-        undefined,
-        2
-      ))
-      return
-    }
-    yield* Effect.forEach(
-      proofs,
-      (proof) => Console.log(`${proof.name} - ${proof.description}`),
-      { discard: true }
-    )
-  })
-).pipe(
-  Command.withDescription("List available verification proofs")
-)
+const makeListCommand = (proofs: ReadonlyArray<Proof<any>>) =>
+  Command.make(
+    "list",
+    {},
+    Effect.fn("verification.cli.proof.list")(function*() {
+      const root = yield* verification
+      if (root.output === "json") {
+        yield* Console.log(JSON.stringify(
+          proofs.map((proof) => ({
+            name: proof.name,
+            description: proof.description
+          })),
+          undefined,
+          2
+        ))
+        return
+      }
+      yield* Effect.forEach(
+        proofs,
+        (proof) => Console.log(`${proof.name} - ${proof.description}`),
+        { discard: true }
+      )
+    })
+  ).pipe(
+    Command.withDescription("List available verification proofs")
+  )
 
-const run = Command.make(
-  "run",
-  {
-    name: Argument.string("name").pipe(
-      Argument.withDescription("Proof name, or all"),
-      Argument.withDefault("all")
-    ),
-    reportDir: Flag.optional(Flag.directory("report-dir")).pipe(
-      Flag.withDescription("Directory for JSON proof reports")
-    ),
-    trialId: Flag.optional(Flag.string("trial-id")).pipe(
-      Flag.withDescription("Trial id for a single proof run")
-    )
-  },
-  Effect.fn("verification.cli.proof.run")(function*({ name, reportDir, trialId }) {
-    const selected = yield* selectedProofs(name)
-    const reportPath = Option.getOrUndefined(reportDir)
-    const requestedTrialId = Option.getOrUndefined(trialId)
-    if (requestedTrialId !== undefined && selected.length !== 1) {
-      return yield* new VerificationError({ message: "--trial-id can only be used with one named proof" })
-    }
-    const completed = yield* Effect.forEach(selected, (proof) =>
-      runProof(proof, {
-        ...(reportPath === undefined ? {} : { reportDir: reportPath }),
-        ...(requestedTrialId === undefined ? {} : { trialId: requestedTrialId })
-      }))
-    yield* Effect.forEach(completed, printCompletedProof, { discard: true })
-  })
-).pipe(
-  Command.withDescription("Run one proof or all proofs")
-)
+const makeRunCommand = (proofs: ReadonlyArray<Proof<any>>) =>
+  Command.make(
+    "run",
+    {
+      name: Argument.string("name").pipe(
+        Argument.withDescription("Proof name, or all"),
+        Argument.withDefault("all")
+      ),
+      reportDir: Flag.optional(Flag.directory("report-dir")).pipe(
+        Flag.withDescription("Directory for JSON proof reports")
+      ),
+      trialId: Flag.optional(Flag.string("trial-id")).pipe(
+        Flag.withDescription("Trial id for a single proof run")
+      )
+    },
+    Effect.fn("verification.cli.proof.run")(function*({ name, reportDir, trialId }) {
+      const selected = yield* selectedProofs(proofs, name)
+      const reportPath = Option.getOrUndefined(reportDir)
+      const requestedTrialId = Option.getOrUndefined(trialId)
+      if (requestedTrialId !== undefined && selected.length !== 1) {
+        return yield* new VerificationError({ message: "--trial-id can only be used with one named proof" })
+      }
+      const completed = yield* Effect.forEach(selected, (proof) =>
+        runProof(proof, {
+          ...(reportPath === undefined ? {} : { reportDir: reportPath }),
+          ...(requestedTrialId === undefined ? {} : { trialId: requestedTrialId })
+        }))
+      yield* Effect.forEach(completed, printCompletedProof, { discard: true })
+    })
+  ).pipe(
+    Command.withDescription("Run one proof or all proofs")
+  )
 
-const command = verification.pipe(
-  Command.withSubcommands([
-    proof.pipe(Command.withSubcommands([list, run]))
-  ])
-)
+const makeCommand = (proofs: ReadonlyArray<Proof<any>>) =>
+  verification.pipe(
+    Command.withSubcommands([
+      proof.pipe(Command.withSubcommands([makeListCommand(proofs), makeRunCommand(proofs)]))
+    ])
+  )
 
-export const runCli = Command.run(command, { version }).pipe(
-  Effect.provide(Layer.mergeAll(
-    NodeServices.layer,
-    TraceRuntimeLayer({ serviceName: "firegrid-verification-cli" })
-  ))
-)
+export const runCli = (proofs: ReadonlyArray<Proof<any>>) =>
+  Command.run(makeCommand(proofs), { version }).pipe(
+    Effect.provide(Layer.mergeAll(
+      NodeServices.layer,
+      TraceRuntimeLayer({ serviceName: "firegrid-verification-cli" })
+    ))
+  )

@@ -53,11 +53,18 @@
       "outputs": []
     },
     "//#lint:dead": {
-      "inputs": ["knip.json", "package.json", "packages/**/package.json", "packages/**/src/**", "packages/**/test/**"],
+      "inputs": [
+        "knip.json",
+        "package.json",
+        "packages/**/package.json",
+        "packages/**/src/**",
+        "packages/**/proofs/**",
+        "packages/**/test/**"
+      ],
       "cache": false
     },
     "//#lint:dup": {
-      "inputs": ["packages/*/src/**", ".jscpd.json"],
+      "inputs": ["packages/*/src/**", "packages/*/proofs/**", ".jscpd.json"],
       "outputs": []
     },
     "//#lint:deps": {

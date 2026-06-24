@@ -3,7 +3,7 @@ import { Effect } from "effect"
 import type * as Scope from "effect/Scope"
 import { describe, expect, it } from "vitest"
 
-import { S2LiteSupervisor } from "../src/index.ts"
+import { S2LiteSupervisor } from "../src/S2LiteSupervisor.ts"
 
 const runScoped = <A, E>(
   effect: Effect.Effect<A, E, NodeServices.NodeServices | Scope.Scope>

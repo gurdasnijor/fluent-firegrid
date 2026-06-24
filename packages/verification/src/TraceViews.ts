@@ -3,7 +3,7 @@ const escapeString = (value: string): string => value.replace(/\\/g, "\\\\").rep
 export const bindTrialSql = (sql: string, trialId: string): string =>
   sql.replaceAll("{trial_id:String}", `'${escapeString(trialId)}'`)
 
-export const trialSpansSql = `
+const trialSpansSql = `
 (
   SELECT *
   FROM otel_traces
@@ -16,7 +16,7 @@ export const trialSpansSql = `
 )
 `
 
-export const verificationOperationsSql = `
+const verificationOperationsSql = `
 (
   SELECT
     SpanAttributes['firegrid.trial.id'] AS trial_id,

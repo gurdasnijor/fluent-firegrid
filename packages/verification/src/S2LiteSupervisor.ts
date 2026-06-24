@@ -25,7 +25,7 @@ export interface S2LiteConfig {
   }
 }
 
-export interface S2LiteHandle {
+interface S2LiteHandle {
   readonly endpoint: string
   readonly stop: Effect.Effect<void>
   readonly kill: Effect.Effect<void>
@@ -144,5 +144,3 @@ const makeSupervisor = Effect.fn("S2LiteSupervisor.make")(function*(
     restart: stop.pipe(Effect.andThen(spawnLive))
   })
 })
-
-export type S2LiteSupervisorRequirements = Scope.Scope

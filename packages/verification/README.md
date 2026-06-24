@@ -17,7 +17,7 @@ Implemented pieces:
 - `hosts` is backed by supervised process hosts: `hosts.kill` sends `SIGKILL`, `hosts.restart` starts the host again, and `hosts.killAfterSpan` is trial-scoped `waitForSpan(...)` followed by a real process kill. `faults` remains as a compatibility alias for the older method names.
 - `runProperty(..., { reportDir })` writes a JSON report with span counts, trace coverage, and failed-check context. Failed checks also include an observed span summary in the thrown `VerificationError`.
 - `proofs/effect-s2-capability-a.ts` is a live substrate proof for Capability A's `packages/effect-s2` dependency: under real `s2 lite`, an atomic own-journal batch guarded by `matchSeqNum` commits `StepCompleted + CheckpointAdvanced`, the stale replay append is rejected by `SeqNumMismatchError`, and replay reads back only the original batch. The proof is verified through workload result checks and trace SQL over production `effect-s2` spans in the OTel/chDB evidence.
-- `tsx src/main.ts proof run all` runs registered proofs through the verification system. `proof list` shows available proofs; `proof run <name> --report-dir <dir>` writes JSON trial reports.
+- `tsx proofs/main.ts proof run all` runs registered proofs through the verification system. `proof list` shows available proofs; `proof run <name> --report-dir <dir>` writes JSON trial reports.
 
 Still missing before this should be treated as the complete verification system:
 

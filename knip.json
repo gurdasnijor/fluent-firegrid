@@ -8,6 +8,16 @@
         "test/**/*.ts"
       ]
     },
+    "packages/verification": {
+      "entry": [
+        "proofs/main.ts!"
+      ],
+      "project": [
+        "src/**/*.ts!",
+        "proofs/**/*.ts!",
+        "test/**/*.ts"
+      ]
+    },
     "packages/fluent-acp-process": {
       "project": [
         "src/**/*.ts!",

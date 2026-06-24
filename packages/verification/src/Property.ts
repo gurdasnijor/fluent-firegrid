@@ -308,6 +308,7 @@ const startS2Lite = Effect.fn("runProperty.startS2Lite")(function*(
   return yield* Effect.gen(function*() {
     const supervisor = yield* S2LiteSupervisor
     yield* supervisor.start
+    yield* Effect.addFinalizer(() => supervisor.kill.pipe(Effect.ignore))
     return yield* supervisor.endpoint
   }).pipe(
     Effect.provide(S2LiteSupervisor.layer(config)),

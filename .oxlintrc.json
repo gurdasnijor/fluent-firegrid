@@ -24,7 +24,15 @@
         "packages/*/src/**/*.mjs",
         "packages/*/src/**/*.mts",
         "packages/*/src/**/*.ts",
-        "packages/*/src/**/*.tsx"
+        "packages/*/src/**/*.tsx",
+        "packages/*/proofs/**/*.cjs",
+        "packages/*/proofs/**/*.cts",
+        "packages/*/proofs/**/*.js",
+        "packages/*/proofs/**/*.jsx",
+        "packages/*/proofs/**/*.mjs",
+        "packages/*/proofs/**/*.mts",
+        "packages/*/proofs/**/*.ts",
+        "packages/*/proofs/**/*.tsx"
       ],
       "rules": {
         "eslint/no-restricted-imports": ["error", {

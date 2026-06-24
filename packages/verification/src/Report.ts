@@ -9,12 +9,12 @@ import { Path } from "effect/Path"
 import { bindTrialSql, expandTraceMacros } from "./TraceViews.ts"
 import { VerificationError } from "./VerificationError.ts"
 
-export interface SpanCount {
+interface SpanCount {
   readonly name: string
   readonly count: number
 }
 
-export interface TraceCoverage {
+interface TraceCoverage {
   readonly spans: number
   readonly traces: number
   readonly evidenceSpans: number
@@ -47,7 +47,7 @@ const queryTrial = <A extends object>(
     )
   })
 
-export const spanCounts = Effect.fn("Report.spanCounts")(function*(trialId: string) {
+const spanCounts = Effect.fn("Report.spanCounts")(function*(trialId: string) {
   return yield* queryTrial<SpanCount>(
     `
 SELECT SpanName AS name, count() AS count
@@ -59,7 +59,7 @@ ORDER BY count DESC, SpanName
   )
 })
 
-export const traceCoverage = Effect.fn("Report.traceCoverage")(function*(trialId: string) {
+const traceCoverage = Effect.fn("Report.traceCoverage")(function*(trialId: string) {
   const rows = yield* queryTrial<TraceCoverage>(
     `
 SELECT
@@ -112,7 +112,7 @@ const writeReportFile = Effect.fn("Report.writeReportFile")(function*(
   return file
 })
 
-export const buildTrialReport = Effect.fn("Report.buildTrialReport")(function*(input: {
+const buildTrialReport = Effect.fn("Report.buildTrialReport")(function*(input: {
   readonly trialId: string
   readonly checks: number
   readonly status: "passed" | "failed"

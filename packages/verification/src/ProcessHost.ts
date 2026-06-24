@@ -174,7 +174,7 @@ const makeManagedHost = Effect.fn("ProcessHost.makeManagedHost")(function*(
       Effect.catch((cause) => handle.kill.pipe(Effect.andThen(Effect.fail(cause))))
     )
     yield* Ref.set(state, Option.some(handle))
-    yield* Scope.addFinalizer(scope, handle.stop)
+    yield* Scope.addFinalizer(scope, release("stop"))
   })
 
   const startWithSpan = start().pipe(

@@ -12,7 +12,7 @@
     "lint": "oxlint -f unix --report-unused-disable-directives && dprint check",
     "lint:dead": "knip --production --workspace './packages/*' --include files,exports,nsExports,types,nsTypes,enumMembers,namespaceMembers,duplicates --treat-config-hints-as-errors && knip --workspace './packages/*' --include files,exports,nsExports,types,nsTypes,enumMembers,namespaceMembers,duplicates,dependencies,unlisted,unresolved,binaries,catalog --treat-config-hints-as-errors",
     "lint:deps": "depcruise --config .dependency-cruiser.cjs packages",
-    "lint:dup": "jscpd packages/*/src",
+    "lint:dup": "jscpd packages/*/src packages/*/proofs",
     "lint:fix": "oxlint --fix && dprint fmt",
     "lint:type-aware": "oxlint --type-aware -f unix -A typescript/no-unsafe-type-assertion -A typescript/no-unnecessary-type-arguments -A typescript/no-unnecessary-boolean-literal-compare",
     "lint:root": "oxlint -f unix tools/oxc/oxlint-plugin.js",

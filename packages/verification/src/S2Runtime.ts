@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect"
 
 import { VerificationError } from "./VerificationError.ts"
 
-export interface S2StreamInput {
+interface S2StreamInput {
   readonly basin: string
   readonly stream: string
   readonly ensure?: boolean

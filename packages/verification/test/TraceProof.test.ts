@@ -2,14 +2,8 @@ import { layer as ChdbLayer } from "@firegrid/observability"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 
-import {
-  bindTrialSql,
-  normalizeProofSql,
-  runTraceProof,
-  traceOperation,
-  traceSql,
-  VerificationError
-} from "../src/index.ts"
+import { normalizeProofSql, runTraceProof, traceOperation, traceSql, VerificationError } from "../src/index.ts"
+import { bindTrialSql } from "../src/TraceViews.ts"
 
 describe("traceSql", () => {
   it("normalizes read-only proof SQL and expands trace views", () => {
