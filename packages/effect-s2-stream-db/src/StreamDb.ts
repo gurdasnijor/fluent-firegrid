@@ -313,9 +313,9 @@ class StreamDbSchemaCodecError extends Data.TaggedError("StreamDbSchemaCodecErro
   readonly cause: unknown
 }> {}
 
-const asServiceFreeEncoder = (schema: TableMeta["schema"]): Schema.Encoder<unknown, never> => schema as never
+const asServiceFreeEncoder = (schema: TableMeta["schema"]): Schema.ConstraintEncoder<unknown, never> => schema as never
 
-const asServiceFreeDecoder = (schema: TableMeta["schema"]): Schema.Decoder<unknown, never> => schema as never
+const asServiceFreeDecoder = (schema: TableMeta["schema"]): Schema.ConstraintDecoder<unknown, never> => schema as never
 
 type Intent =
   | { readonly _tag: "write"; readonly meta: TableMeta; readonly row: unknown }

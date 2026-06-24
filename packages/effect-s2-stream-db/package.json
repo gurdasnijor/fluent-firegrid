@@ -27,11 +27,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "effect": "4.0.0-beta.78",
+    "effect": "4.0.0-beta.87",
     "effect-s2": "workspace:*"
   },
   "devDependencies": {
-    "@effect/vitest": "4.0.0-beta.78",
+    "@effect/vitest": "4.0.0-beta.87",
     "typescript": "^5.7.0",
     "vitest": "^3.2.0"
   }

@@ -12,9 +12,9 @@ import type { ActorExit } from "../object/machine/index.ts"
 
 export const toError = durableError
 
-export const asServiceFreeEncoder = (schema: Schema.Top): Schema.Encoder<unknown, never> => schema as never
+export const asServiceFreeEncoder = (schema: Schema.Top): Schema.ConstraintEncoder<unknown, never> => schema as never
 
-export const asServiceFreeDecoder = (schema: Schema.Top): Schema.Decoder<unknown, never> => schema as never
+export const asServiceFreeDecoder = (schema: Schema.Top): Schema.ConstraintDecoder<unknown, never> => schema as never
 
 export const fail = (operation: string, message: string): Effect.Effect<never, DurableExecutionError> =>
   Effect.fail(new DurableExecutionError({ operation, message, cause: undefined }))
