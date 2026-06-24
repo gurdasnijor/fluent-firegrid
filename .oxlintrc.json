@@ -16,6 +16,62 @@
   "jsPlugins": ["./tools/oxc/oxlint-plugin.js"],
   "overrides": [
     {
+      "files": [
+        "packages/*/src/**/*.cjs",
+        "packages/*/src/**/*.cts",
+        "packages/*/src/**/*.js",
+        "packages/*/src/**/*.jsx",
+        "packages/*/src/**/*.mjs",
+        "packages/*/src/**/*.mts",
+        "packages/*/src/**/*.ts",
+        "packages/*/src/**/*.tsx"
+      ],
+      "rules": {
+        "eslint/no-restricted-imports": ["error", {
+          "patterns": [
+            {
+              "regex": "(^|/)__tests__/",
+              "message": "Production source must not import test files. Move shared helpers into production or test utility modules."
+            },
+            {
+              "regex": "[.](?:spec|test)(?:[.](?:cjs|cts|js|jsx|mjs|mts|ts|tsx))?$",
+              "message": "Production source must not import test files. Move shared helpers into production or test utility modules."
+            }
+          ]
+        }]
+      }
+    },
+    {
+      "files": [
+        "packages/fluent-acp-process/src/**/*.cjs",
+        "packages/fluent-acp-process/src/**/*.cts",
+        "packages/fluent-acp-process/src/**/*.js",
+        "packages/fluent-acp-process/src/**/*.jsx",
+        "packages/fluent-acp-process/src/**/*.mjs",
+        "packages/fluent-acp-process/src/**/*.mts",
+        "packages/fluent-acp-process/src/**/*.ts",
+        "packages/fluent-acp-process/src/**/*.tsx"
+      ],
+      "rules": {
+        "eslint/no-restricted-imports": ["error", {
+          "patterns": [
+            {
+              "regex": "(^|/)__tests__/",
+              "message": "Production source must not import test files. Move shared helpers into production or test utility modules."
+            },
+            {
+              "regex": "[.](?:spec|test)(?:[.](?:cjs|cts|js|jsx|mjs|mts|ts|tsx))?$",
+              "message": "Production source must not import test files. Move shared helpers into production or test utility modules."
+            },
+            {
+              "regex": "^@durable-streams(?:/|$)",
+              "message": "fluent-acp-process must keep a tiny import surface: use ACP SDK, Effect, and platform APIs instead of durable-streams internals."
+            }
+          ]
+        }]
+      }
+    },
+    {
       "files": ["**/{test,tests,__tests__,examples,scripts}/**", "**/*.test.ts", "**/*.test.tsx"],
       "rules": {
         "effect/no-bigint-literals": "off",
