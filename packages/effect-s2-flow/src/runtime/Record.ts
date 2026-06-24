@@ -32,7 +32,11 @@ export const stringRecord = (
     ...(headers === undefined ? {} : { headers })
   })
 
-export const ownedRecord = (record: StringFlowAppendRecord, ownerId: string, writeId: number): StringFlowAppendRecord => {
+export const ownedRecord = (
+  record: StringFlowAppendRecord,
+  ownerId: string,
+  writeId: number
+): StringFlowAppendRecord => {
   const headers = normalizeHeaders(record.headers).filter(([key]) => key !== ownerHeader && key !== writeHeader)
   return stringRecord(record.body, [
     ...headers,

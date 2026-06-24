@@ -117,7 +117,7 @@ export const make = Effect.fn("ViewOrchestrator.make")(function*<S>(options: Vie
           )
         )
         return value as B
-    }),
+      }),
     applied: Ref.get(appliedRef),
     changes: Stream.fromPubSub(changes)
   } satisfies ViewOrchestrator<S>

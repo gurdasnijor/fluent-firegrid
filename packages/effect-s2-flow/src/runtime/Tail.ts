@@ -49,9 +49,7 @@ export const catchUp = Effect.fn("Tail.catchUp")(function*(
 export const follow = (stream: S2.StreamApi, fromSeqNum: number): Stream.Stream<FlowRecord, FlowError> =>
   Stream.unwrap(
     Ref.make(fromSeqNum).pipe(
-      Effect.map((cursorRef) =>
-        Stream.fromIterableEffectRepeat(readNext(stream, cursorRef))
-      )
+      Effect.map((cursorRef) => Stream.fromIterableEffectRepeat(readNext(stream, cursorRef)))
     )
   )
 
