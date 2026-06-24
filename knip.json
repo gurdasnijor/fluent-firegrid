@@ -22,24 +22,6 @@
         "test/**/*.ts",
         "examples/**/*.ts!"
       ]
-    },
-    "packages/effect-s2-stream-db": {
-      "entry": [
-        "test/usage.ts"
-      ],
-      "project": [
-        "src/**/*.ts!",
-        "test/**/*.ts"
-      ]
-    },
-    "packages/effect-s2-durable": {
-      "entry": [
-        "test/types.ts"
-      ],
-      "project": [
-        "src/**/*.ts!",
-        "test/**/*.ts"
-      ]
     }
   }
 }

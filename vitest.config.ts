@@ -30,42 +30,6 @@ export default defineConfig({
             "effect-s2": path.resolve(__dirname, "./packages/effect-s2/src/index.ts")
           }
         }
-      }),
-      defineProject({
-        test: {
-          name: "effect-s2-stream-db",
-          include: ["packages/effect-s2-stream-db/test/**/*.test.ts"],
-          exclude: ["**/node_modules/**"]
-        },
-        resolve: {
-          alias: {
-            "effect-s2": path.resolve(__dirname, "./packages/effect-s2/src/index.ts"),
-            "effect-s2-stream-db": path.resolve(
-              __dirname,
-              "./packages/effect-s2-stream-db/src/index.ts"
-            )
-          }
-        }
-      }),
-      defineProject({
-        test: {
-          name: "effect-s2-durable",
-          include: ["packages/effect-s2-durable/test/**/*.test.ts"],
-          exclude: ["**/node_modules/**"]
-        },
-        resolve: {
-          alias: {
-            "effect-s2": path.resolve(__dirname, "./packages/effect-s2/src/index.ts"),
-            "effect-s2-stream-db": path.resolve(
-              __dirname,
-              "./packages/effect-s2-stream-db/src/index.ts"
-            ),
-            "effect-s2-durable": path.resolve(
-              __dirname,
-              "./packages/effect-s2-durable/src/index.ts"
-            )
-          }
-        }
       })
     ]
   }

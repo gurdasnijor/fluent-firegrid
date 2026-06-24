@@ -53,6 +53,8 @@ This is not "manual wrapper versus codegen." Codegen is the spine. The correctio
 
 **Initial clean-generator result (2026-06-23).** `effect-s2` now has a local HeyAPI generation path pinned to `s2-specs@329de93f7b240a4daef9edbeb98ced0699aab7d0/s2/v1/openapi.json`. The generator emits `src/generated/effect-schema.gen.ts` from the local `effect-schema` plugin and `src/generated/client-effect.gen.ts` from the local `client-effect` plugin. It does not emit HeyAPI plain TypeScript models or a post-processed runtime adapter. The generated client module defines `S2Api` with Effect `HttpApi`/`HttpApiEndpoint` groups, including the S2 read endpoint's `text/event-stream` success alternative, derives `S2ProtocolClientApi` with `HttpApiClient.ForApi`, and exposes `make`/`layer` for the grouped derived client shape documented by Effect. Snapshot tests follow HeyAPI's own `openapi-ts-tests` file-snapshot pattern and generate from the pinned upstream URL rather than a checked-in spec file.
 
+**Layer-0 cutover result (2026-06-24).** `effect-s2` now exposes a single production semantic surface from `src/S2Client.ts`; the legacy `Channel.ts`, local SDK shim, local tagged-error wrapper, and `S2ClientAlt` spike are deleted. The public surface is grouped around `basins`, `accessTokens`, `locations`, `metrics`, `basin(name)`, and `stream(basin, name)`. The stream capability exposes one-shot `append`, `read`, `readSession`, `checkTail`, scoped `appendSession`, scoped `producer`, command-record constructors (`AppendRecord.fence` / `trim`), and integrated upstream `@s2-dev/streamstore-patterns` APIs (`u64`, chunking/framing, dedupe headers, serializing append sessions, deserializing read sessions). This is the Layer-0 API the runtime should build on. The generated protocol remains the protocol contract and drift detector; the runtime substrate uses the upstream SDK-backed semantic capabilities for behaviors the OpenAPI contract cannot express.
+
 Recommended physical shape:
 
 ```txt
@@ -97,7 +99,7 @@ interface SerializingAppendSession<A> {
 - Exact u64 boundary handling: `encodeU64` / `decodeU64`.
 - Fencing and CAS: pass through `fencingToken` and `matchSeqNum` on every append path, including one-shot append, append session, Producer, and serialized writer.
 
-**Conformance gate L-1.** The generator emits the protocol module from the pinned S2 OpenAPI spec through HeyAPI and local Effect-native plugins. The generated output typechecks, includes the load-bearing operations and schemas, and has file snapshots for a focused append/read/checkTail/list-basins slice. The semantic layer then proves the native SDK behavior flow depends on: `matchSeqNum`, `fencingToken`, append-session ticketing/backpressure, Producer per-record seqnums, serialization roundtrip, dedupe headers, and u64 encode/decode. Until this passes, flow must not add wrapper-specific workarounds.
+**Conformance gate L-1.** The generator emits the protocol module from the pinned S2 OpenAPI spec through HeyAPI and local Effect-native plugins. The generated output typechecks, includes the load-bearing operations and schemas, and has file snapshots for a focused append/read/checkTail/list-basins slice. The semantic layer exposes the native SDK behavior flow depends on: `matchSeqNum`, `fencingToken`, append-session ticketing/backpressure, Producer per-record seqnums, serialization roundtrip, dedupe headers, and u64 encode/decode. The current gate is sufficient to start Layer 1 implementation; add live/contract tests for those semantics before claiming the full L-1 behavioral gate.
 
 ---
 
@@ -121,6 +123,8 @@ Two tiering knobs: **Express (40 ms ack)** vs **Standard (400 ms ack)** storage 
 **Command records** (`fence`, `trim`) are records with a single empty-name header, seq-numbered and returned to reads, filterable by `headers.length === 1 && headers[0][0] === ""`. Because they are records, they batch atomically with data — which is how a snapshot and its trim land together (Layer 3), and how a fence can be co-committed with data.
 
 **Conformance gate L0.** The native guarantees are available through the Layer -1 semantic capabilities: `append` (with `fencingToken` and `matchSeqNum`), `read`, `checkTail`, faithful append sessions / Producer tickets, serialized/framed logical messages, dedupe headers, and command records. This layer is the contract the rest of the document targets.
+
+**Current L0 status.** In place for implementation: direct `stream(basin, name).append`, `read`, `readSession`, `checkTail`, scoped `appendSession`, scoped `producer`, SDK `AppendInput`/`AppendRecord` including `fence` and `trim`, and `patterns` (`u64`, dedupe, framing/chunking, serialization). Not yet proven by repository-local semantic tests: live S2 412 behavior for `matchSeqNum`/`fencingToken`, append-session poisoning, and Producer per-record seqnum ordering. Those tests are Layer-1/ownership hardening work, not a blocker to begin the orchestrator.
 
 ---
 
@@ -176,6 +180,7 @@ interface Orchestrator<S> {
 }
 
 const make = Effect.fn("Orchestrator.make")(function*<S>(opts: {
+  readonly basin: string
   readonly stream: string
   readonly initial: S
   readonly reduce: (state: S, record: EventRecord<unknown, unknown>) => S
@@ -190,7 +195,8 @@ const make = Effect.fn("Orchestrator.make")(function*<S>(opts: {
   let pending = SortedMap.empty<number, Array<Cmd<S>>>(Order.number)
 
   // ordered writer fiber (FuturesOrdered analog): submit awaits durable ack, FIFO, carries the fence
-  const session = yield* S2Client.appendSession(opts.stream)
+  const s2 = yield* S2Client.stream(opts.basin, opts.stream)
+  const session = yield* s2.appendSession()
   yield* Stream.fromQueue(writes).pipe(
     Stream.runForEach(({ records, reply }) =>
       session.submit(AppendInput.create(records, opts.fencingToken ? { fencingToken: opts.fencingToken } : undefined)).pipe(
@@ -202,7 +208,7 @@ const make = Effect.fn("Orchestrator.make")(function*<S>(opts: {
   // the select!: commands ⊕ tailing reader, one consumer fiber, owns `state` and `pending`
   yield* Stream.merge(
     Stream.fromQueue(command).pipe(Stream.map((c) => ({ k: "cmd" as const, c }))),
-    Channel.readDecoded(opts.stream, RecordSchema, { start: { from: { seqNum: opts.fromCursor } } }).pipe(
+    s2.serialization.readSession(decodeRecord, { start: { from: { seqNum: opts.fromCursor } } }).pipe(
       Stream.map((r) => ({ k: "rec" as const, r }))),
   ).pipe(
     Stream.runForEach((ev) => Effect.gen(function*() {
@@ -236,10 +242,11 @@ const make = Effect.fn("Orchestrator.make")(function*<S>(opts: {
 
 ```ts
 // runtime/CheckTail.ts — coalesce concurrent strong reads into one checkTail per window (the "bus-stand")
-class CheckTail extends Request.Class<number, FlowError, { readonly stream: string }>()("CheckTail") {}
+class CheckTail extends Request.Class<number, FlowError, { readonly basin: string; readonly stream: string }>()("CheckTail") {}
 const CheckTailResolver = RequestResolver.makeBatched((reqs: ReadonlyArray<CheckTail>) =>
-  Effect.forEach(Array.groupBy(reqs, (r) => r.stream), ([stream, group]) =>
-    S2Client.checkTail(stream).pipe(
+  Effect.forEach(Array.groupBy(reqs, (r) => `${r.basin}/${r.stream}`), ([_, group]) =>
+    S2Client.stream(group[0].basin, group[0].stream).pipe(
+      Effect.flatMap((s2) => s2.checkTail()),
       Effect.flatMap((t) => Effect.forEach(group, (r) => Request.succeed(r, t.tail.seqNum)))))
 ).pipe(RequestResolver.batchN(256))
 ```
@@ -250,7 +257,7 @@ const CheckTailResolver = RequestResolver.makeBatched((reqs: ReadonlyArray<Check
 
 # Layer 2 — Streams
 
-The data-plane vocabulary, built directly on `effect-s2`'s `Channel` (schema⇄JSON `publish` / `readDecoded` / `guardedAppend` / `conditionalAppend`).
+The data-plane vocabulary, built directly on `effect-s2`'s production stream capability (`stream(basin, name)`) plus `Schema` codecs. There is no `Channel.ts` adapter layer. Codec helpers are local to flow: encode/decode records at the boundary, then call `StreamApi.append`, `read`, `readSession`, or `serialization.*` directly.
 
 ```ts
 // stream/EventStream.ts — a declaration. Physical stream per key: `${name}/${encode(key)}`.
@@ -277,9 +284,9 @@ interface SinkDef<K, A> { readonly name: string; readonly input: EventStream<K, 
 
 Wire-format sources/sinks use `Stream.pipeThroughChannel` with the `Ndjson`/`Msgpack` channels as the codec stage.
 
-**`ChangeMessage` stays in `stream-db`.** Flow streams carry domain facts on the generic `Channel` envelope; flow **never imports `ChangeMessage`**, which is the table-changelog protocol layered *above* the engine (Layer 3 note).
+**`ChangeMessage` stays in `stream-db`.** Flow streams carry domain facts in flow's own typed event envelope; flow **never imports `ChangeMessage`**, which is the table-changelog protocol layered *above* the engine (Layer 3 note).
 
-**Conformance gate L2.** Schema encode/decode errors are typed (`FlowError reason="decode"`); missing and empty streams resolve consistently (a 404 vs a tail-0 416 both mean "nothing to fold"); `guardedAppend`/fence options pass through to `effect-s2`.
+**Conformance gate L2.** Schema encode/decode errors are typed (`FlowError reason="decode"`); missing and empty streams resolve consistently (a 404 vs a tail-0 416 both mean "nothing to fold"); `matchSeqNum` / `fencingToken` options pass through to `effect-s2` on every guarded owner write.
 
 ---
 
@@ -318,7 +325,8 @@ const checkpoint = (stream: string) => Effect.gen(function*() {
   const cursor = yield* currentTail(stream)
   const entries = liveEntries()
   const records = [ snapshotStart(cursor), ...entries.map(asInsert), snapshotEnd(cursor), AppendRecord.trim(cursor) ]
-  yield* S2Client.append(stream, AppendInput.create(records, { matchSeqNum: cursor }))  // trim lands iff snapshot does
+  const s2 = yield* S2Client.stream(basinFor(stream), stream)
+  yield* s2.append(AppendInput.create(records, { matchSeqNum: cursor }))  // trim lands iff snapshot does
 })
 ```
 
@@ -385,7 +393,8 @@ interface ProcessorContext<Out, St> {
 const commitAtomic = (stream: string, records: ReadonlyArray<AppendRecord>, opts: { matchSeqNum?: SeqNum; fencingToken?: string }) =>
   records.length > 1000 || sizeOf(records) > MiB
     ? Effect.fail(new BatchTooLarge({ records: records.length }))   // typed, at assembly time — not a runtime 412
-    : S2Client.append(stream, AppendInput.create(records, opts))     // atomic: all-or-none
+    : S2Client.stream(basinFor(stream), stream).pipe(
+        Effect.flatMap((s2) => s2.append(AppendInput.create(records, opts))))     // atomic: all-or-none
 ```
 
 **The batch limit is the isolation boundary, not a fan-out cap.** Because reads are linearizable and the atomic unit is the batch, a `TableView` can never fold a *partial* batch — "uncommitted invisible until commit" holds **only** while an atomic group is exactly one batch. A group that would exceed the budget cannot silently split into multiple appends (each atomic alone, not together — a view could then fold a half-applied group); the assembly helper **fails with a typed `BatchTooLarge`** so an over-budget atomic group is *unconstructible*. Exceeding it is then an explicit modeling choice (a saga, or accepting non-atomic idempotent steps), never a silent 412.
@@ -806,11 +815,11 @@ const saga = service({
 
 Each step is gated by its layer's conformance check; do not start a layer until the one below passes.
 
--1. **`effect-s2` fidelity spike — generate first, wrap second.** Pin `s2-streamstore/s2-specs` to commit `329de93f7b240a4daef9edbeb98ced0699aab7d0`, run HeyAPI into `effect-s2/src/generated` with local `effect-schema` and `client-effect` plugins, and do not check in the OpenAPI spec. The generated protocol must be an Effect `HttpApi` contract plus `HttpApiClient`-derived client, not a custom fetch/request runtime. The public Effect layer is handwritten only around semantics OpenAPI cannot represent: auth/config layers, normalized S2 domain errors, append-session ticketing/backpressure, Producer, serialization/framing, dedupe headers, u64 codecs, fencing/CAS helpers. Gate: generation is reproducible; generated output typechecks; generated Effect output includes `append`/`read`/`checkTail`, `Schema` model declarations, and typed protocol errors; semantic tests prove `matchSeqNum`, `fencingToken`, append-session tickets, Producer per-record seqnums, serialization roundtrip, dedupe headers, and u64 encode/decode. This step explicitly replaces the current broad hand-maintained `S2ClientApi` with generated protocol + narrow semantic capabilities.
+-1. **`effect-s2` fidelity spike — generate first, wrap second.** Pin `s2-streamstore/s2-specs` to commit `329de93f7b240a4daef9edbeb98ced0699aab7d0`, run HeyAPI into `effect-s2/src/generated` with local `effect-schema` and `client-effect` plugins, and do not check in the OpenAPI spec. The generated protocol must be an Effect `HttpApi` contract plus `HttpApiClient`-derived client, not a custom fetch/request runtime. The public Effect layer is handwritten only around semantics OpenAPI cannot represent: auth/config layers, upstream S2 domain errors, append-session ticketing/backpressure, Producer, serialization/framing, dedupe headers, u64 codecs, fencing/CAS helpers. Gate: generation is reproducible; generated output typechecks; generated Effect output includes `append`/`read`/`checkTail`, `Schema` model declarations, and typed protocol errors; the semantic surface exposes `matchSeqNum`, `fencingToken`, append-session tickets, Producer per-record seqnums, serialization roundtrip, dedupe headers, and u64 encode/decode. Live semantic tests for those behaviors harden L1/L6; they do not require reintroducing wrapper workarounds. This step explicitly replaces the old broad hand-maintained `S2ClientApi` with generated protocol + narrow semantic capabilities.
 0. **Decide packaging + `stream-db`'s fate first** (before any TableView code). The orchestrator + TableView are the primitive substrate; resolve whether they incubate inside `effect-s2-stream-db` or graduate to `effect-s2-flow` (see Resolved Decisions / Packaging) so flow's `TableView` and stream-db's `Table` do not coexist with two concurrency models mid-build. Also land **"thread `fencingToken` through `StreamDb`/keyed-store appends"** as a concrete item — the baseline is CAS-only today.
 1. **L1 Orchestrator — two implementations.** `ViewOrchestrator` (apply-on-tail) *and* `OwnedOrchestrator` (apply-on-ack own writes + own-record-filtered tail reader). Bounded queues + drop policy on `changes` + deadline on pending reads. Gate: reproduce the KV-demo observable semantics **and** the property-based linearizability checker below; own-write RYW holds on `OwnedOrchestrator`; the tail reader never double-applies own records.
    - **Property-based linearizability checker (gate on steps 1–3, not optional).** Replaying the demo's *example* trace won't catch a concurrency violation, and linearizability is the headline claim. Generate interleaved `submit`/`read-strong`/`read-eventual` histories and check the strong path is linearizable (eventual no worse than sequentially consistent) with a Porcupine/Knossos-style checker — model the orchestrator + fence as a register `(tail, last_record_hash, fence_token)`, model `match_seq_num`, and set an **indefinitely-failed append's end-time after all other ops** (the Jepsen gotcha that `match_seq_num`-retry resolves; mirror `s2-streamstore/s2-verification`). This is the gate that *earns* the Layer 1 claim.
-2. **L2 Streams** — `EventStream`/`Record`/`Source`/`Sink` over `Channel`. Gate: typed codec errors; consistent empty/missing.
+2. **L2 Streams** — `EventStream`/`Record`/`Source`/`Sink` over direct `effect-s2` stream capabilities plus local `Schema` codecs. Gate: typed codec errors; consistent empty/missing.
 3. **L3 TableView** — fold + `getStrong` + `changes` + `Checkpoint`. Gate: linearizable read after concurrent write (checker above); cold-start-from-snapshot equals full replay.
 4. **L4 Processor** — handler + guarded emit + guarantee Layers. Gate: idempotent durable output on replay (positional on own journal; logical-id on shared downstream); at-least-once dupes; at-most-once skips.
 5. **L5 Atomicity** — the budget-enforced atomic append (no transaction resource). Gate: all-or-none batch under crash; an over-budget group fails at assembly (`BatchTooLarge`), never splits silently; checkpoint + own-journal emits are one atomic append on the owner's stream; a downstream emit replayed twice is deduped (SDK dedupe headers), not double-applied.
@@ -911,4 +920,4 @@ The design intentionally tracks S2's own published research; the load-bearing ma
 - Restate — `restate-sdk-gen` (authoring shape, Operation/Future, cancellation/interrupt): `restatedev/sdk-typescript` › `packages/libs/restate-sdk-gen`
 - Restate — service communication (child-call model): https://docs.restate.dev/develop/ts/service-communication
 - Companion SDDs: `effect-s2-flow-sdd.md` (folded in here), `effect-durable-execution-sdd.md`, `effect-s2-durable-consolidation-sdd.md`
-- Baseline: `effect-s2/{S2Client,Channel}.ts`, `effect-s2-stream-db/{StreamDb,MaterializedState,ChangeMessage}.ts`
+- Baseline: `effect-s2/S2Client.ts`, `effect-s2-stream-db/{StreamDb,MaterializedState,ChangeMessage}.ts`

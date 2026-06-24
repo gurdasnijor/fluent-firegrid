@@ -70,50 +70,6 @@ importers:
         specifier: ^3.2.0
         version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
 
-  packages/effect-s2-durable:
-    dependencies:
-      '@effect/platform-node':
-        specifier: 4.0.0-beta.87
-        version: 4.0.0-beta.87(effect@4.0.0-beta.87)(ioredis@5.11.1)
-      effect:
-        specifier: 4.0.0-beta.87
-        version: 4.0.0-beta.87
-      effect-s2:
-        specifier: workspace:*
-        version: link:../effect-s2
-      effect-s2-stream-db:
-        specifier: workspace:*
-        version: link:../effect-s2-stream-db
-    devDependencies:
-      '@effect/vitest':
-        specifier: 4.0.0-beta.87
-        version: 4.0.0-beta.87(effect@4.0.0-beta.87)(vitest@3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0))
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
-
-  packages/effect-s2-stream-db:
-    dependencies:
-      effect:
-        specifier: 4.0.0-beta.87
-        version: 4.0.0-beta.87
-      effect-s2:
-        specifier: workspace:*
-        version: link:../effect-s2
-    devDependencies:
-      '@effect/vitest':
-        specifier: 4.0.0-beta.87
-        version: 4.0.0-beta.87(effect@4.0.0-beta.87)(vitest@3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0))
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
-
   packages/fluent-acp-process:
     dependencies:
       '@agentclientprotocol/sdk':
