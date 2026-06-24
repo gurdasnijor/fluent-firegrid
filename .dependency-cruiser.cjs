@@ -67,11 +67,19 @@ module.exports = {
         ],
       },
     },
+    {
+      name: "verification-runtime-not-to-proofs",
+      severity: "error",
+      comment:
+        "The verification runtime must not import concrete proofs. Keep proof registration in packages/verification/proofs so src stays reusable verification infrastructure.",
+      from: { path: "^packages/verification/src/" },
+      to: { path: "^packages/verification/proofs/" },
+    },
   ],
   options: {
     tsConfig: { fileName: "tsconfig.json" },
     doNotFollow: { path: "node_modules" },
-    includeOnly: "^packages/.*/src",
+    includeOnly: "^packages/.*/(?:src|proofs)",
     enhancedResolveOptions: { exportsFields: ["exports"] },
   },
 }

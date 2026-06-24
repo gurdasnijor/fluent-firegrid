@@ -21,6 +21,18 @@ export default defineConfig({
       }),
       defineProject({
         test: {
+          name: "verification",
+          include: ["packages/verification/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"]
+        },
+        resolve: {
+          alias: {
+            "@firegrid/verification": path.resolve(__dirname, "./packages/verification/src/index.ts")
+          }
+        }
+      }),
+      defineProject({
+        test: {
           name: "effect-s2",
           include: ["packages/effect-s2/test/**/*.test.ts"],
           exclude: ["**/node_modules/**"]

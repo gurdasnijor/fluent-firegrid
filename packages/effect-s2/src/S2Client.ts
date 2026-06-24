@@ -130,6 +130,31 @@ const wrapAsyncIterable =
 const ignoreFinalizerError = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<void, never, R> =>
   Effect.ignore(effect)
 
+const s2ErrorAttributes = (error: S2Error): Record<string, string> => ({
+  "s2.error.code": error.code ?? "",
+  "s2.error.expected_seq_num": error instanceof SeqNumMismatchError
+    ? String(error.expectedSeqNum)
+    : "",
+  "s2.error.kind": error.name,
+  "s2.error.status": String(error.status)
+})
+
+const withS2Span = <A, R>(
+  name: string,
+  attributes: Record<string, unknown>,
+  effect: Effect.Effect<A, S2Error, R>
+) =>
+  effect.pipe(
+    Effect.tap(() => Effect.annotateCurrentSpan("s2.operation.status", "ok")),
+    Effect.tapError((error) =>
+      Effect.annotateCurrentSpan({
+        ...s2ErrorAttributes(error),
+        "s2.operation.status": "error"
+      })
+    ),
+    Effect.withSpan(name, { attributes })
+  )
+
 export interface S2ClientApi {
   readonly raw: S2
   readonly basins: BasinsApi
@@ -474,13 +499,32 @@ const makeMetrics = (raw: S2["metrics"]): MetricsApi => ({
 const makeStream = (raw: SdkStream): StreamApi => ({
   raw,
   name: raw.name,
-  checkTail: (options) => tryPromise(() => raw.checkTail(options)),
-  read: (input, options) => tryPromise(() => raw.read(input, options)),
+  checkTail: (options) =>
+    withS2Span(
+      "effect-s2.check-tail",
+      { "s2.stream": raw.name },
+      tryPromise(() => raw.checkTail(options))
+    ),
+  read: (input, options) =>
+    withS2Span(
+      "effect-s2.read",
+      { "s2.stream": raw.name },
+      tryPromise(() => raw.read(input, options))
+    ),
   readSession: (input, options) =>
     Stream.unwrap(
       Effect.map(acquireReadSession(raw, input, options), (session) => Stream.fromAsyncIterable(session, toS2Error))
+    ).pipe(
+      Stream.withSpan("effect-s2.read-session", {
+        attributes: { "s2.stream": raw.name }
+      })
     ),
-  append: (input, options) => tryPromise(() => raw.append(input, options)),
+  append: (input, options) =>
+    withS2Span(
+      "effect-s2.append",
+      { "s2.append.record_count": input.records.length, "s2.stream": raw.name },
+      tryPromise(() => raw.append(input, options))
+    ),
   appendSession: (sessionOptions, requestOptions) =>
     Effect.map(acquireAppendSession(raw, sessionOptions, requestOptions), wrapAppendSession),
   producer: (sessionOptions, requestOptions) =>
