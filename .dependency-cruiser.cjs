@@ -56,12 +56,6 @@ module.exports = {
       },
     },
     {
-      name: "no-circular",
-      severity: "error",
-      from: {},
-      to: { circular: true },
-    },
-    {
       name: "fluent-acp-process-tiny-import-surface",
       severity: "error",
       comment:

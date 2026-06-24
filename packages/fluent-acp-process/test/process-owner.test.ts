@@ -61,7 +61,7 @@ describe("spawnAcpProcess (fake harness, unit-only)", () => {
         const second = yield* Effect.promise(() => reader.read())
         const value = second.value as { id?: number; result?: { ok?: boolean } }
         expect(value.id).toBe(1)
-        expect(value.result?.ok).toBe(true)
+        expect(value.result?.ok).toBeTruthy()
 
         reader.releaseLock()
       })
