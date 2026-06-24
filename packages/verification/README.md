@@ -9,13 +9,15 @@ Implemented pieces:
 - `operation(name, input, effect, options)` emits runner-owned `verification.operation` spans with input, output, status, client, id, and key attributes.
 - `traceSql(name, sql)` verifies the OTel/chDB evidence dataset with one read-only query.
 - `trial_spans` expands to every OTel span in any trace that contains the trial marker span.
+- `waitForSpan` is scoped to the active trial id; it cannot satisfy a wait from another trial's spans in the same chDB session.
 - `S2LiteSupervisor` owns a scoped `s2 lite` child process, waits for HTTP readiness, and exposes separate graceful stop and force kill paths.
 
 Still missing before this should be treated as the complete verification system:
 
 - a real host supervisor that starts opaque host descriptors and injects trial/host/S2 config into NodeRuntime processes;
 - concrete `Faults` backed by that host supervisor;
-- `killHostAfterSpan` implemented as `waitForSpan(...)` plus a real process kill;
+- a shared OTel sink topology for host processes, so `waitForSpan(...)` can see host-emitted spans before killing them;
+- `killHostAfterSpan` implemented as trial-scoped `waitForSpan(...)` plus a real process kill;
 - report/counterexample artifacts;
 - the first durable replay gate against real `s2 lite` and a real crashed host.
 

@@ -1,6 +1,8 @@
 import { ChdbClient } from "@firegrid/observability"
 import * as Context from "effect/Context"
+import type * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
+import * as Equal from "effect/Equal"
 import * as Exit from "effect/Exit"
 import * as Layer from "effect/Layer"
 import * as Random from "effect/Random"
@@ -15,6 +17,10 @@ export interface HostDescriptor {
 
 export const hostDescriptor = (name: string, value: unknown): HostDescriptor => ({ name, value })
 
+export const TrialId = Context.Reference<string | undefined>("@firegrid/verification/Property/TrialId", {
+  defaultValue: () => undefined
+})
+
 export interface Faults {
   readonly killHost: (name: string) => Effect.Effect<void, VerificationError>
   readonly restartHost: (name: string) => Effect.Effect<void, VerificationError>
@@ -27,12 +33,15 @@ export interface Faults {
   ) => Effect.Effect<void, VerificationError>
 }
 
+export interface WaitForSpanOptions {
+  readonly attributes?: Record<string, string>
+  readonly attempts?: number
+  readonly interval?: Duration.Input
+}
+
 export class VerificationRuntime extends Context.Service<VerificationRuntime, {
   readonly flush: Effect.Effect<void, VerificationError>
-  readonly waitForSpan: (
-    span: string,
-    options?: { readonly attributes?: Record<string, string> }
-  ) => Effect.Effect<void, VerificationError>
+  readonly waitForSpan: (span: string, options?: WaitForSpanOptions) => Effect.Effect<void, VerificationError>
 }>()("@firegrid/verification/Property/VerificationRuntime") {
   static readonly layer = Layer.succeed(
     this,
@@ -154,7 +163,7 @@ export const expectWorkloadResult = <A>(expected: A): Check<A> => ({
         })
       }
       const actual = trial.result.value
-      if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+      if (!Equal.equals(actual, expected)) {
         return yield* new VerificationError({
           message: `workload result mismatch: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`
         })
@@ -240,6 +249,11 @@ export const runProperty = Effect.fn("runProperty")(function*<A>(
       operation,
       runtime
     }).pipe(
+      Effect.provideService(TrialId, trialId),
+      Effect.annotateSpans({
+        "firegrid.property.name": spec.name,
+        "firegrid.trial.id": trialId
+      }),
       Effect.withSpan("verification.trial", {
         attributes: {
           "firegrid.property.name": spec.name,

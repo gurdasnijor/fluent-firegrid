@@ -87,8 +87,8 @@ const makeSupervisor = Effect.fn("S2LiteSupervisor.make")(function*(
       ...(config.initFile === undefined ? [] : ["--init-file", config.initFile])
     ]
     const proc = yield* ChildProcess.make(bin, args, {
-      stdout: "pipe",
-      stderr: "pipe"
+      stdout: "ignore",
+      stderr: "ignore"
     }).pipe(
       Effect.mapError((cause) => new S2LiteError({ message: `failed to start ${bin} lite`, cause }))
     )

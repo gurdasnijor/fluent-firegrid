@@ -32,13 +32,19 @@ describe("property", () => {
     Effect.gen(function*() {
       const spec = property("durable.step-replay")
         .host("worker", { opaque: "host" })
-        .workload(({ operation }) =>
-          operation(
-            "greeter.process",
-            { name: "Ada" },
-            Effect.succeed({ greeting: "Hello, Ada!" }),
-            { clientId: 1, operationId: 1, key: "Ada" }
-          )
+        .workload(({ operation, runtime }) =>
+          Effect.gen(function*() {
+            const result = yield* operation(
+              "greeter.process",
+              { name: "Ada" },
+              Effect.succeed({ greeting: "Hello, Ada!" }),
+              { clientId: 1, operationId: 1, key: "Ada" }
+            )
+            yield* runtime.waitForSpan("verification.operation", {
+              attributes: { "firegrid.operation.name": "greeter.process" }
+            })
+            return result
+          })
         )
         .verify(
           expectWorkloadResult({ greeting: "Hello, Ada!" }),
@@ -71,6 +77,39 @@ describe("property", () => {
       Effect.runPromise
     ))
 
+  it("does not let waitForSpan match another trial", () =>
+    Effect.gen(function*() {
+      const first = property("first-trial")
+        .workload(({ operation }) =>
+          operation(
+            "greeter.process",
+            { name: "Ada" },
+            Effect.succeed({ greeting: "Hello, Ada!" }),
+            { clientId: 1, operationId: 1, key: "Ada" }
+          )
+        )
+        .verify()
+
+      yield* runProperty(first, { trialId: "first-trial" })
+
+      const second = property("second-trial")
+        .workload(({ runtime }) =>
+          runtime.waitForSpan("verification.operation", {
+            attempts: 0,
+            attributes: { "firegrid.operation.name": "greeter.process" }
+          }).pipe(Effect.as("ok"))
+        )
+        .verify(expectWorkloadResult("ok"))
+
+      const exit = yield* Effect.exit(runProperty(second, { trialId: "second-trial" }))
+
+      expect(exit._tag).toBe("Failure")
+    }).pipe(
+      Effect.provide(LiveTraceLayer),
+      Effect.scoped,
+      Effect.runPromise
+    ))
+
   it("fails when the workload result does not match", () =>
     Effect.gen(function*() {
       const spec = property("result-mismatch")
@@ -80,6 +119,21 @@ describe("property", () => {
       const exit = yield* Effect.exit(runProperty(spec))
 
       expect(exit._tag).toBe("Failure")
+    }).pipe(
+      Effect.provide(TestLayer),
+      Effect.scoped,
+      Effect.runPromise
+    ))
+
+  it("compares workload results structurally", () =>
+    Effect.gen(function*() {
+      const spec = property("structural-result")
+        .workload(() => Effect.succeed({ a: 1, b: 2 }))
+        .verify(expectWorkloadResult({ b: 2, a: 1 }))
+
+      const trial = yield* runProperty(spec)
+
+      expect(trial.result._tag).toBe("Success")
     }).pipe(
       Effect.provide(TestLayer),
       Effect.scoped,

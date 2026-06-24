@@ -1,11 +1,10 @@
 import * as NodeSdk from "@effect/opentelemetry/NodeSdk"
 import { ChdbClient, ChdbSession, ChdbSpanExporter, layer as ChdbLayer } from "@firegrid/observability"
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base"
-import type * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 
-import { VerificationRuntime } from "./Property.ts"
+import { TrialId, VerificationRuntime, type WaitForSpanOptions } from "./Property.ts"
 import { bindTrialSql } from "./TraceViews.ts"
 import { VerificationError } from "./VerificationError.ts"
 
@@ -16,6 +15,7 @@ export interface TraceRuntimeConfig {
 const escapeString = (value: string): string => value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")
 
 const spanMatchSql = (
+  trialId: string,
   span: string,
   attributes: Record<string, string> | undefined
 ): string => {
@@ -25,7 +25,8 @@ const spanMatchSql = (
   return `
 SELECT count() > 0 AS ok
 FROM otel_traces
-WHERE SpanName = '${escapeString(span)}'
+WHERE SpanAttributes['firegrid.trial.id'] = {trial_id:String}
+AND SpanName = '${escapeString(span)}'
 ${attrPredicates === "" ? "" : `AND ${attrPredicates}`}
 `
 }
@@ -36,15 +37,17 @@ const makeWaitForSpan = (
 ) =>
   Effect.fn("VerificationRuntime.waitForSpan")(function*(
     span: string,
-    options: {
-      readonly attributes?: Record<string, string>
-      readonly attempts?: number
-      readonly interval?: Duration.Input
-    } = {}
+    options: WaitForSpanOptions = {}
   ) {
+    const trialId = yield* TrialId
+    if (trialId === undefined) {
+      return yield* new VerificationError({
+        message: `cannot wait for span ${span} outside an active verification trial`
+      })
+    }
     const attempts = options.attempts ?? 200
     const interval = options.interval ?? "25 millis"
-    const sql = spanMatchSql(span, options.attributes)
+    const sql = spanMatchSql(trialId, span, options.attributes)
 
     const loop = (remaining: number): Effect.Effect<void, VerificationError> =>
       Effect.gen(function*() {
@@ -52,7 +55,7 @@ const makeWaitForSpan = (
           try: () => processor.forceFlush(),
           catch: (cause) => new VerificationError({ message: "failed to flush trace processor", cause })
         })
-        const rows = yield* chdb.unsafe<{ readonly ok: boolean | number | string }>(bindTrialSql(sql, "")).pipe(
+        const rows = yield* chdb.unsafe<{ readonly ok: boolean | number | string }>(bindTrialSql(sql, trialId)).pipe(
           Effect.mapError((cause) => new VerificationError({ message: `failed to query for span ${span}`, cause }))
         )
         if (rows.some((row) => row.ok === true || row.ok === 1 || row.ok === "1")) {
