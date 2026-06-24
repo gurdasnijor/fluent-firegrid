@@ -6,7 +6,7 @@ Implemented pieces:
 
 - `property(name)` defines a trial, opaque hosts, an ordinary Effect workload, and post-run checks.
 - `TraceRuntime.layer()` wires `@effect/opentelemetry`, `BatchSpanProcessor`, `ChdbSpanExporter`, and chDB. `VerificationRuntime.flush` calls the real processor.
-- `operation(name, input, effect, options)` emits runner-owned `verification.operation` spans with input, output, status, client, id, and key attributes.
+- `operation(name, input, effect, options)` is an optional runner-owned client-boundary span for properties that need externally observed call/return evidence. Production code should still use normal Effect tracing with `Effect.withSpan`, `Effect.annotateSpans`, and package-local instrumentation.
 - `traceSql(name, sql)` verifies the OTel/chDB evidence dataset with one read-only query.
 - `traceOperation(name, match)` is the common helper for asserting a `verification.operation` span by operation name, status, attributes, output fragments, and expected count.
 - `trial_spans` expands to every OTel span in any trace that contains the trial marker span.
@@ -16,7 +16,7 @@ Implemented pieces:
 - `processHost(config)` marks an otherwise opaque host as runner-owned. The runner starts it in the trial scope, injects `FIREGRID_TRIAL_ID`, `FIREGRID_HOST_ID`, `S2_ENDPOINT`, and OTel resource attributes, and records host lifecycle spans.
 - `hosts` is backed by supervised process hosts: `hosts.kill` sends `SIGKILL`, `hosts.restart` starts the host again, and `hosts.killAfterSpan` is trial-scoped `waitForSpan(...)` followed by a real process kill. `faults` remains as a compatibility alias for the older method names.
 - `runProperty(..., { reportDir })` writes a JSON report with span counts, trace coverage, and failed-check context. Failed checks also include an observed span summary in the thrown `VerificationError`.
-- `proofs/effect-s2-capability-a.ts` is a live substrate proof for Capability A's `packages/effect-s2` dependency: under real `s2 lite`, an atomic own-journal batch guarded by `matchSeqNum` commits `StepCompleted + CheckpointAdvanced`, the stale replay append is rejected by `SeqNumMismatchError`, and replay reads back only the original batch. The proof is verified through workload result checks and trace SQL over the OTel/chDB evidence.
+- `proofs/effect-s2-capability-a.ts` is a live substrate proof for Capability A's `packages/effect-s2` dependency: under real `s2 lite`, an atomic own-journal batch guarded by `matchSeqNum` commits `StepCompleted + CheckpointAdvanced`, the stale replay append is rejected by `SeqNumMismatchError`, and replay reads back only the original batch. The proof is verified through workload result checks and trace SQL over production `effect-s2` spans in the OTel/chDB evidence.
 - `tsx src/main.ts proof run all` runs registered proofs through the verification system. `proof list` shows available proofs; `proof run <name> --report-dir <dir>` writes JSON trial reports.
 
 Still missing before this should be treated as the complete verification system:
@@ -71,3 +71,14 @@ const stepReplay = property("durable.step-replay")
 
 Proof queries must be a single `SELECT` or `WITH` query and must return either
 an `ok` column or a truthy first column.
+
+## Operation boundaries
+
+Most proofs should verify passive production telemetry. Instrument the system
+under test normally with Effect tracing and assert over those spans through
+`traceSql`.
+
+Use `operation(...)` only when the property needs the verifier/client's
+externally observed call/return interval, such as a future linearizability
+check. It does not replace Effect execution semantics: the wrapped effect still
+succeeds, fails, retries, catches, and interrupts normally.

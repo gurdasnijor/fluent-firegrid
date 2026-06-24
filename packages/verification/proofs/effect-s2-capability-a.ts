@@ -1,12 +1,10 @@
 import { AppendInput, AppendRecord, SeqNumMismatchError } from "effect-s2"
-import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
-import * as Exit from "effect/Exit"
 import * as Stream from "effect/Stream"
 
 import type { Proof } from "../src/Proof.ts"
 import { expectWorkloadResult, property } from "../src/Property.ts"
-import { traceOperation } from "../src/TraceProof.ts"
+import { traceSql } from "../src/TraceProof.ts"
 import { VerificationError } from "../src/VerificationError.ts"
 
 const journal = [
@@ -24,78 +22,46 @@ export const effectS2CapabilityAProof: Proof = {
     const streamName = `invocation-${trialId}`
     return property("capability-a.effect-s2.atomic-replay-proof")
       .s2Lite({ persistence: "local-root" })
-      .workload(({ operation, s2 }) =>
+      .workload(({ s2 }) =>
         Effect.gen(function*() {
           const stream = yield* s2.stream({ basin: "capability-a-proof", stream: streamName })
 
-          const initialTail = yield* operation(
-            "effect-s2.check-tail.initial",
-            { stream: streamName },
-            stream.checkTail(),
-            { operationId: 1, key: streamName }
+          const initialTail = yield* stream.checkTail()
+          const matchSeqNum = initialTail.tail.seqNum
+
+          const commitAck = yield* stream.append(
+            AppendInput.create(journal, { matchSeqNum })
           )
 
-          const commitAck = yield* operation(
-            "effect-s2.append.atomic-journal-commit",
-            { matchSeqNum: initialTail.tail.seqNum, records: journalTypes },
-            stream.append(AppendInput.create(journal, { matchSeqNum: initialTail.tail.seqNum })),
-            { operationId: 2, key: streamName }
-          )
-
-          const staleReplayExit = yield* Effect.exit(
-            operation(
-              "effect-s2.append.stale-replay",
-              { matchSeqNum: initialTail.tail.seqNum, records: journalTypes },
-              stream.append(AppendInput.create(journal, { matchSeqNum: initialTail.tail.seqNum })).pipe(
-                Effect.tapError((error) =>
-                  Effect.annotateCurrentSpan({
-                    "s2.error.code": error.code ?? "",
-                    "s2.error.expected_seq_num": error instanceof SeqNumMismatchError
-                      ? String(error.expectedSeqNum)
-                      : "",
-                    "s2.error.kind": error.name,
-                    "s2.error.status": String(error.status)
-                  })
-                )
-              ),
-              { operationId: 3, key: streamName }
+          const staleReplayError = yield* stream.append(
+            AppendInput.create(journal, { matchSeqNum })
+          ).pipe(
+            Effect.flatMap((ack) =>
+              new VerificationError({
+                message: "stale replay append succeeded; expected SeqNumMismatchError",
+                cause: ack
+              })
+            ),
+            Effect.catchIf(
+              (error): error is SeqNumMismatchError => error instanceof SeqNumMismatchError,
+              Effect.succeed
             )
           )
-          const staleReplayReason = Exit.isFailure(staleReplayExit)
-            ? staleReplayExit.cause.reasons.find(Cause.isFailReason)
-            : undefined
-          const staleReplayError = staleReplayReason?.error
-          if (!(staleReplayError instanceof SeqNumMismatchError)) {
-            return yield* new VerificationError({
-              message: "expected stale replay append to fail with SeqNumMismatchError",
-              cause: staleReplayExit
-            })
-          }
 
-          const recordTypes = yield* operation(
-            "effect-s2.read-session.replay-fold",
-            { start: commitAck.start.seqNum, count: journal.length },
-            stream.readSession({
-              start: { from: { seqNum: commitAck.start.seqNum } },
-              stop: { limits: { count: journal.length } }
-            }).pipe(
-              Stream.runCollect,
-              Effect.map((records) =>
-                Array.from(
-                  records,
-                  (record) => record.headers.find(([key]) => key === "durable.record.type")?.[1] ?? ""
-                )
+          const recordTypes = yield* stream.readSession({
+            start: { from: { seqNum: commitAck.start.seqNum } },
+            stop: { limits: { count: journal.length } }
+          }).pipe(
+            Stream.runCollect,
+            Effect.map((records) =>
+              Array.from(
+                records,
+                (record) => record.headers.find(([key]) => key === "durable.record.type")?.[1] ?? ""
               )
-            ),
-            { operationId: 4, key: streamName }
+            )
           )
 
-          const finalTail = yield* operation(
-            "effect-s2.check-tail.final",
-            { stream: streamName },
-            stream.checkTail(),
-            { operationId: 5, key: streamName }
-          )
+          const finalTail = yield* stream.checkTail()
 
           return {
             appendStartedAtInitialTail: commitAck.start.seqNum === initialTail.tail.seqNum,
@@ -112,25 +78,38 @@ export const effectS2CapabilityAProof: Proof = {
           staleReplayRejectedAtSeqNum: 2,
           tailAdvancedBy: 2
         }),
-        traceOperation("atomic-commit-observed", {
-          operation: "effect-s2.append.atomic-journal-commit",
-          status: "ok"
-        }),
-        traceOperation("stale-replay-rejected-by-seqnum", {
-          operation: "effect-s2.append.stale-replay",
-          status: "error",
-          attributes: {
-            "s2.error.code": "APPEND_CONDITION_FAILED",
-            "s2.error.expected_seq_num": 2,
-            "s2.error.kind": "SeqNumMismatchError",
-            "s2.error.status": 412
-          }
-        }),
-        traceOperation("replay-fold-read-original-atomic-batch", {
-          operation: "effect-s2.read-session.replay-fold",
-          status: "ok",
-          outputContains: journalTypes
-        })
+        traceSql(
+          "atomic-commit-observed",
+          `
+          SELECT countIf(
+            SpanName = 'effect-s2.append'
+            AND SpanAttributes['s2.operation.status'] = 'ok'
+            AND SpanAttributes['s2.append.record_count'] = '2'
+          ) >= 1 AS ok
+          FROM trial_spans
+        `
+        ),
+        traceSql(
+          "stale-replay-rejected-by-seqnum",
+          `
+          SELECT countIf(
+            SpanName = 'effect-s2.append'
+            AND SpanAttributes['s2.operation.status'] = 'error'
+            AND SpanAttributes['s2.error.kind'] = 'SeqNumMismatchError'
+            AND SpanAttributes['s2.error.code'] = 'APPEND_CONDITION_FAILED'
+            AND SpanAttributes['s2.error.status'] = '412'
+            AND SpanAttributes['s2.error.expected_seq_num'] = '2'
+          ) = 1 AS ok
+          FROM trial_spans
+        `
+        ),
+        traceSql(
+          "replay-read-used-production-s2-span",
+          `
+          SELECT countIf(SpanName = 'effect-s2.read-session') >= 1 AS ok
+          FROM trial_spans
+        `
+        )
       )
   }
 }
