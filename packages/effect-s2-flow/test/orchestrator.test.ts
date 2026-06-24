@@ -3,11 +3,12 @@ import { promisify } from "node:util"
 
 import * as Effect from "effect/Effect"
 import type * as Scope from "effect/Scope"
+import * as Stream from "effect/Stream"
 import { AppendInput, AppendRecord, FencingTokenMismatchError } from "effect-s2"
 import * as S2 from "effect-s2"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
-import { flowError, OwnedOrchestrator, ViewOrchestrator } from "../src/index.ts"
+import { OwnedOrchestrator, ViewOrchestrator } from "../src/index.ts"
 import type { FlowRecord } from "../src/runtime/Record.ts"
 import * as Tail from "../src/runtime/Tail.ts"
 
@@ -30,14 +31,18 @@ let endpoint = ""
 let basinCounter = 0
 
 const runScoped = <A, E>(effect: Effect.Effect<A, E, Scope.Scope | S2.S2Client>): Promise<A> =>
-  effect.pipe(Effect.scoped, Effect.provide(S2.layer({
-    accessToken: "unused",
-    endpoints: {
-      account: endpoint,
-      basin: endpoint
-    },
-    requestTimeoutMillis: 5_000
-  })), Effect.runPromise)
+  effect.pipe(
+    Effect.scoped,
+    Effect.provide(S2.layer({
+      accessToken: "unused",
+      endpoints: {
+        account: endpoint,
+        basin: endpoint
+      },
+      requestTimeoutMillis: 5_000
+    })),
+    Effect.runPromise
+  )
 
 const reduceBodies = (state: ReadonlyArray<string>, record: FlowRecord): ReadonlyArray<string> => [
   ...state,
@@ -55,10 +60,13 @@ const nextNames = (label: string) => {
   }
 }
 
-const withStream = <A, E>(label: string, use: (names: {
-  readonly basin: string
-  readonly stream: string
-}) => Effect.Effect<A, E, Scope.Scope | S2.S2Client>) =>
+const withStream = <A, E>(
+  label: string,
+  use: (names: {
+    readonly basin: string
+    readonly stream: string
+  }) => Effect.Effect<A, E, Scope.Scope | S2.S2Client>
+) =>
   Effect.gen(function*() {
     const names = nextNames(label)
     yield* S2.basins.ensure({ basin: names.basin })
@@ -130,8 +138,7 @@ describe("ViewOrchestrator over official s2-lite", () => {
 
         expect(state).toEqual(["1", "2"])
         expect(yield* view.applied).toBe(2)
-      })
-    )))
+      }))))
 
   it("uses checkTail as the strong-read barrier for concurrent appends", () =>
     runScoped(withStream("view-strong", (names) =>
@@ -147,8 +154,7 @@ describe("ViewOrchestrator over official s2-lite", () => {
 
         expect(state).toEqual(["after-start"])
         expect(yield* view.applied).toBe(1)
-      })
-    )))
+      }))))
 
   it("recovers from a cursor by folding real S2 records at or after it", () =>
     runScoped(withStream("view-cursor", (names) =>
@@ -165,9 +171,7 @@ describe("ViewOrchestrator over official s2-lite", () => {
 
         expect(state).toEqual(["keep"])
         expect(yield* view.applied).toBe(3)
-      })
-    )))
-
+      }))))
 })
 
 describe("Tail cursor protocol over official s2-lite", () => {
@@ -180,15 +184,13 @@ describe("Tail cursor protocol over official s2-lite", () => {
         const cursor = yield* Tail.catchUp(stream, 0, (record) =>
           Effect.sync(() => {
             folded.push(record.body)
-          })
-        )
+          }))
         yield* append(names, ["handoff"])
         const followed = yield* Tail.follow(stream, cursor).pipe(Stream.take(1), Stream.runCollect)
 
         expect(folded).toEqual(["caught-up"])
         expect(followed.map((record) => record.body)).toEqual(["handoff"])
-      })
-    )))
+      }))))
 })
 
 describe("OwnedOrchestrator over official s2-lite", () => {
@@ -213,8 +215,7 @@ describe("OwnedOrchestrator over official s2-lite", () => {
         expect(ack.endSeqNum).toBe(2)
         expect(state).toEqual(["owned-1"])
         expect(yield* owned.applied).toBe(2)
-      })
-    )))
+      }))))
 
   it("applies its own S2 records once when the tail reader observes them", () =>
     runScoped(withStream("owned-once", (names) =>
@@ -237,8 +238,7 @@ describe("OwnedOrchestrator over official s2-lite", () => {
 
         expect(state).toEqual(["1", "2"])
         expect(yield* owned.applied).toBe(3)
-      })
-    )))
+      }))))
 
   it("does not reorder an owned append after an earlier foreign S2 record", () =>
     runScoped(withStream("owned-order", (names) =>
@@ -260,8 +260,7 @@ describe("OwnedOrchestrator over official s2-lite", () => {
 
         expect(state).toEqual(["foreign", "owned"])
         expect(yield* owned.applied).toBe(3)
-      })
-    )))
+      }))))
 
   it("accepts matching fencing tokens and rejects stale owned S2 appends", () =>
     runScoped(withStream("owned-fence", (names) =>
@@ -303,8 +302,7 @@ describe("OwnedOrchestrator over official s2-lite", () => {
           expect(result.error.reason).toBe("write")
           expect(result.error.cause).toBeInstanceOf(FencingTokenMismatchError)
         }
-      })
-    )))
+      }))))
 
   it("fails invalid owned append input with typed FlowError instead of timing out", () =>
     runScoped(withStream("owned-invalid", (names) =>
@@ -333,8 +331,7 @@ describe("OwnedOrchestrator over official s2-lite", () => {
           expect(result.error.reason).toBe("write")
           expect(result.error.message).toBe("invalid owned append input")
         }
-      })
-    )))
+      }))))
 })
 
 const installFence = (names: { readonly basin: string; readonly stream: string }, token: string) =>
