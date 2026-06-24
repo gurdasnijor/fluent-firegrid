@@ -39,6 +39,7 @@
     "test": {
       "dependsOn": ["^build"],
       "inputs": ["src/**", "test/**", "examples/**", "tsconfig.json", "../../vitest.config.ts"],
+      "passThroughEnv": ["S2_LITE_BIN"],
       "outputs": []
     },
     "check": {

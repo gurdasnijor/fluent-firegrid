@@ -22,8 +22,11 @@ interface S2LiteProcess {
   readonly stderr: { readonly on: (event: "data", listener: (chunk: Buffer) => void) => void } | null
   readonly exitCode: number | null
   readonly kill: (signal: "SIGTERM" | "SIGKILL") => boolean
-  readonly on: (event: "exit", listener: () => void) => void
-  readonly off: (event: "exit", listener: () => void) => void
+}
+
+interface EventEmitterLike<Event extends string> {
+  readonly on: (event: Event, listener: (...args: ReadonlyArray<unknown>) => void) => void
+  readonly off: (event: Event, listener: (...args: ReadonlyArray<unknown>) => void) => void
 }
 
 let server: S2LiteProcess | undefined
@@ -91,7 +94,7 @@ beforeAll(async () => {
 
   const port = await availablePort()
   endpoint = `http://127.0.0.1:${port}`
-  const currentServer: S2LiteProcess = spawn(s2LiteBin, ["lite", "--port", String(port)], {
+  const currentServer = spawn(s2LiteBin, ["lite", "--port", String(port)], {
     stdio: ["ignore", "pipe", "pipe"]
   })
   server = currentServer
@@ -344,12 +347,13 @@ const installFence = (names: { readonly basin: string; readonly stream: string }
 const availablePort = (): Promise<number> =>
   new Promise((resolve, reject) => {
     const probe = createServer()
-    const onError = (error: Error) => {
-      probe.off("listening", onListening)
+    const probeEvents = probe as unknown as EventEmitterLike<"error" | "listening">
+    const onError = (error: unknown) => {
+      probeEvents.off("listening", onListening)
       reject(error)
     }
     const onListening = () => {
-      probe.off("error", onError)
+      probeEvents.off("error", onError)
       const address = probe.address()
       if (address === null || typeof address === "string") {
         probe.close(() => reject(new Error("failed to allocate TCP port")))
@@ -358,8 +362,8 @@ const availablePort = (): Promise<number> =>
       const port = address.port
       probe.close(() => resolve(port))
     }
-    probe.on("error", onError)
-    probe.on("listening", onListening)
+    probeEvents.on("error", onError)
+    probeEvents.on("listening", onListening)
     probe.listen(0, "127.0.0.1")
   })
 
@@ -394,6 +398,7 @@ const stopS2Lite = async (): Promise<void> => {
   }
 
   child.kill("SIGTERM")
+  const childEvents = child as unknown as EventEmitterLike<"exit">
   await new Promise<void>((resolve) => {
     let resolved = false
     const done = () => {
@@ -411,8 +416,9 @@ const stopS2Lite = async (): Promise<void> => {
     timeout.unref()
     const onExit = () => {
       clearTimeout(timeout)
+      childEvents.off("exit", onExit)
       done()
     }
-    child.on("exit", onExit)
+    childEvents.on("exit", onExit)
   })
 }
