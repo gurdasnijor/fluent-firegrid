@@ -132,6 +132,9 @@ const ignoreFinalizerError = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.E
 
 const s2ErrorAttributes = (error: S2Error): Record<string, string> => ({
   "s2.error.code": error.code ?? "",
+  "s2.error.expected_fencing_token": error instanceof FencingTokenMismatchError
+    ? error.expectedFencingToken
+    : "",
   "s2.error.expected_seq_num": error instanceof SeqNumMismatchError
     ? String(error.expectedSeqNum)
     : "",
