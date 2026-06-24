@@ -1,10 +1,11 @@
 import * as Clock from "effect/Clock"
 import * as Effect from "effect/Effect"
 
-import { type CompletedTrial, type PropertySpec, runProperty, type RunPropertyOptions } from "./Property.ts"
+import { type CompletedTrial, property, type PropertySpec, runProperty, type RunPropertyOptions } from "./Property.ts"
 
 export interface ProofContext {
   readonly trialId: string
+  readonly property: typeof property
 }
 
 export interface Proof<A = any> {
@@ -57,7 +58,7 @@ export const runProof = Effect.fn("runProof")(function*<A>(
 ) {
   const now = yield* Clock.currentTimeMillis
   const trialId = options.trialId ?? trialIdFromProof(proof.name, now)
-  const spec = proof.makeSpec({ trialId })
+  const spec = proof.makeSpec({ property, trialId })
   const trial = yield* runProperty(spec, {
     trialId,
     ...(options.reportDir === undefined ? {} : { reportDir: options.reportDir }),

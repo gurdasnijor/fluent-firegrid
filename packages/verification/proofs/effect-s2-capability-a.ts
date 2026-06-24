@@ -3,8 +3,6 @@ import * as Effect from "effect/Effect"
 import * as Stream from "effect/Stream"
 
 import { proof } from "../src/Proof.ts"
-import { property } from "../src/Property.ts"
-import { VerificationError } from "../src/VerificationError.ts"
 
 const journal = [
   AppendRecord.string({ body: "step-1:ok", headers: [["durable.record.type", "StepCompleted"]] }),
@@ -17,7 +15,7 @@ export default proof("effect-s2.capability-a.atomic-replay")
   .describedAs(
     "Proves the Capability A effect-s2 substrate: atomic StepCompleted + checkpoint append under matchSeqNum, stale replay rejected by SeqNumMismatchError, and replay reads only the original batch."
   )
-  .spec(({ trialId }) => {
+  .spec(({ property, trialId }) => {
     const streamName = `invocation-${trialId}`
     return property("capability-a.effect-s2.atomic-replay-proof")
       .s2Lite({ persistence: "local-root" })
@@ -35,15 +33,10 @@ export default proof("effect-s2.capability-a.atomic-replay")
           const staleReplayError = yield* stream.append(
             AppendInput.create(journal, { matchSeqNum })
           ).pipe(
-            Effect.flatMap((ack) =>
-              new VerificationError({
-                message: "stale replay append succeeded; expected SeqNumMismatchError",
-                cause: ack
-              })
-            ),
-            Effect.catchIf(
+            Effect.flip,
+            Effect.filterOrFail(
               (error): error is SeqNumMismatchError => error instanceof SeqNumMismatchError,
-              Effect.succeed
+              (error) => error
             )
           )
 
