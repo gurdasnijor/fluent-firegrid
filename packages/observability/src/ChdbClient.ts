@@ -358,6 +358,9 @@ export const makeWithSession = (
       executeValues(sql: string, _params: ReadonlyArray<unknown>) {
         return Effect.map(runString(sql, "JSONCompactEachRow"), parseCompactEachRow)
       }
+      executeValuesUnprepared(sql: string, params: ReadonlyArray<unknown>) {
+        return this.executeValues(sql, params)
+      }
       executeUnprepared(sql: string, params: ReadonlyArray<unknown>, transformRows: TransformRows | undefined) {
         return this.execute(sql, params, transformRows)
       }
