@@ -181,7 +181,7 @@ const asCheck = <A>(check: Check<A> | TraceProof): Check<A> => {
   }
 }
 
-export const expectWorkloadResult = <A>(expected: A): Check<A> => ({
+export const expectWorkloadResult = (expected: unknown): Check<unknown> => ({
   name: "expectWorkloadResult",
   run: (trial) =>
     Effect.gen(function*() {
