@@ -78,6 +78,9 @@ importers:
       effect:
         specifier: 4.0.0-beta.87
         version: 4.0.0-beta.87
+      effect-s2:
+        specifier: workspace:*
+        version: link:../effect-s2
     devDependencies:
       typescript:
         specifier: ^5.7.0
