@@ -44,6 +44,6 @@ export type {
   S2ClientApi,
   SerializingAppendSessionApi,
   StreamApi,
-  StreamSerializationApi,
-  StreamsApi
+  StreamsApi,
+  StreamSerializationApi
 } from "./S2Client.ts"
