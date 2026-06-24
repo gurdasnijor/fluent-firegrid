@@ -120,6 +120,14 @@ const trySync = <A>(evaluate: () => A): Effect.Effect<A, S2Error> => Effect.try(
 const tryPromise = <A>(evaluate: () => PromiseLike<A>): Effect.Effect<A, S2Error> =>
   Effect.tryPromise({ try: evaluate, catch: toS2Error })
 
+const wrapPromise =
+  <Args extends Array<unknown>, A>(evaluate: (...args: Args) => PromiseLike<A>) =>
+  (...args: Args): Effect.Effect<A, S2Error> => tryPromise(() => evaluate(...args))
+
+const wrapAsyncIterable =
+  <Args extends Array<unknown>, A>(evaluate: (...args: Args) => AsyncIterable<A>) =>
+  (...args: Args): Stream.Stream<A, S2Error> => Stream.fromAsyncIterable(evaluate(...args), toS2Error)
+
 const ignoreFinalizerError = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<void, never, R> =>
   Effect.ignore(effect)
 
@@ -285,7 +293,7 @@ export interface StreamSerializationApi {
   ) => Stream.Stream<Message, S2Error>
 }
 
-export class S2Config extends Context.Service<S2Config, S2ClientOptions>()("effect-s2/S2Config") {}
+export class S2Config extends Context.Service<S2Config, S2ClientOptions>()("effect-s2/S2Client/S2Config") {}
 
 export class S2Client extends Context.Service<S2Client, S2ClientApi>()("effect-s2/S2Client") {}
 
@@ -424,24 +432,26 @@ const makeBasin = (raw: SdkBasin): BasinApi => ({
 })
 
 const makeBasins = (raw: S2["basins"]): BasinsApi => ({
-  list: (args, options) => tryPromise(() => raw.list(args, options)),
-  listAll: (args, options) => Stream.fromAsyncIterable(raw.listAll(args, options), toS2Error),
-  create: (args, options) => tryPromise(() => raw.create(args, options)),
-  getConfig: (args, options) => tryPromise(() => raw.getConfig(args, options)),
-  delete: (args, options) => tryPromise(() => raw.delete(args, options)),
-  ensure: (args, options) => tryPromise(() => raw.ensure(args, options)),
-  reconfigure: (args, options) => tryPromise(() => raw.reconfigure(args, options))
+  list: wrapPromise(raw.list.bind(raw)),
+  listAll: wrapAsyncIterable(raw.listAll.bind(raw)),
+  create: wrapPromise(raw.create.bind(raw)),
+  getConfig: wrapPromise(raw.getConfig.bind(raw)),
+  delete: wrapPromise(raw.delete.bind(raw)),
+  ensure: wrapPromise(raw.ensure.bind(raw)),
+  reconfigure: wrapPromise(raw.reconfigure.bind(raw))
 })
 
-const makeStreams = (raw: SdkBasin["streams"]): StreamsApi => ({
-  list: (args, options) => tryPromise(() => raw.list(args, options)),
-  listAll: (args, options) => Stream.fromAsyncIterable(raw.listAll(args, options), toS2Error),
-  create: (args, options) => tryPromise(() => raw.create(args, options)),
-  getConfig: (args, options) => tryPromise(() => raw.getConfig(args, options)),
-  delete: (args, options) => tryPromise(() => raw.delete(args, options)),
-  ensure: (args, options) => tryPromise(() => raw.ensure(args, options)),
-  reconfigure: (args, options) => tryPromise(() => raw.reconfigure(args, options))
-})
+const makeStreams = (raw: SdkBasin["streams"]): StreamsApi => {
+  const list = wrapPromise(raw.list.bind(raw))
+  const listAll = wrapAsyncIterable(raw.listAll.bind(raw))
+  const create = wrapPromise(raw.create.bind(raw))
+  const getConfig = wrapPromise(raw.getConfig.bind(raw))
+  const deleteStream = wrapPromise(raw.delete.bind(raw))
+  const ensure = wrapPromise(raw.ensure.bind(raw))
+  const reconfigure = wrapPromise(raw.reconfigure.bind(raw))
+
+  return { create, delete: deleteStream, ensure, getConfig, list, listAll, reconfigure }
+}
 
 const makeAccessTokens = (raw: S2["accessTokens"]): AccessTokensApi => ({
   list: (args, options) => tryPromise(() => raw.list(args, options)),

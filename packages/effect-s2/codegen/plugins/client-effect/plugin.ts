@@ -663,15 +663,16 @@ export const handler: ClientEffectPlugin["Handler"] = ({ plugin }) => {
 
   plugin.node($.type.alias(optionsSymbol).export().type(optionsType))
 
+  const serviceBase = $(plugin.imports.Context)
+    .attr("Service")
+    .call()
+    .generics(serviceSymbol, apiTypeSymbol)
+    .call($.literal("effect-s2/generated/client-effect.gen/S2ProtocolClient"))
+
   plugin.node(
-    $.const(serviceSymbol)
+    $.class(serviceSymbol)
       .export()
-      .assign(
-        $(plugin.imports.Context)
-          .attr("Service")
-          .call($.literal("effect-s2/S2ProtocolClient"))
-          .generic(apiTypeSymbol)
-      )
+      .extends(serviceBase as any)
   )
 
   plugin.node(

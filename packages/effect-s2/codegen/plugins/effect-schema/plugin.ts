@@ -135,7 +135,9 @@ const schemaExpression = (
 
   switch (schema.type) {
     case "array":
-      return schemaCall(plugin, "Array", [schemaExpression(plugin, schema.items?.[0], nextSeen)])
+      return schemaExpression(plugin, schema.items?.[0], nextSeen)
+        .attr("pipe")
+        .call($(plugin.imports.Schema).attr("Array"))
     case "boolean":
       return $(plugin.imports.Schema).attr("Boolean")
     case "integer":

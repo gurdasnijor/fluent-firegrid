@@ -299,7 +299,10 @@ export type S2ProtocolClientOptions = {
   ) => Effect.Effect<unknown, unknown, unknown>
 }
 
-export const S2ProtocolClient = Context.Service<S2ProtocolClientApi>("effect-s2/S2ProtocolClient")
+export class S2ProtocolClient extends Context.Service<S2ProtocolClient, S2ProtocolClientApi>()(
+  "effect-s2/generated/client-effect.gen/S2ProtocolClient"
+) {
+}
 
 export const make = Effect.fn("S2ProtocolClient.make")((options?: S2ProtocolClientOptions) =>
   HttpApiClient.make(S2Api, options)

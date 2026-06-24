@@ -16,7 +16,7 @@ export const AccessTokenScopeSchema = Schema.Struct({
   access_tokens: Schema.optionalKey(Schema.Union([Schema.Null, Schema.suspend(() => ResourceSetSchema)])),
   basins: Schema.optionalKey(Schema.Union([Schema.Null, Schema.suspend(() => ResourceSetSchema)])),
   op_groups: Schema.optionalKey(Schema.Union([Schema.Null, Schema.suspend(() => PermittedOperationGroupsSchema)])),
-  ops: Schema.optionalKey(Schema.Union([Schema.Array(Schema.suspend(() => OperationSchema)), Schema.Null])),
+  ops: Schema.optionalKey(Schema.Union([Schema.suspend(() => OperationSchema).pipe(Schema.Array), Schema.Null])),
   streams: Schema.optionalKey(Schema.Union([Schema.Null, Schema.suspend(() => ResourceSetSchema)]))
 })
 
@@ -26,8 +26,8 @@ export const AccumulationMetricSchema = Schema.Struct({
   interval: Schema.suspend(() => TimeseriesIntervalSchema),
   name: Schema.String,
   unit: Schema.suspend(() => MetricUnitSchema),
-  values: Schema.Array(
-    Schema.Tuple([Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)), Schema.Number])
+  values: Schema.Tuple([Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)), Schema.Number]).pipe(
+    Schema.Array
   )
 })
 
@@ -45,12 +45,12 @@ export const AppendConditionFailedSchema = Schema.Union([
 export const AppendInputSchema = Schema.Struct({
   fencing_token: Schema.optionalKey(Schema.Union([Schema.Null, Schema.suspend(() => FencingTokenSchema)])),
   match_seq_num: Schema.optionalKey(Schema.Union([Schema.Null, Schema.suspend(() => U64Schema)])),
-  records: Schema.Array(Schema.suspend(() => AppendRecordSchema))
+  records: Schema.suspend(() => AppendRecordSchema).pipe(Schema.Array)
 })
 
 export const AppendRecordSchema = Schema.Struct({
   body: Schema.optionalKey(Schema.String),
-  headers: Schema.optionalKey(Schema.Array(Schema.suspend(() => HeaderSchema))),
+  headers: Schema.optionalKey(Schema.suspend(() => HeaderSchema).pipe(Schema.Array)),
   timestamp: Schema.optionalKey(Schema.Union([Schema.Null, Schema.suspend(() => U64Schema)]))
 })
 
@@ -154,8 +154,8 @@ export const FormatSchema = Schema.Literals(["raw", "base64"])
 export const GaugeMetricSchema = Schema.Struct({
   name: Schema.String,
   unit: Schema.suspend(() => MetricUnitSchema),
-  values: Schema.Array(
-    Schema.Tuple([Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)), Schema.Number])
+  values: Schema.Tuple([Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)), Schema.Number]).pipe(
+    Schema.Array
   )
 })
 
@@ -165,21 +165,21 @@ export const InfiniteRetentionSchema = Schema.Record(Schema.String, Schema.Unkno
 
 export const IssueAccessTokenResponseSchema = Schema.Struct({ access_token: Schema.String })
 
-export const LabelMetricSchema = Schema.Struct({ name: Schema.String, values: Schema.Array(Schema.String) })
+export const LabelMetricSchema = Schema.Struct({ name: Schema.String, values: Schema.String.pipe(Schema.Array) })
 
 export const ListAccessTokensResponseSchema = Schema.Struct({
-  access_tokens: Schema.Array(Schema.suspend(() => AccessTokenInfoSchema)),
+  access_tokens: Schema.suspend(() => AccessTokenInfoSchema).pipe(Schema.Array),
   has_more: Schema.Boolean
 })
 
 export const ListBasinsResponseSchema = Schema.Struct({
-  basins: Schema.Array(Schema.suspend(() => BasinInfoSchema)),
+  basins: Schema.suspend(() => BasinInfoSchema).pipe(Schema.Array),
   has_more: Schema.Boolean
 })
 
 export const ListStreamsResponseSchema = Schema.Struct({
   has_more: Schema.Boolean,
-  streams: Schema.Array(Schema.suspend(() => StreamInfoSchema))
+  streams: Schema.suspend(() => StreamInfoSchema).pipe(Schema.Array)
 })
 
 export const LocationInfoSchema = Schema.Struct({
@@ -196,7 +196,7 @@ export const MetricSchema = Schema.Union([
   Schema.Struct({ label: Schema.suspend(() => LabelMetricSchema) })
 ])
 
-export const MetricSetResponseSchema = Schema.Struct({ values: Schema.Array(Schema.suspend(() => MetricSchema)) })
+export const MetricSetResponseSchema = Schema.Struct({ values: Schema.suspend(() => MetricSchema).pipe(Schema.Array) })
 
 export const MetricUnitSchema = Schema.Literals(["bytes", "operations"])
 
@@ -249,7 +249,7 @@ export const PingEventDataSchema = Schema.Struct({
 })
 
 export const ReadBatchSchema = Schema.Struct({
-  records: Schema.Array(Schema.suspend(() => SequencedRecordSchema)),
+  records: Schema.suspend(() => SequencedRecordSchema).pipe(Schema.Array),
   tail: Schema.optionalKey(Schema.Union([Schema.Null, Schema.suspend(() => StreamPositionSchema)]))
 })
 
@@ -301,7 +301,7 @@ export const ScalarMetricSchema = Schema.Struct({
 
 export const SequencedRecordSchema = Schema.Struct({
   body: Schema.optionalKey(Schema.String),
-  headers: Schema.optionalKey(Schema.Array(Schema.suspend(() => HeaderSchema))),
+  headers: Schema.optionalKey(Schema.suspend(() => HeaderSchema).pipe(Schema.Array)),
   seq_num: Schema.suspend(() => U64Schema),
   timestamp: Schema.suspend(() => U64Schema)
 })
