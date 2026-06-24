@@ -9,6 +9,14 @@ export interface TraceProof {
   readonly sql: string
 }
 
+export interface TraceOperationMatch {
+  readonly operation: string
+  readonly status?: string
+  readonly attributes?: Record<string, string | number | boolean>
+  readonly outputContains?: ReadonlyArray<string>
+  readonly count?: number
+}
+
 export interface TraceProofResult {
   readonly ok: boolean
   readonly reason?: string
@@ -37,6 +45,32 @@ export const traceSql = (name: string, sql: string): TraceProof => ({
   name,
   sql: normalizeProofSql(sql)
 })
+
+const sqlString = (value: string): string => `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`
+
+const spanAttributeEquals = (name: string, value: string | number | boolean): string =>
+  `SpanAttributes[${sqlString(name)}] = ${sqlString(String(value))}`
+
+export const traceOperation = (name: string, match: TraceOperationMatch): TraceProof => {
+  const conditions = [
+    "SpanName = 'verification.operation'",
+    spanAttributeEquals("firegrid.operation.name", match.operation),
+    ...(match.status === undefined ? [] : [spanAttributeEquals("firegrid.operation.status", match.status)]),
+    ...Object.entries(match.attributes ?? {}).map(([attribute, value]) => spanAttributeEquals(attribute, value)),
+    ...(match.outputContains ?? []).map((fragment) =>
+      `position(SpanAttributes['firegrid.operation.output.json'], ${sqlString(fragment)}) > 0`
+    )
+  ]
+  return traceSql(
+    name,
+    `
+      SELECT countIf(
+        ${conditions.join("\n        AND ")}
+      ) = ${match.count ?? 1} AS ok
+      FROM trial_spans
+    `
+  )
+}
 
 export const runTraceProof = Effect.fn("runTraceProof")(function*(
   proof: TraceProof,

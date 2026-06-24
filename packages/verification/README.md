@@ -8,6 +8,7 @@ Implemented pieces:
 - `TraceRuntime.layer()` wires `@effect/opentelemetry`, `BatchSpanProcessor`, `ChdbSpanExporter`, and chDB. `VerificationRuntime.flush` calls the real processor.
 - `operation(name, input, effect, options)` emits runner-owned `verification.operation` spans with input, output, status, client, id, and key attributes.
 - `traceSql(name, sql)` verifies the OTel/chDB evidence dataset with one read-only query.
+- `traceOperation(name, match)` is the common helper for asserting a `verification.operation` span by operation name, status, attributes, output fragments, and expected count.
 - `trial_spans` expands to every OTel span in any trace that contains the trial marker span.
 - `waitForSpan` is scoped to the active trial id; it cannot satisfy a wait from another trial's spans in the same chDB session.
 - `S2LiteSupervisor` owns a scoped `s2 lite` child process, waits for HTTP readiness, and exposes separate graceful stop and force kill paths.

@@ -1,40 +1,31 @@
-import { AppendInput, AppendRecord, SeqNumMismatchError } from "effect-s2"
+import { AppendInput, AppendRecord, type S2Error, SeqNumMismatchError, type StreamApi } from "effect-s2"
 import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as Stream from "effect/Stream"
 
 import type { Proof } from "../src/Proof.ts"
-import { expectWorkloadResult, property } from "../src/Property.ts"
-import { traceSql } from "../src/TraceProof.ts"
+import { expectWorkloadResult, property, type WorkloadContext } from "../src/Property.ts"
+import { traceOperation } from "../src/TraceProof.ts"
+import { VerificationError } from "../src/VerificationError.ts"
 
 const basinName = "capability-a-proof"
-
+const journalRecordTypes = ["StepCompleted", "CheckpointAdvanced"] as const
 export interface CapabilityAProofResult {
   readonly appendStartedAtInitialTail: boolean
-  readonly duplicateRejectedBySeqNum: boolean
-  readonly duplicateExpectedSeqNum: number
-  readonly readRecordTypes: ReadonlyArray<string>
-  readonly recordCount: number
+  readonly replayRecordTypes: ReadonlyArray<string>
+  readonly staleReplayRejectedAtSeqNum: number
   readonly tailAdvancedBy: number
 }
 
-const durableRecord = (type: string, body: string) =>
-  AppendRecord.string({
-    body,
-    headers: [["durable.record.type", type]]
-  })
-
-const headerValue = (
-  headers: ReadonlyArray<readonly [string, string]>,
-  name: string
-): string | undefined => headers.find(([key]) => key === name)?.[1]
-
-const seqNumMismatchFromExit = (exit: Exit.Exit<unknown, unknown>): SeqNumMismatchError | undefined => {
-  if (!Exit.isFailure(exit)) return undefined
-  const failReason = exit.cause.reasons.find(Cause.isFailReason)
-  return failReason?.error instanceof SeqNumMismatchError ? failReason.error : undefined
+const expectedOutcome: CapabilityAProofResult = {
+  appendStartedAtInitialTail: true,
+  replayRecordTypes: journalRecordTypes,
+  staleReplayRejectedAtSeqNum: 2,
+  tailAdvancedBy: 2
 }
+
+type Operation = WorkloadContext["operation"]
 
 export const effectS2CapabilityAProof: Proof<CapabilityAProofResult> = {
   name: "effect-s2.capability-a.atomic-replay",
@@ -47,138 +38,145 @@ export const effectS2CapabilityAProof: Proof<CapabilityAProofResult> = {
       .workload<CapabilityAProofResult>(({ operation, s2 }) =>
         Effect.gen(function*() {
           const stream = yield* s2.stream({ basin: basinName, stream: streamName })
+          const step = operationRecorder(operation, streamName)
 
-          const initialTail = yield* operation(
-            "effect-s2.check-tail.initial",
+          const initialTail = yield* step(
+            "check-tail.initial",
             { stream: streamName },
-            stream.checkTail(),
-            { operationId: 1, key: streamName }
+            stream.checkTail()
           )
 
-          const commitAck = yield* operation(
-            "effect-s2.append.atomic-journal-commit",
+          const commitAck = yield* step(
+            "append.atomic-journal-commit",
             {
               matchSeqNum: initialTail.tail.seqNum,
-              records: ["StepCompleted", "CheckpointAdvanced"]
+              records: journalRecordTypes
             },
-            stream.append(AppendInput.create([
-              durableRecord("StepCompleted", "step-1:ok"),
-              durableRecord("CheckpointAdvanced", "input-cursor:1")
-            ], { matchSeqNum: initialTail.tail.seqNum })),
-            { operationId: 2, key: streamName }
+            appendJournalBatch(stream, initialTail.tail.seqNum)
           )
 
           const duplicateExit = yield* Effect.exit(
-            operation(
-              "effect-s2.append.replay-duplicate",
+            step(
+              "append.stale-replay",
               {
                 matchSeqNum: initialTail.tail.seqNum,
-                records: ["StepCompleted", "CheckpointAdvanced"]
+                records: journalRecordTypes
               },
-              stream.append(AppendInput.create([
-                durableRecord("StepCompleted", "step-1:ok"),
-                durableRecord("CheckpointAdvanced", "input-cursor:1")
-              ], { matchSeqNum: initialTail.tail.seqNum })).pipe(
-                Effect.tapError((error) =>
-                  Effect.annotateCurrentSpan({
-                    "s2.error.code": error.code ?? "",
-                    "s2.error.expected_seq_num": error instanceof SeqNumMismatchError
-                      ? String(error.expectedSeqNum)
-                      : "",
-                    "s2.error.kind": error.name,
-                    "s2.error.status": String(error.status)
-                  })
-                )
-              ),
-              { operationId: 3, key: streamName }
+              replayJournalBatch(stream, initialTail.tail.seqNum)
             )
           )
-          const duplicateError = seqNumMismatchFromExit(duplicateExit)
+          const staleReplayError = yield* expectSeqNumMismatch(duplicateExit)
 
-          const readRecords = yield* operation(
-            "effect-s2.read-session.replay-fold",
-            { start: commitAck.start.seqNum, count: 2 },
-            stream.readSession({
-              start: { from: { seqNum: commitAck.start.seqNum } },
-              stop: { limits: { count: 2 } }
-            }).pipe(
-              Stream.runCollect,
-              Effect.map((records) =>
-                Array.from(records, (record) => ({
-                  seqNum: record.seqNum,
-                  body: record.body,
-                  type: headerValue(record.headers, "durable.record.type") ?? ""
-                }))
-              )
-            ),
-            { operationId: 4, key: streamName }
+          const recordTypes = yield* step(
+            "read-session.replay-fold",
+            { start: commitAck.start.seqNum, count: ownJournalBatch.length },
+            replayRecordTypes(stream, commitAck.start.seqNum)
           )
 
-          const finalTail = yield* operation(
-            "effect-s2.check-tail.final",
+          const finalTail = yield* step(
+            "check-tail.final",
             { stream: streamName },
-            stream.checkTail(),
-            { operationId: 5, key: streamName }
+            stream.checkTail()
           )
 
           return {
             appendStartedAtInitialTail: commitAck.start.seqNum === initialTail.tail.seqNum,
-            duplicateExpectedSeqNum: duplicateError?.expectedSeqNum ?? -1,
-            duplicateRejectedBySeqNum: duplicateError !== undefined,
-            readRecordTypes: readRecords.map((record) => record.type),
-            recordCount: readRecords.length,
+            replayRecordTypes: recordTypes,
+            staleReplayRejectedAtSeqNum: staleReplayError.expectedSeqNum,
             tailAdvancedBy: finalTail.tail.seqNum - initialTail.tail.seqNum
           } satisfies CapabilityAProofResult
         })
       )
       .verify(
-        expectWorkloadResult<CapabilityAProofResult>({
-          appendStartedAtInitialTail: true,
-          duplicateExpectedSeqNum: 2,
-          duplicateRejectedBySeqNum: true,
-          readRecordTypes: ["StepCompleted", "CheckpointAdvanced"],
-          recordCount: 2,
-          tailAdvancedBy: 2
+        expectWorkloadResult(expectedOutcome),
+        traceOperation("atomic-commit-observed", {
+          operation: "effect-s2.append.atomic-journal-commit",
+          status: "ok"
         }),
-        traceSql(
-          "atomic-commit-observed",
-          `
-          SELECT countIf(
-            SpanName = 'verification.operation'
-            AND SpanAttributes['firegrid.operation.name'] = 'effect-s2.append.atomic-journal-commit'
-            AND SpanAttributes['firegrid.operation.status'] = 'ok'
-          ) = 1 AS ok
-          FROM trial_spans
-        `
-        ),
-        traceSql(
-          "duplicate-replay-rejected-by-seqnum",
-          `
-          SELECT countIf(
-            SpanName = 'verification.operation'
-            AND SpanAttributes['firegrid.operation.name'] = 'effect-s2.append.replay-duplicate'
-            AND SpanAttributes['firegrid.operation.status'] = 'error'
-            AND SpanAttributes['s2.error.kind'] = 'SeqNumMismatchError'
-            AND SpanAttributes['s2.error.code'] = 'APPEND_CONDITION_FAILED'
-            AND SpanAttributes['s2.error.status'] = '412'
-            AND SpanAttributes['s2.error.expected_seq_num'] = '2'
-          ) = 1 AS ok
-          FROM trial_spans
-        `
-        ),
-        traceSql(
-          "replay-fold-read-original-atomic-batch",
-          `
-          SELECT countIf(
-            SpanName = 'verification.operation'
-            AND SpanAttributes['firegrid.operation.name'] = 'effect-s2.read-session.replay-fold'
-            AND SpanAttributes['firegrid.operation.status'] = 'ok'
-            AND SpanAttributes['firegrid.operation.output.json'] LIKE '%StepCompleted%'
-            AND SpanAttributes['firegrid.operation.output.json'] LIKE '%CheckpointAdvanced%'
-          ) = 1 AS ok
-          FROM trial_spans
-        `
-        )
+        traceOperation("stale-replay-rejected-by-seqnum", {
+          operation: "effect-s2.append.stale-replay",
+          status: "error",
+          attributes: {
+            "s2.error.code": "APPEND_CONDITION_FAILED",
+            "s2.error.expected_seq_num": 2,
+            "s2.error.kind": "SeqNumMismatchError",
+            "s2.error.status": 412
+          }
+        }),
+        traceOperation("replay-fold-read-original-atomic-batch", {
+          operation: "effect-s2.read-session.replay-fold",
+          status: "ok",
+          outputContains: journalRecordTypes
+        })
       )
   }
 }
+
+const ownJournalBatch = [
+  AppendRecord.string({
+    body: "step-1:ok",
+    headers: [["durable.record.type", "StepCompleted"]]
+  }),
+  AppendRecord.string({
+    body: "input-cursor:1",
+    headers: [["durable.record.type", "CheckpointAdvanced"]]
+  })
+]
+
+const operationRecorder = (operation: Operation, streamName: string) => {
+  let operationId = 0
+  return <A, E, R>(
+    name: string,
+    input: unknown,
+    effect: Effect.Effect<A, E, R>
+  ): Effect.Effect<A, E, R> =>
+    operation(`effect-s2.${name}`, input, effect, {
+      key: streamName,
+      operationId: ++operationId
+    })
+}
+
+const appendJournalBatch = (stream: StreamApi, matchSeqNum: number) =>
+  stream.append(AppendInput.create(ownJournalBatch, { matchSeqNum }))
+
+const annotateS2Error = (error: S2Error) =>
+  Effect.annotateCurrentSpan({
+    "s2.error.code": error.code ?? "",
+    "s2.error.expected_seq_num": error instanceof SeqNumMismatchError
+      ? String(error.expectedSeqNum)
+      : "",
+    "s2.error.kind": error.name,
+    "s2.error.status": String(error.status)
+  })
+
+const replayJournalBatch = (stream: StreamApi, matchSeqNum: number) =>
+  appendJournalBatch(stream, matchSeqNum).pipe(
+    Effect.tapError(annotateS2Error)
+  )
+
+const recordType = (headers: ReadonlyArray<readonly [string, string]>): string =>
+  headers.find(([key]) => key === "durable.record.type")?.[1] ?? ""
+
+const replayRecordTypes = (stream: StreamApi, startSeqNum: number) =>
+  stream.readSession({
+    start: { from: { seqNum: startSeqNum } },
+    stop: { limits: { count: ownJournalBatch.length } }
+  }).pipe(
+    Stream.runCollect,
+    Effect.map((records) => Array.from(records, (record) => recordType(record.headers)))
+  )
+
+const seqNumMismatchFromExit = (exit: Exit.Exit<unknown, unknown>): SeqNumMismatchError | undefined => {
+  if (!Exit.isFailure(exit)) return undefined
+  const failReason = exit.cause.reasons.find(Cause.isFailReason)
+  return failReason?.error instanceof SeqNumMismatchError ? failReason.error : undefined
+}
+
+const expectSeqNumMismatch = Effect.fn("expectSeqNumMismatch")(function*(exit: Exit.Exit<unknown, unknown>) {
+  const error = seqNumMismatchFromExit(exit)
+  if (error !== undefined) return error
+  return yield* new VerificationError({
+    message: "expected stale replay append to fail with SeqNumMismatchError",
+    cause: exit
+  })
+})

@@ -2,7 +2,14 @@ import { layer as ChdbLayer } from "@firegrid/observability"
 import { Effect } from "effect"
 import { describe, expect, it } from "vitest"
 
-import { bindTrialSql, normalizeProofSql, runTraceProof, traceSql, VerificationError } from "../src/index.ts"
+import {
+  bindTrialSql,
+  normalizeProofSql,
+  runTraceProof,
+  traceOperation,
+  traceSql,
+  VerificationError
+} from "../src/index.ts"
 
 describe("traceSql", () => {
   it("normalizes read-only proof SQL and expands trace views", () => {
@@ -20,6 +27,23 @@ describe("traceSql", () => {
 
   it("binds trial ids as string literals", () => {
     expect(bindTrialSql("SELECT {trial_id:String}", "trial-'1")).toBe("SELECT 'trial-\\'1'")
+  })
+
+  it("builds operation-span proofs without hand-written SQL", () => {
+    const proof = traceOperation("stale-replay-rejected", {
+      operation: "effect-s2.append.stale-replay",
+      status: "error",
+      attributes: {
+        "s2.error.kind": "SeqNumMismatchError"
+      },
+      outputContains: ["StepCompleted"]
+    })
+
+    expect(proof.sql).toContain("SpanName = 'verification.operation'")
+    expect(proof.sql).toContain("SpanAttributes['firegrid.operation.name'] = 'effect-s2.append.stale-replay'")
+    expect(proof.sql).toContain("SpanAttributes['firegrid.operation.status'] = 'error'")
+    expect(proof.sql).toContain("SpanAttributes['s2.error.kind'] = 'SeqNumMismatchError'")
+    expect(proof.sql).toContain("position(SpanAttributes['firegrid.operation.output.json'], 'StepCompleted') > 0")
   })
 
   it("executes proofs through chDB", () =>
