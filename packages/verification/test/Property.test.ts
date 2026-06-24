@@ -3,18 +3,62 @@ import { Effect, Layer } from "effect"
 import { describe, expect, it } from "vitest"
 
 import { expectWorkloadResult, property, runProperty, traceSql, VerificationRuntime } from "../src/index.ts"
+import { layer as TraceRuntimeLayer } from "../src/TraceRuntime.ts"
 
-const TestLayer = Layer.mergeAll(ChdbLayer({}), VerificationRuntime.layer)
+const TestRuntimeLayer = Layer.succeed(VerificationRuntime, {
+  flush: Effect.void,
+  waitForSpan: Effect.fn("TestVerificationRuntime.waitForSpan")(() => Effect.void)
+})
+const TestLayer = Layer.mergeAll(ChdbLayer({}), TestRuntimeLayer)
+const LiveTraceLayer = TraceRuntimeLayer({ serviceName: "firegrid-verification-test" })
 
 describe("property", () => {
-  it("runs an Effect workload and post-run checks", () =>
+  it("fails loudly when no trace runtime is installed", () =>
+    Effect.gen(function*() {
+      const spec = property("missing-trace-runtime")
+        .workload(() => Effect.succeed("ok"))
+        .verify(expectWorkloadResult("ok"))
+
+      const exit = yield* Effect.exit(runProperty(spec))
+
+      expect(exit._tag).toBe("Failure")
+    }).pipe(
+      Effect.provide(Layer.mergeAll(ChdbLayer({}), VerificationRuntime.layer)),
+      Effect.scoped,
+      Effect.runPromise
+    ))
+
+  it("exports workload and operation spans to chDB", () =>
     Effect.gen(function*() {
       const spec = property("durable.step-replay")
         .host("worker", { opaque: "host" })
-        .workload(() => Effect.succeed({ greeting: "Hello, Ada!" }))
+        .workload(({ operation }) =>
+          operation(
+            "greeter.process",
+            { name: "Ada" },
+            Effect.succeed({ greeting: "Hello, Ada!" }),
+            { clientId: 1, operationId: 1, key: "Ada" }
+          )
+        )
         .verify(
           expectWorkloadResult({ greeting: "Hello, Ada!" }),
-          traceSql("constant-trace-proof", "SELECT 1 AS ok")
+          traceSql(
+            "operation-span-exported",
+            `
+            SELECT countIf(SpanName = 'verification.operation') = 1 AS ok
+            FROM trial_spans
+          `
+          ),
+          traceSql(
+            "operation-view-projects-boundary",
+            `
+            SELECT count() = 1
+              AND any(operation) = 'greeter.process'
+              AND any(operation_key) = 'Ada'
+              AND any(status) = 'ok' AS ok
+            FROM verification_operations
+          `
+          )
         )
 
       const trial = yield* runProperty(spec, { trialId: "trial-1" })
@@ -22,7 +66,7 @@ describe("property", () => {
       expect(trial.trialId).toBe("trial-1")
       expect(trial.result._tag).toBe("Success")
     }).pipe(
-      Effect.provide(TestLayer),
+      Effect.provide(LiveTraceLayer),
       Effect.scoped,
       Effect.runPromise
     ))

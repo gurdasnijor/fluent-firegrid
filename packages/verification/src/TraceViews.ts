@@ -7,7 +7,11 @@ export const trialSpansSql = `
 (
   SELECT *
   FROM otel_traces
-  WHERE SpanAttributes['firegrid.trial.id'] = {trial_id:String}
+  WHERE TraceId IN (
+    SELECT TraceId
+    FROM otel_traces
+    WHERE SpanAttributes['firegrid.trial.id'] = {trial_id:String}
+  )
 )
 `
 

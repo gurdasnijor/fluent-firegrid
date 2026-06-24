@@ -26,10 +26,20 @@ describe("S2LiteSupervisor", () => {
 
         const exit = yield* Effect.exit(supervisor.endpoint)
         expect(exit._tag).toBe("Failure")
+
+        yield* supervisor.start
+        expect(yield* supervisor.endpoint).toBe("http://127.0.0.1:32199")
+        yield* supervisor.kill
+
+        const killedExit = yield* Effect.exit(supervisor.endpoint)
+        expect(killedExit._tag).toBe("Failure")
       }).pipe(
         Effect.provide(S2LiteSupervisor.layer({
           bin: "node",
-          args: () => ["-e", "setInterval(() => {}, 1000)"],
+          args: (cfg) => [
+            "-e",
+            `require("node:http").createServer((_, res) => res.end("ok")).listen(${cfg.port})`
+          ],
           port: 32199,
           localRoot: "/tmp/firegrid-verification-test"
         }))

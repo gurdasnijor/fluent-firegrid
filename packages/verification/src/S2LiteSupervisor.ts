@@ -1,11 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices"
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient"
 import * as Context from "effect/Context"
+import type * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Ref from "effect/Ref"
 import type * as Scope from "effect/Scope"
 import * as ChildProcess from "effect/unstable/process/ChildProcess"
+import * as HttpClient from "effect/unstable/http/HttpClient"
 
 import { S2LiteError } from "./VerificationError.ts"
 
@@ -15,10 +18,16 @@ export interface S2LiteConfig {
   readonly port: number
   readonly localRoot: string
   readonly initFile?: string
+  readonly readiness?: {
+    readonly attempts?: number
+    readonly interval?: Duration.Input
+    readonly path?: string
+  }
 }
 
 export interface S2LiteHandle {
   readonly endpoint: string
+  readonly stop: Effect.Effect<void>
   readonly kill: Effect.Effect<void>
 }
 
@@ -42,6 +51,31 @@ const makeSupervisor = Effect.fn("S2LiteSupervisor.make")(function*(
   const state = yield* Ref.make<Option.Option<S2LiteHandle>>(Option.none())
   const endpoint = `http://127.0.0.1:${config.port}`
 
+  const waitUntilReady = Effect.fn("S2LiteSupervisor.waitUntilReady")(function*() {
+    const attempts = config.readiness?.attempts ?? 120
+    const interval = config.readiness?.interval ?? "50 millis"
+    const path = config.readiness?.path ?? "/"
+    const url = `${endpoint}${path}`
+
+    const loop = (remaining: number): Effect.Effect<void, S2LiteError, HttpClient.HttpClient> =>
+      Effect.gen(function*() {
+        const ready = yield* Effect.exit(HttpClient.get(url))
+        if (ready._tag === "Success") {
+          return
+        }
+        if (remaining <= 0) {
+          return yield* new S2LiteError({
+            message: `s2 lite did not become ready at ${url}`,
+            cause: ready.cause
+          })
+        }
+        yield* Effect.sleep(interval)
+        return yield* loop(remaining - 1)
+      })
+
+    return yield* loop(attempts)
+  })
+
   const spawn = Effect.fn("S2LiteSupervisor.spawn")(function*() {
     const bin = config.bin ?? "s2"
     const args = config.args?.(config) ?? [
@@ -60,22 +94,39 @@ const makeSupervisor = Effect.fn("S2LiteSupervisor.make")(function*(
     )
     const handle: S2LiteHandle = {
       endpoint,
-      kill: proc.kill().pipe(Effect.ignore)
+      stop: proc.kill({ killSignal: "SIGTERM", forceKillAfter: "5 seconds" }).pipe(Effect.ignore),
+      kill: proc.kill({ killSignal: "SIGKILL" }).pipe(Effect.ignore)
     }
+    yield* waitUntilReady().pipe(
+      Effect.catch((cause) => handle.kill.pipe(Effect.andThen(Effect.fail(cause))))
+    )
     yield* Ref.set(state, Option.some(handle))
   })
 
-  const stop = Effect.gen(function*() {
+  const release = Effect.fn("S2LiteSupervisor.release")(function*(mode: "stop" | "kill") {
     const current = yield* Ref.get(state)
     if (Option.isSome(current)) {
-      yield* current.value.kill
+      if (mode === "kill") {
+        yield* current.value.kill
+      } else {
+        yield* current.value.stop
+      }
       yield* Ref.set(state, Option.none())
     }
-  }).pipe(
+  })
+
+  const stop = release("stop").pipe(
     Effect.withSpan("S2LiteSupervisor.stop"),
     Effect.mapError((cause) => new S2LiteError({ message: "failed to stop s2 lite", cause }))
   )
-  const spawnLive = spawn().pipe(Effect.provide(NodeServices.layer))
+
+  const kill = release("kill").pipe(
+    Effect.withSpan("S2LiteSupervisor.kill"),
+    Effect.mapError((cause) => new S2LiteError({ message: "failed to kill s2 lite", cause }))
+  )
+  const spawnLive = spawn().pipe(
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerFetch))
+  )
 
   return S2LiteSupervisor.of({
     endpoint: Ref.get(state).pipe(
@@ -89,7 +140,7 @@ const makeSupervisor = Effect.fn("S2LiteSupervisor.make")(function*(
       Effect.flatMap((current) => Option.isSome(current) ? Effect.void : spawnLive)
     ),
     stop,
-    kill: stop,
+    kill,
     restart: stop.pipe(Effect.andThen(spawnLive))
   })
 })

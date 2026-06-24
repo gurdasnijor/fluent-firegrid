@@ -3,6 +3,7 @@ import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
 import * as Layer from "effect/Layer"
+import * as Random from "effect/Random"
 
 import { runTraceProof, type TraceProof } from "./TraceProof.ts"
 import { VerificationError } from "./VerificationError.ts"
@@ -36,8 +37,12 @@ export class VerificationRuntime extends Context.Service<VerificationRuntime, {
   static readonly layer = Layer.succeed(
     this,
     {
-      flush: Effect.void,
-      waitForSpan: Effect.fn("VerificationRuntime.waitForSpan")(() => Effect.void)
+      flush: Effect.fail(new VerificationError({ message: "VerificationRuntime.flush is not implemented" })),
+      waitForSpan: Effect.fn("VerificationRuntime.waitForSpan")(function*(span: string) {
+        return yield* new VerificationError({
+          message: `VerificationRuntime.waitForSpan(${span}) is not implemented`
+        })
+      })
     }
   )
 }
@@ -45,6 +50,7 @@ export class VerificationRuntime extends Context.Service<VerificationRuntime, {
 export interface WorkloadContext {
   readonly faults: Faults
   readonly runtime: VerificationRuntime["Service"]
+  readonly operation: typeof operation
 }
 
 export interface CompletedTrial<A> {
@@ -156,6 +162,57 @@ export const expectWorkloadResult = <A>(expected: A): Check<A> => ({
     })
 })
 
+const stringifyJson = (value: unknown): string => {
+  try {
+    return JSON.stringify(value) ?? "null"
+  } catch {
+    return String(value)
+  }
+}
+
+export const operation = Effect.fnUntraced(function*<A, E, R>(
+  name: string,
+  input: unknown,
+  effect: Effect.Effect<A, E, R>,
+  options: {
+    readonly clientId?: string | number
+    readonly operationId?: string | number
+    readonly key?: string
+  } = {}
+) {
+  const generatedId = yield* Random.nextInt
+  const operationId = options.operationId ?? `${name}-${generatedId}`
+  const clientId = options.clientId ?? "default"
+  const withStatus = effect.pipe(
+    Effect.tap((output) =>
+      Effect.annotateCurrentSpan({
+        "firegrid.operation.output.json": stringifyJson(output),
+        "firegrid.operation.status": "ok"
+      })
+    ),
+    Effect.tapError((cause) =>
+      Effect.annotateCurrentSpan({
+        "firegrid.operation.failure.kind": typeof cause === "object" && cause !== null && "_tag" in cause
+          ? String(cause._tag)
+          : "unknown",
+        "firegrid.operation.status": "error"
+      })
+    )
+  )
+  return yield* withStatus.pipe(
+    Effect.withSpan("verification.operation", {
+      attributes: {
+        "firegrid.client.id": String(clientId),
+        "firegrid.operation.id": String(operationId),
+        "firegrid.operation.input.json": stringifyJson(input),
+        "firegrid.operation.key": options.key ?? "",
+        "firegrid.operation.name": name,
+        "firegrid.operation.status": "running"
+      }
+    })
+  )
+})
+
 const defaultFaults: Faults = {
   killHost: (name) => new VerificationError({ message: `fault killHost(${name}) is not implemented` }),
   restartHost: (name) => new VerificationError({ message: `fault restartHost(${name}) is not implemented` }),
@@ -177,10 +234,20 @@ export const runProperty = Effect.fn("runProperty")(function*<A>(
   const chdb = yield* ChdbClient
   const runtime = yield* VerificationRuntime
   const trialId = options.trialId ?? trialIdFromName(spec.name)
-  const result = yield* Effect.exit(spec.workload({
-    faults: options.faults ?? defaultFaults,
-    runtime
-  }))
+  const result = yield* Effect.exit(
+    spec.workload({
+      faults: options.faults ?? defaultFaults,
+      operation,
+      runtime
+    }).pipe(
+      Effect.withSpan("verification.trial", {
+        attributes: {
+          "firegrid.property.name": spec.name,
+          "firegrid.trial.id": trialId
+        }
+      })
+    )
+  )
   yield* runtime.flush
   const completed: CompletedTrial<A> = {
     trialId,
