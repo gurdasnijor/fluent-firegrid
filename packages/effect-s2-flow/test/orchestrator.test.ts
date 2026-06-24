@@ -1,297 +1,412 @@
-import * as Deferred from "effect/Deferred"
+import { createServer } from "node:net"
+import { promisify } from "node:util"
+
 import * as Effect from "effect/Effect"
-import * as Queue from "effect/Queue"
 import type * as Scope from "effect/Scope"
-import * as Stream from "effect/Stream"
-import { describe, expect, it } from "vitest"
+import { AppendInput, AppendRecord, FencingTokenMismatchError } from "effect-s2"
+import * as S2 from "effect-s2"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
-import { OwnedOrchestrator, ViewOrchestrator } from "../src/index.ts"
-import type { AppendAck, AppendBatch, FlowRecord, StreamStore } from "../src/index.ts"
-import { InMemoryStreamStore } from "../src/test-support/index.ts"
+import { flowError, OwnedOrchestrator, ViewOrchestrator } from "../src/index.ts"
+import type { FlowRecord } from "../src/runtime/Record.ts"
+import * as Tail from "../src/runtime/Tail.ts"
 
-const runScoped = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>): Promise<A> =>
-  effect.pipe(Effect.scoped, Effect.runPromise)
+const defaultS2LiteBin = "/Users/gnijor/.s2/bin/s2"
+const s2LiteBin = process.env.S2_LITE_BIN ?? defaultS2LiteBin
+const requiredVersion = "s2 0.37.1"
+const liveStreamOptions = { forceTransport: "fetch" as const }
 
-const reduceNumbers = (state: ReadonlyArray<number>, record: { readonly value: number }) => [
+interface S2LiteProcess {
+  readonly stdout: { readonly on: (event: "data", listener: (chunk: Buffer) => void) => void } | null
+  readonly stderr: { readonly on: (event: "data", listener: (chunk: Buffer) => void) => void } | null
+  readonly exitCode: number | null
+  readonly kill: (signal: "SIGTERM" | "SIGKILL") => boolean
+  readonly once: (event: "exit", listener: () => void) => void
+}
+
+let server: S2LiteProcess | undefined
+let removeExitCleanup: (() => void) | undefined
+let endpoint = ""
+let basinCounter = 0
+
+const runScoped = <A, E>(effect: Effect.Effect<A, E, Scope.Scope | S2.S2Client>): Promise<A> =>
+  effect.pipe(Effect.scoped, Effect.provide(S2.layer({
+    accessToken: "unused",
+    endpoints: {
+      account: endpoint,
+      basin: endpoint
+    },
+    requestTimeoutMillis: 5_000
+  })), Effect.runPromise)
+
+const reduceBodies = (state: ReadonlyArray<string>, record: FlowRecord): ReadonlyArray<string> => [
   ...state,
-  record.value
+  record.body
 ]
 
-const ackAt = (batch: AppendBatch<number>, seqNum: number): AppendAck<number> => ({
-  startSeqNum: seqNum,
-  endSeqNum: seqNum + 1,
-  records: [{
-    seqNum,
-    value: batch.values[0]!,
-    ...(batch.ownerId === undefined ? {} : { ownerId: batch.ownerId }),
-    ...(batch.writeId === undefined ? {} : { writeId: batch.writeId })
-  }]
-})
+const record = (body: string): ReturnType<typeof AppendRecord.string> => AppendRecord.string({ body })
 
-describe("ViewOrchestrator", () => {
-  it("serves eventual reads from the applied tail", () =>
-    runScoped(
+const nextNames = (label: string) => {
+  const counter = basinCounter++
+  const suffix = `${Date.now().toString(36)}-${counter}`
+  return {
+    basin: `flow-${suffix}`,
+    stream: `${label}-${suffix}`
+  }
+}
+
+const withStream = <A, E>(label: string, use: (names: {
+  readonly basin: string
+  readonly stream: string
+}) => Effect.Effect<A, E, Scope.Scope | S2.S2Client>) =>
+  Effect.gen(function*() {
+    const names = nextNames(label)
+    yield* S2.basins.ensure({ basin: names.basin })
+    const basin = yield* S2.basin(names.basin)
+    yield* basin.streams.ensure({ stream: names.stream })
+    return yield* use(names)
+  })
+
+const append = (names: { readonly basin: string; readonly stream: string }, records: ReadonlyArray<string>) =>
+  Effect.gen(function*() {
+    const stream = yield* S2.stream(names.basin, names.stream)
+    return yield* stream.append(AppendInput.create(records.map(record)))
+  })
+
+beforeAll(async () => {
+  const { execFile, spawn } = await import("node:child_process")
+  const execFileAsync = promisify(execFile)
+  const version = (await execFileAsync(s2LiteBin, ["--version"])).stdout.trim()
+  console.log(`effect-s2-flow live tests using ${s2LiteBin}: ${version}`)
+  expect(version).toBe(requiredVersion)
+
+  const port = await availablePort()
+  endpoint = `http://127.0.0.1:${port}`
+  server = spawn(s2LiteBin, ["lite", "--port", String(port)], {
+    stdio: ["ignore", "pipe", "pipe"]
+  })
+  const currentServer = server
+  const killOnExit = () => {
+    if (currentServer.exitCode === null) {
+      currentServer.kill("SIGKILL")
+    }
+  }
+  process.once("exit", killOnExit)
+  removeExitCleanup = () => process.off("exit", killOnExit)
+
+  let output = ""
+  currentServer.stdout?.on("data", (chunk: Buffer) => {
+    output += chunk.toString()
+  })
+  currentServer.stderr?.on("data", (chunk: Buffer) => {
+    output += chunk.toString()
+  })
+
+  try {
+    await waitForHealth(`${endpoint}/health`)
+  } catch (error) {
+    await stopS2Lite()
+    throw new Error(`s2-lite did not become healthy at ${endpoint}: ${String(error)}\n${output}`, { cause: error })
+  }
+}, 30_000)
+
+afterAll(async () => {
+  await stopS2Lite()
+}, 5_000)
+
+describe("ViewOrchestrator over official s2-lite", () => {
+  it("serves eventual reads from the applied real S2 tail", () =>
+    runScoped(withStream("view-eventual", (names) =>
       Effect.gen(function*() {
-        const store = yield* InMemoryStreamStore.make<number>()
-        yield* store.externalAppend([1, 2])
+        yield* append(names, ["1", "2"])
         const view = yield* ViewOrchestrator.make({
-          store,
-          initial: [] as ReadonlyArray<number>,
-          reduce: reduceNumbers
+          ...names,
+          initial: [] as ReadonlyArray<string>,
+          reduce: reduceBodies
         })
 
-        yield* view.readStrong((s) => s)
-        const state = yield* view.read((s) => s)
+        yield* view.readStrong((state) => state)
+        const state = yield* view.read((current) => current)
 
-        expect(state).toEqual([1, 2])
+        expect(state).toEqual(["1", "2"])
         expect(yield* view.applied).toBe(2)
       })
-    ))
+    )))
 
-  it("blocks strong reads until the checked tail has been applied", () =>
-    runScoped(
+  it("uses checkTail as the strong-read barrier for concurrent appends", () =>
+    runScoped(withStream("view-strong", (names) =>
       Effect.gen(function*() {
-        const store = yield* InMemoryStreamStore.make<number>()
-        yield* store.externalAppend([1])
         const view = yield* ViewOrchestrator.make({
-          store,
-          initial: [] as ReadonlyArray<number>,
-          reduce: reduceNumbers
+          ...names,
+          initial: [] as ReadonlyArray<string>,
+          reduce: reduceBodies
         })
 
-        const state = yield* view.readStrong((s) => s)
+        yield* append(names, ["after-start"])
+        const state = yield* view.readStrong((current) => current)
 
-        expect(state).toEqual([1])
+        expect(state).toEqual(["after-start"])
+        expect(yield* view.applied).toBe(1)
       })
-    ))
+    )))
 
-  it("recovers from a cursor by folding only records at or after it", () =>
-    runScoped(
+  it("recovers from a cursor by folding real S2 records at or after it", () =>
+    runScoped(withStream("view-cursor", (names) =>
       Effect.gen(function*() {
-        const store = yield* InMemoryStreamStore.make<number>()
-        yield* store.externalAppend([1, 2, 3])
+        yield* append(names, ["skip-1", "skip-2", "keep"])
         const view = yield* ViewOrchestrator.make({
-          store,
-          initial: [] as ReadonlyArray<number>,
-          reduce: reduceNumbers,
+          ...names,
+          initial: [] as ReadonlyArray<string>,
+          reduce: reduceBodies,
           fromSeqNum: 2
         })
 
-        const state = yield* view.readStrong((s) => s)
+        const state = yield* view.readStrong((current) => current)
 
-        expect(state).toEqual([3])
+        expect(state).toEqual(["keep"])
         expect(yield* view.applied).toBe(3)
       })
-    ))
+    )))
 
-  it("times out a strong read when the tail reader never reaches the checked tail", () =>
-    runScoped(
-      Effect.gen(function*() {
-        const view = yield* ViewOrchestrator.make({
-          store: {
-            append: () => Effect.die("unused"),
-            checkTail: Effect.succeed(1),
-            readSession: () => Stream.never
-          },
-          initial: [] as ReadonlyArray<number>,
-          reduce: reduceNumbers,
-          config: { readTimeout: 10 }
-        })
-
-        const reason = yield* view.readStrong((s) => s).pipe(
-          Effect.match({
-            onFailure: (error) => error.reason,
-            onSuccess: () => "success"
-          })
-        )
-
-        expect(reason).toBe("read-timeout")
-      })
-    ))
-
-  it("keeps generated write/read-strong histories linearizable against an array model", () =>
-    runScoped(
-      Effect.gen(function*() {
-        for (let mask = 0; mask < 16; mask++) {
-          const store = yield* InMemoryStreamStore.make<number>()
-          const view = yield* ViewOrchestrator.make({
-            store,
-            initial: [] as ReadonlyArray<number>,
-            reduce: reduceNumbers
-          })
-          const model: Array<number> = []
-
-          for (let step = 0; step < 4; step++) {
-            if ((mask & (1 << step)) === 0) {
-              const value = model.length + 1
-              model.push(value)
-              yield* store.externalAppend([value])
-            } else {
-              const observed = yield* view.readStrong((s) => s)
-              expect(observed).toEqual(model)
-            }
-          }
-
-          const observed = yield* view.readStrong((s) => s)
-          expect(observed).toEqual(model)
-        }
-      })
-    ))
 })
 
-describe("OwnedOrchestrator", () => {
-  it("completes writes only after ordered local apply, giving read-your-writes", () =>
-    runScoped(
+describe("Tail cursor protocol over official s2-lite", () => {
+  it("does not skip records appended between catch-up and live follow setup", () =>
+    runScoped(withStream("tail-handoff", (names) =>
       Effect.gen(function*() {
-        const store = yield* InMemoryStreamStore.make<number>()
-        const owned = yield* OwnedOrchestrator.make({
-          store,
-          ownerId: "owner-a",
-          fencingToken: "token-a",
-          initial: [] as ReadonlyArray<number>,
-          reduce: reduceNumbers
-        })
-
-        const ack = yield* owned.write([1])
-        const state = yield* owned.read((s) => s)
-
-        expect(ack.startSeqNum).toBe(0)
-        expect(state).toEqual([1])
-        expect(yield* owned.applied).toBe(1)
-      })
-    ))
-
-  it("does not double-apply its own records when the tail reader observes them", () =>
-    runScoped(
-      Effect.gen(function*() {
-        const store = yield* InMemoryStreamStore.make<number>()
-        const owned = yield* OwnedOrchestrator.make({
-          store,
-          ownerId: "owner-a",
-          fencingToken: "token-a",
-          initial: [] as ReadonlyArray<number>,
-          reduce: reduceNumbers
-        })
-
-        yield* owned.write([1])
-        yield* owned.write([2])
-        const state = yield* owned.read((s) => s)
-
-        expect(state).toEqual([1, 2])
-      })
-    ))
-
-  it("does not reorder an own ack after an earlier foreign record", () =>
-    runScoped(
-      Effect.gen(function*() {
-        const store = yield* InMemoryStreamStore.make<number>()
-        const owned = yield* OwnedOrchestrator.make({
-          store,
-          ownerId: "owner-a",
-          fencingToken: "token-a",
-          initial: [] as ReadonlyArray<number>,
-          reduce: reduceNumbers
-        })
-
-        yield* store.externalAppend([10])
-        yield* owned.write([20])
-        const state = yield* owned.read((s) => s)
-
-        expect(state).toEqual([10, 20])
-      })
-    ))
-
-  it("holds an acked own write until an earlier foreign record is applied", () =>
-    runScoped(
-      Effect.gen(function*() {
-        const tail = yield* Queue.unbounded<FlowRecord<number>>()
-        const store: StreamStore<number> = {
-          append: (batch: AppendBatch<number>) => Effect.succeed(ackAt(batch, 1)),
-          checkTail: Effect.succeed(2),
-          readSession: () => Stream.fromQueue(tail)
-        }
-        const owned = yield* OwnedOrchestrator.make({
-          store,
-          ownerId: "owner-a",
-          fencingToken: "token-a",
-          initial: [] as ReadonlyArray<number>,
-          reduce: reduceNumbers,
-          config: { writeTimeout: "500 millis" }
-        })
-        const result = yield* Deferred.make<unknown>()
-
-        yield* owned.write([20]).pipe(
-          Effect.matchEffect({
-            onFailure: (error) => Deferred.succeed(result, error.reason),
-            onSuccess: (ack) => Deferred.succeed(result, ack)
-          }),
-          Effect.forkScoped
+        yield* append(names, ["caught-up"])
+        const stream = yield* S2.stream(names.basin, names.stream, liveStreamOptions)
+        const folded: Array<string> = []
+        const cursor = yield* Tail.catchUp(stream, 0, (record) =>
+          Effect.sync(() => {
+            folded.push(record.body)
+          })
         )
-        yield* Effect.sleep("20 millis")
-        const beforeForeignRecord = yield* Deferred.poll(result)
+        yield* append(names, ["handoff"])
+        const followed = yield* Tail.follow(stream, cursor).pipe(Stream.take(1), Stream.runCollect)
 
-        expect(beforeForeignRecord._tag).toBe("None")
+        expect(folded).toEqual(["caught-up"])
+        expect(followed.map((record) => record.body)).toEqual(["handoff"])
+      })
+    )))
+})
 
-        yield* Queue.offer(tail, { seqNum: 0, value: 10 })
-        const ack = yield* Deferred.await(result)
-        const state = yield* owned.read((s) => s)
+describe("OwnedOrchestrator over official s2-lite", () => {
+  it("completes writes only after ordered local apply, giving read-your-writes", () =>
+    runScoped(withStream("owned-ryw", (names) =>
+      Effect.gen(function*() {
+        yield* installFence(names, "token-a")
+        const owned = yield* OwnedOrchestrator.make({
+          ...names,
+          streamOptions: liveStreamOptions,
+          ownerId: "owner-a",
+          fencingToken: "token-a",
+          initial: [] as ReadonlyArray<string>,
+          reduce: reduceBodies,
+          fromSeqNum: 1
+        })
 
-        expect(ack).toMatchObject({ startSeqNum: 1, endSeqNum: 2 })
-        expect(state).toEqual([10, 20])
+        const ack = yield* owned.write([record("owned-1")])
+        const state = yield* owned.read((current) => current)
+
+        expect(ack.startSeqNum).toBe(1)
+        expect(ack.endSeqNum).toBe(2)
+        expect(state).toEqual(["owned-1"])
         expect(yield* owned.applied).toBe(2)
       })
-    ))
+    )))
 
-  it("fails an owned write when its ack cannot be ordered-applied before the deadline", () =>
-    runScoped(
+  it("applies its own S2 records once when the tail reader observes them", () =>
+    runScoped(withStream("owned-once", (names) =>
       Effect.gen(function*() {
-        const store: StreamStore<number> = {
-          append: (batch: AppendBatch<number>) => Effect.succeed(ackAt(batch, 1)),
-          checkTail: Effect.succeed(2),
-          readSession: () => Stream.never
-        }
+        yield* installFence(names, "token-a")
         const owned = yield* OwnedOrchestrator.make({
-          store,
+          ...names,
+          streamOptions: liveStreamOptions,
           ownerId: "owner-a",
           fencingToken: "token-a",
-          initial: [] as ReadonlyArray<number>,
-          reduce: reduceNumbers,
-          config: { writeTimeout: 10 }
+          initial: [] as ReadonlyArray<string>,
+          reduce: reduceBodies,
+          fromSeqNum: 1
         })
-        const reason = yield* owned.write([20]).pipe(
+
+        yield* owned.write([record("1")])
+        yield* owned.write([record("2")])
+        yield* owned.read((current) => current)
+        const state = yield* owned.read((current) => current)
+
+        expect(state).toEqual(["1", "2"])
+        expect(yield* owned.applied).toBe(3)
+      })
+    )))
+
+  it("does not reorder an owned append after an earlier foreign S2 record", () =>
+    runScoped(withStream("owned-order", (names) =>
+      Effect.gen(function*() {
+        yield* installFence(names, "token-a")
+        const owned = yield* OwnedOrchestrator.make({
+          ...names,
+          streamOptions: liveStreamOptions,
+          ownerId: "owner-a",
+          fencingToken: "token-a",
+          initial: [] as ReadonlyArray<string>,
+          reduce: reduceBodies,
+          fromSeqNum: 1
+        })
+
+        yield* append(names, ["foreign"])
+        yield* owned.write([record("owned")])
+        const state = yield* owned.read((current) => current)
+
+        expect(state).toEqual(["foreign", "owned"])
+        expect(yield* owned.applied).toBe(3)
+      })
+    )))
+
+  it("accepts matching fencing tokens and rejects stale owned S2 appends", () =>
+    runScoped(withStream("owned-fence", (names) =>
+      Effect.gen(function*() {
+        yield* installFence(names, "token-a")
+        const matching = yield* OwnedOrchestrator.make({
+          ...names,
+          streamOptions: liveStreamOptions,
+          ownerId: "owner-a",
+          fencingToken: "token-a",
+          initial: [] as ReadonlyArray<string>,
+          reduce: reduceBodies,
+          fromSeqNum: 1
+        })
+        yield* matching.write([record("accepted")])
+        const accepted = yield* matching.read((current) => current)
+        expect(accepted).toEqual(["accepted"])
+
+        const stale = yield* OwnedOrchestrator.make({
+          ...names,
+          streamOptions: liveStreamOptions,
+          ownerId: "owner-b",
+          fencingToken: "token-b",
+          initial: [] as ReadonlyArray<string>,
+          reduce: reduceBodies,
+          fromSeqNum: 2,
+          config: { writeTimeout: "2 seconds" }
+        })
+
+        const result = yield* stale.write([record("rejected")]).pipe(
           Effect.match({
-            onFailure: (error) => error.reason,
-            onSuccess: () => "success"
+            onFailure: (error) => ({ _tag: "Left" as const, error }),
+            onSuccess: (ack) => ({ _tag: "Right" as const, ack })
           })
         )
 
-        expect(reason).toBe("write-timeout")
-      })
-    ))
-
-  it("passes the configured fencing token through every owned append", () =>
-    runScoped(
-      Effect.gen(function*() {
-        const store: StreamStore<number> = {
-          append: (batch: AppendBatch<number>) =>
-            batch.fencingToken === "token-a"
-              ? Effect.succeed(ackAt(batch, 0))
-              : Effect.die("missing fencing token"),
-          checkTail: Effect.succeed(1),
-          readSession: () => Stream.never
+        expect(result._tag).toBe("Left")
+        if (result._tag === "Left") {
+          expect(result.error.reason).toBe("write")
+          expect(result.error.cause).toBeInstanceOf(FencingTokenMismatchError)
         }
+      })
+    )))
+
+  it("fails invalid owned append input with typed FlowError instead of timing out", () =>
+    runScoped(withStream("owned-invalid", (names) =>
+      Effect.gen(function*() {
+        yield* installFence(names, "token-a")
         const owned = yield* OwnedOrchestrator.make({
-          store,
+          ...names,
+          streamOptions: liveStreamOptions,
           ownerId: "owner-a",
           fencingToken: "token-a",
-          initial: [] as ReadonlyArray<number>,
-          reduce: reduceNumbers
+          initial: [] as ReadonlyArray<string>,
+          reduce: reduceBodies,
+          fromSeqNum: 1,
+          config: { writeTimeout: "2 seconds" }
         })
 
-        yield* owned.write([1])
-        const state = yield* owned.read((s) => s)
+        const result = yield* owned.write([]).pipe(
+          Effect.match({
+            onFailure: (error) => ({ _tag: "Left" as const, error }),
+            onSuccess: (ack) => ({ _tag: "Right" as const, ack })
+          })
+        )
 
-        expect(state).toEqual([1])
+        expect(result._tag).toBe("Left")
+        if (result._tag === "Left") {
+          expect(result.error.reason).toBe("write")
+          expect(result.error.message).toBe("invalid owned append input")
+        }
       })
-    ))
+    )))
 })
+
+const installFence = (names: { readonly basin: string; readonly stream: string }, token: string) =>
+  Effect.gen(function*() {
+    const stream = yield* S2.stream(names.basin, names.stream)
+    yield* stream.append(AppendInput.create([AppendRecord.fence(token)]))
+  })
+
+const availablePort = (): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const probe = createServer()
+    probe.once("error", reject)
+    probe.listen(0, "127.0.0.1", () => {
+      const address = probe.address()
+      if (address === null || typeof address === "string") {
+        probe.close(() => reject(new Error("failed to allocate TCP port")))
+        return
+      }
+      const port = address.port
+      probe.close(() => resolve(port))
+    })
+  })
+
+const waitForHealth = async (url: string): Promise<void> => {
+  const deadline = Date.now() + 30_000
+  let lastError: unknown
+
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url)
+      if (response.ok) {
+        return
+      }
+      lastError = new Error(`HTTP ${response.status}`)
+    } catch (error) {
+      lastError = error
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+
+  throw lastError
+}
+
+const stopS2Lite = async (): Promise<void> => {
+  const child = server
+  server = undefined
+  removeExitCleanup?.()
+  removeExitCleanup = undefined
+
+  if (child === undefined || child.exitCode !== null) {
+    return
+  }
+
+  child.kill("SIGTERM")
+  await new Promise<void>((resolve) => {
+    let resolved = false
+    const done = () => {
+      if (!resolved) {
+        resolved = true
+        resolve()
+      }
+    }
+    const timeout = setTimeout(() => {
+      if (child.exitCode === null) {
+        child.kill("SIGKILL")
+      }
+      done()
+    }, 1_000)
+    timeout.unref()
+    child.once("exit", () => {
+      clearTimeout(timeout)
+      done()
+    })
+  })
+}

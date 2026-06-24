@@ -39,6 +39,7 @@ export default defineConfig({
         },
         resolve: {
           alias: {
+            "effect-s2": path.resolve(__dirname, "./packages/effect-s2/src/index.ts"),
             "effect-s2-flow": path.resolve(__dirname, "./packages/effect-s2-flow/src/index.ts")
           }
         }

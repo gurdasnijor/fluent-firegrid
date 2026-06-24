@@ -94,6 +94,17 @@ export {
   utf8ByteLength
 }
 
+export type {
+  AppendAck,
+  ReadBatch,
+  ReadInput,
+  ReadRecord,
+  S2ClientOptions,
+  S2RequestOptions,
+  StreamOptions,
+  TailResponse
+}
+
 type SdkBasin = ReturnType<S2["basin"]>
 type SdkStream = ReturnType<SdkBasin["stream"]>
 type ReadFormat = "string" | "bytes"

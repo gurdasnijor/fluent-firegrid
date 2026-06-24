@@ -6,19 +6,19 @@ import * as Ref from "effect/Ref"
 import type * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
 
-import type { FlowRecord } from "./StreamStore.ts"
+import type { FlowRecord } from "./Record.ts"
 
 export type Project<S> = (state: S, applied: number) => unknown
 
-export interface RecordEvent<A> {
+export interface RecordEvent {
   readonly _tag: "Record"
-  readonly record: FlowRecord<A>
+  readonly record: FlowRecord
 }
 
-export interface StateCursor<S, A> {
+export interface StateCursor<S> {
   readonly appliedRef: Ref.Ref<number>
-  readonly changes: PubSub.PubSub<FlowRecord<A>>
-  readonly reduce: (state: S, record: FlowRecord<A>) => S
+  readonly changes: PubSub.PubSub<FlowRecord>
+  readonly reduce: (state: S, record: FlowRecord) => S
   readonly stateRef: Ref.Ref<S>
 }
 
@@ -28,14 +28,14 @@ export interface ApplyResult<S> {
   readonly state: S
 }
 
-export type Changes<A> = Stream.Stream<FlowRecord<A>>
+export type Changes = Stream.Stream<FlowRecord>
 
-export const changesStream = <A>(changes: PubSub.PubSub<FlowRecord<A>>): Changes<A> => Stream.fromPubSub(changes)
+export const changesStream = (changes: PubSub.PubSub<FlowRecord>): Changes => Stream.fromPubSub(changes)
 
-const forkRecords = <A, Event, E, R>(
-  records: Stream.Stream<FlowRecord<A>, E, R>,
+const forkRecords = <Event, E, R>(
+  records: Stream.Stream<FlowRecord, E, R>,
   events: Queue.Queue<Event>,
-  toEvent: (record: FlowRecord<A>) => Event
+  toEvent: (record: FlowRecord) => Event
 ): Effect.Effect<void, never, Scope.Scope | R> =>
   records.pipe(
     Stream.runForEach((record) => Queue.offer(events, toEvent(record))),
@@ -43,8 +43,8 @@ const forkRecords = <A, Event, E, R>(
     Effect.asVoid
   )
 
-export const forkRecordEvents = <A, Event, E, R>(
-  records: Stream.Stream<FlowRecord<A>, E, R>,
+export const forkRecordEvents = <Event, E, R>(
+  records: Stream.Stream<FlowRecord, E, R>,
   events: Queue.Queue<Event>
 ): Effect.Effect<void, never, Scope.Scope | R> =>
   forkRecords(records, events, (record) => ({ _tag: "Record" as const, record }) as Event)
@@ -71,10 +71,10 @@ export const completeProjectedRead = Effect.fn("completeProjectedRead")(function
   yield* Deferred.succeed(reply, project(state, applied))
 })
 
-export const applyRecord = <S, A>(
-  record: FlowRecord<A>,
-  cursor: StateCursor<S, A>,
-  afterApply?: (record: FlowRecord<A>) => Effect.Effect<void>
+export const applyRecord = <S>(
+  record: FlowRecord,
+  cursor: StateCursor<S>,
+  afterApply?: (record: FlowRecord) => Effect.Effect<void>
 ): Effect.Effect<ApplyResult<S>> =>
   Effect.gen(function*() {
     const currentApplied = yield* Ref.get(cursor.appliedRef)

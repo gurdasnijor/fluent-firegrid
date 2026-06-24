@@ -4,10 +4,14 @@ import * as Effect from "effect/Effect"
 import * as PubSub from "effect/PubSub"
 import * as Queue from "effect/Queue"
 import * as Ref from "effect/Ref"
+import { AppendInput } from "effect-s2"
+import * as S2 from "effect-s2"
 
-import { type FlowError, flowError } from "./FlowError.ts"
+import { FlowError, flowError } from "./FlowError.ts"
 import * as Internal from "./Internal.ts"
-import type { AppendAck, FlowRecord, StreamStore } from "./StreamStore.ts"
+import type { FlowRecord, OwnedAppendAck, StringFlowAppendRecord } from "./Record.ts"
+import * as RuntimeRecord from "./Record.ts"
+import * as Tail from "./Tail.ts"
 
 export interface OwnedOrchestratorConfig {
   readonly commandCapacity: number
@@ -23,74 +27,118 @@ const defaultConfig: OwnedOrchestratorConfig = {
   writeTimeout: "1 second"
 }
 
-type Event<S, A> =
-  | Internal.RecordEvent<A>
+type Event<S> =
+  | Internal.RecordEvent
   | {
     readonly _tag: "WriteAck"
-    readonly ack: AppendAck<A>
-    readonly reply: Deferred.Deferred<AppendAck<A>, FlowError>
+    readonly ack: OwnedAppendAck
+    readonly reply: Deferred.Deferred<OwnedAppendAck, FlowError>
   }
   | { readonly _tag: "Read"; readonly project: Internal.Project<S>; readonly reply: Deferred.Deferred<unknown> }
 
-interface PendingOwn<A> {
-  readonly ack: AppendAck<A>
-  readonly reply: Deferred.Deferred<AppendAck<A>, FlowError>
+interface PendingOwn {
+  readonly ack: OwnedAppendAck
+  readonly reply: Deferred.Deferred<OwnedAppendAck, FlowError>
 }
 
-type OwnedContext<S, A> = Internal.StateCursor<S, A> & {
+type OwnedContext<S> = Internal.StateCursor<S> & {
   readonly appliedOwnRef: Ref.Ref<ReadonlySet<number>>
   readonly ownerId: string
-  readonly pendingOwnRef: Ref.Ref<ReadonlyMap<number, PendingOwn<A>>>
+  readonly pendingOwnRef: Ref.Ref<ReadonlyMap<number, PendingOwn>>
 }
 
-export interface OwnedOrchestrator<S, A> {
-  readonly write: (values: ReadonlyArray<A>) => Effect.Effect<AppendAck<A>, FlowError>
+export interface OwnedOrchestrator<S> {
+  readonly write: (records: ReadonlyArray<StringFlowAppendRecord>) => Effect.Effect<OwnedAppendAck, FlowError>
   readonly read: <B>(project: (state: S, applied: number) => B) => Effect.Effect<B>
   readonly applied: Effect.Effect<number>
-  readonly changes: Internal.Changes<A>
+  readonly changes: Internal.Changes
 }
 
-export interface OwnedOrchestratorOptions<S, A> {
-  readonly store: StreamStore<A>
+export interface OwnedOrchestratorOptions<S> {
+  readonly basin: string
+  readonly stream: string
+  readonly streamOptions?: S2.StreamOptions
   readonly ownerId: string
   readonly fencingToken: string
   readonly initial: S
-  readonly reduce: (state: S, record: FlowRecord<A>) => S
+  readonly reduce: (state: S, record: FlowRecord) => S
   readonly fromSeqNum?: number
   readonly config?: Partial<OwnedOrchestratorConfig>
 }
 
-export const make = Effect.fn("OwnedOrchestrator.make")(function*<S, A>(options: OwnedOrchestratorOptions<S, A>) {
+export const make = Effect.fn("OwnedOrchestrator.make")(function*<S>(options: OwnedOrchestratorOptions<S>) {
   const config = { ...defaultConfig, ...options.config }
-  const events = yield* Queue.bounded<Event<S, A>>(config.commandCapacity)
+  const events = yield* Queue.bounded<Event<S>>(config.commandCapacity)
   const writes = yield* Queue.bounded<{
-    readonly values: ReadonlyArray<A>
+    readonly records: ReadonlyArray<StringFlowAppendRecord>
     readonly writeId: number
-    readonly reply: Deferred.Deferred<AppendAck<A>, FlowError>
+    readonly reply: Deferred.Deferred<OwnedAppendAck, FlowError>
   }>(config.writeCapacity)
-  const changes = yield* PubSub.dropping<FlowRecord<A>>(config.changesCapacity)
+  const changes = yield* PubSub.dropping<FlowRecord>(config.changesCapacity)
   const appliedRef = yield* Ref.make(options.fromSeqNum ?? 0)
   const stateRef = yield* Ref.make(options.initial)
-  const pendingOwnRef = yield* Ref.make<ReadonlyMap<number, PendingOwn<A>>>(new Map())
+  const pendingOwnRef = yield* Ref.make<ReadonlyMap<number, PendingOwn>>(new Map())
   const appliedOwnRef = yield* Ref.make<ReadonlySet<number>>(new Set())
   const writeIdRef = yield* Ref.make(0)
+  const s2 = yield* S2.stream(options.basin, options.stream, options.streamOptions).pipe(
+    Effect.mapError((cause) => flowError("read-session", "failed to open S2 stream", cause))
+  )
+  const appendSession = yield* s2.appendSession().pipe(
+    Effect.mapError((cause) => flowError("write", "failed to open S2 append session", cause))
+  )
 
-  yield* Internal.forkRecordEvents(options.store.readSession(options.fromSeqNum ?? 0), events)
+  const applyCaughtUpRecord = (record: FlowRecord) =>
+    applyOwnedRecord(record, {
+      appliedOwnRef,
+      appliedRef,
+      changes,
+      ownerId: options.ownerId,
+      pendingOwnRef,
+      reduce: options.reduce,
+      stateRef
+    }).pipe(Effect.asVoid)
+  const cursor = yield* Tail.catchUp(s2, options.fromSeqNum ?? 0, applyCaughtUpRecord)
+
+  yield* Internal.forkRecordEvents(Tail.follow(s2, cursor), events)
 
   yield* Queue.take(writes).pipe(
-    Effect.flatMap(({ values, writeId, reply }) =>
-      options.store.append({
-        values,
-        ownerId: options.ownerId,
-        writeId,
-        fencingToken: options.fencingToken
-      }).pipe(
+    Effect.flatMap(({ records, writeId, reply }) => {
+      const prepare = Effect.try({
+        try: () => {
+          const ownedRecords = records.map((record) => RuntimeRecord.ownedRecord(record, options.ownerId, writeId))
+          return {
+            input: AppendInput.create(ownedRecords, { fencingToken: options.fencingToken }),
+            ownedRecords
+          }
+        },
+        catch: (cause) => flowError("write", "invalid owned append input", cause)
+      })
+      return prepare.pipe(
+        Effect.flatMap(({ input, ownedRecords }) =>
+          appendSession.submit(input).pipe(
+            Effect.flatMap((ticket) => ticket.ack),
+            Effect.flatMap((ack) =>
+              Effect.try({
+                try: () =>
+                  ({
+                    startSeqNum: ack.start.seqNum,
+                    endSeqNum: ack.end.seqNum,
+                    records: ownedRecords.map((record, index) =>
+                      RuntimeRecord.appendRecordToFlowRecord(ack.start.seqNum + index, record)
+                    )
+                  }) satisfies OwnedAppendAck,
+                catch: (cause) => flowError("write", "failed to project S2 append ack", cause)
+              })
+            )
+          )
+        ),
         Effect.matchEffect({
-          onFailure: (error) => Deferred.fail(reply, error),
+          onFailure: (error) =>
+            Deferred.fail(reply, error instanceof FlowError ? error : flowError("write", "S2 append failed", error)),
           onSuccess: (ack) => Queue.offer(events, { _tag: "WriteAck" as const, ack, reply })
         })
       )
-    ),
+    }),
     Effect.forever,
     Effect.forkScoped
   )
@@ -107,11 +155,11 @@ export const make = Effect.fn("OwnedOrchestrator.make")(function*<S, A>(options:
     }))
 
   return {
-    write: (values) =>
+    write: (records) =>
       Effect.gen(function*() {
-        const reply = yield* Deferred.make<AppendAck<A>, FlowError>()
+        const reply = yield* Deferred.make<OwnedAppendAck, FlowError>()
         const writeId = yield* Ref.updateAndGet(writeIdRef, (id) => id + 1)
-        yield* Queue.offer(writes, { values, writeId, reply })
+        yield* Queue.offer(writes, { records, writeId, reply })
         return yield* Deferred.await(reply).pipe(
           Effect.timeoutOption(config.writeTimeout),
           Effect.flatMap((option) =>
@@ -130,17 +178,17 @@ export const make = Effect.fn("OwnedOrchestrator.make")(function*<S, A>(options:
       }),
     applied: Ref.get(appliedRef),
     changes: Internal.changesStream(changes)
-  } satisfies OwnedOrchestrator<S, A>
+  } satisfies OwnedOrchestrator<S>
 })
 
-const handleEvent = <S, A>(
-  event: Event<S, A>,
-  ctx: OwnedContext<S, A>
+const handleEvent = <S>(
+  event: Event<S>,
+  ctx: OwnedContext<S>
 ) =>
   Effect.gen(function*() {
     switch (event._tag) {
       case "Record": {
-        if (event.record.ownerId === ctx.ownerId) {
+        if (RuntimeRecord.ownerId(event.record) === ctx.ownerId) {
           const appliedOwn = yield* Ref.get(ctx.appliedOwnRef)
           if (appliedOwn.has(event.record.seqNum)) {
             return
@@ -176,7 +224,7 @@ const handleEvent = <S, A>(
     }
   })
 
-const drainPendingOwn = <S, A>(ctx: OwnedContext<S, A>) =>
+const drainPendingOwn = <S>(ctx: OwnedContext<S>) =>
   Effect.gen(function*() {
     let applied = yield* Ref.get(ctx.appliedRef)
     let pending = yield* Ref.get(ctx.pendingOwnRef)
@@ -198,11 +246,11 @@ const drainPendingOwn = <S, A>(ctx: OwnedContext<S, A>) =>
     }
   })
 
-const completePendingAt = <A>(
+const completePendingAt = (
   seqNum: number,
   ctx: {
     readonly appliedOwnRef: Ref.Ref<ReadonlySet<number>>
-    readonly pendingOwnRef: Ref.Ref<ReadonlyMap<number, PendingOwn<A>>>
+    readonly pendingOwnRef: Ref.Ref<ReadonlyMap<number, PendingOwn>>
   }
 ) =>
   Effect.gen(function*() {
@@ -216,21 +264,21 @@ const completePendingAt = <A>(
     }
   })
 
-const applyOwnedRecord = <S, A>(
-  record: FlowRecord<A>,
-  ctx: OwnedContext<S, A>
+const applyOwnedRecord = <S>(
+  record: FlowRecord,
+  ctx: OwnedContext<S>
 ) =>
   Internal.applyRecord(
     record,
     ctx,
-    record.ownerId === ctx.ownerId
+    RuntimeRecord.ownerId(record) === ctx.ownerId
       ? (appliedRecord) => Ref.update(ctx.appliedOwnRef, (set) => new Set(set).add(appliedRecord.seqNum))
       : undefined
   )
 
-const completeAckIfApplied = <A>(
-  ack: AppendAck<A>,
-  reply: Deferred.Deferred<AppendAck<A>, FlowError>,
+const completeAckIfApplied = (
+  ack: OwnedAppendAck,
+  reply: Deferred.Deferred<OwnedAppendAck, FlowError>,
   appliedOwnRef: Ref.Ref<ReadonlySet<number>>
 ) =>
   Effect.gen(function*() {

@@ -10,10 +10,6 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
-    },
-    "./test-support": {
-      "types": "./src/test-support/index.ts",
-      "default": "./src/test-support/index.ts"
     }
   },
   "files": ["src", "README.md"],
@@ -28,6 +24,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "effect-s2": "workspace:*",
     "effect": "4.0.0-beta.87"
   },
   "devDependencies": {

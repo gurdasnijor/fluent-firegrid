@@ -32,6 +32,7 @@ export {
 
 export type {
   AccessTokensApi,
+  AppendAck,
   AppendOptions,
   AppendSessionApi,
   BasinApi,
@@ -40,10 +41,17 @@ export type {
   LocationsApi,
   MetricsApi,
   ProducerApi,
+  ReadBatch,
+  ReadInput,
+  ReadRecord,
   RecordSubmitTicketApi,
+  S2ClientOptions,
+  S2RequestOptions,
   S2ClientApi,
   SerializingAppendSessionApi,
   StreamApi,
+  StreamOptions,
   StreamsApi,
-  StreamSerializationApi
+  StreamSerializationApi,
+  TailResponse
 } from "./S2Client.ts"
