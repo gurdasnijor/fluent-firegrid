@@ -182,27 +182,25 @@ const make: Effect.Effect<HandlerPrimitivesApi, never, EngineState | DurableStor
       })
     ))
 
+  const decodeOptionalRow = <Tbl extends AnyTable>(
+    table: Tbl,
+    encoded: Option.Option<unknown>
+  ): Effect.Effect<Option.Option<RowOf<Tbl>>, DurableExecutionError> =>
+    Option.match(encoded, {
+      onNone: () => Effect.succeedNone,
+      onSome: (value) => decodeRowFor(table, value).pipe(Effect.map((row) => Option.some(row as RowOf<Tbl>)))
+    })
+
   const stateGet = <Tbl extends AnyTable>(
     table: Tbl,
     key: string
   ): Effect.Effect<Option.Option<RowOf<Tbl>>, DurableExecutionError> =>
     withActive("state.get").pipe(Effect.flatMap((active) =>
       active.kind === "shared"
-        ? Option.match(stateValue(active.snapshot, table.tableName, key), {
-          onNone: () => Effect.succeedNone,
-          onSome: (encoded) => decodeRowFor(table, encoded).pipe(Effect.map((row) => Option.some(row as RowOf<Tbl>)))
-        })
+        ? decodeOptionalRow(table, stateValue(active.snapshot, table.tableName, key))
         : active.kind === "object"
         ? provideClient(
-          active.state.get(table.tableName, key).pipe(
-            Effect.flatMap((opt) =>
-              Option.match(opt, {
-                onNone: () => Effect.succeedNone,
-                onSome: (encoded) =>
-                  decodeRowFor(table, encoded).pipe(Effect.map((row) => Option.some(row as RowOf<Tbl>)))
-              })
-            )
-          )
+          active.state.get(table.tableName, key).pipe(Effect.flatMap((opt) => decodeOptionalRow(table, opt)))
         )
         : Effect.gen(function*() {
           const ordinal = yield* Ref.getAndUpdate(active.readSeq, (n) => n + 1)
@@ -224,7 +222,7 @@ const make: Effect.Effect<HandlerPrimitivesApi, never, EngineState | DurableStor
             return Option.fromNullishOr(yield* decodeRead(recorded.value.value))
           }
           const current = yield* active.stateDb.table(table).get(key).pipe(Effect.mapError(toError("state.get")))
-          const encoded = yield* encodeRead(Option.getOrNull(current))
+          const encoded = yield* current.pipe(Option.getOrNull, encodeRead)
           yield* active.db.stateReads.insert({ readKey, value: encoded }).pipe(Effect.mapError(toError("state.get")))
           return current
         })

@@ -21,39 +21,35 @@ maybe(`spawnAcpProcess (real ${AGENT})`, () => {
   it(
     "produces an acp.Stream that completes an initialize handshake",
     () =>
-      Effect.runPromise(
-        Effect.scoped(
-          Effect.gen(function*() {
-            const handle = yield* spawnAcpProcess({ agent: AGENT, cwd: "." })
+      Effect.gen(function*() {
+        const handle = yield* spawnAcpProcess({ agent: AGENT, cwd: "." })
 
-            const writer = handle.stream.writable.getWriter()
-            yield* Effect.promise(() =>
-              writer.write({
-                jsonrpc: "2.0",
-                id: 1,
-                method: "initialize",
-                params: { protocolVersion: 1, clientCapabilities: {} }
-              })
-            )
-
-            const reader = handle.stream.readable.getReader()
-            let response: { id?: number; result?: unknown } | undefined
-            const started = yield* Clock.currentTimeMillis
-            const deadline = started + 60_000
-            let now = started
-            while (now < deadline && response === undefined) {
-              const next = yield* Effect.promise(() => reader.read())
-              if (next.done) break
-              const msg = next.value as { id?: number; result?: unknown }
-              if (msg.id === 1 && msg.result !== undefined) response = msg
-              now = yield* Clock.currentTimeMillis
-            }
-
-            expect(response?.result).toBeDefined()
-            reader.releaseLock()
+        const writer = handle.stream.writable.getWriter()
+        yield* Effect.promise(() =>
+          writer.write({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "initialize",
+            params: { protocolVersion: 1, clientCapabilities: {} }
           })
-        ).pipe(Effect.provide(NodeServices.layer))
-      ),
+        )
+
+        const reader = handle.stream.readable.getReader()
+        let response: { id?: number; result?: unknown } | undefined
+        const started = yield* Clock.currentTimeMillis
+        const deadline = started + 60_000
+        let now = started
+        while (now < deadline && response === undefined) {
+          const next = yield* Effect.promise(() => reader.read())
+          if (next.done) break
+          const msg = next.value as { id?: number; result?: unknown }
+          if (msg.id === 1 && msg.result !== undefined) response = msg
+          now = yield* Clock.currentTimeMillis
+        }
+
+        expect(response?.result).toBeDefined()
+        reader.releaseLock()
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), Effect.runPromise),
     90_000
   )
 })

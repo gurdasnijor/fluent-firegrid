@@ -4,8 +4,6 @@ import * as HashMap from "effect/HashMap"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Ref from "effect/Ref"
-import type * as Schema from "effect/Schema"
-import type { DurableExecutionError } from "../errors.ts"
 import { objectPartsOption } from "./address.ts"
 import type { ExternalResolution } from "./api.ts"
 import { DurableStores } from "./durable-stores.ts"
@@ -21,12 +19,7 @@ const make: Effect.Effect<ResolutionRouterApi, never, EngineState | DurableStore
   const { running, waiters } = yield* EngineState
   const { objectDriver: store, provideClient } = yield* DurableStores
 
-  const resolveExternal = <A, I>(
-    executionId: string,
-    name: string,
-    schema: Schema.Codec<A, I, never, never>,
-    value: A
-  ): Effect.Effect<void, DurableExecutionError> =>
+  const resolveExternal: ExternalResolution = (executionId, name, schema, value) =>
     Effect.gen(function*() {
       const parts = yield* objectPartsOption(executionId)
       if (Option.isSome(parts)) {

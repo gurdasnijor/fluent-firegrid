@@ -174,5 +174,5 @@ export const durableIngress = (defs: ReadonlyArray<AnyDef>) => {
       .handle("objectAttach", ({ params, payload }) => runAttach(registry, objectLocatePath(params, payload)))
       .handle("serviceOutput", ({ params, payload }) => runOutput(registry, serviceLocatePath(params, payload)))
       .handle("objectOutput", ({ params, payload }) => runOutput(registry, objectLocatePath(params, payload))))
-  return HttpRouter.serve(HttpApiBuilder.layer(DurableApi).pipe(Layer.provide(InvocationsLive)))
+  return DurableApi.pipe(HttpApiBuilder.layer, Layer.provide(InvocationsLive), HttpRouter.serve)
 }

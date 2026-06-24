@@ -26,6 +26,18 @@ export { DurableFailure } from "./contract.ts"
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- erased method arity; recovered as DurableIngressClient
 type IngressMethod = (...args: ReadonlyArray<any>) => Effect.Effect<unknown, DurableFailure, never>
 
+type InvocationEndpointPair<P, A, E> = {
+  readonly object: (
+    req: {
+      readonly params: { readonly name: string; readonly key: string; readonly method: string }
+      readonly payload: P
+    }
+  ) => Effect.Effect<A, E, never>
+  readonly service: (
+    req: { readonly params: { readonly name: string; readonly method: string }; readonly payload: P }
+  ) => Effect.Effect<A, E, never>
+}
+
 /** Locate an in-flight invocation by its server-minted id or its idempotency key. */
 export type Locator = { readonly invocationId: string } | { readonly idempotencyKey: string }
 
@@ -117,17 +129,7 @@ export const connect = (
     // `DurableFailure` channel (gap #2).
     const invocations = api.invocations
     const invokeEndpoint = <P, A, E>(
-      endpoints: {
-        readonly object: (
-          req: {
-            readonly params: { readonly name: string; readonly key: string; readonly method: string }
-            readonly payload: P
-          }
-        ) => Effect.Effect<A, E, never>
-        readonly service: (
-          req: { readonly params: { readonly name: string; readonly method: string }; readonly payload: P }
-        ) => Effect.Effect<A, E, never>
-      },
+      endpoints: InvocationEndpointPair<P, A, E>,
       def: AnyDef,
       key: string | undefined,
       method: string,
@@ -137,17 +139,31 @@ export const connect = (
         ? endpoints.object({ params: { name: def.name, key: key as string, method }, payload })
         : endpoints.service({ params: { name: def.name, method }, payload })).pipe(Effect.mapError(asFailure))
 
+    const invokeWithInput = <A, E>(
+      endpoints: InvocationEndpointPair<ReturnType<typeof payloadFor>, A, E>,
+      def: AnyDef,
+      key: string | undefined,
+      method: string,
+      input: unknown,
+      invokeOptions: InvokeOptions | undefined
+    ): Effect.Effect<{ readonly codec: HandlerCodecs; readonly result: A }, DurableFailure> =>
+      Effect.gen(function*() {
+        const codec = codecsOf(def, method)
+        const encoded = yield* Schema.encodeEffect(codec.input)(input).pipe(Effect.orDie)
+        const result = yield* invokeEndpoint(endpoints, def, key, method, payloadFor(encoded, invokeOptions))
+        return { codec, result }
+      })
+
     const call =
       (def: AnyDef, key: string | undefined) => (method: string) => (input: unknown, invokeOptions?: InvokeOptions) =>
         Effect.gen(function*() {
-          const codec = codecsOf(def, method)
-          const encoded = yield* Schema.encodeEffect(codec.input)(input).pipe(Effect.orDie)
-          const result = yield* invokeEndpoint(
+          const { codec, result } = yield* invokeWithInput(
             { object: invocations.objectCall, service: invocations.serviceCall },
             def,
             key,
             method,
-            payloadFor(encoded, invokeOptions)
+            input,
+            invokeOptions
           )
           return yield* Schema.decodeUnknownEffect(codec.output)(result.output).pipe(Effect.mapError(asFailure))
         })
@@ -187,14 +203,13 @@ export const connect = (
     const send =
       (def: AnyDef, key: string | undefined) => (method: string) => (input: unknown, invokeOptions?: InvokeOptions) =>
         Effect.gen(function*() {
-          const codec = codecsOf(def, method)
-          const encoded = yield* Schema.encodeEffect(codec.input)(input).pipe(Effect.orDie)
-          const result = yield* invokeEndpoint(
+          const { result } = yield* invokeWithInput(
             { object: invocations.objectSend, service: invocations.serviceSend },
             def,
             key,
             method,
-            payloadFor(encoded, invokeOptions)
+            input,
+            invokeOptions
           )
           const locator: Locator = { invocationId: result.invocationId }
           return {

@@ -25,8 +25,8 @@ const debugConfig = Config.boolean("S2LITE_DEBUG").pipe(Config.withDefault(false
 const BasinConfig = Schema.Struct({
   createStreamOnAppend: Schema.optionalKey(Schema.Boolean),
   createStreamOnRead: Schema.optionalKey(Schema.Boolean),
-  defaultStreamConfig: Schema.optionalKey(Schema.NullOr(Schema.Unknown)),
-  streamCipher: Schema.optionalKey(Schema.NullOr(Schema.Unknown))
+  defaultStreamConfig: Schema.Unknown.pipe(Schema.NullOr, Schema.optionalKey),
+  streamCipher: Schema.Unknown.pipe(Schema.NullOr, Schema.optionalKey)
 }).pipe(Schema.encodeKeys({
   createStreamOnAppend: "create_stream_on_append",
   createStreamOnRead: "create_stream_on_read",

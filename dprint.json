@@ -9,6 +9,7 @@
     "semiColons": "asi",
     "quoteStyle": "alwaysDouble",
     "trailingCommas": "never",
+    "module.sortImportDeclarations": "maintain",
     "operatorPosition": "maintain",
     "arrowFunction.useParentheses": "force"
   },

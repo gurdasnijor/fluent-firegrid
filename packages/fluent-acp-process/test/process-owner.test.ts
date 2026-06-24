@@ -15,7 +15,7 @@ const FAKE_HARNESS = [
 
 const runScoped = <A, E>(
   eff: Effect.Effect<A, E, NodeServices.NodeServices | Scope.Scope>
-): Promise<A> => Effect.runPromise(Effect.scoped(eff).pipe(Effect.provide(NodeServices.layer)))
+): Promise<A> => eff.pipe(Effect.scoped, Effect.provide(NodeServices.layer), Effect.runPromise)
 
 describe("resolveAgent", () => {
   it("maps known agents to their ACP adapters", () =>
