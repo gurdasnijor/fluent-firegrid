@@ -28,6 +28,10 @@ export interface ApplyResult<S> {
   readonly state: S
 }
 
+export type Changes<A> = Stream.Stream<FlowRecord<A>>
+
+export const changesStream = <A>(changes: PubSub.PubSub<FlowRecord<A>>): Changes<A> => Stream.fromPubSub(changes)
+
 const forkRecords = <A, Event, E, R>(
   records: Stream.Stream<FlowRecord<A>, E, R>,
   events: Queue.Queue<Event>,

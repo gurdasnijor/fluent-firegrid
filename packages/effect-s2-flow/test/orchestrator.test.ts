@@ -1,9 +1,12 @@
+import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
+import * as Queue from "effect/Queue"
 import type * as Scope from "effect/Scope"
 import * as Stream from "effect/Stream"
 import { describe, expect, it } from "vitest"
 
 import { OwnedOrchestrator, ViewOrchestrator } from "../src/index.ts"
+import type { AppendAck, AppendBatch, FlowRecord, StreamStore } from "../src/index.ts"
 import { InMemoryStreamStore } from "../src/test-support/index.ts"
 
 const runScoped = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>): Promise<A> =>
@@ -13,6 +16,17 @@ const reduceNumbers = (state: ReadonlyArray<number>, record: { readonly value: n
   ...state,
   record.value
 ]
+
+const ackAt = (batch: AppendBatch<number>, seqNum: number): AppendAck<number> => ({
+  startSeqNum: seqNum,
+  endSeqNum: seqNum + 1,
+  records: [{
+    seqNum,
+    value: batch.values[0]!,
+    ...(batch.ownerId === undefined ? {} : { ownerId: batch.ownerId }),
+    ...(batch.writeId === undefined ? {} : { writeId: batch.writeId })
+  }]
+})
 
 describe("ViewOrchestrator", () => {
   it("serves eventual reads from the applied tail", () =>
@@ -184,6 +198,100 @@ describe("OwnedOrchestrator", () => {
         const state = yield* owned.read((s) => s)
 
         expect(state).toEqual([10, 20])
+      })
+    ))
+
+  it("holds an acked own write until an earlier foreign record is applied", () =>
+    runScoped(
+      Effect.gen(function*() {
+        const tail = yield* Queue.unbounded<FlowRecord<number>>()
+        const store: StreamStore<number> = {
+          append: (batch: AppendBatch<number>) => Effect.succeed(ackAt(batch, 1)),
+          checkTail: Effect.succeed(2),
+          readSession: () => Stream.fromQueue(tail)
+        }
+        const owned = yield* OwnedOrchestrator.make({
+          store,
+          ownerId: "owner-a",
+          fencingToken: "token-a",
+          initial: [] as ReadonlyArray<number>,
+          reduce: reduceNumbers,
+          config: { writeTimeout: "500 millis" }
+        })
+        const result = yield* Deferred.make<unknown>()
+
+        yield* owned.write([20]).pipe(
+          Effect.matchEffect({
+            onFailure: (error) => Deferred.succeed(result, error.reason),
+            onSuccess: (ack) => Deferred.succeed(result, ack)
+          }),
+          Effect.forkScoped
+        )
+        yield* Effect.sleep("20 millis")
+        const beforeForeignRecord = yield* Deferred.poll(result)
+
+        expect(beforeForeignRecord._tag).toBe("None")
+
+        yield* Queue.offer(tail, { seqNum: 0, value: 10 })
+        const ack = yield* Deferred.await(result)
+        const state = yield* owned.read((s) => s)
+
+        expect(ack).toMatchObject({ startSeqNum: 1, endSeqNum: 2 })
+        expect(state).toEqual([10, 20])
+        expect(yield* owned.applied).toBe(2)
+      })
+    ))
+
+  it("fails an owned write when its ack cannot be ordered-applied before the deadline", () =>
+    runScoped(
+      Effect.gen(function*() {
+        const store: StreamStore<number> = {
+          append: (batch: AppendBatch<number>) => Effect.succeed(ackAt(batch, 1)),
+          checkTail: Effect.succeed(2),
+          readSession: () => Stream.never
+        }
+        const owned = yield* OwnedOrchestrator.make({
+          store,
+          ownerId: "owner-a",
+          fencingToken: "token-a",
+          initial: [] as ReadonlyArray<number>,
+          reduce: reduceNumbers,
+          config: { writeTimeout: 10 }
+        })
+        const reason = yield* owned.write([20]).pipe(
+          Effect.match({
+            onFailure: (error) => error.reason,
+            onSuccess: () => "success"
+          })
+        )
+
+        expect(reason).toBe("write-timeout")
+      })
+    ))
+
+  it("passes the configured fencing token through every owned append", () =>
+    runScoped(
+      Effect.gen(function*() {
+        const store: StreamStore<number> = {
+          append: (batch: AppendBatch<number>) =>
+            batch.fencingToken === "token-a"
+              ? Effect.succeed(ackAt(batch, 0))
+              : Effect.die("missing fencing token"),
+          checkTail: Effect.succeed(1),
+          readSession: () => Stream.never
+        }
+        const owned = yield* OwnedOrchestrator.make({
+          store,
+          ownerId: "owner-a",
+          fencingToken: "token-a",
+          initial: [] as ReadonlyArray<number>,
+          reduce: reduceNumbers
+        })
+
+        yield* owned.write([1])
+        const state = yield* owned.read((s) => s)
+
+        expect(state).toEqual([1])
       })
     ))
 })

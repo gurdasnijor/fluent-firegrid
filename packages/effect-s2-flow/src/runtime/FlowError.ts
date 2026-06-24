@@ -5,6 +5,7 @@ export type FlowErrorReason =
   | "read-session"
   | "read-timeout"
   | "write"
+  | "write-timeout"
 
 export class FlowError extends Data.TaggedError("FlowError")<{
   readonly reason: FlowErrorReason
