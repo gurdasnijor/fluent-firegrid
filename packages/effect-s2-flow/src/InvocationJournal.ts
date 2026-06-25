@@ -43,6 +43,17 @@ export type InvocationJournalRecord =
     readonly value: unknown
   }
   | {
+    readonly _tag: "TimerSet"
+    readonly requestId: string
+    readonly timerName: string
+    readonly fireAtEpochMillis: number
+  }
+  | {
+    readonly _tag: "TimerFired"
+    readonly requestId: string
+    readonly timerName: string
+  }
+  | {
     readonly _tag: "CheckpointAdvanced"
     readonly nextSeqNum: number
   }
@@ -97,6 +108,14 @@ export const stepHeaders = (
 export const stateHeaders = (stateName: string): ReadonlyArray<readonly [string, string]> => [
   ...recordTypeHeader("StateChanged"),
   ["effect-s2-flow.state.name", stateName]
+]
+
+export const timerHeaders = (
+  type: "TimerSet" | "TimerFired",
+  timerName: string
+): ReadonlyArray<readonly [string, string]> => [
+  ...recordTypeHeader(type),
+  ["effect-s2-flow.timer.name", timerName]
 ]
 
 export const s2Layer = (endpoint: string) =>

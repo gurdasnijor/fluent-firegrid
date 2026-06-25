@@ -59,7 +59,7 @@ export default proof("effect-s2-flow.capability-b.fenced-state")
           return {
             addResults: [add5, add7],
             finalValue,
-            staleTokenRejected: staleTokenError.expectedFencingToken !== ""
+            staleTokenRejected: staleTokenError instanceof FencingTokenMismatchError
           }
         })
       )

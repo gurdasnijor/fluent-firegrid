@@ -3,8 +3,10 @@ import * as NodeSdk from "@effect/opentelemetry/NodeSdk"
 import { RemoteChdbSpanExporter } from "@firegrid/observability"
 import { SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base"
 import { AppendInput, type AppendOptions, AppendRecord, type StreamApi } from "effect-s2"
+import * as Cause from "effect/Cause"
+import * as Clock from "effect/Clock"
 import * as Context from "effect/Context"
-import type * as Duration from "effect/Duration"
+import * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
 import * as Equal from "effect/Equal"
 import * as Fiber from "effect/Fiber"
@@ -30,7 +32,8 @@ import {
   readInvocationJournal,
   recordTypeHeader,
   stateHeaders,
-  stepHeaders
+  stepHeaders,
+  timerHeaders
 } from "./InvocationJournal.ts"
 import type { InvocationJournalRecord } from "./InvocationJournal.ts"
 
@@ -305,6 +308,7 @@ export interface CurrentInvocationScope {
   readonly streamApi: StreamApi
   readonly states: Ref.Ref<ReadonlyMap<string, unknown>>
   readonly steps: Ref.Ref<ReadonlyMap<string, unknown>>
+  readonly timers: Ref.Ref<ReadonlyMap<string, TimerState>>
   readonly nextSeqNum: Ref.Ref<number>
 }
 
@@ -312,8 +316,28 @@ export class InvocationScope extends Context.Service<InvocationScope, CurrentInv
   "effect-s2-flow/runtime/InvocationScope"
 ) {}
 
+type TimerState =
+  | {
+    readonly _tag: "set"
+    readonly fireAtEpochMillis: number
+  }
+  | {
+    readonly _tag: "fired"
+  }
+
+class InvocationSuspended {
+  readonly _tag = "InvocationSuspended"
+  constructor(readonly message: string) {}
+}
+
+const isInvocationSuspended = (cause: Cause.Cause<unknown>): boolean =>
+  cause.reasons.some((reason) => Cause.isFailReason(reason) && reason.error instanceof InvocationSuspended)
+
 const appendOptions = (matchSeqNum: number, fencingToken: string | undefined): AppendOptions =>
   fencingToken === undefined ? { matchSeqNum } : { fencingToken, matchSeqNum }
+
+const suspendInvocation = (message: string): Effect.Effect<never, FlowRuntimeError> =>
+  Effect.fail(new InvocationSuspended(message)) as unknown as Effect.Effect<never, FlowRuntimeError>
 
 export const run = <A, E, R>(
   name: string,
@@ -373,6 +397,94 @@ export const run = <A, E, R>(
     return value
   })
 
+export const sleep = (
+  name: string,
+  duration: Duration.Input
+): Effect.Effect<void, FlowRuntimeError, InvocationScope> =>
+  Effect.gen(function*() {
+    const scope = yield* InvocationScope
+    const timers = yield* Ref.get(scope.timers)
+    const current = timers.get(name)
+    if (current?._tag === "fired") return
+
+    if (current === undefined) {
+      const now = yield* Clock.currentTimeMillis
+      const fireAtEpochMillis = now + Duration.toMillis(duration)
+      yield* scope.appendLock.withPermit(
+        Effect.gen(function*() {
+          const matchSeqNum = yield* Ref.get(scope.nextSeqNum)
+          const fencingToken = yield* Ref.get(scope.fencingToken)
+          const ack = yield* appendAtomic(
+            scope.streamApi,
+            [
+              encodeRecord({
+                _tag: "TimerSet",
+                fireAtEpochMillis,
+                requestId: scope.requestId,
+                timerName: name
+              }, timerHeaders("TimerSet", name))
+            ],
+            appendOptions(matchSeqNum, fencingToken),
+            `failed to append TimerSet for ${name}`
+          ).pipe(
+            Effect.withSpan("effect-s2-flow.timer.set", {
+              attributes: {
+                "effect-s2-flow.invocation.stream": scope.streamName,
+                "effect-s2-flow.request.id": scope.requestId,
+                "effect-s2-flow.timer.fire_at_epoch_millis": String(fireAtEpochMillis),
+                "effect-s2-flow.timer.name": name
+              }
+            })
+          )
+          yield* Ref.update(scope.timers, (map) =>
+            new Map(map).set(name, { _tag: "set", fireAtEpochMillis } satisfies TimerState))
+          yield* Ref.set(scope.nextSeqNum, ack.end.seqNum)
+        })
+      )
+      return yield* suspendInvocation(`timer ${name} set`)
+    }
+
+    const now = yield* Clock.currentTimeMillis
+    if (now < current.fireAtEpochMillis) {
+      return yield* suspendInvocation(`timer ${name} not due`)
+    }
+
+    yield* scope.appendLock.withPermit(
+      Effect.gen(function*() {
+        const refreshed = yield* Ref.get(scope.timers)
+        const latest = refreshed.get(name)
+        if (latest?._tag === "fired") {
+          return
+        }
+        const matchSeqNum = yield* Ref.get(scope.nextSeqNum)
+        const fencingToken = yield* Ref.get(scope.fencingToken)
+        const ack = yield* appendAtomic(
+          scope.streamApi,
+          [
+            encodeRecord({
+              _tag: "TimerFired",
+              requestId: scope.requestId,
+              timerName: name
+            }, timerHeaders("TimerFired", name))
+          ],
+          appendOptions(matchSeqNum, fencingToken),
+          `failed to append TimerFired for ${name}`
+        ).pipe(
+          Effect.withSpan("effect-s2-flow.timer.fired", {
+            attributes: {
+              "effect-s2-flow.invocation.stream": scope.streamName,
+              "effect-s2-flow.request.id": scope.requestId,
+              "effect-s2-flow.timer.name": name
+            }
+          })
+        )
+        yield* Ref.update(scope.timers, (map) =>
+          new Map(map).set(name, { _tag: "fired" } satisfies TimerState))
+        yield* Ref.set(scope.nextSeqNum, ack.end.seqNum)
+      })
+    )
+  })
+
 export interface StateHandle<A> {
   readonly get: Effect.Effect<A, FlowError, InvocationScope>
   readonly set: (value: A) => Effect.Effect<void, FlowError, InvocationScope>
@@ -427,15 +539,20 @@ const methodEffect = (
 
 const hostFenceToken = (): string => (process.env.FIREGRID_HOST_ID ?? `pid-${process.pid}`).slice(0, 36)
 
-const fenceLeaseMillis = 8_000
+const durationEnv = (name: string, fallback: Duration.Input): Duration.Duration => {
+  const value = process.env[name]
+  return Duration.fromInputUnsafe(value === undefined || value === "" ? fallback : value as Duration.Input)
+}
 
-const fenceBusyBackoff: Duration.Input = "1 second"
+const fenceLeaseMillis = (): number => Duration.toMillis(durationEnv("EFFECT_S2_FLOW_FENCE_LEASE", "8 seconds"))
 
-const fenceRefreshInterval: Duration.Input = "2 seconds"
+const fenceBusyBackoff = (): Duration.Input => durationEnv("EFFECT_S2_FLOW_FENCE_BUSY_BACKOFF", "1 second")
+
+const fenceRefreshInterval = (): Duration.Input => durationEnv("EFFECT_S2_FLOW_FENCE_REFRESH_INTERVAL", "2 seconds")
 
 const hostId = (): string => (process.env.FIREGRID_HOST_ID ?? `pid-${process.pid}`).replace(/:/g, "-").slice(0, 20)
 
-const makeFenceToken = (): string => `${hostId()}:${(Date.now() + fenceLeaseMillis).toString(36)}`
+const makeFenceToken = (): string => `${hostId()}:${(Date.now() + fenceLeaseMillis()).toString(36)}`
 
 const parseFenceToken = (
   token: string
@@ -557,7 +674,7 @@ const refreshObjectFence = Effect.fn("effect-s2-flow.refreshObjectFence")(functi
   )
 
   return yield* Effect.gen(function*() {
-    yield* Effect.sleep(fenceRefreshInterval)
+    yield* Effect.sleep(fenceRefreshInterval())
     yield* refreshOnce
   }).pipe(
     Effect.forever
@@ -565,6 +682,8 @@ const refreshObjectFence = Effect.fn("effect-s2-flow.refreshObjectFence")(functi
 })
 
 type InvokeRecord = Extract<InvocationJournalRecord, { readonly _tag: "Invoke" }>
+
+type InvocationOutcome = "finished" | "suspended"
 
 const pendingInvocations = (records: ReadonlyArray<InvocationJournalRecord>): ReadonlyArray<InvokeRecord> => {
   const completedRequests = new Set(
@@ -587,17 +706,25 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
   appendLock: Semaphore.Semaphore,
   replayedRecords: ReadonlyArray<InvocationJournalRecord>
 ) {
-  if (invokeRecord?._tag !== "Invoke") return
+  if (invokeRecord?._tag !== "Invoke") return "finished" as InvocationOutcome
 
   const steps = new Map<string, unknown>()
+  const timers = new Map<string, TimerState>()
   replayedRecords.forEach((record) => {
     if (record._tag === "StepCompleted" && record.requestId === invokeRecord.requestId) {
       steps.set(record.stepName, record.value)
+    }
+    if (record._tag === "TimerSet" && record.requestId === invokeRecord.requestId) {
+      timers.set(record.timerName, { _tag: "set", fireAtEpochMillis: record.fireAtEpochMillis })
+    }
+    if (record._tag === "TimerFired" && record.requestId === invokeRecord.requestId) {
+      timers.set(record.timerName, { _tag: "fired" })
     }
   })
 
   const pendingRecords = yield* Ref.make<ReadonlyArray<AppendRecord>>([])
   const stepRef = yield* Ref.make<ReadonlyMap<string, unknown>>(steps)
+  const timerRef = yield* Ref.make<ReadonlyMap<string, TimerState>>(timers)
   const result = yield* Effect.exit(
     methodEffect(serviceDefinition, invokeRecord.method, invokeRecord.input).pipe(
       Effect.provideService(InvocationScope, {
@@ -608,6 +735,7 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
         requestId: invokeRecord.requestId,
         states: stateRef,
         steps: stepRef,
+        timers: timerRef,
         streamApi,
         streamName
       })
@@ -646,7 +774,20 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
         yield* Ref.set(nextSeqNum, ack.end.seqNum)
       })
     )
-    return
+    return "finished" as InvocationOutcome
+  }
+
+  if (isInvocationSuspended(result.cause)) {
+    yield* Effect.void.pipe(
+      Effect.withSpan("effect-s2-flow.invocation.suspended", {
+        attributes: {
+          "effect-s2-flow.invocation.stream": streamName,
+          "effect-s2-flow.request.id": invokeRecord.requestId,
+          "effect-s2-flow.service": serviceDefinition.name
+        }
+      })
+    )
+    return "suspended" as InvocationOutcome
   }
 
   yield* appendLock.withPermit(
@@ -668,6 +809,7 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
       yield* Ref.set(nextSeqNum, ack.end.seqNum)
     })
   )
+  return "finished" as InvocationOutcome
 })
 
 const processInvocationStream = Effect.fn("effect-s2-flow.processInvocationStream")(function*(
@@ -717,8 +859,19 @@ const processInvocationStream = Effect.fn("effect-s2-flow.processInvocationStrea
       Effect.forkChild
     )
 
-  return yield* Effect.forEach(invocations, (invokeRecord) =>
-    processInvocation(
+  const processPending = Effect.fn("effect-s2-flow.processPendingInvocations")(function*(
+    index: number,
+    processed: number
+  ): Generator<
+    Effect.Effect<unknown, FlowRuntimeError>,
+    { readonly _tag: "processed"; readonly count: number } | { readonly _tag: "suspended"; readonly count: number },
+    unknown
+  > {
+    const invokeRecord = invocations[index]
+    if (invokeRecord === undefined) {
+      return { _tag: "processed" as const, count: processed }
+    }
+    const outcome = yield* processInvocation(
       runtime,
       serviceDefinition,
       streamName,
@@ -729,10 +882,16 @@ const processInvocationStream = Effect.fn("effect-s2-flow.processInvocationStrea
       fencingToken,
       appendLock,
       snapshot.records
-    ), { discard: true }).pipe(
-      Effect.as({ _tag: "processed" as const, count: invocations.length }),
-      Effect.ensuring(refreshFiber === undefined ? Effect.void : Fiber.interrupt(refreshFiber))
     )
+    if (outcome === "suspended") {
+      return { _tag: "suspended" as const, count: processed }
+    }
+    return yield* processPending(index + 1, processed + 1)
+  })
+
+  return yield* processPending(0, 0).pipe(
+    Effect.ensuring(refreshFiber === undefined ? Effect.void : Fiber.interrupt(refreshFiber))
+  )
 })
 
 const runOwnerUntilIdle = Effect.fn("effect-s2-flow.runOwnerUntilIdle")(function*(
@@ -741,7 +900,8 @@ const runOwnerUntilIdle = Effect.fn("effect-s2-flow.runOwnerUntilIdle")(function
   streamName: string,
   idleTimeout: Duration.Input
 ) {
-  const busyBackoff = Effect.sleep(fenceBusyBackoff)
+  const busyBackoff = Effect.sleep(fenceBusyBackoff())
+  const suspendedBackoff = Effect.sleep("100 millis")
   const idleWait = Effect.sleep(idleTimeout).pipe(
     Effect.withSpan("effect-s2-flow.owner.idle", {
       attributes: {
@@ -754,6 +914,10 @@ const runOwnerUntilIdle = Effect.fn("effect-s2-flow.runOwnerUntilIdle")(function
   while (true) {
     const result = yield* processInvocationStream(runtime, serviceDefinition, streamName)
     if (result._tag === "processed") continue
+    if (result._tag === "suspended") {
+      yield* suspendedBackoff
+      return
+    }
     if (result._tag === "busy") {
       yield* busyBackoff
       return
@@ -761,6 +925,10 @@ const runOwnerUntilIdle = Effect.fn("effect-s2-flow.runOwnerUntilIdle")(function
     yield* idleWait
     const resultAfterIdle = yield* processInvocationStream(runtime, serviceDefinition, streamName)
     if (resultAfterIdle._tag === "processed") continue
+    if (resultAfterIdle._tag === "suspended") {
+      yield* suspendedBackoff
+      return
+    }
     if (resultAfterIdle._tag === "busy") {
       yield* busyBackoff
     }

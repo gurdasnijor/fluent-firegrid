@@ -12,6 +12,7 @@ export {
   sendClient,
   serve,
   service,
+  sleep,
   state
 } from "./runtime.ts"
 export type {

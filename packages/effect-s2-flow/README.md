@@ -77,6 +77,20 @@ The root package also exports the current durable object primitives:
 This surface is still intentionally small, but it is no longer proof-only: the
 runtime exports it as the product entrypoint for the current Capability B work.
 
+## Capability C Surface
+
+The first durable timer primitive is also exported:
+
+- `sleep(name, duration)` records a durable timer fact in the invocation
+  journal. If the timer is not due, the owner suspends the invocation without
+  appending `Failed`. On replay, the owner folds `TimerSet`; once due it appends
+  `TimerFired` and lets the handler continue. A host can be killed while the
+  invocation is parked and a restarted host resumes from S2.
+
+The current timer driver is intentionally simple: the host scan loop retries
+parked invocations and fires due timers from the folded journal. The broader
+Capability C scheduler surface is not claimed yet.
+
 ## Verification Contract
 
 This package is being built proof-first. Proofs live in
@@ -105,10 +119,9 @@ The load-bearing green proofs establish:
   object mid-handler. A killed owner also stops blocking progress: after its
   lease expires, a successor claims the object stream and completes the pending
   invocation from the S2 journal.
-
-The root package export still stays Capability-A-only. The object/state/fence
-work is intentionally behind examples and package-internal modules until the
-Capability B authoring surface is cleaned up.
+- Durable sleep records `TimerSet`, survives host loss while parked, folds the
+  timer fact from S2 after restart, appends `TimerFired` once, and completes the
+  invocation exactly once.
 
 ## Not Yet Production
 
@@ -119,6 +132,8 @@ small. These are deferred until their own proofs force them:
 - Eviction semantics and host-health policy for long-running fenced owners.
   Lease refresh for active owners is implemented and proven, but the broader
   production ownership lifecycle still needs explicit proofs.
+- A production timer scheduler beyond the current host-scan driven durable
+  sleep primitive.
 - Request de-duplication beyond the current explicit service invocation id
   path.
 - Backpressure, stream discovery pagination, and long-running host lifecycle

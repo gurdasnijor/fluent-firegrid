@@ -12,6 +12,7 @@ import { layer as TraceRuntimeLayer } from "./TraceRuntime.ts"
 import { VerificationError } from "./VerificationError.ts"
 
 const version = "0.0.0"
+const proofTimeout = "10 minutes"
 
 const outputFlag = Flag.choice("output", ["text", "json"]).pipe(
   Flag.withDescription("Output format"),
@@ -45,6 +46,12 @@ const completedProofJson = (completed: CompletedProof): unknown => ({
   result: completed.trial.result._tag,
   report: completed.trial.report?.path
 })
+
+const isVerificationError = (cause: unknown): cause is VerificationError =>
+  typeof cause === "object"
+  && cause !== null
+  && "_tag" in cause
+  && cause._tag === "VerificationError"
 
 const printCompletedProof = Effect.fn("verification.cli.printCompletedProof")(function*(
   completed: CompletedProof
@@ -110,12 +117,22 @@ const makeRunCommand = (proofs: ReadonlyArray<Proof<any>>) =>
       if (requestedTrialId !== undefined && selected.length !== 1) {
         return yield* new VerificationError({ message: "--trial-id can only be used with one named proof" })
       }
-      const completed = yield* Effect.forEach(selected, (proof) =>
+      yield* Effect.forEach(selected, (proof) =>
         runProof(proof, {
           ...(reportPath === undefined ? {} : { reportDir: reportPath }),
           ...(requestedTrialId === undefined ? {} : { trialId: requestedTrialId })
-        }))
-      yield* Effect.forEach(completed, printCompletedProof, { discard: true })
+        }).pipe(
+          Effect.timeout(proofTimeout),
+          Effect.mapError((cause) =>
+            isVerificationError(cause)
+              ? cause
+              : new VerificationError({
+                message: `proof ${proof.name} did not complete within ${proofTimeout}`,
+                cause
+              })
+          ),
+          Effect.flatMap(printCompletedProof)
+        ), { discard: true })
     })
   ).pipe(
     Command.withDescription("Run one proof or all proofs")
