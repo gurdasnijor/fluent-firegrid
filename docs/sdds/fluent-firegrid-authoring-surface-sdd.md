@@ -4,9 +4,9 @@
 
 |   |   |
 | --- | --- |
-| Status | In progress; descriptor contracts, schema validation, and ambient clients implemented |
+| Status | Implemented through transport binding |
 | Date | 2026-06-25 |
-| Package | `@firegrid/fluent-firegrid` |
+| Package | `@firegrid/fluent-firegrid`, `@firegrid/fluent-firegrid-http` |
 | Lower runtime | TanStack Workflow over `@firegrid/tanstack-workflow-s2` |
 
 ---
@@ -111,10 +111,16 @@ in-memory TanStack runtime.
 
 ### D. Transport Binding Package
 
-**Status:** Not started.
+**Status:** Implemented.
 
 **Claim.** HTTP or other ingress binding can expose fluent definitions without
 placing servers in fluent core.
 
 **Forces:** separate package or fixture-only adapter, descriptor-driven routing,
 schema-aware request/response handling, no dependency from core to Node HTTP.
+
+**Proof:** `@firegrid/fluent-firegrid-http` exposes
+`createFluentHttpHandler(Request -> Response)` with no listener ownership.
+`packages/fluent-firegrid-http/test/http-handler.test.ts` covers call/send
+routes, keyed object routing, descriptor validation before invocation, response
+encoding, and `runId` forwarding.

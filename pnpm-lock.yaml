@@ -151,6 +151,25 @@ importers:
         specifier: ^3.2.0
         version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
 
+  packages/fluent-firegrid-http:
+    dependencies:
+      '@firegrid/fluent-firegrid':
+        specifier: workspace:*
+        version: link:../fluent-firegrid
+      effect:
+        specifier: 4.0.0-beta.87
+        version: 4.0.0-beta.87
+    devDependencies:
+      '@effect/language-service':
+        specifier: ^0.86.2
+        version: 0.86.2
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
+
   packages/fluent-firegrid-s2:
     dependencies:
       '@firegrid/fluent-firegrid':

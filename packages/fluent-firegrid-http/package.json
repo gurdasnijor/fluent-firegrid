@@ -1,0 +1,35 @@
+{
+  "name": "@firegrid/fluent-firegrid-http",
+  "version": "0.0.0",
+  "description": "HTTP transport binding for @firegrid/fluent-firegrid definitions.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": ["src", "README.md"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
+    "lint": "oxlint -f unix --config ../../.oxlintrc.json .",
+    "test": "vitest run --root ../.. --project fluent-firegrid-http --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@firegrid/fluent-firegrid": "workspace:*",
+    "effect": "4.0.0-beta.87"
+  },
+  "devDependencies": {
+    "@effect/language-service": "^0.86.2",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.0"
+  }
+}
