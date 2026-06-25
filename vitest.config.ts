@@ -55,6 +55,22 @@ export default defineConfig({
             "effect-s2-flow": path.resolve(__dirname, "./packages/effect-s2-flow/src/index.ts")
           }
         }
+      }),
+      defineProject({
+        test: {
+          name: "tanstack-workflow-s2",
+          include: ["packages/tanstack-workflow-s2/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"],
+          passWithNoTests: true
+        },
+        resolve: {
+          alias: {
+            "@firegrid/tanstack-workflow-s2": path.resolve(
+              __dirname,
+              "./packages/tanstack-workflow-s2/src/index.ts"
+            )
+          }
+        }
       })
     ]
   }

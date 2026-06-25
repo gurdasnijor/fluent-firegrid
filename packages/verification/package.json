@@ -36,8 +36,8 @@
     "@opentelemetry/sdk-metrics": "^2.8.0",
     "@opentelemetry/sdk-trace-base": "^2.8.0",
     "@opentelemetry/sdk-trace-node": "^2.8.0",
+    "@firegrid/tanstack-workflow-s2": "workspace:*",
     "effect": "4.0.0-beta.87",
-    "effect-s2-flow": "workspace:*",
     "effect-s2": "workspace:*"
   },
   "devDependencies": {
