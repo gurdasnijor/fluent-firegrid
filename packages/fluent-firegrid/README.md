@@ -51,6 +51,18 @@ const reviews = serviceClient(incident)
 const result = yield* reviews.triage("INC-1")
 ```
 
+Send clients return durable invocation handles. A handle keeps the plain
+`SendReference` fields for transport and JSON compatibility, and adds
+non-enumerable `attach()` / `outputEffect()` methods for waiting on the typed
+result:
+
+```ts
+import { sendServiceClient } from "@firegrid/fluent-firegrid"
+
+const handle = yield* sendServiceClient(incident).triage("INC-2")
+const result = yield* handle.attach()
+```
+
 This package does not implement a second durable engine. `run` lowers to
 TanStack `ctx.step`, `sleep` lowers to TanStack sleep primitives, and hosting is
 provided by `@firegrid/tanstack-workflow-s2`. `waitForSignal` lowers to

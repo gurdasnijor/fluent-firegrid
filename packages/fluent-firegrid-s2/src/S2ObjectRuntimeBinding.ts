@@ -77,6 +77,9 @@ interface InvocationProjection {
   readonly nextSeqNum: number
 }
 
+const completionPollAttempts = 12_000
+const completionPollInterval = "5 millis"
+
 export const s2FluentDefinitionBindingOptions = (
   config: S2ObjectStateBackendConfig,
   options: S2FluentDefinitionBindingOptions = {}
@@ -344,9 +347,9 @@ const waitForCompletion = (
   ownerLeaseMs: number,
   request: CallRequest,
   callId: string
-): Effect.Effect<CompletedEvent, unknown> =>
-  Effect.gen(function*() {
-    for (let attempt = 0; attempt < 2_000; attempt += 1) {
+): Effect.Effect<CompletedEvent, unknown> => {
+  const loop = (remaining: number): Effect.Effect<CompletedEvent, unknown> =>
+    Effect.gen(function*() {
       yield* drain(runtime, streamName, ownerId, now, ownerLeaseMs, host, request)
       const projection = yield* readProjection(runtime, streamName)
       const completed = projection.completed.get(callId)
@@ -358,12 +361,15 @@ const waitForCompletion = (
           message: `object invocation ${request.name}.${request.handler} failed`
         })
       }
-      yield* Effect.yieldNow
-    }
-    return yield* new FluentFiregridError({
-      message: `object invocation ${request.name}.${request.handler} did not complete before timeout`
+      if (remaining <= 0) {
+        return yield* new FluentFiregridError({
+          message: `object invocation ${request.name}.${request.handler} did not complete before timeout`
+        })
+      }
+      return yield* Effect.sleep(completionPollInterval).pipe(Effect.andThen(loop(remaining - 1)))
     })
-  })
+  return loop(completionPollAttempts)
+}
 
 const drain = (
   runtime: Runtime,

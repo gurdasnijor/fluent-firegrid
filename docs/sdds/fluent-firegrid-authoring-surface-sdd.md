@@ -61,6 +61,18 @@ export const orders = service({
 })
 ```
 
+Typed send clients return durable invocation handles:
+
+```ts
+const handle = yield* sendServiceClient(orders).submit({ orderId: "order-1" })
+const result = yield* handle.attach()
+```
+
+The handle remains structurally compatible with the plain `SendReference` wire
+shape. Its Effect-returning methods are non-enumerable, and the method for
+awaiting output is named `outputEffect()` to avoid colliding with the existing
+`output` data field on completed send references.
+
 ## Acceptance Ladder
 
 ### A. Descriptor-First Contracts
@@ -124,3 +136,18 @@ schema-aware request/response handling, no dependency from core to Node HTTP.
 `packages/fluent-firegrid-http/test/http-handler.test.ts` covers call/send
 routes, keyed object routing, descriptor validation before invocation, response
 encoding, and `runId` forwarding.
+
+### E. Restate-Like Send Handles
+
+**Status:** Implemented.
+
+**Claim.** Typed send clients return durable handles instead of forcing callers
+to manually pass `runId` back through call clients.
+
+**Forces:** preserve `SendReference` transport compatibility, attach by
+invocation id, support explicit and ambient invocation bindings, keep handle
+methods out of JSON/enumeration.
+
+**Proof:** `packages/fluent-firegrid/test/public-surface.test.ts` verifies
+typed explicit send handles, ambient send handles, descriptor-bearing attach
+requests, and context-free `attach()` after the ambient handle has been created.

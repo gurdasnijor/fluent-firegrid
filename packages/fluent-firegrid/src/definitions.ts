@@ -27,8 +27,7 @@ export interface HandlerDescriptor<Input = unknown, Output = unknown> {
 
 export type HandlerInput<Handler> = Handler extends (input: infer Input) => unknown ? Input : never
 
-export type HandlerOutput<Handler> = Handler extends (input: unknown) => Generator<unknown, infer Output, unknown>
-  ? Output
+export type HandlerOutput<Handler> = Handler extends (input: any) => Generator<unknown, infer Output, unknown> ? Output
   : never
 
 export type HandlerDescriptors<Handlers extends Record<string, AnyGeneratorHandler>> = {

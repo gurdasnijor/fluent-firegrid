@@ -33,6 +33,15 @@ export interface SendReference<Output = unknown> {
   readonly output?: Output
 }
 
+export interface InvocationHandle<
+  Output = unknown,
+  Error = unknown,
+  Requirements = never
+> extends SendReference<Output> {
+  readonly attach: () => Effect.Effect<Output, Error, Requirements>
+  readonly outputEffect: () => Effect.Effect<Output, Error, Requirements>
+}
+
 export interface InvocationBinding<Error = unknown, Requirements = never> {
   readonly call: <Output>(request: CallRequest) => Effect.Effect<Output, Error, Requirements>
   readonly send: <Output>(request: SendRequest) => Effect.Effect<SendReference<Output>, Error, Requirements>
@@ -42,20 +51,22 @@ type ClientResult<
   Mode extends ClientMode,
   Handler extends AnyGeneratorHandler,
   Error,
-  Requirements
+  Requirements,
+  HandleRequirements
 > = Mode extends "call" ? Effect.Effect<HandlerOutput<Handler>, Error, Requirements>
-  : Effect.Effect<SendReference<HandlerOutput<Handler>>, Error, Requirements>
+  : Effect.Effect<InvocationHandle<HandlerOutput<Handler>, Error, HandleRequirements>, Error, Requirements>
 
 type ClientShape<
   Mode extends ClientMode,
   Handlers extends Record<string, AnyGeneratorHandler>,
   Error = unknown,
-  Requirements = never
+  Requirements = never,
+  HandleRequirements = Requirements
 > = {
   readonly [Key in keyof Handlers]: (
     input: HandlerInput<Handlers[Key]>,
     options?: { readonly runId?: string }
-  ) => ClientResult<Mode, Handlers[Key], Error, Requirements>
+  ) => ClientResult<Mode, Handlers[Key], Error, Requirements, HandleRequirements>
 }
 
 export type Client<
@@ -88,8 +99,10 @@ type ClientFor<
   Mode extends ClientMode,
   Handlers extends Record<string, AnyGeneratorHandler>,
   Error,
-  Requirements
-> = Mode extends "call" ? Client<Handlers, Error, Requirements> : SendClient<Handlers, Error, Requirements>
+  Requirements,
+  HandleRequirements = Requirements
+> = Mode extends "call" ? Client<Handlers, Error, Requirements>
+  : ClientShape<"send", Handlers, Error, Requirements, HandleRequirements>
 
 type UntypedDefinition = BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>
 type UntypedObjectDefinition = BindableDefinition<string, "object", Record<string, AnyGeneratorHandler>>
@@ -98,9 +111,10 @@ type ObjectClientFor<
   Mode extends ClientMode,
   Handlers extends Record<string, AnyGeneratorHandler>,
   Error,
-  Requirements
+  Requirements,
+  HandleRequirements = Requirements
 > = Mode extends "call" ? ObjectClient<Handlers, Error, Requirements>
-  : SendObjectClient<Handlers, Error, Requirements>
+  : (key: string) => ClientShape<"send", Handlers, Error, Requirements, HandleRequirements>
 
 type BindableDefinition<
   Name extends string,
@@ -133,7 +147,7 @@ interface ContextualClientFactory<Mode extends ClientMode> extends BindingClient
     const Handlers extends Record<string, AnyGeneratorHandler>
   >(
     definition: BindableDefinition<Name, Kind, Handlers>
-  ): ClientFor<Mode, Handlers, FluentFiregridError, FluentDurableContext>
+  ): ClientFor<Mode, Handlers, FluentFiregridError, FluentDurableContext, never>
 }
 
 interface ObjectContextualClientFactory<Mode extends ClientMode> {
@@ -152,7 +166,7 @@ interface ObjectContextualClientFactory<Mode extends ClientMode> {
     const Handlers extends Record<string, AnyGeneratorHandler>
   >(
     definition: BindableDefinition<Name, "object", Handlers>
-  ): ObjectClientFor<Mode, Handlers, FluentFiregridError, FluentDurableContext>
+  ): ObjectClientFor<Mode, Handlers, FluentFiregridError, FluentDurableContext, never>
 }
 
 const methodNames = (descriptors: Record<string, HandlerDescriptor>): ReadonlyArray<string> => Object.keys(descriptors)
@@ -177,6 +191,41 @@ const requestFor = <
   ...(options?.runId === undefined ? {} : { runId: options.runId })
 })
 
+const invocationHandle = <Output, Error, Requirements>(
+  binding: InvocationBinding<Error, Requirements>,
+  request: CallRequest,
+  reference: SendReference<Output>
+): InvocationHandle<Output, Error, Requirements> => {
+  const attach = () =>
+    binding.call<Output>({
+      ...request,
+      runId: reference.invocationId
+    })
+  const handle = { ...reference } as unknown as InvocationHandle<Output, Error, Requirements>
+  Object.defineProperties(handle, {
+    attach: {
+      enumerable: false,
+      value: attach
+    },
+    outputEffect: {
+      enumerable: false,
+      value: attach
+    }
+  })
+  return handle
+}
+
+const invoke = <Output, Error, Requirements>(
+  binding: InvocationBinding<Error, Requirements>,
+  mode: ClientMode,
+  request: CallRequest
+): Effect.Effect<Output | InvocationHandle<Output, Error, Requirements>, Error, Requirements> =>
+  mode === "call"
+    ? binding.call<Output>(request)
+    : binding.send<Output>(request).pipe(
+      Effect.map((reference) => invocationHandle(binding, request, reference))
+    )
+
 const bindInvocationBinding = (mode: ClientMode) =>
 <
   const Name extends string,
@@ -193,7 +242,7 @@ const bindInvocationBinding = (mode: ClientMode) =>
     methodNames(definition._handlers).map((handler) => [
       handler,
       (input: unknown, options?: { readonly runId?: string }) =>
-        binding[mode](requestFor(definition, key, handler, input, options))
+        invoke(binding, mode, requestFor(definition, key, handler, input, options))
     ])
   ) as ClientFor<typeof mode, Handlers, Error, Requirements>
 
@@ -205,24 +254,25 @@ const bindAmbientContext = (mode: ClientMode) =>
 >(
   definition: BindableDefinition<Name, Kind, Handlers>,
   key?: string
-): ClientFor<typeof mode, Handlers, FluentFiregridError, FluentDurableContext> =>
+): ClientFor<typeof mode, Handlers, FluentFiregridError, FluentDurableContext, never> =>
   Object.fromEntries(
     methodNames(definition._handlers).map((handler) => [
       handler,
       (input: unknown, options?: { readonly runId?: string }) =>
         FluentDurableContext.pipe(
-          Effect.flatMap((ctx) =>
-            ctx.binding === undefined
+          Effect.flatMap((ctx) => {
+            const binding = ctx.binding
+            return binding === undefined
               ? Effect.fail(
                 new FluentFiregridError({
                   message: `fluent ambient client ${definition.name}.${handler} requires an invocation binding`
                 })
               )
-              : ctx.binding[mode](requestFor(definition, key, handler, input, options))
-          )
+              : invoke(binding, mode, requestFor(definition, key, handler, input, options))
+          })
         )
     ])
-  ) as ClientFor<typeof mode, Handlers, FluentFiregridError, FluentDurableContext>
+  ) as ClientFor<typeof mode, Handlers, FluentFiregridError, FluentDurableContext, never>
 
 const contextualClient = (
   mode: ClientMode,

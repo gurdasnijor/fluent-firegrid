@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect"
-import { describe, expect, it } from "vitest"
+import { describe, expect, expectTypeOf, it } from "vitest"
 import { defineWorkflowRuntime, inMemoryWorkflowExecutionStore } from "@tanstack/workflow-runtime"
 
 import {
@@ -13,12 +13,14 @@ import {
   iface,
   implement,
   type InvocationBinding,
+  type InvocationHandle,
   run,
   type RunAction,
   schemas,
   sendClient,
   type SendReference,
   type SendRequest,
+  sendServiceClient,
   service,
   serviceClient,
   workflowIdForHandler
@@ -100,9 +102,11 @@ describe("fluent-firegrid public surface", () => {
 
     const callResult = await Effect.runPromise(client(binding, incident).triage("INC-1"))
     const sendResult = await Effect.runPromise(sendClient(binding, incident).triage("INC-2"))
+    const sendOutput = await Effect.runPromise(sendResult.outputEffect())
 
     expect(callResult).toBe("called:INC-1")
     expect(sendResult).toEqual({ invocationId: "send:incident:triage" })
+    expect(sendOutput).toBe("called:INC-2")
     expect(calls[0]).toMatchObject({
       handler: "triage",
       input: "INC-1",
@@ -115,7 +119,15 @@ describe("fluent-firegrid public surface", () => {
       kind: "service",
       name: "incident"
     })
+    expect(calls[1]).toMatchObject({
+      handler: "triage",
+      input: "INC-2",
+      kind: "service",
+      name: "incident",
+      runId: "send:incident:triage"
+    })
     expect(calls[0]?.descriptor).toBe(incidentContract._handlers.triage)
+    expect(calls[1]?.descriptor).toBe(incidentContract._handlers.triage)
     expect(sends[0]?.descriptor).toBe(incidentContract._handlers.triage)
   })
 
@@ -170,6 +182,73 @@ describe("fluent-firegrid public surface", () => {
       name: "incident"
     })
     expect(calls[0]?.descriptor).toBe(incident._handlers.triage)
+  })
+
+  it("resolves ambient send handles through the captured invocation binding", async () => {
+    const incident = service({
+      name: "incident",
+      handlers: {
+        *triage(input: string) {
+          return yield* run(() => `triaged:${input}`, { name: "triage" })
+        }
+      },
+      descriptors: {
+        triage: schemas({
+          input: Schema.String,
+          output: Schema.String
+        })
+      }
+    })
+    const calls = new Array<CallRequest>()
+    const binding: InvocationBinding<never> = {
+      call: <Output>(request: CallRequest) =>
+        Effect.sync(() => {
+          calls.push(request)
+          return `attached:${String(request.input)}:${request.runId}` as Output
+        }),
+      send: <Output>(request: SendRequest) =>
+        Effect.succeed(
+          {
+            handler: request.handler,
+            invocationId: `send:${request.name}:${request.handler}`,
+            kind: request.kind,
+            name: request.name
+          } satisfies SendReference<Output>
+        )
+    }
+    const context = FluentDurableContext.of(
+      {
+        binding,
+        sleep: () => Effect.void,
+        sleepUntil: () => Effect.void,
+        step: () => Effect.die("not used"),
+        waitForSignal: () => Effect.die("not used")
+      } satisfies FluentDurableContextService
+    )
+
+    const handle = await Effect.runPromise(
+      sendClient(binding, incident).triage("INC-5")
+    )
+    const ambientHandle = await Effect.runPromise(
+      sendServiceClient(incident).triage("INC-6").pipe(Effect.provideService(FluentDurableContext, context))
+    )
+    const output = await Effect.runPromise(ambientHandle.attach())
+
+    expect(handle).toEqual({
+      handler: "triage",
+      invocationId: "send:incident:triage",
+      kind: "service",
+      name: "incident"
+    })
+    expectTypeOf(handle).toEqualTypeOf<InvocationHandle<string, never>>()
+    expect(output).toBe("attached:INC-6:send:incident:triage")
+    expect(calls[0]).toMatchObject({
+      handler: "triage",
+      input: "INC-6",
+      kind: "service",
+      name: "incident",
+      runId: "send:incident:triage"
+    })
   })
 
   it("provides ambient clients through bindFluentDefinitions", async () => {

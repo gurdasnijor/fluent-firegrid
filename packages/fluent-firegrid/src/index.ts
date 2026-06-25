@@ -12,6 +12,7 @@ export {
   type Client,
   client,
   type InvocationBinding,
+  type InvocationHandle,
   type ObjectClient,
   objectClient,
   type SendClient,
