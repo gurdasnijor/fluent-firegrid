@@ -45,3 +45,6 @@ await serveFluentS2({
   }
 })
 ```
+
+The durable webhook example and retry/dedupe notes live in
+`docs/guides/durable-webhooks.md`.

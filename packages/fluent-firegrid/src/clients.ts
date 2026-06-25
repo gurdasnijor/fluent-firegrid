@@ -184,10 +184,29 @@ interface ObjectContextualClientFactory<Mode extends ClientMode> {
 
   <
     const Name extends string,
+    const Handlers extends Record<string, AnyGeneratorHandler>,
+    Error = unknown,
+    Requirements = never
+  >(
+    binding: InvocationBinding<Error, Requirements>,
+    definition: BindableDefinition<Name, "object", Handlers>,
+    key: string
+  ): ClientFor<Mode, Handlers, Error, Requirements>
+
+  <
+    const Name extends string,
     const Handlers extends Record<string, AnyGeneratorHandler>
   >(
     definition: BindableDefinition<Name, "object", Handlers>
   ): ObjectClientFor<Mode, Handlers, FluentFiregridError, FluentDurableContext, never>
+
+  <
+    const Name extends string,
+    const Handlers extends Record<string, AnyGeneratorHandler>
+  >(
+    definition: BindableDefinition<Name, "object", Handlers>,
+    key: string
+  ): ClientFor<Mode, Handlers, FluentFiregridError, FluentDurableContext, never>
 }
 
 const methodNames = (descriptors: Record<string, HandlerDescriptor>): ReadonlyArray<string> => Object.keys(descriptors)
@@ -454,9 +473,14 @@ const contextualClient = (
 const keyedContextualClient = (
   mode: ClientMode,
   first: unknown,
-  second: unknown | undefined
+  second: unknown | undefined,
+  key: string | undefined
 ) =>
-  second === undefined
+  key !== undefined
+    ? bindInvocationBinding(mode)(first as InvocationBinding, second as UntypedObjectDefinition, key)
+    : typeof second === "string"
+    ? bindAmbientContext(mode)(first as UntypedObjectDefinition, second)
+    : second === undefined
     ? (key: string) => bindAmbientContext(mode)(first as UntypedObjectDefinition, key)
     : (key: string) => bindInvocationBinding(mode)(first as InvocationBinding, second as UntypedObjectDefinition, key)
 
@@ -494,12 +518,14 @@ export const workflowSendClient = sendWorkflowClient
 
 export const objectClient = ((
   first: unknown,
-  second?: unknown
-) => keyedContextualClient("call", first, second)) as ObjectContextualClientFactory<"call">
+  second?: unknown,
+  key?: string
+) => keyedContextualClient("call", first, second, key)) as ObjectContextualClientFactory<"call">
 
 export const sendObjectClient = ((
   first: unknown,
-  second?: unknown
-) => keyedContextualClient("send", first, second)) as ObjectContextualClientFactory<"send">
+  second?: unknown,
+  key?: string
+) => keyedContextualClient("send", first, second, key)) as ObjectContextualClientFactory<"send">
 
 export const objectSendClient = sendObjectClient

@@ -10,9 +10,13 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./examples/durable-webhook": {
+      "types": "./examples/durable-webhook.ts",
+      "default": "./examples/durable-webhook.ts"
     }
   },
-  "files": ["src", "README.md"],
+  "files": ["src", "examples", "README.md"],
   "publishConfig": {
     "access": "public"
   },

@@ -18,6 +18,8 @@ import {
   implement,
   type InvocationBinding,
   type InvocationHandle,
+  object,
+  objectClient,
   objectSendClient,
   rpc,
   run,
@@ -269,6 +271,51 @@ describe("fluent-firegrid public surface", () => {
       kind: "service",
       name: "incident",
       runId: "manual-run"
+    })
+  })
+
+  it("supports direct and curried object client key ergonomics", async () => {
+    const counter = object({
+      name: "counter",
+      handlers: {
+        *add(input: { readonly by: number }) {
+          return yield* run(() => input.by, { name: "add" })
+        }
+      },
+      descriptors: {
+        add: schemas({
+          input: Schema.Struct({ by: Schema.Number }),
+          output: Schema.Number
+        })
+      }
+    })
+    const calls = new Array<CallRequest>()
+    const sends = new Array<SendRequest>()
+    const binding: InvocationBinding<never> = {
+      call: <Output>(request: CallRequest) =>
+        Effect.sync(() => {
+          calls.push(request)
+          return (request.input as { readonly by: number }).by as Output
+        }),
+      send: <Output>(request: SendRequest) =>
+        Effect.sync(() => {
+          sends.push(request)
+          return { invocationId: `send:${request.key}:${request.handler}` } satisfies SendReference<Output>
+        })
+    }
+
+    await Effect.runPromise(objectClient(binding, counter, "user-1").add({ by: 1 }))
+    await Effect.runPromise(objectClient(binding, counter)("user-2").add({ by: 2 }))
+    const handle = await Effect.runPromise(objectSendClient(binding, counter, "user-3").add({ by: 3 }))
+
+    expect(handle.invocationId).toBe("send:user-3:add")
+    expect(calls.map((request) => request.key)).toEqual(["user-1", "user-2"])
+    expect(sends[0]).toMatchObject({
+      handler: "add",
+      input: { by: 3 },
+      key: "user-3",
+      kind: "object",
+      name: "counter"
     })
   })
 

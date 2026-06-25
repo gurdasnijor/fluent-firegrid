@@ -17,6 +17,7 @@ import {
   listenFluentHttp
 } from "../src/index.ts"
 import { createFluentHttpHandler } from "@firegrid/fluent-firegrid-http"
+import { stripeWebhookRoutes, webhookDefinitions } from "../examples/durable-webhook.ts"
 
 let currentServer: FluentNodeHttpServer | undefined
 
@@ -156,6 +157,52 @@ describe("fluent-firegrid-node", () => {
       kind: "service",
       name: "stripe-webhook",
       runId: "stripe:evt_1"
+    })
+  })
+
+  it("smoke tests the durable webhook example route against the Node binding", async () => {
+    const calls = new Array<CallRequest>()
+    const binding: InvocationBinding<never> = {
+      call: <Output>(request: CallRequest) =>
+        Effect.sync(() => {
+          calls.push(request)
+          return { accepted: true, invoiceId: "invoice-1" } as Output
+        }),
+      send: <Output>() => Effect.succeed({ invocationId: "not-used" } satisfies SendReference<Output>)
+    }
+    currentServer = await listenFluentHttp({
+      handler: createFluentWebhookHandler(
+        createFluentHttpHandler({ binding, definitions: webhookDefinitions }),
+        stripeWebhookRoutes
+      )
+    })
+
+    const response = await fetch(`${currentServer.url}/webhooks/stripe`, {
+      body: JSON.stringify({
+        data: { object: { id: "invoice-1" } },
+        id: "evt_paid_1",
+        type: "invoice.payment_succeeded"
+      }),
+      headers: {
+        "content-type": "application/json",
+        "stripe-event-id": "stripe:evt_paid_1",
+        "stripe-signature": "test-signature"
+      },
+      method: "POST"
+    })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ output: { accepted: true, invoiceId: "invoice-1" } })
+    expect(calls[0]).toMatchObject({
+      handler: "onEvent",
+      input: {
+        data: { object: { id: "invoice-1" } },
+        id: "evt_paid_1",
+        type: "invoice.payment_succeeded"
+      },
+      kind: "service",
+      name: "stripe-webhook",
+      runId: "stripe:evt_paid_1"
     })
   })
 

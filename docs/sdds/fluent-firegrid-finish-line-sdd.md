@@ -602,8 +602,9 @@ Implementation status as of June 25, 2026:
   output encoding stay centralized;
 - routes can derive a durable idempotency key from the incoming request and run
   a raw-body `verify` hook before admission;
-- remaining gap is a canonical runnable example/guide using the full Stripe-like
-  object-state workflow.
+- `packages/fluent-firegrid-node/examples/durable-webhook.ts` and
+  `docs/guides/durable-webhooks.md` provide the canonical Stripe-like
+  object-state workflow and retry/dedupe guide.
 
 ## Finish-Line Acceptance Ladder
 
