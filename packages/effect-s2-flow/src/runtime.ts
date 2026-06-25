@@ -26,6 +26,8 @@ const defaultBasin = "effect-s2-flow"
 const invocationPrefix = (serviceName: string): string => `${serviceName}.invocation.`
 const invocationStream = (serviceName: string, invocationId: string): string =>
   `${invocationPrefix(serviceName)}${invocationId}`
+const objectPrefix = (objectName: string): string => `${objectName}.object.`
+const objectStream = (objectName: string, key: string): string => `${objectPrefix(objectName)}${key}`
 
 export class FlowError extends Data.TaggedError("FlowError")<{
   readonly message: string
@@ -51,9 +53,20 @@ export class FlowRuntime extends Context.Service<FlowRuntime, Required<FlowRunti
 }
 
 export interface ServiceDefinition<Handlers extends ServiceHandlers> {
+  readonly kind: "service"
   readonly name: string
   readonly handlers: Handlers
 }
+
+export interface ObjectDefinition<Handlers extends ServiceHandlers> {
+  readonly kind: "object"
+  readonly name: string
+  readonly handlers: Handlers
+}
+
+export type FlowDefinition<Handlers extends ServiceHandlers> =
+  | ServiceDefinition<Handlers>
+  | ObjectDefinition<Handlers>
 
 export type ServiceHandler<Input = any, Output = any> = (
   input: Input
@@ -63,6 +76,11 @@ export type ServiceHandlers = Record<string, ServiceHandler>
 
 export interface ClientOptions {
   readonly invocationId?: string
+}
+
+interface ResolvedClientOptions {
+  readonly invocationId?: string
+  readonly key?: string
 }
 
 type HandlerInput<Handler> = Handler extends (input: infer Input) => Generator<any, any, any> ? Input : never
@@ -76,8 +94,12 @@ export type ServiceClient<Handlers extends ServiceHandlers> = {
 }
 
 export const service = <Handlers extends ServiceHandlers>(
-  definition: ServiceDefinition<Handlers>
-): ServiceDefinition<Handlers> => definition
+  definition: Omit<ServiceDefinition<Handlers>, "kind">
+): ServiceDefinition<Handlers> => ({ ...definition, kind: "service" })
+
+export const object = <Handlers extends ServiceHandlers>(
+  definition: Omit<ObjectDefinition<Handlers>, "kind">
+): ObjectDefinition<Handlers> => ({ ...definition, kind: "object" })
 
 const s2Layer = (endpoint: string) =>
   S2Layer({
@@ -99,13 +121,20 @@ const withS2 = <A, E, R>(
 type FlowRecord =
   | {
     readonly _tag: "Invoke"
+    readonly requestId: string
     readonly service: string
     readonly method: string
     readonly input: unknown
   }
   | {
     readonly _tag: "StepCompleted"
+    readonly requestId: string
     readonly stepName: string
+    readonly value: unknown
+  }
+  | {
+    readonly _tag: "StateChanged"
+    readonly stateName: string
     readonly value: unknown
   }
   | {
@@ -114,10 +143,12 @@ type FlowRecord =
   }
   | {
     readonly _tag: "Completed"
+    readonly requestId: string
     readonly value: unknown
   }
   | {
     readonly _tag: "Failed"
+    readonly requestId: string
     readonly message: string
   }
 
@@ -139,6 +170,11 @@ const recordTypeHeader = (type: FlowRecord["_tag"]): ReadonlyArray<readonly [str
 const stepHeaders = (type: FlowRecord["_tag"], stepName: string): ReadonlyArray<readonly [string, string]> => [
   ...recordTypeHeader(type),
   ["effect-s2-flow.step.name", stepName]
+]
+
+const stateHeaders = (stateName: string): ReadonlyArray<readonly [string, string]> => [
+  ...recordTypeHeader("StateChanged"),
+  ["effect-s2-flow.state.name", stateName]
 ]
 
 const ensureInvocationStream = Effect.fn("effect-s2-flow.ensureInvocationStream")(function*(
@@ -187,45 +223,69 @@ const collectCurrentRecords = Effect.fn("effect-s2-flow.collectCurrentRecords")(
   return { nextSeqNum: tail.tail.seqNum, records }
 })
 
-export const client = <Handlers extends ServiceHandlers>(
+export function client<Handlers extends ServiceHandlers>(
   definition: ServiceDefinition<Handlers>,
-  options: ClientOptions = {}
-): ServiceClient<Handlers> =>
-  new Proxy({}, {
+  options?: ClientOptions
+): ServiceClient<Handlers>
+export function client<Handlers extends ServiceHandlers>(
+  definition: ObjectDefinition<Handlers>,
+  key: string,
+  options?: ClientOptions
+): ServiceClient<Handlers>
+export function client<Handlers extends ServiceHandlers>(
+  definition: FlowDefinition<Handlers>,
+  keyOrOptions: string | ClientOptions = {},
+  maybeOptions: ClientOptions = {}
+): ServiceClient<Handlers> {
+  const options: ResolvedClientOptions = typeof keyOrOptions === "string"
+    ? { ...maybeOptions, key: keyOrOptions }
+    : keyOrOptions
+  return new Proxy({}, {
     get: (_target, property) =>
       typeof property === "string" && property in definition.handlers
-        ? (input: unknown) => invoke(definition.name, property, input, options) as any
+        ? (input: unknown) => invoke(definition, property, input, options) as any
         : undefined
   }) as ServiceClient<Handlers>
+}
 
 const invoke = Effect.fn("effect-s2-flow.client.invoke")(function*(
-  serviceName: string,
+  definition: FlowDefinition<ServiceHandlers>,
   method: string,
   input: unknown,
-  options: ClientOptions
+  options: ResolvedClientOptions
 ) {
   const runtime = yield* FlowRuntime
   const generated = yield* Random.nextInt
-  const invocationId = options.invocationId ?? `${serviceName}-${Math.abs(generated)}`
-  const streamName = invocationStream(serviceName, invocationId)
+  const requestId = options.invocationId ?? `${definition.name}-${Math.abs(generated)}`
+  if (definition.kind === "object" && options.key === undefined) {
+    return yield* new FlowError({ message: `object client ${definition.name}.${method} requires a key` })
+  }
+  const streamName = definition.kind === "service"
+    ? invocationStream(definition.name, requestId)
+    : objectStream(definition.name, options.key!)
   const streamApi = yield* ensureInvocationStream(runtime, streamName)
 
+  const invokeRecords = [
+    encodeRecord({
+      _tag: "Invoke",
+      input,
+      method,
+      requestId,
+      service: definition.name
+    }, recordTypeHeader("Invoke"))
+  ]
   yield* streamApi.append(
-    AppendInput.create([
-      encodeRecord({
-        _tag: "Invoke",
-        input,
-        method,
-        service: serviceName
-      }, recordTypeHeader("Invoke"))
-    ], { matchSeqNum: 0 })
+    definition.kind === "service"
+      ? AppendInput.create(invokeRecords, { matchSeqNum: 0 })
+      : AppendInput.create(invokeRecords)
   ).pipe(
-    Effect.mapError(flowS2Error(`failed to append Invoke for ${serviceName}.${method}`)),
+    Effect.mapError(flowS2Error(`failed to append Invoke for ${definition.name}.${method}`)),
     Effect.withSpan("effect-s2-flow.client.invoke", {
       attributes: {
         "effect-s2-flow.invocation.stream": streamName,
         "effect-s2-flow.method": method,
-        "effect-s2-flow.service": serviceName
+        "effect-s2-flow.request.id": requestId,
+        "effect-s2-flow.service": definition.name
       }
     })
   )
@@ -235,7 +295,9 @@ const invoke = Effect.fn("effect-s2-flow.client.invoke")(function*(
   }).pipe(
     Stream.map((record) => decodeRecord(record.body)),
     Stream.filterMap((record) => {
-      if (record._tag === "Completed" || record._tag === "Failed") return Result.succeed(record)
+      if ((record._tag === "Completed" || record._tag === "Failed") && record.requestId === requestId) {
+        return Result.succeed(record)
+      }
       return Result.fail(record)
     }),
     Stream.runHead,
@@ -258,8 +320,11 @@ const invoke = Effect.fn("effect-s2-flow.client.invoke")(function*(
 })
 
 export interface CurrentInvocationScope {
+  readonly pendingRecords: Ref.Ref<ReadonlyArray<AppendRecord>>
+  readonly requestId: string
   readonly streamName: string
   readonly streamApi: StreamApi
+  readonly states: Ref.Ref<ReadonlyMap<string, unknown>>
   readonly steps: Ref.Ref<ReadonlyMap<string, unknown>>
   readonly nextSeqNum: Ref.Ref<number>
 }
@@ -286,6 +351,7 @@ export const run = <A, E, R>(
       AppendInput.create([
         encodeRecord({
           _tag: "StepCompleted",
+          requestId: scope.requestId,
           stepName: name,
           value
         }, stepHeaders("StepCompleted", name)),
@@ -316,13 +382,47 @@ export const run = <A, E, R>(
     return value
   })
 
+export interface StateHandle<A> {
+  readonly get: Effect.Effect<A, FlowError, InvocationScope>
+  readonly set: (value: A) => Effect.Effect<void, FlowError, InvocationScope>
+  readonly update: (f: (value: A) => A) => Effect.Effect<A, FlowError, InvocationScope>
+}
+
+export const state = <A>(name: string, initial: A): StateHandle<A> => ({
+  get: Effect.gen(function*() {
+    const scope = yield* InvocationScope
+    const states = yield* Ref.get(scope.states)
+    return (states.has(name) ? states.get(name) : initial) as A
+  }),
+  set: (value) =>
+    Effect.gen(function*() {
+      const scope = yield* InvocationScope
+      yield* Ref.update(scope.states, (current) => new Map(current).set(name, value))
+      yield* Ref.update(scope.pendingRecords, (records) => [
+        ...records,
+        encodeRecord({
+          _tag: "StateChanged",
+          stateName: name,
+          value
+        }, stateHeaders(name))
+      ])
+    }),
+  update: (f) =>
+    Effect.gen(function*() {
+      const current = yield* state(name, initial).get
+      const next = f(current)
+      yield* state(name, initial).set(next)
+      return next
+    })
+})
+
 export interface ServeOptions {
-  readonly services: ReadonlyArray<ServiceDefinition<ServiceHandlers>>
+  readonly services: ReadonlyArray<FlowDefinition<ServiceHandlers>>
   readonly pollInterval?: Duration.Input
 }
 
 const methodEffect = (
-  serviceDefinition: ServiceDefinition<ServiceHandlers>,
+  serviceDefinition: FlowDefinition<ServiceHandlers>,
   method: string,
   input: unknown
 ): Effect.Effect<unknown, unknown, InvocationScope> => {
@@ -337,7 +437,7 @@ const methodEffect = (
 
 const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function*(
   runtime: Required<FlowRuntimeConfig>,
-  serviceDefinition: ServiceDefinition<ServiceHandlers>,
+  serviceDefinition: FlowDefinition<ServiceHandlers>,
   streamName: string
 ) {
   const streamApi = yield* ensureInvocationStream(runtime, streamName)
@@ -349,23 +449,37 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
       }
     })
   )
-  if (snapshot.records.some((record) => record._tag === "Completed" || record._tag === "Failed")) return
-  const invokeRecord = snapshot.records.find((record) => record._tag === "Invoke")
+  const completedRequests = new Set(
+    snapshot.records.flatMap((record) =>
+      record._tag === "Completed" || record._tag === "Failed" ? [record.requestId] : []
+    )
+  )
+  const invokeRecord = snapshot.records.find((record) =>
+    record._tag === "Invoke" && !completedRequests.has(record.requestId)
+  )
   if (invokeRecord?._tag !== "Invoke") return
 
   const steps = new Map<string, unknown>()
+  const states = new Map<string, unknown>()
   snapshot.records.forEach((record) => {
-    if (record._tag === "StepCompleted") {
+    if (record._tag === "StepCompleted" && record.requestId === invokeRecord.requestId) {
       steps.set(record.stepName, record.value)
+    } else if (record._tag === "StateChanged") {
+      states.set(record.stateName, record.value)
     }
   })
 
+  const pendingRecords = yield* Ref.make<ReadonlyArray<AppendRecord>>([])
+  const stateRef = yield* Ref.make<ReadonlyMap<string, unknown>>(states)
   const stepRef = yield* Ref.make<ReadonlyMap<string, unknown>>(steps)
   const nextSeqNum = yield* Ref.make(snapshot.nextSeqNum)
   const result = yield* Effect.exit(
     methodEffect(serviceDefinition, invokeRecord.method, invokeRecord.input).pipe(
       Effect.provideService(InvocationScope, {
         nextSeqNum,
+        pendingRecords,
+        requestId: invokeRecord.requestId,
+        states: stateRef,
         steps: stepRef,
         streamApi,
         streamName
@@ -375,10 +489,13 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
 
   const matchSeqNum = yield* Ref.get(nextSeqNum)
   if (result._tag === "Success") {
+    const records = yield* Ref.get(pendingRecords)
     yield* streamApi.append(
       AppendInput.create([
+        ...records,
         encodeRecord({
           _tag: "Completed",
+          requestId: invokeRecord.requestId,
           value: result.value
         }, recordTypeHeader("Completed"))
       ], { matchSeqNum })
@@ -387,6 +504,8 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
       Effect.withSpan("effect-s2-flow.invocation.completed", {
         attributes: {
           "effect-s2-flow.invocation.stream": streamName,
+          "effect-s2-flow.request.id": invokeRecord.requestId,
+          "effect-s2-flow.state.record_count": String(records.length),
           "effect-s2-flow.service": serviceDefinition.name
         }
       })
@@ -398,6 +517,7 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
     AppendInput.create([
       encodeRecord({
         _tag: "Failed",
+        requestId: invokeRecord.requestId,
         message: String(result.cause)
       }, recordTypeHeader("Failed"))
     ], { matchSeqNum })
@@ -408,7 +528,7 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
 
 const discoverInvocations = Effect.fn("effect-s2-flow.discoverInvocations")(function*(
   runtime: Required<FlowRuntimeConfig>,
-  serviceDefinition: ServiceDefinition<ServiceHandlers>
+  serviceDefinition: FlowDefinition<ServiceHandlers>
 ) {
   const basinApi = yield* withS2(
     basin(runtime.basin).pipe(
@@ -416,7 +536,9 @@ const discoverInvocations = Effect.fn("effect-s2-flow.discoverInvocations")(func
     ),
     runtime
   )
-  const prefix = invocationPrefix(serviceDefinition.name)
+  const prefix = serviceDefinition.kind === "service"
+    ? invocationPrefix(serviceDefinition.name)
+    : objectPrefix(serviceDefinition.name)
   return yield* basinApi.streams.list({ prefix, limit: 1000 }).pipe(
     Effect.map((response) => response.streams.map((stream) => stream.name)),
     Effect.mapError(flowS2Error(`failed to list invocations for ${serviceDefinition.name}`))
@@ -444,6 +566,11 @@ export const serve = Effect.fn("effect-s2-flow.serve")(function*(options: ServeO
           yield* Ref.update(active, (set) => new Set(set).add(streamName))
           yield* processInvocation(runtime, serviceDefinition, streamName).pipe(
             Effect.catch((cause) => Effect.logError(`failed processing ${streamName}`, cause)),
+            Effect.ensuring(Ref.update(active, (set) => {
+              const next = new Set(set)
+              next.delete(streamName)
+              return next
+            })),
             Effect.forkDetach
           )
         }), { discard: true })

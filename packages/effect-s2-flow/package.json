@@ -15,6 +15,10 @@
     "./capability-a-greeter": {
       "types": "./src/CapabilityAGreeter.ts",
       "default": "./src/CapabilityAGreeter.ts"
+    },
+    "./capability-b-counter": {
+      "types": "./src/CapabilityBCounter.ts",
+      "default": "./src/CapabilityBCounter.ts"
     }
   },
   "files": ["src", "README.md"],
