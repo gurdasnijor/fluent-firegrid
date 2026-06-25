@@ -15,6 +15,7 @@ export {
   type SendReference,
   type SendRequest
 } from "./clients.ts"
+export { all, race, raceAll } from "./combinators.ts"
 export {
   fluentContextFromTanStack,
   FluentDurableContext,

@@ -26,3 +26,6 @@ TanStack `ctx.waitForEvent`.
 Transport-specific serving belongs in a separate binding package or process
 entrypoint. The core package only exposes descriptors, typed clients, and
 runtime bindings such as `createTanStackRuntimeBinding`.
+
+Composition helpers such as `all` and `race` are Effect aliases. Firegrid does
+not introduce a separate Operation/Future scheduler.
