@@ -1,8 +1,13 @@
 import {
+  AppendInput,
+  type AppendOptions,
   AppendRecord,
   basin,
   basins,
   layer as S2Layer,
+  MAX_APPEND_BYTES,
+  MAX_APPEND_RECORDS,
+  meteredBytes,
   type S2Error,
   stream as s2Stream,
   type StreamApi
@@ -10,7 +15,7 @@ import {
 import * as Effect from "effect/Effect"
 import * as Stream from "effect/Stream"
 
-import { FlowError } from "./FlowError.ts"
+import { BatchTooLarge, FlowError } from "./FlowError.ts"
 
 export const defaultBasin = "effect-s2-flow"
 
@@ -106,6 +111,32 @@ export const s2Layer = (endpoint: string) =>
   })
 
 export const flowS2Error = (message: string) => (cause: S2Error): FlowError => new FlowError({ message, cause })
+
+export const checkAtomicBatch = (records: ReadonlyArray<AppendRecord>): BatchTooLarge | undefined => {
+  const bytes = records.reduce((sum, record) => sum + meteredBytes(record), 0)
+  if (records.length <= MAX_APPEND_RECORDS && bytes <= MAX_APPEND_BYTES) return undefined
+  return new BatchTooLarge({
+    bytes,
+    maxBytes: MAX_APPEND_BYTES,
+    maxRecords: MAX_APPEND_RECORDS,
+    records: records.length
+  })
+}
+
+export const appendAtomic = Effect.fn("effect-s2-flow.invocationJournal.appendAtomic")(function*(
+  streamApi: StreamApi,
+  records: ReadonlyArray<AppendRecord>,
+  options: AppendOptions | undefined,
+  errorMessage: string
+) {
+  const tooLarge = checkAtomicBatch(records)
+  if (tooLarge !== undefined) {
+    return yield* tooLarge
+  }
+  return yield* streamApi.append(AppendInput.create(records, options)).pipe(
+    Effect.mapError(flowS2Error(errorMessage))
+  )
+})
 
 export const withS2 = <A, E, R>(
   effect: Effect.Effect<A, E, R>,

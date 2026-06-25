@@ -37,7 +37,8 @@ runHostMain({ services: [greeter] })
   completion record.
 - `run(name, effect)` is a durable step. If the host dies after the step is
   journaled, restart folds the journal and returns the recorded value instead
-  of re-running the effect.
+  of re-running the effect. The step checkpoint is committed as one atomic S2
+  append batch: `StepCompleted` plus `CheckpointAdvanced`.
 - `serve({ services })` is the host loop. It discovers invocation streams,
   folds their journals, runs pending handlers, and appends completion records.
 - `runHostMain({ services })` is the Node process entrypoint. It uses Effect's
@@ -49,7 +50,9 @@ The invocation journal substrate is available as
 `effect-s2-flow/invocation-journal`:
 
 - `InvocationJournal.ts` owns S2 basin/stream access, record encoding, stream
-  naming, stream discovery, and fold-from-S2 journal reads.
+  naming, stream discovery, fold-from-S2 journal reads, and the atomic batch
+  guard. An over-budget commit fails locally with `BatchTooLarge`; it is never
+  silently split into separately-recoverable appends.
 - `runtime.ts` owns handler execution, `run` step checkpointing, service/client
   authoring, and the host loop.
 
