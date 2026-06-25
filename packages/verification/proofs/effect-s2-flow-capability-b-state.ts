@@ -20,7 +20,7 @@ export default proof("effect-s2-flow.capability-b.durable-state")
           stderr: "inherit"
         })
       })
-      .workload(({ hosts, runtime, s2Endpoint }) =>
+      .workload(({ hosts, s2Endpoint }) =>
         Effect.gen(function*() {
           if (s2Endpoint === undefined) {
             return yield* new VerificationError({
@@ -33,27 +33,15 @@ export default proof("effect-s2-flow.capability-b.durable-state")
           const addResult = yield* runCounter(
             client(counter, "user-1", { invocationId: "counter-add-5" }).add({ amount: 5 })
           )
-          yield* runtime.waitForSpan("effect-s2-flow.invocation.completed", {
-            attempts: 400,
-            attributes: { "effect-s2-flow.request.id": "counter-add-5" }
-          })
 
           yield* hosts.restart("state-worker")
 
           const valueAfterRestart = yield* runCounter(
             client(counter, "user-1", { invocationId: "counter-value-after-restart" }).value({})
           )
-          yield* runtime.waitForSpan("effect-s2-flow.invocation.completed", {
-            attempts: 400,
-            attributes: { "effect-s2-flow.request.id": "counter-value-after-restart" }
-          })
           const readYourWrites = yield* runCounter(
             client(counter, "user-1", { invocationId: "counter-add-then-read" }).addThenRead({ amount: 7 })
           )
-          yield* runtime.waitForSpan("effect-s2-flow.invocation.completed", {
-            attempts: 400,
-            attributes: { "effect-s2-flow.request.id": "counter-add-then-read" }
-          })
 
           return {
             addResult,
@@ -96,7 +84,7 @@ export default proof("effect-s2-flow.capability-b.durable-state")
         traceSql(
           "state-used-production-s2",
           `
-          SELECT countIf(SpanName = 'effect-s2.read-session') >= 3
+          SELECT countIf(SpanName = 'effect-s2.read') >= 3
             AND countIf(SpanName = 'effect-s2.append') >= 6 AS ok
           FROM trial_spans
         `

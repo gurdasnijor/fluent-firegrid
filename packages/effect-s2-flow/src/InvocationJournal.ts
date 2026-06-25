@@ -173,28 +173,55 @@ export const ensureInvocationJournalStream = Effect.fn("effect-s2-flow.invocatio
   )
 })
 
-export const readInvocationJournal = Effect.fn("effect-s2-flow.invocationJournal.read")(
-  function*(streamApi: StreamApi) {
+const readRecordsFromStart = Effect.fn("effect-s2-flow.invocationJournal.readRecordsFromStart")(
+  function*(
+    streamApi: StreamApi,
+    options: {
+      readonly errorMessage: string
+      readonly ignoreCommandRecords?: boolean
+    }
+  ) {
     const tail = yield* streamApi.checkTail().pipe(
       Effect.mapError(flowS2Error("failed to check invocation tail"))
     )
-    if (tail.tail.seqNum === 0) {
-      return {
-        nextSeqNum: 0,
-        records: [] as ReadonlyArray<InvocationJournalRecord>
-      }
-    }
+    if (tail.tail.seqNum === 0) return { nextSeqNum: 0, records: [] }
     const batch = yield* streamApi.read({
       start: { from: { seqNum: 0 } },
-      ignoreCommandRecords: true,
+      ...(options.ignoreCommandRecords === undefined ? {} : { ignoreCommandRecords: options.ignoreCommandRecords }),
       stop: { limits: { count: tail.tail.seqNum } }
     }).pipe(
-      Effect.mapError(flowS2Error("failed to read invocation journal"))
+      Effect.mapError(flowS2Error(options.errorMessage))
     )
     return {
       nextSeqNum: tail.tail.seqNum,
-      records: batch.records.map((record) => decodeRecord(record.body))
+      records: batch.records
     }
+  }
+)
+
+export const readInvocationJournal = Effect.fn("effect-s2-flow.invocationJournal.read")(
+  function*(streamApi: StreamApi) {
+    const journal = yield* readRecordsFromStart(streamApi, {
+      errorMessage: "failed to read invocation journal",
+      ignoreCommandRecords: true
+    })
+    return {
+      nextSeqNum: journal.nextSeqNum,
+      records: journal.records.map((record) => decodeRecord(record.body))
+    }
+  }
+)
+
+const isFenceCommand = (headers: ReadonlyArray<readonly [string, string]>): boolean =>
+  headers.length === 1 && headers[0]?.[0] === "" && headers[0][1] === "fence"
+
+export const readCurrentFenceToken = Effect.fn("effect-s2-flow.invocationJournal.readCurrentFenceToken")(
+  function*(streamApi: StreamApi) {
+    const journal = yield* readRecordsFromStart(streamApi, { errorMessage: "failed to read invocation fence" })
+    return journal.records.reduce<string | undefined>(
+      (token, record) => isFenceCommand(record.headers) ? record.body === "" ? undefined : record.body : token,
+      undefined
+    )
   }
 )
 

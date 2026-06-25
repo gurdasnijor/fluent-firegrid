@@ -82,7 +82,7 @@ export default proof("effect-s2-flow.capability-a.step-replay")
           "restart-folded-real-journal",
           `
           SELECT countIf(SpanName = 'effect-s2-flow.owner.rehydrate') >= 1
-            AND countIf(SpanName = 'effect-s2.read-session') >= 1 AS ok
+            AND countIf(SpanName = 'effect-s2.read') >= 1 AS ok
           FROM trial_spans
         `
         )

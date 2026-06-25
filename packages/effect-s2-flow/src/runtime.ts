@@ -7,16 +7,12 @@ import * as Context from "effect/Context"
 import type * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
-import * as Option from "effect/Option"
 import * as Random from "effect/Random"
 import * as Ref from "effect/Ref"
-import * as Result from "effect/Result"
-import * as Stream from "effect/Stream"
 
 import { type BatchTooLarge, FlowError } from "./FlowError.ts"
 import {
   appendAtomic,
-  decodeRecord,
   defaultBasin,
   encodeRecord,
   ensureBasin,
@@ -27,6 +23,7 @@ import {
   listInvocationJournalStreams,
   objectPrefix,
   objectStream,
+  readCurrentFenceToken,
   readInvocationJournal,
   recordTypeHeader,
   stateHeaders,
@@ -185,34 +182,26 @@ const invoke = Effect.fn("effect-s2-flow.client.invoke")(function*(
     })
   )
 
-  return yield* streamApi.readSession({
-    ignoreCommandRecords: true,
-    start: { from: { seqNum: 0 } }
-  }).pipe(
-    Stream.map((record) => decodeRecord(record.body)),
-    Stream.filterMap((record) => {
-      if ((record._tag === "Completed" || record._tag === "Failed") && record.requestId === requestId) {
-        return Result.succeed(record)
-      }
-      return Result.fail(record)
-    }),
-    Stream.runHead,
-    Effect.flatMap((completed) =>
-      Option.match(completed, {
-        onNone: () => new FlowError({ message: `invocation ${streamName} completed without a result` }),
-        onSome: (record) =>
-          record._tag === "Completed"
-            ? Effect.succeed(record.value)
-            : new FlowError({ message: `invocation ${streamName} failed: ${record.message}` })
-      })
-    ),
-    Effect.mapError((cause) =>
-      cause instanceof FlowError ? cause : new FlowError({
-        message: `failed waiting for invocation ${streamName}`,
-        cause
+  const awaitCompletion: Effect.Effect<unknown, FlowError> = Effect.suspend(() =>
+    readInvocationJournal(streamApi).pipe(
+      Effect.flatMap((journal) => {
+        const completed = journal.records.find((record) =>
+          (record._tag === "Completed" || record._tag === "Failed") && record.requestId === requestId
+        )
+        if (completed === undefined) {
+          return Effect.sleep("25 millis").pipe(Effect.andThen(awaitCompletion))
+        }
+        if (completed._tag === "Completed") {
+          return Effect.succeed(completed.value)
+        }
+        if (completed._tag === "Failed") {
+          return new FlowError({ message: `invocation ${streamName} failed: ${completed.message}` })
+        }
+        return Effect.sleep("25 millis").pipe(Effect.andThen(awaitCompletion))
       })
     )
   )
+  return yield* awaitCompletion
 })
 
 export interface CurrentInvocationScope {
@@ -341,19 +330,58 @@ const methodEffect = (
 
 const hostFenceToken = (): string => (process.env.FIREGRID_HOST_ID ?? `pid-${process.pid}`).slice(0, 36)
 
+const fenceLeaseMillis = 5_000
+
+const hostId = (): string => (process.env.FIREGRID_HOST_ID ?? `pid-${process.pid}`).replace(/:/g, "-").slice(0, 20)
+
+const makeFenceToken = (): string => `${hostId()}:${(Date.now() + fenceLeaseMillis).toString(36)}`
+
+const parseFenceToken = (
+  token: string
+): { readonly hostId: string; readonly deadlineMillis: number } | undefined => {
+  const separator = token.lastIndexOf(":")
+  if (separator <= 0) return undefined
+  const deadlineMillis = Number.parseInt(token.slice(separator + 1), 36)
+  if (!Number.isFinite(deadlineMillis)) return undefined
+  return {
+    deadlineMillis,
+    hostId: token.slice(0, separator)
+  }
+}
+
+const activeForeignFence = (token: string | undefined): boolean => {
+  if (token === undefined) return false
+  const parsed = parseFenceToken(token)
+  if (parsed === undefined) return token !== hostFenceToken()
+  return parsed.hostId !== hostId() && parsed.deadlineMillis > Date.now()
+}
+
 const claimObjectFence = Effect.fn("effect-s2-flow.claimObjectFence")(function*(
   streamApi: StreamApi,
   streamName: string
 ) {
-  const token = hostFenceToken()
+  const expectedToken = yield* readCurrentFenceToken(streamApi)
+  if (activeForeignFence(expectedToken)) {
+    yield* Effect.void.pipe(
+      Effect.withSpan("effect-s2-flow.fence.busy", {
+        attributes: {
+          "effect-s2-flow.fencing.expected_token": expectedToken ?? "",
+          "effect-s2-flow.invocation.stream": streamName
+        }
+      })
+    )
+    return undefined
+  }
+  const token = makeFenceToken()
   const ack = yield* appendAtomic(
     streamApi,
     [AppendRecord.fence(token)],
-    undefined,
+    { fencingToken: expectedToken ?? "" },
     `failed to claim fence for ${streamName}`
   ).pipe(
     Effect.withSpan("effect-s2-flow.fence.claim", {
       attributes: {
+        "effect-s2-flow.fencing.expected_token": expectedToken ?? "",
         "effect-s2-flow.fencing.token": token,
         "effect-s2-flow.invocation.stream": streamName
       }
@@ -392,6 +420,7 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
   const fence = serviceDefinition.kind === "object"
     ? yield* claimObjectFence(streamApi, streamName)
     : undefined
+  if (serviceDefinition.kind === "object" && fence === undefined) return
 
   const steps = new Map<string, unknown>()
   const states = new Map<string, unknown>()
