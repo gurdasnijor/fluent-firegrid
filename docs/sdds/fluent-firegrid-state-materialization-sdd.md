@@ -4,7 +4,7 @@
 
 |   |   |
 | --- | --- |
-| Status | Active implementation target |
+| Status | Implemented through A-E |
 | Date | 2026-06-25 |
 | Package | `@firegrid/fluent-firegrid` plus S2 object-owner support |
 | Prior art | `effect-s2-durable` user-defined durable state; `effect-s2-stream-db` |
@@ -156,6 +156,8 @@ Build this in vertical slices:
 
 ### A. Fluent Table Materialization
 
+**Status:** Implemented.
+
 **Claim.** Fluent core exposes the durable state authoring shape without an S2
 dependency.
 
@@ -167,6 +169,8 @@ dependency.
 
 ### B. S2 Object State Projection
 
+**Status:** Implemented.
+
 **Claim.** One S2 owner stream can persist and replay table state for one object
 key.
 
@@ -176,6 +180,8 @@ state backend implementation.
 **Proof:** `add(5)` then fresh process `value()` returns `5` against `s2 lite`.
 
 ### C1. Same-Process Same-Key Serialization
+
+**Status:** Implemented.
 
 **Claim.** Concurrent same-key object calls through one runtime binding cannot
 lose updates.
@@ -187,6 +193,8 @@ active call at a time.
 both complete and final value is `12` against `s2 lite`.
 
 ### C2. Cross-Host Same-Key Serialization
+
+**Status:** Implemented.
 
 **Claim.** Concurrent same-key object calls from different hosts cannot lose
 updates.
