@@ -13,8 +13,9 @@ import * as Ref from "effect/Ref"
 import * as Result from "effect/Result"
 import * as Stream from "effect/Stream"
 
-import { FlowError } from "./FlowError.ts"
+import { type BatchTooLarge, FlowError } from "./FlowError.ts"
 import {
+  appendAtomic,
   decodeRecord,
   defaultBasin,
   encodeRecord,
@@ -36,6 +37,8 @@ export interface FlowRuntimeConfig {
   readonly s2Endpoint: string
   readonly basin?: string
 }
+
+export type FlowRuntimeError = BatchTooLarge | FlowError
 
 export class FlowRuntime extends Context.Service<FlowRuntime, Required<FlowRuntimeConfig>>()(
   "effect-s2-flow/runtime/FlowRuntime"
@@ -212,7 +215,7 @@ export class InvocationScope extends Context.Service<InvocationScope, CurrentInv
 export const run = <A, E, R>(
   name: string,
   effect: Effect.Effect<A, E, R>
-): Effect.Effect<A, E | FlowError, R | InvocationScope> =>
+): Effect.Effect<A, E | FlowRuntimeError, R | InvocationScope> =>
   Effect.gen(function*() {
     const scope = yield* InvocationScope
     const steps = yield* Ref.get(scope.steps)
@@ -223,8 +226,9 @@ export const run = <A, E, R>(
     const value = yield* effect
     const matchSeqNum = yield* Ref.get(scope.nextSeqNum)
     const checkpointNext = matchSeqNum + 2
-    yield* scope.streamApi.append(
-      AppendInput.create([
+    yield* appendAtomic(
+      scope.streamApi,
+      [
         encodeRecord({
           _tag: "StepCompleted",
           requestId: scope.requestId,
@@ -235,7 +239,9 @@ export const run = <A, E, R>(
           _tag: "CheckpointAdvanced",
           nextSeqNum: checkpointNext
         }, recordTypeHeader("CheckpointAdvanced"))
-      ], { matchSeqNum })
+      ],
+      { matchSeqNum },
+      `failed to append StepCompleted for ${name}`
     ).pipe(
       Effect.tap(() =>
         Effect.annotateCurrentSpan({
@@ -244,7 +250,6 @@ export const run = <A, E, R>(
           "effect-s2-flow.step.name": name
         })
       ),
-      Effect.mapError(flowS2Error(`failed to append StepCompleted for ${name}`)),
       Effect.withSpan("effect-s2-flow.journal.append.ack", {
         attributes: {
           "effect-s2-flow.invocation.stream": scope.streamName,
@@ -366,17 +371,19 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
   const matchSeqNum = yield* Ref.get(nextSeqNum)
   if (result._tag === "Success") {
     const records = yield* Ref.get(pendingRecords)
-    yield* streamApi.append(
-      AppendInput.create([
+    yield* appendAtomic(
+      streamApi,
+      [
         ...records,
         encodeRecord({
           _tag: "Completed",
           requestId: invokeRecord.requestId,
           value: result.value
         }, recordTypeHeader("Completed"))
-      ], { matchSeqNum })
+      ],
+      { matchSeqNum },
+      `failed to append Completed for ${streamName}`
     ).pipe(
-      Effect.mapError(flowS2Error(`failed to append Completed for ${streamName}`)),
       Effect.withSpan("effect-s2-flow.invocation.completed", {
         attributes: {
           "effect-s2-flow.invocation.stream": streamName,
@@ -389,16 +396,17 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
     return
   }
 
-  yield* streamApi.append(
-    AppendInput.create([
+  yield* appendAtomic(
+    streamApi,
+    [
       encodeRecord({
         _tag: "Failed",
         requestId: invokeRecord.requestId,
         message: String(result.cause)
       }, recordTypeHeader("Failed"))
-    ], { matchSeqNum })
-  ).pipe(
-    Effect.mapError(flowS2Error(`failed to append Failed for ${streamName}`))
+    ],
+    { matchSeqNum },
+    `failed to append Failed for ${streamName}`
   )
 })
 
