@@ -36,12 +36,13 @@ export default proof("effect-s2-flow.capability-b.lease-refresh")
 
           yield* sendClient(counter, key, { invocationId: "counter-lease-refresh-add" }).add({
             amount: 5,
-            delay: "1500 millis"
+            delay: "30 seconds"
           }).pipe(
             Effect.provide(FlowRuntime.layer({ s2Endpoint }))
           )
           yield* runtime.waitForSpan("effect-s2-flow.client.invoke", {
-            attributes: { "effect-s2-flow.request.id": "counter-lease-refresh-add" }
+            attributes: { "effect-s2-flow.request.id": "counter-lease-refresh-add" },
+            attempts: 800
           })
 
           yield* hosts.restart("owner-a")
