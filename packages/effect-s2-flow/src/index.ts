@@ -5,16 +5,19 @@ export {
   flowRuntimeLayerFromEnv,
   hostLayerFromEnv,
   hostTraceLayerFromEnv,
+  object,
   run,
   runHostMain,
   serve,
-  service
+  service,
+  state
 } from "./runtime.ts"
 export type {
   ClientOptions,
   CurrentInvocationScope,
   FlowRuntimeConfig,
   FlowRuntimeError,
+  ObjectDefinition,
   ServeOptions,
   ServiceClient,
   ServiceDefinition,

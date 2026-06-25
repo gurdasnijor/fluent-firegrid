@@ -32,6 +32,7 @@ import {
   stateHeaders,
   stepHeaders
 } from "./InvocationJournal.ts"
+import type { InvocationJournalRecord } from "./InvocationJournal.ts"
 
 export interface FlowRuntimeConfig {
   readonly s2Endpoint: string
@@ -343,6 +344,7 @@ export const state = <A>(name: string, initial: A): StateHandle<A> => ({
 
 export interface ServeOptions {
   readonly services: ReadonlyArray<FlowDefinition<ServiceHandlers>>
+  readonly idleTimeout?: Duration.Input
   readonly pollInterval?: Duration.Input
 }
 
@@ -361,6 +363,8 @@ const methodEffect = (
 const hostFenceToken = (): string => (process.env.FIREGRID_HOST_ID ?? `pid-${process.pid}`).slice(0, 36)
 
 const fenceLeaseMillis = 8_000
+
+const fenceBusyBackoff: Duration.Input = "1 second"
 
 const fenceRefreshInterval: Duration.Input = "2 seconds"
 
@@ -465,57 +469,40 @@ const refreshObjectFence = Effect.fn("effect-s2-flow.refreshObjectFence")(functi
   )
 })
 
+type InvokeRecord = Extract<InvocationJournalRecord, { readonly _tag: "Invoke" }>
+
+const pendingInvocations = (records: ReadonlyArray<InvocationJournalRecord>): ReadonlyArray<InvokeRecord> => {
+  const completedRequests = new Set(
+    records.flatMap((record) => record._tag === "Completed" || record._tag === "Failed" ? [record.requestId] : [])
+  )
+  return records.filter((record): record is InvokeRecord =>
+    record._tag === "Invoke" && !completedRequests.has(record.requestId)
+  )
+}
+
 const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function*(
   runtime: Required<FlowRuntimeConfig>,
   serviceDefinition: FlowDefinition<ServiceHandlers>,
-  streamName: string
+  streamName: string,
+  streamApi: StreamApi,
+  invokeRecord: InvokeRecord,
+  stateRef: Ref.Ref<ReadonlyMap<string, unknown>>,
+  nextSeqNum: Ref.Ref<number>,
+  fencingToken: Ref.Ref<string | undefined>,
+  appendLock: Semaphore.Semaphore,
+  replayedRecords: ReadonlyArray<InvocationJournalRecord>
 ) {
-  const streamApi = yield* ensureInvocationJournalStream(runtime, streamName)
-  const snapshot = yield* readInvocationJournal(streamApi).pipe(
-    Effect.withSpan("effect-s2-flow.owner.rehydrate", {
-      attributes: {
-        "effect-s2-flow.invocation.stream": streamName,
-        "effect-s2-flow.service": serviceDefinition.name
-      }
-    })
-  )
-  const completedRequests = new Set(
-    snapshot.records.flatMap((record) =>
-      record._tag === "Completed" || record._tag === "Failed" ? [record.requestId] : []
-    )
-  )
-  const invokeRecord = snapshot.records.find((record) =>
-    record._tag === "Invoke" && !completedRequests.has(record.requestId)
-  )
   if (invokeRecord?._tag !== "Invoke") return
 
-  const fence = serviceDefinition.kind === "object"
-    ? yield* claimObjectFence(streamApi, streamName)
-    : undefined
-  if (serviceDefinition.kind === "object" && fence === undefined) return
-
   const steps = new Map<string, unknown>()
-  const states = new Map<string, unknown>()
-  snapshot.records.forEach((record) => {
+  replayedRecords.forEach((record) => {
     if (record._tag === "StepCompleted" && record.requestId === invokeRecord.requestId) {
       steps.set(record.stepName, record.value)
-    } else if (record._tag === "StateChanged") {
-      states.set(record.stateName, record.value)
     }
   })
 
   const pendingRecords = yield* Ref.make<ReadonlyArray<AppendRecord>>([])
-  const stateRef = yield* Ref.make<ReadonlyMap<string, unknown>>(states)
   const stepRef = yield* Ref.make<ReadonlyMap<string, unknown>>(steps)
-  const nextSeqNum = yield* Ref.make(fence?.nextSeqNum ?? snapshot.nextSeqNum)
-  const fencingToken = yield* Ref.make<string | undefined>(fence?.token)
-  const appendLock = yield* Semaphore.make(1)
-  const refreshFiber = fence === undefined
-    ? undefined
-    : yield* refreshObjectFence(streamApi, streamName, appendLock, nextSeqNum, fencingToken).pipe(
-      Effect.catch((cause) => Effect.logError(`failed refreshing fence for ${streamName}`, cause)),
-      Effect.forkChild
-    )
   const result = yield* Effect.exit(
     methodEffect(serviceDefinition, invokeRecord.method, invokeRecord.input).pipe(
       Effect.provideService(InvocationScope, {
@@ -528,8 +515,7 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
         steps: stepRef,
         streamApi,
         streamName
-      }),
-      Effect.ensuring(refreshFiber === undefined ? Effect.void : Fiber.interrupt(refreshFiber))
+      })
     )
   )
 
@@ -589,6 +575,101 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
   )
 })
 
+const processInvocationStream = Effect.fn("effect-s2-flow.processInvocationStream")(function*(
+  runtime: Required<FlowRuntimeConfig>,
+  serviceDefinition: FlowDefinition<ServiceHandlers>,
+  streamName: string
+) {
+  const streamApi = yield* ensureInvocationJournalStream(runtime, streamName)
+  const snapshot = yield* readInvocationJournal(streamApi).pipe(
+    Effect.withSpan("effect-s2-flow.owner.rehydrate", {
+      attributes: {
+        "effect-s2-flow.invocation.stream": streamName,
+        "effect-s2-flow.service": serviceDefinition.name
+      }
+    })
+  )
+  const invocations = pendingInvocations(snapshot.records)
+  if (invocations.length === 0) {
+    return { _tag: "idle" as const }
+  }
+
+  const fence = serviceDefinition.kind === "object"
+    ? yield* claimObjectFence(streamApi, streamName)
+    : undefined
+  if (serviceDefinition.kind === "object" && fence === undefined) {
+    return { _tag: "busy" as const }
+  }
+
+  const states = new Map<string, unknown>()
+  snapshot.records.forEach((record) => {
+    if (record._tag === "StateChanged") {
+      states.set(record.stateName, record.value)
+    }
+  })
+
+  const stateRef = yield* Ref.make<ReadonlyMap<string, unknown>>(states)
+  const nextSeqNum = yield* Ref.make(fence?.nextSeqNum ?? snapshot.nextSeqNum)
+  const fencingToken = yield* Ref.make<string | undefined>(fence?.token)
+  const appendLock = yield* Semaphore.make(1)
+  const refreshFiber = fence === undefined
+    ? undefined
+    : yield* refreshObjectFence(streamApi, streamName, appendLock, nextSeqNum, fencingToken).pipe(
+      Effect.catch((cause) => Effect.logError(`failed refreshing fence for ${streamName}`, cause)),
+      Effect.forkChild
+    )
+
+  return yield* Effect.forEach(invocations, (invokeRecord) =>
+    processInvocation(
+      runtime,
+      serviceDefinition,
+      streamName,
+      streamApi,
+      invokeRecord,
+      stateRef,
+      nextSeqNum,
+      fencingToken,
+      appendLock,
+      snapshot.records
+    ), { discard: true }).pipe(
+      Effect.as({ _tag: "processed" as const, count: invocations.length }),
+      Effect.ensuring(refreshFiber === undefined ? Effect.void : Fiber.interrupt(refreshFiber))
+    )
+})
+
+const runOwnerUntilIdle = Effect.fn("effect-s2-flow.runOwnerUntilIdle")(function*(
+  runtime: Required<FlowRuntimeConfig>,
+  serviceDefinition: FlowDefinition<ServiceHandlers>,
+  streamName: string,
+  idleTimeout: Duration.Input
+) {
+  const busyBackoff = Effect.sleep(fenceBusyBackoff)
+  const idleWait = Effect.sleep(idleTimeout).pipe(
+    Effect.withSpan("effect-s2-flow.owner.idle", {
+      attributes: {
+        "effect-s2-flow.invocation.stream": streamName,
+        "effect-s2-flow.service": serviceDefinition.name
+      }
+    })
+  )
+
+  while (true) {
+    const result = yield* processInvocationStream(runtime, serviceDefinition, streamName)
+    if (result._tag === "processed") continue
+    if (result._tag === "busy") {
+      yield* busyBackoff
+      return
+    }
+    yield* idleWait
+    const resultAfterIdle = yield* processInvocationStream(runtime, serviceDefinition, streamName)
+    if (resultAfterIdle._tag === "processed") continue
+    if (resultAfterIdle._tag === "busy") {
+      yield* busyBackoff
+    }
+    return
+  }
+})
+
 const discoverInvocations = Effect.fn("effect-s2-flow.discoverInvocations")(function*(
   runtime: Required<FlowRuntimeConfig>,
   serviceDefinition: FlowDefinition<ServiceHandlers>
@@ -610,6 +691,7 @@ export const serve = Effect.fn("effect-s2-flow.serve")(function*(options: ServeO
   const runtime = yield* FlowRuntime
   yield* ensureBasin(runtime)
   const active = yield* Ref.make<ReadonlySet<string>>(new Set())
+  const idleTimeout = options.idleTimeout ?? "250 millis"
   const pollInterval = options.pollInterval ?? "50 millis"
 
   const scan = Effect.forEach(options.services, (serviceDefinition) =>
@@ -620,8 +702,8 @@ export const serve = Effect.fn("effect-s2-flow.serve")(function*(options: ServeO
           const current = yield* Ref.get(active)
           if (current.has(streamName)) return
           yield* Ref.update(active, (set) => new Set(set).add(streamName))
-          yield* processInvocation(runtime, serviceDefinition, streamName).pipe(
-            Effect.catch((cause) => Effect.logError(`failed processing ${streamName}`, cause)),
+          yield* runOwnerUntilIdle(runtime, serviceDefinition, streamName, idleTimeout).pipe(
+            Effect.catch((cause) => Effect.logError(`failed running owner for ${streamName}`, cause)),
             Effect.ensuring(Ref.update(active, (set) => {
               const next = new Set(set)
               next.delete(streamName)

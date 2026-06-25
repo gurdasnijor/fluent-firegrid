@@ -41,7 +41,9 @@ runHostMain({ services: [greeter] })
   of re-running the effect. The step checkpoint is committed as one atomic S2
   append batch: `StepCompleted` plus `CheckpointAdvanced`.
 - `serve({ services })` is the host loop. It discovers invocation streams,
-  folds their journals, runs pending handlers, and appends completion records.
+  starts one resident owner per active stream, folds its journal, drains pending
+  handlers in order, keeps the owner alive briefly for follow-up work, and then
+  idles it out.
 - `runHostMain({ services })` is the Node process entrypoint. It uses Effect's
   `NodeRuntime.runMain` and wires the host from environment supplied by the
   verifier or deployment wrapper.
@@ -59,6 +61,18 @@ The invocation journal substrate is available as
 
 The examples exported from `effect-s2-flow/examples/*` are proof fixtures. They
 are not product API.
+
+## Capability B Surface
+
+The root package also exports the current durable object primitives:
+
+- `object(...)` defines a per-key durable object backed by one S2 stream per
+  key.
+- `state(name, initial)` defines owner-local durable state folded from
+  `StateChanged` records. Reads inside a handler observe the owner fold.
+
+This surface is still intentionally small, but it is no longer proof-only: the
+runtime exports it as the product entrypoint for the current Capability B work.
 
 ## Verification Contract
 
