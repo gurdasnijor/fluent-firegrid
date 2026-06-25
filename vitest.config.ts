@@ -77,6 +77,25 @@ export default defineConfig({
       }),
       defineProject({
         test: {
+          name: "fluent-firegrid-s2",
+          include: ["packages/fluent-firegrid-s2/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"],
+          passWithNoTests: true
+        },
+        resolve: {
+          alias: {
+            "@firegrid/fluent-firegrid": path.resolve(__dirname, "./packages/fluent-firegrid/src/index.ts"),
+            "@firegrid/fluent-firegrid/state": path.resolve(__dirname, "./packages/fluent-firegrid/src/state.ts"),
+            "@firegrid/fluent-firegrid-s2": path.resolve(
+              __dirname,
+              "./packages/fluent-firegrid-s2/src/index.ts"
+            ),
+            "effect-s2": path.resolve(__dirname, "./packages/effect-s2/src/index.ts")
+          }
+        }
+      }),
+      defineProject({
+        test: {
           name: "tanstack-workflow-core",
           include: ["packages/tanstack-workflow-core/test/**/*.test.ts"],
           exclude: ["**/node_modules/**"],

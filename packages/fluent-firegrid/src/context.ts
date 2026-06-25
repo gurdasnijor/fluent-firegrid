@@ -2,8 +2,18 @@
 import type { SleepOptions, StepContext, StepOptions, WaitForEventOptions } from "@tanstack/workflow-core"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
+import type * as Option from "effect/Option"
 
 import { FluentFiregridError } from "./error.ts"
+
+export interface ObjectStateBackend {
+  readonly get: (
+    table: string,
+    key: string
+  ) => Effect.Effect<Option.Option<unknown>, FluentFiregridError>
+  readonly set: (table: string, key: string, value: unknown) => Effect.Effect<void, FluentFiregridError>
+  readonly delete: (table: string, key: string) => Effect.Effect<void, FluentFiregridError>
+}
 
 export interface RunActionContext {
   readonly id: string
@@ -17,6 +27,7 @@ export type RunAction<A> = (
 
 export interface FluentDurableContextService {
   readonly key?: string
+  readonly state?: ObjectStateBackend
   readonly step: <A>(
     name: string,
     action: RunAction<A>,
@@ -47,9 +58,10 @@ export interface TanStackWorkflowContext {
 
 export const fluentContextFromTanStack = (
   ctx: TanStackWorkflowContext,
-  options: { readonly key?: string } = {}
+  options: { readonly key?: string; readonly state?: ObjectStateBackend } = {}
 ): FluentDurableContextService => ({
   ...(options.key === undefined ? {} : { key: options.key }),
+  ...(options.state === undefined ? {} : { state: options.state }),
   sleep: (ms, options) =>
     Effect.tryPromise({
       try: () => ctx.sleep(ms, options),

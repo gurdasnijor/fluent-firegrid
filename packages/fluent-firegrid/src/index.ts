@@ -28,6 +28,7 @@ export {
   fluentContextFromTanStack,
   FluentDurableContext,
   type FluentDurableContextService,
+  type ObjectStateBackend,
   type RunAction,
   type RunActionContext,
   type TanStackWorkflowContext
@@ -50,3 +51,5 @@ export {
 } from "./definitions.ts"
 export { FluentFiregridError } from "./error.ts"
 export { objectKey, run, type RunOptions, sleep, sleepUntil, waitForSignal } from "./run.ts"
+export { state } from "./state.ts"
+export type { StateBinding } from "./state.ts"

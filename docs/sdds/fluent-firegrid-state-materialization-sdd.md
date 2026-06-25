@@ -1,0 +1,214 @@
+# SDD: Fluent Firegrid State And Materialization
+
+### Table-shaped durable state for virtual objects
+
+|   |   |
+| --- | --- |
+| Status | Active implementation target |
+| Date | 2026-06-25 |
+| Package | `@firegrid/fluent-firegrid` plus S2 object-owner support |
+| Prior art | `effect-s2-durable` user-defined durable state; `effect-s2-stream-db` |
+| Lower runtime | TanStack Workflow over `@firegrid/tanstack-workflow-s2` |
+
+---
+
+## Decision
+
+Virtual object state uses the old table/materialization authoring shape, not a
+string-slot API.
+
+The public authoring target is:
+
+```ts
+import { object, objectClient, state } from "@firegrid/fluent-firegrid"
+import { primaryKey, Table } from "@firegrid/fluent-firegrid/state"
+import { Option, Schema } from "effect"
+
+class CounterState extends Table<CounterState>("counterState")({
+  id: Schema.String.pipe(primaryKey),
+  value: Schema.Number
+}) {}
+
+const counter = object({
+  name: "counter",
+  handlers: {
+    *add(amount: number) {
+      const st = state(CounterState)
+      const current = yield* st.get("v")
+      const value = Option.match(current, {
+        onNone: () => 0,
+        onSome: (row) => row.value
+      })
+      yield* st.set({ id: "v", value: value + amount })
+      return value + amount
+    },
+    *value() {
+      const st = state(CounterState)
+      const current = yield* st.get("v")
+      return Option.match(current, {
+        onNone: () => 0,
+        onSome: (row) => row.value
+      })
+    }
+  }
+})
+
+yield* objectClient(binding, counter)("user-1").add(5)
+yield* objectClient(binding, counter)("user-1").value()
+```
+
+`state(Table)` is synchronous and reusable as a value. Its operations are Effects.
+The table schema owns the row codec, table name, and primary key.
+
+## Layering
+
+This layer is split deliberately:
+
+1. `@firegrid/fluent-firegrid` owns the authoring surface:
+   `Table`, `primaryKey`, materialization fold types, `state(Table)`, and an
+   abstract handler-context state backend.
+2. The S2 object-owner runtime owns persistence:
+   one owner stream per `(objectName, key)`, ordered actor events, projection,
+   fenced draining, and crash recovery.
+3. Transport bindings remain outside fluent core.
+
+Fluent core must not import `effect-s2`. The S2 owner stream implements the
+backend consumed by `state(Table)`.
+
+## Physical Model
+
+Each virtual object key has one authoritative owner stream:
+
+```text
+obj/{objectName}/{encodedKey}
+```
+
+That stream is the ordered source of truth for:
+
+- accepted calls
+- call start/completion/error
+- table state changes
+- journaled state reads
+- durable `run` results
+- signal/awakeable resolution
+
+The projection is latest-value-per-`(table, key)` for state rows plus call/journal
+indexes for execution. Cold recovery folds the same stream.
+
+## Actor Events
+
+The durable event vocabulary should include at least:
+
+```ts
+type ObjectActorEvent =
+  | { _tag: "Accepted"; callId: string; method: string; input: unknown; idempotencyKey?: string }
+  | { _tag: "Started"; callId: string; runId: string }
+  | { _tag: "Completed"; callId: string; output: unknown }
+  | { _tag: "Errored"; callId: string; error: unknown }
+  | { _tag: "StateChanged"; callId: string; opId: string; table: string; key: string; value?: unknown; op: "set" | "delete" }
+  | { _tag: "StateReadJournaled"; callId: string; readId: string; table: string; key: string; value?: unknown }
+  | { _tag: "RunJournaled"; callId: string; step: string; value?: unknown; error?: unknown }
+  | { _tag: "SignalResolved"; callId: string; name: string; value: unknown }
+```
+
+The exact event names can evolve, but these facts are load-bearing.
+
+## State Semantics
+
+`state.get(table, key)` is replay-sensitive and must be journaled per call. A
+read-modify-write sequence must replay the same read value after a crash, even if
+the object state has advanced meanwhile.
+
+Algorithm:
+
+1. Derive `readId` from the active call id plus a deterministic state-read
+   ordinal.
+2. If `StateReadJournaled(readId)` exists, decode and return that value.
+3. Otherwise read from the current object projection.
+4. Append `StateReadJournaled(readId, value)` to the owner stream.
+5. Return the journaled value.
+
+`state.set` and `state.delete` append idempotent state-change facts whose
+operation identity is derived from the active call and deterministic operation
+ordinal/name. Replay must not double-apply a mutation.
+
+## Object Invocation Semantics
+
+`objectClient(binding, objectDef)(key).method(input)` is keyed at the type level.
+The final object binding should admit the call into the owner stream, not directly
+start an arbitrary workflow run.
+
+Flow:
+
+1. Append `Accepted` to `obj/{objectName}/{key}`.
+2. An owner drainer claims the key and runs accepted calls in stream order.
+3. The drainer starts/resumes the TanStack workflow run for the head call.
+4. The fluent context provides `objectKey` and the object state backend.
+5. Completion appends `Completed`; the drainer advances.
+
+Different keys may run concurrently. The same key is serial.
+
+## Acceptance Ladder
+
+Build this in vertical slices:
+
+### A. Fluent Table Materialization
+
+**Claim.** Fluent core exposes the durable state authoring shape without an S2
+dependency.
+
+**Forces:** `Table`, `primaryKey`, `ChangeMessage`, `MaterializedState`,
+`state(Table)`, abstract state backend.
+
+**Proof:** unit tests cover schema-owned primary keys, encode/decode/fold, and
+`state(Table)` get/set/delete against a fake backend.
+
+### B. S2 Object State Projection
+
+**Claim.** One S2 owner stream can persist and replay table state for one object
+key.
+
+**Forces:** owner stream path derivation, actor event codec, projection fold,
+state backend implementation.
+
+**Proof:** `add(5)` then fresh process `value()` returns `5` against `s2 lite`.
+
+### C. Same-Key Serialization
+
+**Claim.** Concurrent same-key object calls cannot lose updates.
+
+**Forces:** `Accepted` admission, owner drainer, per-key lock/fence, one active
+call at a time.
+
+**Proof:** two hosts race `add(5)` and `add(7)` for the same key; final value is
+`12`; trace evidence shows serialized owner writes.
+
+### D. Replay-Safe Reads And Writes
+
+**Claim.** Read-modify-write remains stable under crash/replay.
+
+**Forces:** `StateReadJournaled`, idempotent state mutations, replay from owner
+stream before handler resume.
+
+**Proof:** crash after state mutation but before call completion; restart does not
+double-apply and returns the original result.
+
+### E. Restate-Like Handles
+
+**Claim.** `sendObjectClient` returns durable handles with attach/output
+semantics.
+
+**Forces:** idempotency keys, completion lookup by call id, attach/poll APIs.
+
+**Proof:** caller sends with idempotency key, process restarts, another caller
+attaches by handle and reads the completed result.
+
+## Guardrails
+
+- Do not replace `state(Table)` with string slots.
+- Do not put HTTP in fluent core.
+- Do not import `effect-s2` into fluent core.
+- Do not allow state operations inside `run` actions.
+- Do not claim object-state correctness without a real `s2 lite` crash/restart
+  proof.
+- Do not weaken the TanStack/S2 store proofs while adding object state.

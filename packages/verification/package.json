@@ -30,6 +30,7 @@
     "@effect/opentelemetry": "4.0.0-beta.87",
     "@effect/platform-node": "4.0.0-beta.87",
     "@firegrid/fluent-firegrid": "workspace:*",
+    "@firegrid/fluent-firegrid-s2": "workspace:*",
     "@firegrid/observability": "workspace:*",
     "@opentelemetry/api-logs": "^0.208.0",
     "@opentelemetry/resources": "^2.8.0",
