@@ -1,3 +1,4 @@
+/* oxlint-disable effect/restricted-syntax -- Node HTTP serving and host-loop callbacks are runtime boundaries that must run fluent Effects. */
 import {
   type AnyGeneratorHandler,
   bindFluentDefinitions,
@@ -18,6 +19,7 @@ import {
   type S2WorkflowRuntimeHostLoopArgs
 } from "@firegrid/tanstack-workflow-s2"
 import type { WorkflowRegistrationMap } from "@tanstack/workflow-runtime"
+import * as Effect from "effect/Effect"
 // @effect-diagnostics-next-line nodeBuiltinImport:off
 import * as Http from "node:http"
 // @effect-diagnostics-next-line nodeBuiltinImport:off
@@ -162,10 +164,15 @@ export const serveFluentS2 = async (options: FluentS2NodeServerOptions): Promise
   const runtime = createFluentS2NodeRuntime(options)
   const loopController = new AbortController()
   let loopFailed = false
+  const { onTick, ...hostLoopOptions } = options.hostLoop === false ? {} : options.hostLoop ?? {}
   const hostLoop = options.hostLoop === false
     ? undefined
     : runtime.host.runLoop({
-      ...options.hostLoop,
+      ...hostLoopOptions,
+      onTick: async (result) => {
+        await Effect.runPromise(runtime.binding.drainDelayedStarts())
+        await onTick?.(result)
+      },
       signal: loopController.signal
     }).catch(() => {
       loopFailed = true

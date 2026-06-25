@@ -13,6 +13,7 @@ import fluentFiregridS2ObjectSerializationProof from "./fluent-firegrid-s2-objec
 import fluentFiregridS2ObjectStateWaitProof from "./fluent-firegrid-s2-object-state-wait.ts"
 import fluentFiregridS2ObjectStateProof from "./fluent-firegrid-s2-object-state.ts"
 import fluentFiregridS2ObjectStaleOwnerProof from "./fluent-firegrid-s2-object-stale-owner.ts"
+import fluentFiregridS2ServiceDelayedSendProof from "./fluent-firegrid-s2-service-delayed-send.ts"
 import tanstackWorkflowS2HostCrashRestartProof from "./tanstack-workflow-s2-host-crash-restart.ts"
 import tanstackWorkflowS2HostTickProof from "./tanstack-workflow-s2-host-tick.ts"
 import tanstackWorkflowS2EventLogProof from "./tanstack-workflow-s2-event-log.ts"
@@ -37,6 +38,7 @@ const proofs = [
   fluentFiregridS2ObjectStateWaitProof,
   fluentFiregridS2ObjectStateProof,
   fluentFiregridS2ObjectStaleOwnerProof,
+  fluentFiregridS2ServiceDelayedSendProof,
   tanstackWorkflowS2HostCrashRestartProof,
   tanstackWorkflowS2HostTickProof,
   tanstackWorkflowS2EventLogProof,

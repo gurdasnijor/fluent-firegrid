@@ -33,6 +33,20 @@ export interface S2ObjectRuntimeBindingConfig extends S2ObjectStateBackendConfig
   readonly objectOwnerLeaseMs?: number
 }
 
+export interface S2DelayedStartDrainOptions {
+  readonly limit?: number
+}
+
+export interface S2DelayedStartDrainResult {
+  readonly started: number
+}
+
+export interface S2ObjectRuntimeBinding extends InvocationBinding<FluentFiregridError> {
+  readonly drainDelayedStarts: (
+    options?: S2DelayedStartDrainOptions
+  ) => Effect.Effect<S2DelayedStartDrainResult, FluentFiregridError>
+}
+
 export interface S2FluentDefinitionBindingOptions {
   readonly invocationBinding?: FluentDefinitionBindingOptions["invocationBinding"]
 }
@@ -85,6 +99,28 @@ type StateWaitDeliveredEvent = {
   readonly waitId: string
 }
 
+type DelayedStartAcceptedEvent = {
+  readonly _tag: "DelayedStartAccepted"
+  readonly invocationId: string
+  readonly notBefore: number
+  readonly now: number
+  readonly request: CallRequest
+}
+
+type DelayedStartStartedEvent = {
+  readonly _tag: "DelayedStartStarted"
+  readonly invocationId: string
+  readonly leaseExpiresAt: number
+  readonly now: number
+  readonly ownerId: string
+}
+
+type DelayedStartDeliveredEvent = {
+  readonly _tag: "DelayedStartDelivered"
+  readonly invocationId: string
+  readonly now: number
+}
+
 type ObjectInvocationEvent =
   | AcceptedEvent
   | StartedEvent
@@ -94,7 +130,24 @@ type ObjectInvocationEvent =
   | StateWaitReadyEvent
   | StateWaitDeliveredEvent
 
+type DelayedStartEvent =
+  | DelayedStartAcceptedEvent
+  | DelayedStartStartedEvent
+  | DelayedStartDeliveredEvent
+
 type RuntimeRunResult = Awaited<ReturnType<NonNullable<FluentRuntimeHost["runtime"]["deliverSignal"]>>>
+
+interface DelayedStartExecution {
+  readonly run: {
+    readonly error?: unknown
+    readonly output?: unknown
+    readonly status: string
+  }
+}
+
+interface DelayedStartHostStore {
+  readonly loadExecution: (runId: string) => Promise<DelayedStartExecution | undefined>
+}
 
 interface Runtime {
   readonly basinName: string
@@ -111,6 +164,14 @@ interface InvocationProjection {
   readonly stateWaitReady: ReadonlyMap<string, StateWaitReadyEvent>
   readonly stateWaits: ReadonlyArray<StateWaitRegisteredEvent>
   readonly nextSeqNum: number
+}
+
+interface DelayedStartProjection {
+  readonly accepted: ReadonlyMap<string, DelayedStartAcceptedEvent>
+  readonly delivered: ReadonlySet<string>
+  readonly nextSeqNum: number
+  readonly orderedInvocationIds: ReadonlyArray<string>
+  readonly started: ReadonlyMap<string, DelayedStartStartedEvent>
 }
 
 const completionPollAttempts = 12_000
@@ -149,13 +210,14 @@ const s2ObjectStateOwnerFrom = (value: unknown): S2ObjectStateOwner | undefined 
 export const createS2ObjectRuntimeBinding = (
   host: FluentRuntimeHost,
   config: S2ObjectRuntimeBindingConfig
-): InvocationBinding<FluentFiregridError> => {
+): S2ObjectRuntimeBinding => {
   let nextCall = 0
   const bindingId = Math.random().toString(36).slice(2)
   const runtime = makeRuntime(config)
   const direct = createTanStackRuntimeBinding(host, config.now === undefined ? {} : { now: config.now })
   const now = config.now ?? Date.now
   const ownerLeaseMs = config.objectOwnerLeaseMs ?? 30_000
+  const delayedStarts = delayedStartStreamName(config)
 
   const callIdFor = (request: CallRequest): string =>
     request.runId ??
@@ -211,18 +273,73 @@ export const createS2ObjectRuntimeBinding = (
     )
   }
 
-  const binding: InvocationBinding<FluentFiregridError> = {
+  const runDelayedStart = <Output>(
+    request: CallRequest,
+    mode: "call" | "send"
+  ): Effect.Effect<Output | SendReference<Output>, FluentFiregridError> => {
+    const invocationId = callIdFor(request)
+    return runS2(
+      delayedStarts,
+      Effect.gen(function*() {
+        yield* admitDelayedStart(runtime, delayedStarts, {
+          _tag: "DelayedStartAccepted",
+          invocationId,
+          notBefore: now() + (request.delayMs ?? 0),
+          now: now(),
+          request: { ...request, runId: invocationId }
+        })
+        if (mode === "send") {
+          return {
+            handler: request.handler,
+            invocationId,
+            ...(request.key === undefined ? {} : { key: request.key }),
+            kind: request.kind,
+            name: request.name
+          } satisfies SendReference<Output>
+        }
+        return yield* waitForDelayedStartCompletion<Output>(
+          host,
+          runtime,
+          delayedStarts,
+          now,
+          ownerLeaseMs,
+          request,
+          invocationId
+        )
+      })
+    )
+  }
+
+  const drainDelayedStarts = (
+    options: S2DelayedStartDrainOptions = {}
+  ): Effect.Effect<S2DelayedStartDrainResult, FluentFiregridError> =>
+    runS2(
+      delayedStarts,
+      drainGenericDelayedStarts(host, runtime, delayedStarts, now, ownerLeaseMs, options.limit ?? 25)
+    )
+
+  const binding: S2ObjectRuntimeBinding = {
     call: <Output>(request: CallRequest): Effect.Effect<Output, FluentFiregridError> =>
       request.kind === "object"
         ? runObject<Output>(request, "call").pipe(Effect.map((value) => value as Output))
+        : request.delayMs !== undefined && request.delayMs > 0
+        ? runDelayedStart<Output>(request, "call").pipe(Effect.map((value) => value as Output))
         : direct.call<Output>(request),
+    drainDelayedStarts,
     send: <Output>(request: CallRequest): Effect.Effect<SendReference<Output>, FluentFiregridError> =>
       request.kind === "object"
         ? runObject<Output>(request, "send").pipe(Effect.map((value) => value as SendReference<Output>))
+        : request.delayMs !== undefined && request.delayMs > 0
+        ? runDelayedStart<Output>(request, "send").pipe(Effect.map((value) => value as SendReference<Output>))
         : direct.send<Output>(request)
   }
   return binding
 }
+
+export const delayedStartStreamName = (
+  config: Pick<S2ObjectRuntimeBindingConfig, "namespace">
+): string =>
+  `${sanitize(config.namespace ?? "default")}/delayed-starts`
 
 export const objectInvocationStreamName = (
   config: Pick<S2ObjectRuntimeBindingConfig, "namespace">,
@@ -281,6 +398,30 @@ const readProjection = (runtime: Runtime, streamName: string): Effect.Effect<Inv
     Effect.catch((cause) =>
       isMissing(cause)
         ? Effect.succeed(foldInvocationEvents([], 0))
+        : Effect.fail(cause)
+    )
+  )
+
+const readDelayedStartProjection = (
+  runtime: Runtime,
+  streamName: string
+): Effect.Effect<DelayedStartProjection, unknown> =>
+  Effect.gen(function*() {
+    const stream = yield* getStream(runtime, streamName)
+    const tail = yield* stream.checkTail()
+    const events = new Array<DelayedStartEvent>()
+    if (tail.tail.seqNum > 0) {
+      const records = yield* stream.readSession({
+        start: { from: { seqNum: 0 } },
+        stop: { limits: { count: tail.tail.seqNum } }
+      }).pipe(Stream.runCollect)
+      events.push(...Array.from(records, (record) => JSON.parse(record.body) as DelayedStartEvent))
+    }
+    return foldDelayedStartEvents(events, tail.tail.seqNum)
+  }).pipe(
+    Effect.catch((cause) =>
+      isMissing(cause)
+        ? Effect.succeed(foldDelayedStartEvents([], 0))
         : Effect.fail(cause)
     )
   )
@@ -345,6 +486,42 @@ const foldInvocationEvents = (
   }
 }
 
+const foldDelayedStartEvents = (
+  events: ReadonlyArray<DelayedStartEvent>,
+  nextSeqNum: number
+): DelayedStartProjection => {
+  const accepted = new Map<string, DelayedStartAcceptedEvent>()
+  const delivered = new Set<string>()
+  const orderedInvocationIds = new Array<string>()
+  const started = new Map<string, DelayedStartStartedEvent>()
+  events.forEach((event) => {
+    switch (event._tag) {
+      case "DelayedStartAccepted": {
+        if (!accepted.has(event.invocationId)) {
+          accepted.set(event.invocationId, event)
+          orderedInvocationIds.push(event.invocationId)
+        }
+        break
+      }
+      case "DelayedStartStarted": {
+        started.set(event.invocationId, event)
+        break
+      }
+      case "DelayedStartDelivered": {
+        delivered.add(event.invocationId)
+        break
+      }
+    }
+  })
+  return {
+    accepted,
+    delivered,
+    nextSeqNum,
+    orderedInvocationIds,
+    started
+  }
+}
+
 const appendEvent = (
   runtime: Runtime,
   streamName: string,
@@ -359,6 +536,68 @@ const appendEvent = (
         matchSeqNum === undefined ? undefined : { matchSeqNum }
       )
     )
+  })
+
+const appendDelayedStartEvent = (
+  runtime: Runtime,
+  streamName: string,
+  event: DelayedStartEvent,
+  matchSeqNum?: number
+): Effect.Effect<void, unknown> =>
+  Effect.gen(function*() {
+    const stream = yield* getStream(runtime, streamName)
+    yield* stream.append(
+      AppendInput.create(
+        [AppendRecord.string({ body: JSON.stringify(event) })],
+        matchSeqNum === undefined ? undefined : { matchSeqNum }
+      )
+    )
+  })
+
+const admitDelayedStart = (
+  runtime: Runtime,
+  streamName: string,
+  event: DelayedStartAcceptedEvent
+): Effect.Effect<void, unknown> =>
+  Effect.gen(function*() {
+    for (let attempt = 0; attempt < 32; attempt += 1) {
+      const projection = yield* readDelayedStartProjection(runtime, streamName)
+      if (projection.accepted.has(event.invocationId)) return
+      const result = yield* appendDelayedStartEvent(runtime, streamName, event, projection.nextSeqNum).pipe(Effect.exit)
+      if (result._tag === "Success") return
+      if (!isCasConflict(result.cause)) {
+        return yield* Effect.failCause(result.cause)
+      }
+    }
+    return yield* new FluentFiregridError({
+      message: `delayed fluent invocation admission CAS failed for ${event.invocationId}`
+    })
+  })
+
+const appendDelayedStartDelivered = (
+  runtime: Runtime,
+  streamName: string,
+  invocationId: string,
+  now: number
+): Effect.Effect<void, unknown> =>
+  Effect.gen(function*() {
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      const projection = yield* readDelayedStartProjection(runtime, streamName)
+      if (projection.delivered.has(invocationId)) return
+      const result = yield* appendDelayedStartEvent(
+        runtime,
+        streamName,
+        { _tag: "DelayedStartDelivered", invocationId, now },
+        projection.nextSeqNum
+      ).pipe(Effect.exit)
+      if (result._tag === "Success") return
+      if (!isCasConflict(result.cause)) {
+        return yield* Effect.failCause(result.cause)
+      }
+    }
+    return yield* new FluentFiregridError({
+      message: `delayed fluent invocation delivered CAS failed for ${invocationId}`
+    })
   })
 
 const appendTerminalEvent = (
@@ -421,6 +660,166 @@ const admit = (
       }
     }
     return yield* new FluentFiregridError({ message: `object invocation admission CAS failed for ${streamName}` })
+  })
+
+const drainGenericDelayedStarts = (
+  host: FluentRuntimeHost,
+  runtime: Runtime,
+  streamName: string,
+  now: () => number,
+  leaseMs: number,
+  limit: number
+): Effect.Effect<S2DelayedStartDrainResult, unknown> =>
+  Effect.gen(function*() {
+    let started = 0
+    while (started < limit) {
+      const projection = yield* readDelayedStartProjection(runtime, streamName)
+      const currentTime = now()
+      const nextInvocationId = projection.orderedInvocationIds.find((invocationId) => {
+        const accepted = projection.accepted.get(invocationId)
+        const startedEvent = projection.started.get(invocationId)
+        return accepted !== undefined
+          && accepted.notBefore <= currentTime
+          && !projection.delivered.has(invocationId)
+          && (startedEvent === undefined || startedEvent.leaseExpiresAt <= currentTime)
+      })
+      if (nextInvocationId === undefined) return { started }
+      const accepted = projection.accepted.get(nextInvocationId)
+      if (accepted === undefined) return { started }
+      const ownerId = `delayed-start:${nextInvocationId}:${Math.random().toString(36).slice(2)}`
+      const claim = yield* appendDelayedStartEvent(
+        runtime,
+        streamName,
+        {
+          _tag: "DelayedStartStarted",
+          invocationId: nextInvocationId,
+          leaseExpiresAt: currentTime + leaseMs,
+          now: currentTime,
+          ownerId
+        },
+        projection.nextSeqNum
+      ).pipe(Effect.exit)
+      if (claim._tag === "Failure") {
+        if (isCasConflict(claim.cause)) continue
+        return yield* Effect.failCause(claim.cause)
+      }
+      const result = yield* startDelayedRequest(host, accepted.request, now()).pipe(Effect.exit)
+      if (result._tag === "Failure") {
+        return yield* Effect.failCause(result.cause)
+      }
+      yield* appendDelayedStartDelivered(runtime, streamName, nextInvocationId, now())
+      started += 1
+    }
+    return { started }
+  })
+
+const waitForDelayedStartCompletion = <Output>(
+  host: FluentRuntimeHost,
+  runtime: Runtime,
+  streamName: string,
+  now: () => number,
+  leaseMs: number,
+  request: CallRequest,
+  invocationId: string
+): Effect.Effect<Output, unknown> => {
+  const loop = (remaining: number): Effect.Effect<Output, unknown> =>
+    Effect.gen(function*() {
+      yield* drainGenericDelayedStarts(host, runtime, streamName, now, leaseMs, 25)
+      const projection = yield* readDelayedStartProjection(runtime, streamName)
+      const accepted = projection.accepted.get(invocationId)
+      if (accepted !== undefined && accepted.notBefore > now()) {
+        return yield* Effect.sleep(completionPollInterval).pipe(Effect.andThen(loop(remaining - 1)))
+      }
+      const stored = yield* readDelayedStartCompletion<Output>(host, request, invocationId)
+      if (Option.isSome(stored)) return stored.value
+      const result = yield* startDelayedRequest(host, { ...request, runId: invocationId }, now()).pipe(Effect.exit)
+      if (result._tag === "Success") {
+        switch (result.value.kind) {
+          case "completed": {
+            return result.value.run?.output as Output
+          }
+          case "errored": {
+            return yield* new FluentFiregridError({
+              cause: result.value.run?.error,
+              message: `delayed fluent invocation ${request.name}.${request.handler} failed`
+            })
+          }
+          case "paused":
+          case "running":
+          case "not-claimable": {
+            const current = yield* readDelayedStartCompletion<Output>(host, request, invocationId)
+            if (Option.isSome(current)) return current.value
+            if (remaining <= 0) {
+              return yield* new FluentFiregridError({
+                message: `delayed fluent invocation ${request.name}.${request.handler} did not complete before timeout`
+              })
+            }
+            return yield* Effect.sleep(completionPollInterval).pipe(Effect.andThen(loop(remaining - 1)))
+          }
+          default: {
+            return yield* new FluentFiregridError({
+              message: `delayed fluent invocation ${request.name}.${request.handler} could not be attached: ${result.value.kind}`
+            })
+          }
+        }
+      }
+      return yield* Effect.failCause(result.cause)
+    })
+  return loop(completionPollAttempts)
+}
+
+const readDelayedStartCompletion = <Output>(
+  host: FluentRuntimeHost,
+  request: CallRequest,
+  invocationId: string
+): Effect.Effect<Option.Option<Output>, unknown> => {
+  const store = delayedStartHostStore(host)
+  if (store === undefined) return Effect.succeed(Option.none())
+  return Effect.tryPromise({
+    try: () => store.loadExecution(invocationId),
+    catch: (cause) => cause
+  }).pipe(
+    Effect.flatMap((execution) => {
+      if (execution?.run.status === "finished") {
+        return Effect.succeed(Option.some(execution.run.output as Output))
+      }
+      if (execution?.run.status === "errored") {
+        return new FluentFiregridError({
+          cause: execution.run.error,
+          message: `delayed fluent invocation ${request.name}.${request.handler} failed`
+        })
+      }
+      return Effect.succeed(Option.none())
+    })
+  )
+}
+
+const delayedStartHostStore = (host: FluentRuntimeHost): DelayedStartHostStore | undefined => {
+  const store = (host as { readonly store?: unknown }).store
+  if (typeof store !== "object" || store === null) return undefined
+  const loadExecution = (store as { readonly loadExecution?: unknown }).loadExecution
+  return typeof loadExecution === "function"
+    ? { loadExecution: loadExecution as DelayedStartHostStore["loadExecution"] }
+    : undefined
+}
+
+const startDelayedRequest = (
+  host: FluentRuntimeHost,
+  request: CallRequest,
+  now: number
+): Effect.Effect<RuntimeRunResult, unknown> =>
+  Effect.tryPromise({
+    try: () =>
+      host.runtime.startRun({
+        input: {
+          input: request.input,
+          ...(request.key === undefined ? {} : { key: request.key })
+        },
+        now,
+        runId: request.runId!,
+        workflowId: `${request.kind}:${request.name}:${request.handler}`
+      }),
+    catch: (cause) => cause
   })
 
 const waitForCompletion = (

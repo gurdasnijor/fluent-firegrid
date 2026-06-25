@@ -82,7 +82,6 @@ Implemented:
 Remaining gaps:
 
 - invocation cancel;
-- service/workflow delayed execution backed by the generic runtime scheduler.
 
 ### Durable Timers
 
@@ -313,10 +312,12 @@ Implementation status as of June 25, 2026:
 - the S2 object runtime persists `notBefore` on accepted object invocations,
   returns send handles immediately, skips delayed calls until due, and still
   drains later same-key work that is already due;
-- `createTanStackRuntimeBinding` rejects delayed invocations rather than
-  silently executing them immediately;
-- remaining gaps are service/workflow delayed starts backed by the generic
-  runtime scheduler and schedule/cron authoring helpers.
+- the S2 binding persists service/workflow delayed starts to a fluent-owned S2
+  admission stream, the Node host loop drains due starts into the TanStack
+  runtime, and returned handles attach to terminal output;
+- `createTanStackRuntimeBinding` still rejects delayed invocations because only
+  the S2 binding has durable delayed-start support;
+- remaining gaps are schedule/cron authoring helpers.
 
 `orTimeout` should be an Effect combinator returning a typed timeout error, not a
 new Future abstraction. `orTimeout(duration)` now maps Effect's native timeout
@@ -629,7 +630,8 @@ Implementation status as of June 25, 2026:
   not supplied;
 - `genericCall`, `genericSend`, `invocation`, and `attach` cover dynamic route
   metadata without requiring a concrete definition object;
-- delayed-send execution is still owned by the delayed messages slice;
+- delayed-send execution is durable for objects and for service/workflow starts
+  when using the S2 binding;
 - `cancel(invocationId)` remains intentionally unexposed until the lower runtime
   has a real persisted cancel/terminal event.
 
@@ -703,6 +705,8 @@ Tests:
 
 - delayed object send is admitted, wakes when due, and sender completes
   immediately;
+- delayed service/workflow send is admitted, stays absent before `notBefore`,
+  drains when due, and can be attached by handle;
 - timeout around a client call produces the expected typed failure.
 
 ### E. Durable Webhook Product Example

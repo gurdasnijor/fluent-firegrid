@@ -1,7 +1,11 @@
 export {
   createS2ObjectRuntimeBinding,
+  delayedStartStreamName,
   objectInvocationStreamName,
+  type S2DelayedStartDrainOptions,
+  type S2DelayedStartDrainResult,
   type S2FluentDefinitionBindingOptions,
+  type S2ObjectRuntimeBinding,
   s2FluentDefinitionBindingOptions,
   type S2ObjectRuntimeBindingConfig
 } from "./S2ObjectRuntimeBinding.ts"
