@@ -35,7 +35,7 @@ export default proof("effect-s2-flow.capability-b.owner-contention")
             runCounter(
               client(counter, "contended-user", { invocationId: "counter-contended-add-5" }).add({
                 amount: 5,
-                delay: "6 seconds"
+                delay: "1500 millis"
               })
             )
           )
@@ -43,7 +43,7 @@ export default proof("effect-s2-flow.capability-b.owner-contention")
             runCounter(
               client(counter, "contended-user", { invocationId: "counter-contended-add-7" }).add({
                 amount: 7,
-                delay: "6 seconds"
+                delay: "1500 millis"
               })
             )
           )

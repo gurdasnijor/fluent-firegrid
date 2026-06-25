@@ -38,7 +38,7 @@ export default proof("effect-s2-flow.capability-b.lease-refresh")
           const addFiber = yield* Effect.forkDetach(
             client(counter, key, { invocationId: "counter-lease-refresh-add" }).add({
               amount: 5,
-              delay: "12 seconds"
+              delay: "1500 millis"
             }).pipe(
               Effect.provide(FlowRuntime.layer({ s2Endpoint }))
             )

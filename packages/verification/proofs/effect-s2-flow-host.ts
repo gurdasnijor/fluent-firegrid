@@ -18,5 +18,10 @@ export const effectS2FlowHost = () =>
       `${repoRoot}/packages/verification/proofs/effect-s2-flow-proof-host.ts`
     ],
     cwd: repoRoot,
+    env: {
+      EFFECT_S2_FLOW_FENCE_BUSY_BACKOFF: "100 millis",
+      EFFECT_S2_FLOW_FENCE_LEASE: "1 second",
+      EFFECT_S2_FLOW_FENCE_REFRESH_INTERVAL: "250 millis"
+    },
     stderr: "inherit"
   })

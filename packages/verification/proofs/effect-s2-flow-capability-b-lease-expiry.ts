@@ -40,7 +40,7 @@ export default proof("effect-s2-flow.capability-b.lease-expiry")
             runCounter(
               client(counter, key, { invocationId: "counter-lease-expiry-add" }).add({
                 amount: 5,
-                delay: "12 seconds"
+                delay: "1500 millis"
               })
             )
           )

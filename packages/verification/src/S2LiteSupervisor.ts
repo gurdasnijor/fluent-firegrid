@@ -52,7 +52,7 @@ const makeSupervisor = Effect.fn("S2LiteSupervisor.make")(function*(
   const endpoint = `http://127.0.0.1:${config.port}`
 
   const waitUntilReady = Effect.fn("S2LiteSupervisor.waitUntilReady")(function*() {
-    const attempts = config.readiness?.attempts ?? 120
+    const attempts = config.readiness?.attempts ?? 400
     const interval = config.readiness?.interval ?? "50 millis"
     const path = config.readiness?.path ?? "/"
     const url = `${endpoint}${path}`

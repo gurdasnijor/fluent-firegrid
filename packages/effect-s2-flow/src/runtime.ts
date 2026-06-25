@@ -539,15 +539,20 @@ const methodEffect = (
 
 const hostFenceToken = (): string => (process.env.FIREGRID_HOST_ID ?? `pid-${process.pid}`).slice(0, 36)
 
-const fenceLeaseMillis = 8_000
+const durationEnv = (name: string, fallback: Duration.Input): Duration.Duration => {
+  const value = process.env[name]
+  return Duration.fromInputUnsafe(value === undefined || value === "" ? fallback : value as Duration.Input)
+}
 
-const fenceBusyBackoff: Duration.Input = "1 second"
+const fenceLeaseMillis = (): number => Duration.toMillis(durationEnv("EFFECT_S2_FLOW_FENCE_LEASE", "8 seconds"))
 
-const fenceRefreshInterval: Duration.Input = "2 seconds"
+const fenceBusyBackoff = (): Duration.Input => durationEnv("EFFECT_S2_FLOW_FENCE_BUSY_BACKOFF", "1 second")
+
+const fenceRefreshInterval = (): Duration.Input => durationEnv("EFFECT_S2_FLOW_FENCE_REFRESH_INTERVAL", "2 seconds")
 
 const hostId = (): string => (process.env.FIREGRID_HOST_ID ?? `pid-${process.pid}`).replace(/:/g, "-").slice(0, 20)
 
-const makeFenceToken = (): string => `${hostId()}:${(Date.now() + fenceLeaseMillis).toString(36)}`
+const makeFenceToken = (): string => `${hostId()}:${(Date.now() + fenceLeaseMillis()).toString(36)}`
 
 const parseFenceToken = (
   token: string
@@ -669,7 +674,7 @@ const refreshObjectFence = Effect.fn("effect-s2-flow.refreshObjectFence")(functi
   )
 
   return yield* Effect.gen(function*() {
-    yield* Effect.sleep(fenceRefreshInterval)
+    yield* Effect.sleep(fenceRefreshInterval())
     yield* refreshOnce
   }).pipe(
     Effect.forever
@@ -895,7 +900,7 @@ const runOwnerUntilIdle = Effect.fn("effect-s2-flow.runOwnerUntilIdle")(function
   streamName: string,
   idleTimeout: Duration.Input
 ) {
-  const busyBackoff = Effect.sleep(fenceBusyBackoff)
+  const busyBackoff = Effect.sleep(fenceBusyBackoff())
   const suspendedBackoff = Effect.sleep("100 millis")
   const idleWait = Effect.sleep(idleTimeout).pipe(
     Effect.withSpan("effect-s2-flow.owner.idle", {
