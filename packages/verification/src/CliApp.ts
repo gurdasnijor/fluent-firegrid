@@ -110,12 +110,13 @@ const makeRunCommand = (proofs: ReadonlyArray<Proof<any>>) =>
       if (requestedTrialId !== undefined && selected.length !== 1) {
         return yield* new VerificationError({ message: "--trial-id can only be used with one named proof" })
       }
-      const completed = yield* Effect.forEach(selected, (proof) =>
+      yield* Effect.forEach(selected, (proof) =>
         runProof(proof, {
           ...(reportPath === undefined ? {} : { reportDir: reportPath }),
           ...(requestedTrialId === undefined ? {} : { trialId: requestedTrialId })
-        }))
-      yield* Effect.forEach(completed, printCompletedProof, { discard: true })
+        }).pipe(
+          Effect.flatMap(printCompletedProof)
+        ), { discard: true })
     })
   ).pipe(
     Command.withDescription("Run one proof or all proofs")
