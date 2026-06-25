@@ -6,9 +6,12 @@ import { AppendInput, type AppendOptions, AppendRecord, type StreamApi } from "e
 import * as Context from "effect/Context"
 import type * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
+import * as Equal from "effect/Equal"
+import * as Fiber from "effect/Fiber"
 import * as Layer from "effect/Layer"
 import * as Random from "effect/Random"
 import * as Ref from "effect/Ref"
+import * as Semaphore from "effect/Semaphore"
 
 import { type BatchTooLarge, FlowError } from "./FlowError.ts"
 import {
@@ -29,6 +32,7 @@ import {
   stateHeaders,
   stepHeaders
 } from "./InvocationJournal.ts"
+import type { InvocationJournalRecord } from "./InvocationJournal.ts"
 
 export interface FlowRuntimeConfig {
   readonly s2Endpoint: string
@@ -150,6 +154,24 @@ const invoke = Effect.fn("effect-s2-flow.client.invoke")(function*(
       service: definition.name
     }, recordTypeHeader("Invoke"))
   ]
+  const journalHasSameInvoke = Effect.fn("effect-s2-flow.client.journalHasSameInvoke")(function*(
+    currentStreamApi: StreamApi
+  ) {
+    const journal = yield* readInvocationJournal(currentStreamApi)
+    const existing = journal.records.find((record) => record._tag === "Invoke" && record.requestId === requestId)
+    if (existing === undefined) return false
+    if (
+      existing._tag === "Invoke"
+      && existing.service === definition.name
+      && existing.method === method
+      && Equal.equals(existing.input, input)
+    ) {
+      return true
+    }
+    return yield* new FlowError({
+      message: `invocation ${requestId} already exists with a different request shape`
+    })
+  })
   const appendInvoke = Effect.fn("effect-s2-flow.client.appendInvoke")(function*(
     remainingRetries: number,
     currentStreamApi: StreamApi
@@ -164,14 +186,19 @@ const invoke = Effect.fn("effect-s2-flow.client.invoke")(function*(
       )
     )
     if (exit._tag === "Success") return
+    if (definition.kind === "service") {
+      const alreadySubmitted = yield* journalHasSameInvoke(currentStreamApi)
+      if (alreadySubmitted) return
+    }
     if (remainingRetries <= 0) {
       return yield* Effect.failCause(exit.cause)
     }
+    yield* Effect.sleep("50 millis")
     const retryStreamApi = yield* ensureInvocationJournalStream(runtime, streamName)
     return yield* appendInvoke(remainingRetries - 1, retryStreamApi)
   })
 
-  yield* appendInvoke(3, streamApi).pipe(
+  yield* appendInvoke(10, streamApi).pipe(
     Effect.withSpan("effect-s2-flow.client.invoke", {
       attributes: {
         "effect-s2-flow.invocation.stream": streamName,
@@ -205,7 +232,8 @@ const invoke = Effect.fn("effect-s2-flow.client.invoke")(function*(
 })
 
 export interface CurrentInvocationScope {
-  readonly fencingToken?: string
+  readonly appendLock: Semaphore.Semaphore
+  readonly fencingToken: Ref.Ref<string | undefined>
   readonly pendingRecords: Ref.Ref<ReadonlyArray<AppendRecord>>
   readonly requestId: string
   readonly streamName: string
@@ -234,44 +262,49 @@ export const run = <A, E, R>(
     }
 
     const value = yield* effect
-    const matchSeqNum = yield* Ref.get(scope.nextSeqNum)
-    const checkpointNext = matchSeqNum + 2
-    yield* appendAtomic(
-      scope.streamApi,
-      [
-        encodeRecord({
-          _tag: "StepCompleted",
-          requestId: scope.requestId,
-          stepName: name,
-          value
-        }, stepHeaders("StepCompleted", name)),
-        encodeRecord({
-          _tag: "CheckpointAdvanced",
-          nextSeqNum: checkpointNext
-        }, recordTypeHeader("CheckpointAdvanced"))
-      ],
-      appendOptions(matchSeqNum, scope.fencingToken),
-      `failed to append StepCompleted for ${name}`
-    ).pipe(
-      Effect.tap(() =>
-        Effect.annotateCurrentSpan({
-          "effect-s2-flow.invocation.stream": scope.streamName,
-          "effect-s2-flow.fencing.token": scope.fencingToken ?? "",
-          "effect-s2-flow.record.type": "StepCompleted",
-          "effect-s2-flow.step.name": name
-        })
-      ),
-      Effect.withSpan("effect-s2-flow.journal.append.ack", {
-        attributes: {
-          "effect-s2-flow.invocation.stream": scope.streamName,
-          "effect-s2-flow.fencing.token": scope.fencingToken ?? "",
-          "effect-s2-flow.record.type": "StepCompleted",
-          "effect-s2-flow.step.name": name
-        }
+    yield* scope.appendLock.withPermit(
+      Effect.gen(function*() {
+        const matchSeqNum = yield* Ref.get(scope.nextSeqNum)
+        const fencingToken = yield* Ref.get(scope.fencingToken)
+        const checkpointNext = matchSeqNum + 2
+        const ack = yield* appendAtomic(
+          scope.streamApi,
+          [
+            encodeRecord({
+              _tag: "StepCompleted",
+              requestId: scope.requestId,
+              stepName: name,
+              value
+            }, stepHeaders("StepCompleted", name)),
+            encodeRecord({
+              _tag: "CheckpointAdvanced",
+              nextSeqNum: checkpointNext
+            }, recordTypeHeader("CheckpointAdvanced"))
+          ],
+          appendOptions(matchSeqNum, fencingToken),
+          `failed to append StepCompleted for ${name}`
+        ).pipe(
+          Effect.tap(() =>
+            Effect.annotateCurrentSpan({
+              "effect-s2-flow.invocation.stream": scope.streamName,
+              "effect-s2-flow.fencing.token": fencingToken ?? "",
+              "effect-s2-flow.record.type": "StepCompleted",
+              "effect-s2-flow.step.name": name
+            })
+          ),
+          Effect.withSpan("effect-s2-flow.journal.append.ack", {
+            attributes: {
+              "effect-s2-flow.invocation.stream": scope.streamName,
+              "effect-s2-flow.fencing.token": fencingToken ?? "",
+              "effect-s2-flow.record.type": "StepCompleted",
+              "effect-s2-flow.step.name": name
+            }
+          })
+        )
+        yield* Ref.update(scope.steps, (current) => new Map(current).set(name, value))
+        yield* Ref.set(scope.nextSeqNum, ack.end.seqNum)
       })
     )
-    yield* Ref.update(scope.steps, (current) => new Map(current).set(name, value))
-    yield* Ref.set(scope.nextSeqNum, checkpointNext)
     return value
   })
 
@@ -311,6 +344,7 @@ export const state = <A>(name: string, initial: A): StateHandle<A> => ({
 
 export interface ServeOptions {
   readonly services: ReadonlyArray<FlowDefinition<ServiceHandlers>>
+  readonly idleTimeout?: Duration.Input
   readonly pollInterval?: Duration.Input
 }
 
@@ -329,6 +363,10 @@ const methodEffect = (
 const hostFenceToken = (): string => (process.env.FIREGRID_HOST_ID ?? `pid-${process.pid}`).slice(0, 36)
 
 const fenceLeaseMillis = 8_000
+
+const fenceBusyBackoff: Duration.Input = "1 second"
+
+const fenceRefreshInterval: Duration.Input = "2 seconds"
 
 const hostId = (): string => (process.env.FIREGRID_HOST_ID ?? `pid-${process.pid}`).replace(/:/g, "-").slice(0, 20)
 
@@ -391,7 +429,153 @@ const claimObjectFence = Effect.fn("effect-s2-flow.claimObjectFence")(function*(
   }
 })
 
+const refreshObjectFence = Effect.fn("effect-s2-flow.refreshObjectFence")(function*(
+  streamApi: StreamApi,
+  streamName: string,
+  appendLock: Semaphore.Semaphore,
+  nextSeqNum: Ref.Ref<number>,
+  fencingToken: Ref.Ref<string | undefined>
+) {
+  const refreshOnce = appendLock.withPermit(
+    Effect.gen(function*() {
+      const previousToken = yield* Ref.get(fencingToken)
+      if (previousToken === undefined) return
+      const matchSeqNum = yield* Ref.get(nextSeqNum)
+      const token = makeFenceToken()
+      const ack = yield* appendAtomic(
+        streamApi,
+        [AppendRecord.fence(token)],
+        appendOptions(matchSeqNum, previousToken),
+        `failed to refresh fence for ${streamName}`
+      ).pipe(
+        Effect.withSpan("effect-s2-flow.fence.refresh", {
+          attributes: {
+            "effect-s2-flow.fencing.previous_token": previousToken,
+            "effect-s2-flow.fencing.token": token,
+            "effect-s2-flow.invocation.stream": streamName
+          }
+        })
+      )
+      yield* Ref.set(fencingToken, token)
+      yield* Ref.set(nextSeqNum, ack.end.seqNum)
+    })
+  )
+
+  return yield* Effect.gen(function*() {
+    yield* Effect.sleep(fenceRefreshInterval)
+    yield* refreshOnce
+  }).pipe(
+    Effect.forever
+  )
+})
+
+type InvokeRecord = Extract<InvocationJournalRecord, { readonly _tag: "Invoke" }>
+
+const pendingInvocations = (records: ReadonlyArray<InvocationJournalRecord>): ReadonlyArray<InvokeRecord> => {
+  const completedRequests = new Set(
+    records.flatMap((record) => record._tag === "Completed" || record._tag === "Failed" ? [record.requestId] : [])
+  )
+  return records.filter((record): record is InvokeRecord =>
+    record._tag === "Invoke" && !completedRequests.has(record.requestId)
+  )
+}
+
 const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function*(
+  runtime: Required<FlowRuntimeConfig>,
+  serviceDefinition: FlowDefinition<ServiceHandlers>,
+  streamName: string,
+  streamApi: StreamApi,
+  invokeRecord: InvokeRecord,
+  stateRef: Ref.Ref<ReadonlyMap<string, unknown>>,
+  nextSeqNum: Ref.Ref<number>,
+  fencingToken: Ref.Ref<string | undefined>,
+  appendLock: Semaphore.Semaphore,
+  replayedRecords: ReadonlyArray<InvocationJournalRecord>
+) {
+  if (invokeRecord?._tag !== "Invoke") return
+
+  const steps = new Map<string, unknown>()
+  replayedRecords.forEach((record) => {
+    if (record._tag === "StepCompleted" && record.requestId === invokeRecord.requestId) {
+      steps.set(record.stepName, record.value)
+    }
+  })
+
+  const pendingRecords = yield* Ref.make<ReadonlyArray<AppendRecord>>([])
+  const stepRef = yield* Ref.make<ReadonlyMap<string, unknown>>(steps)
+  const result = yield* Effect.exit(
+    methodEffect(serviceDefinition, invokeRecord.method, invokeRecord.input).pipe(
+      Effect.provideService(InvocationScope, {
+        appendLock,
+        fencingToken,
+        nextSeqNum,
+        pendingRecords,
+        requestId: invokeRecord.requestId,
+        states: stateRef,
+        steps: stepRef,
+        streamApi,
+        streamName
+      })
+    )
+  )
+
+  if (result._tag === "Success") {
+    yield* appendLock.withPermit(
+      Effect.gen(function*() {
+        const matchSeqNum = yield* Ref.get(nextSeqNum)
+        const token = yield* Ref.get(fencingToken)
+        const records = yield* Ref.get(pendingRecords)
+        const ack = yield* appendAtomic(
+          streamApi,
+          [
+            ...records,
+            encodeRecord({
+              _tag: "Completed",
+              requestId: invokeRecord.requestId,
+              value: result.value
+            }, recordTypeHeader("Completed"))
+          ],
+          appendOptions(matchSeqNum, token),
+          `failed to append Completed for ${streamName}`
+        ).pipe(
+          Effect.withSpan("effect-s2-flow.invocation.completed", {
+            attributes: {
+              "effect-s2-flow.invocation.stream": streamName,
+              "effect-s2-flow.fencing.token": token ?? "",
+              "effect-s2-flow.request.id": invokeRecord.requestId,
+              "effect-s2-flow.state.record_count": String(records.length),
+              "effect-s2-flow.service": serviceDefinition.name
+            }
+          })
+        )
+        yield* Ref.set(nextSeqNum, ack.end.seqNum)
+      })
+    )
+    return
+  }
+
+  yield* appendLock.withPermit(
+    Effect.gen(function*() {
+      const matchSeqNum = yield* Ref.get(nextSeqNum)
+      const token = yield* Ref.get(fencingToken)
+      const ack = yield* appendAtomic(
+        streamApi,
+        [
+          encodeRecord({
+            _tag: "Failed",
+            requestId: invokeRecord.requestId,
+            message: String(result.cause)
+          }, recordTypeHeader("Failed"))
+        ],
+        appendOptions(matchSeqNum, token),
+        `failed to append Failed for ${streamName}`
+      )
+      yield* Ref.set(nextSeqNum, ack.end.seqNum)
+    })
+  )
+})
+
+const processInvocationStream = Effect.fn("effect-s2-flow.processInvocationStream")(function*(
   runtime: Required<FlowRuntimeConfig>,
   serviceDefinition: FlowDefinition<ServiceHandlers>,
   streamName: string
@@ -405,91 +589,85 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
       }
     })
   )
-  const completedRequests = new Set(
-    snapshot.records.flatMap((record) =>
-      record._tag === "Completed" || record._tag === "Failed" ? [record.requestId] : []
-    )
-  )
-  const invokeRecord = snapshot.records.find((record) =>
-    record._tag === "Invoke" && !completedRequests.has(record.requestId)
-  )
-  if (invokeRecord?._tag !== "Invoke") return
+  const invocations = pendingInvocations(snapshot.records)
+  if (invocations.length === 0) {
+    return { _tag: "idle" as const }
+  }
 
   const fence = serviceDefinition.kind === "object"
     ? yield* claimObjectFence(streamApi, streamName)
     : undefined
-  if (serviceDefinition.kind === "object" && fence === undefined) return
+  if (serviceDefinition.kind === "object" && fence === undefined) {
+    return { _tag: "busy" as const }
+  }
 
-  const steps = new Map<string, unknown>()
   const states = new Map<string, unknown>()
   snapshot.records.forEach((record) => {
-    if (record._tag === "StepCompleted" && record.requestId === invokeRecord.requestId) {
-      steps.set(record.stepName, record.value)
-    } else if (record._tag === "StateChanged") {
+    if (record._tag === "StateChanged") {
       states.set(record.stateName, record.value)
     }
   })
 
-  const pendingRecords = yield* Ref.make<ReadonlyArray<AppendRecord>>([])
   const stateRef = yield* Ref.make<ReadonlyMap<string, unknown>>(states)
-  const stepRef = yield* Ref.make<ReadonlyMap<string, unknown>>(steps)
   const nextSeqNum = yield* Ref.make(fence?.nextSeqNum ?? snapshot.nextSeqNum)
-  const result = yield* Effect.exit(
-    methodEffect(serviceDefinition, invokeRecord.method, invokeRecord.input).pipe(
-      Effect.provideService(InvocationScope, {
-        ...(fence === undefined ? {} : { fencingToken: fence.token }),
-        nextSeqNum,
-        pendingRecords,
-        requestId: invokeRecord.requestId,
-        states: stateRef,
-        steps: stepRef,
-        streamApi,
-        streamName
-      })
+  const fencingToken = yield* Ref.make<string | undefined>(fence?.token)
+  const appendLock = yield* Semaphore.make(1)
+  const refreshFiber = fence === undefined
+    ? undefined
+    : yield* refreshObjectFence(streamApi, streamName, appendLock, nextSeqNum, fencingToken).pipe(
+      Effect.catch((cause) => Effect.logError(`failed refreshing fence for ${streamName}`, cause)),
+      Effect.forkChild
     )
+
+  return yield* Effect.forEach(invocations, (invokeRecord) =>
+    processInvocation(
+      runtime,
+      serviceDefinition,
+      streamName,
+      streamApi,
+      invokeRecord,
+      stateRef,
+      nextSeqNum,
+      fencingToken,
+      appendLock,
+      snapshot.records
+    ), { discard: true }).pipe(
+      Effect.as({ _tag: "processed" as const, count: invocations.length }),
+      Effect.ensuring(refreshFiber === undefined ? Effect.void : Fiber.interrupt(refreshFiber))
+    )
+})
+
+const runOwnerUntilIdle = Effect.fn("effect-s2-flow.runOwnerUntilIdle")(function*(
+  runtime: Required<FlowRuntimeConfig>,
+  serviceDefinition: FlowDefinition<ServiceHandlers>,
+  streamName: string,
+  idleTimeout: Duration.Input
+) {
+  const busyBackoff = Effect.sleep(fenceBusyBackoff)
+  const idleWait = Effect.sleep(idleTimeout).pipe(
+    Effect.withSpan("effect-s2-flow.owner.idle", {
+      attributes: {
+        "effect-s2-flow.invocation.stream": streamName,
+        "effect-s2-flow.service": serviceDefinition.name
+      }
+    })
   )
 
-  const matchSeqNum = yield* Ref.get(nextSeqNum)
-  if (result._tag === "Success") {
-    const records = yield* Ref.get(pendingRecords)
-    yield* appendAtomic(
-      streamApi,
-      [
-        ...records,
-        encodeRecord({
-          _tag: "Completed",
-          requestId: invokeRecord.requestId,
-          value: result.value
-        }, recordTypeHeader("Completed"))
-      ],
-      appendOptions(matchSeqNum, fence?.token),
-      `failed to append Completed for ${streamName}`
-    ).pipe(
-      Effect.withSpan("effect-s2-flow.invocation.completed", {
-        attributes: {
-          "effect-s2-flow.invocation.stream": streamName,
-          "effect-s2-flow.fencing.token": fence?.token ?? "",
-          "effect-s2-flow.request.id": invokeRecord.requestId,
-          "effect-s2-flow.state.record_count": String(records.length),
-          "effect-s2-flow.service": serviceDefinition.name
-        }
-      })
-    )
+  while (true) {
+    const result = yield* processInvocationStream(runtime, serviceDefinition, streamName)
+    if (result._tag === "processed") continue
+    if (result._tag === "busy") {
+      yield* busyBackoff
+      return
+    }
+    yield* idleWait
+    const resultAfterIdle = yield* processInvocationStream(runtime, serviceDefinition, streamName)
+    if (resultAfterIdle._tag === "processed") continue
+    if (resultAfterIdle._tag === "busy") {
+      yield* busyBackoff
+    }
     return
   }
-
-  yield* appendAtomic(
-    streamApi,
-    [
-      encodeRecord({
-        _tag: "Failed",
-        requestId: invokeRecord.requestId,
-        message: String(result.cause)
-      }, recordTypeHeader("Failed"))
-    ],
-    appendOptions(matchSeqNum, fence?.token),
-    `failed to append Failed for ${streamName}`
-  )
 })
 
 const discoverInvocations = Effect.fn("effect-s2-flow.discoverInvocations")(function*(
@@ -513,6 +691,7 @@ export const serve = Effect.fn("effect-s2-flow.serve")(function*(options: ServeO
   const runtime = yield* FlowRuntime
   yield* ensureBasin(runtime)
   const active = yield* Ref.make<ReadonlySet<string>>(new Set())
+  const idleTimeout = options.idleTimeout ?? "250 millis"
   const pollInterval = options.pollInterval ?? "50 millis"
 
   const scan = Effect.forEach(options.services, (serviceDefinition) =>
@@ -523,8 +702,8 @@ export const serve = Effect.fn("effect-s2-flow.serve")(function*(options: ServeO
           const current = yield* Ref.get(active)
           if (current.has(streamName)) return
           yield* Ref.update(active, (set) => new Set(set).add(streamName))
-          yield* processInvocation(runtime, serviceDefinition, streamName).pipe(
-            Effect.catch((cause) => Effect.logError(`failed processing ${streamName}`, cause)),
+          yield* runOwnerUntilIdle(runtime, serviceDefinition, streamName, idleTimeout).pipe(
+            Effect.catch((cause) => Effect.logError(`failed running owner for ${streamName}`, cause)),
             Effect.ensuring(Ref.update(active, (set) => {
               const next = new Set(set)
               next.delete(streamName)

@@ -41,7 +41,9 @@ runHostMain({ services: [greeter] })
   of re-running the effect. The step checkpoint is committed as one atomic S2
   append batch: `StepCompleted` plus `CheckpointAdvanced`.
 - `serve({ services })` is the host loop. It discovers invocation streams,
-  folds their journals, runs pending handlers, and appends completion records.
+  starts one resident owner per active stream, folds its journal, drains pending
+  handlers in order, keeps the owner alive briefly for follow-up work, and then
+  idles it out.
 - `runHostMain({ services })` is the Node process entrypoint. It uses Effect's
   `NodeRuntime.runMain` and wires the host from environment supplied by the
   verifier or deployment wrapper.
@@ -60,6 +62,18 @@ The invocation journal substrate is available as
 The examples exported from `effect-s2-flow/examples/*` are proof fixtures. They
 are not product API.
 
+## Capability B Surface
+
+The root package also exports the current durable object primitives:
+
+- `object(...)` defines a per-key durable object backed by one S2 stream per
+  key.
+- `state(name, initial)` defines owner-local durable state folded from
+  `StateChanged` records. Reads inside a handler observe the owner fold.
+
+This surface is still intentionally small, but it is no longer proof-only: the
+runtime exports it as the product entrypoint for the current Capability B work.
+
 ## Verification Contract
 
 This package is being built proof-first. Proofs live in
@@ -76,11 +90,16 @@ The load-bearing green proofs establish:
 
 - Durable step replay survives a `kill -9` after a step journal ack and does not
   re-run the completed step.
+- Explicit service invocation IDs are idempotent: retrying the same request
+  attaches to the existing S2 journal, returns the recorded result, and does
+  not append a second `Invoke`.
 - The first internal Capability B slices are real-substrate proofs: state folds
   after a fresh process, a stale object-stream token is rejected by S2 with
   `FencingTokenMismatchError`, and two would-be owners of one object stream
   contend without a lost update because the active lease admits one owner while
-  the other backs off. A killed owner also stops blocking progress: after its
+  the other backs off. A live owner refreshes its fence while processing work
+  that runs longer than the initial lease, so a successor cannot steal the
+  object mid-handler. A killed owner also stops blocking progress: after its
   lease expires, a successor claims the object stream and completes the pending
   invocation from the S2 journal.
 
@@ -94,11 +113,11 @@ The package is no longer just stubs, but the product claim is intentionally
 small. These are deferred until their own proofs force them:
 
 - Public durable object/state APIs.
-- Lease refresh and eviction semantics for long-running fenced owners. The
-  current internal lease token is enough to prove active-owner backoff and
-  dead-owner expiry, not full production ownership lifecycle.
-- Idempotent client retries and request de-duplication beyond the current
-  explicit invocation id path.
+- Eviction semantics and host-health policy for long-running fenced owners.
+  Lease refresh for active owners is implemented and proven, but the broader
+  production ownership lifecycle still needs explicit proofs.
+- Request de-duplication beyond the current explicit service invocation id
+  path.
 - Backpressure, stream discovery pagination, and long-running host lifecycle
   controls.
 - Fluent higher-level authoring APIs.
