@@ -25,6 +25,16 @@ export interface S2ObjectStateAddress {
   readonly key: string
 }
 
+export interface S2ObjectStateOwner {
+  readonly callId: string
+  readonly invocationStreamName: string
+  readonly ownerId: string
+}
+
+export interface S2ObjectStateBackendOptions {
+  readonly owner?: S2ObjectStateOwner
+}
+
 interface Runtime {
   readonly basinName: string
   readonly layer: ReturnType<typeof S2Layer>
@@ -37,18 +47,31 @@ interface Projection {
   readonly reads: ReadonlyMap<string, Option.Option<unknown>>
 }
 
+interface InvocationProjection {
+  readonly started: ReadonlyMap<string, { readonly ownerId: string }>
+}
+
 export const objectStateStreamName = (
   config: Pick<S2ObjectStateBackendConfig, "namespace">,
   address: S2ObjectStateAddress
 ): string =>
   `${sanitize(config.namespace ?? "default")}/obj/${sanitize(address.objectName)}/${sanitize(address.key)}/state`
 
+const objectInvocationStreamName = (
+  config: Pick<S2ObjectStateBackendConfig, "namespace">,
+  address: S2ObjectStateAddress
+): string =>
+  `${sanitize(config.namespace ?? "default")}/obj/${sanitize(address.objectName)}/${sanitize(address.key)}/invocations`
+
 export const createS2ObjectStateBackend = (
   config: S2ObjectStateBackendConfig,
-  address: S2ObjectStateAddress
+  address: S2ObjectStateAddress,
+  backendOptions: S2ObjectStateBackendOptions = {}
 ): ObjectStateBackend => {
   const runtime = makeRuntime(config)
   const streamName = objectStateStreamName(config, address)
+  const owner = backendOptions.owner
+  const invocationStreamName = owner?.invocationStreamName
   const run = <A>(effect: Effect.Effect<A, unknown, never>): Effect.Effect<A, FluentFiregridError> =>
     effect.pipe(
       Effect.mapError((cause) =>
@@ -62,33 +85,41 @@ export const createS2ObjectStateBackend = (
     get: (table, key, options) =>
       run(
         options?.readId === undefined
-          ? readProjection(runtime, streamName).pipe(
+          ? readProjection(runtime, streamName, invocationStreamName).pipe(
             Effect.map((projection) => projection.materialized.get(table, key))
           )
-          : readJournaled(runtime, streamName, table, key, options.readId)
+          : readJournaled(runtime, streamName, table, key, options.readId, owner)
       ),
     set: (table, key, value, options) =>
       run(
         appendChange(runtime, streamName, {
           headers: {
+            ...(owner === undefined ? {} : {
+              callId: owner.callId,
+              ownerId: owner.ownerId
+            }),
             operation: "update",
             ...(options?.opId === undefined ? {} : { txid: options.opId })
           },
           key,
           type: table,
           value
-        }).pipe(Effect.asVoid)
+        }, owner).pipe(Effect.asVoid)
       ),
     delete: (table, key, options) =>
       run(
         appendChange(runtime, streamName, {
           headers: {
+            ...(owner === undefined ? {} : {
+              callId: owner.callId,
+              ownerId: owner.ownerId
+            }),
             operation: "delete",
             ...(options?.opId === undefined ? {} : { txid: options.opId })
           },
           key,
           type: table
-        }).pipe(Effect.asVoid)
+        }, owner).pipe(Effect.asVoid)
       )
   }
 }
@@ -115,8 +146,40 @@ const getStream = (runtime: Runtime, streamName: string) =>
     runtime.layer
   )
 
-const readProjection = (runtime: Runtime, streamName: string): Effect.Effect<Projection, unknown> =>
+const readInvocationProjection = (
+  runtime: Runtime,
+  streamName: string
+): Effect.Effect<InvocationProjection, unknown> =>
   Effect.gen(function*() {
+    const stream = yield* getStream(runtime, streamName)
+    const tail = yield* stream.checkTail()
+    const started = new Map<string, { readonly ownerId: string }>()
+    if (tail.tail.seqNum <= 0) return { started }
+    const records = yield* stream.readSession({
+      start: { from: { seqNum: 0 } },
+      stop: { limits: { count: tail.tail.seqNum } }
+    }).pipe(Stream.runCollect)
+    Array.from(records, (record) => JSON.parse(record.body) as {
+      readonly _tag?: string
+      readonly callId?: string
+      readonly ownerId?: string
+    }).forEach((event) => {
+      if (event._tag === "Started" && event.callId !== undefined && event.ownerId !== undefined) {
+        started.set(event.callId, { ownerId: event.ownerId })
+      }
+    })
+    return { started }
+  })
+
+const readProjection = (
+  runtime: Runtime,
+  streamName: string,
+  invocationStreamName?: string
+): Effect.Effect<Projection, unknown> =>
+  Effect.gen(function*() {
+    const invocation = invocationStreamName === undefined
+      ? undefined
+      : yield* readInvocationProjection(runtime, invocationStreamName)
     const stream = yield* getStream(runtime, streamName)
     const tail = yield* stream.checkTail()
     const materialized = MaterializedState.empty()
@@ -135,6 +198,7 @@ const readProjection = (runtime: Runtime, streamName: string): Effect.Effect<Pro
         ChangeMessage.decode(record.body).pipe(
           Effect.tap((message) =>
             Effect.sync(() => {
+              if (!stateMessageOwnerIsCurrent(message, invocation)) return
               if (ChangeMessage.isReadJournaled(message)) {
                 reads.set(message.headers.readId, message.headers.present ? Option.some(message.value) : Option.none())
                 return
@@ -150,25 +214,60 @@ const readProjection = (runtime: Runtime, streamName: string): Effect.Effect<Pro
     return { appliedTxids, materialized, nextSeqNum: tail.tail.seqNum, reads }
   })
 
+const stateMessageOwnerIsCurrent = (
+  message: ChangeMessage.Message,
+  invocation: InvocationProjection | undefined
+): boolean => {
+  if (invocation === undefined) return true
+  if (!("callId" in message.headers) || message.headers.callId === undefined || message.headers.ownerId === undefined) {
+    return true
+  }
+  return invocation.started.get(message.headers.callId)?.ownerId === message.headers.ownerId
+}
+
+const verifyOwner = (
+  runtime: Runtime,
+  owner: S2ObjectStateOwner | undefined
+): Effect.Effect<void, unknown> =>
+  owner === undefined
+    ? Effect.void
+    : readInvocationProjection(runtime, owner.invocationStreamName).pipe(
+      Effect.flatMap((projection) =>
+        projection.started.get(owner.callId)?.ownerId === owner.ownerId
+          ? Effect.void
+          : Effect.fail(
+            new FluentFiregridError({
+              message: `S2 object owner ${owner.ownerId} no longer owns call ${owner.callId}`
+            })
+          )
+      )
+    )
+
 const readJournaled = (
   runtime: Runtime,
   streamName: string,
   table: string,
   key: string,
-  readId: string
+  readId: string,
+  owner: S2ObjectStateOwner | undefined
 ): Effect.Effect<Option.Option<unknown>, unknown> =>
   Effect.gen(function*() {
     let attempts = 0
     while (attempts < 16) {
       attempts += 1
-      const projection = yield* readProjection(runtime, streamName)
+      const projection = yield* readProjection(runtime, streamName, owner?.invocationStreamName)
       const journaled = projection.reads.get(readId)
       if (journaled !== undefined) return journaled
 
+      yield* verifyOwner(runtime, owner)
       const value = projection.materialized.get(table, key)
       const stream = yield* getStream(runtime, streamName)
       const body = yield* ChangeMessage.encode({
         headers: {
+          ...(owner === undefined ? {} : {
+            callId: owner.callId,
+            ownerId: owner.ownerId
+          }),
           present: Option.isSome(value),
           read: "journaled",
           readId
@@ -193,15 +292,17 @@ const readJournaled = (
 const appendChange = (
   runtime: Runtime,
   streamName: string,
-  message: ChangeMessage.Message
+  message: ChangeMessage.Message,
+  owner: S2ObjectStateOwner | undefined
 ): Effect.Effect<void, unknown> =>
   Effect.gen(function*() {
     let attempts = 0
     while (attempts < 16) {
       attempts += 1
-      const projection = yield* readProjection(runtime, streamName)
+      const projection = yield* readProjection(runtime, streamName, owner?.invocationStreamName)
       const txid = ChangeMessage.isChange(message) ? message.headers.txid : undefined
       if (txid !== undefined && projection.appliedTxids.has(txid)) return
+      yield* verifyOwner(runtime, owner)
       const stream = yield* getStream(runtime, streamName)
       const body = yield* ChangeMessage.encode(message)
       const result = yield* stream.append(
@@ -231,7 +332,7 @@ export const readS2ObjectState = (
 ): Effect.Effect<MaterializedState, FluentFiregridError> => {
   const runtime = makeRuntime(config)
   const streamName = objectStateStreamName(config, address)
-  return readProjection(runtime, streamName).pipe(
+  return readProjection(runtime, streamName, objectInvocationStreamName(config, address)).pipe(
     Effect.map((projection) => projection.materialized),
     Effect.mapError((cause) =>
       cause instanceof FluentFiregridError

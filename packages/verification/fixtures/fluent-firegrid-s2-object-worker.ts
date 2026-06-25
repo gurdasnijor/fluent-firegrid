@@ -62,6 +62,25 @@ const counter = object({
       yield* counterState.set({ id: "v", value: next })
       return next
     },
+    *deposedAdd(input: { readonly by: number }) {
+      const current = yield* counterState.get("v")
+      const value = Option.match(current, {
+        onNone: () => 0,
+        onSome: (row) => row.value
+      })
+      const next = value + input.by
+      yield* run(
+        () =>
+          hostId === "a"
+            ? new Promise<{ readonly hostId: string; readonly next: number }>((resolve) => {
+              setTimeout(() => resolve({ hostId, next }), 500)
+            })
+            : { hostId, next },
+        { name: `deposed-compute-${input.by}` }
+      )
+      yield* counterState.set({ id: "v", value: next })
+      return next
+    },
     *crashAfterSet(input: { readonly by: number }) {
       const current = yield* counterState.get("v")
       const value = Option.match(current, {
@@ -156,6 +175,12 @@ const server = http.createServer((request, response) => {
 
     if (request.url?.startsWith("/crash-after-set") === true && request.method === "POST") {
       const value = await Effect.runPromise(client.crashAfterSet({ by: readBy(request) }))
+      sendJson(response, { hostId, value })
+      return
+    }
+
+    if (request.url?.startsWith("/deposed-add") === true && request.method === "POST") {
+      const value = await Effect.runPromise(client.deposedAdd({ by: readBy(request) }))
       sendJson(response, { hostId, value })
       return
     }

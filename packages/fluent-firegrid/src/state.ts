@@ -54,6 +54,8 @@ export interface StateChangeMessage {
   readonly old_value?: unknown
   readonly headers: {
     readonly operation: StateOperation
+    readonly callId?: string
+    readonly ownerId?: string
     readonly txid?: string
   }
 }
@@ -70,6 +72,8 @@ export interface StateReadJournaledMessage {
   readonly key: string
   readonly value?: unknown
   readonly headers: {
+    readonly callId?: string
+    readonly ownerId?: string
     readonly present: boolean
     readonly read: "journaled"
     readonly readId: string
@@ -92,6 +96,8 @@ export namespace ChangeMessage {
     old_value: Schema.optional(Schema.Unknown),
     headers: Schema.Struct({
       operation: Operation,
+      callId: Schema.optional(Schema.String),
+      ownerId: Schema.optional(Schema.String),
       txid: Schema.optional(Schema.String)
     })
   })
@@ -110,6 +116,8 @@ export namespace ChangeMessage {
     key: Schema.String,
     value: Schema.optional(Schema.Unknown),
     headers: Schema.Struct({
+      callId: Schema.optional(Schema.String),
+      ownerId: Schema.optional(Schema.String),
       present: Schema.Boolean,
       read: Schema.Literal("journaled"),
       readId: Schema.String

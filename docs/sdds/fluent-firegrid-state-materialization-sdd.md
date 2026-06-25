@@ -214,16 +214,21 @@ active call at a time.
 
 **Status:** Implemented.
 
-**Claim.** A killed object owner cannot block a key forever or allow stale writes
-after takeover.
+**Claim.** A killed or live-deposed object owner cannot block a key forever or
+allow stale writes after takeover.
 
-**Forces:** stale owner recovery, owner handoff, object lease expiry, and matching
-TanStack runtime lease expiry for the abandoned run.
+**Forces:** stale owner recovery, owner handoff, object lease expiry, matching
+TanStack runtime lease expiry for the abandoned run, owner-token state write
+fencing, and owner-token terminal event fencing.
 
 **Proof:** host A starts a same-key call and is killed before completion; host B
 waits for lease expiry, claims ownership, resumes the abandoned run from S2, then
 serializes its own same-key call. `fluent-firegrid-s2.object-stale-owner` proves
 the final state is `12`.
+
+`fluent-firegrid-s2.object-live-fencing` keeps host A alive after lease expiry,
+lets host B take over and complete the call, then proves host A's late state
+write does not affect the final materialized value.
 
 ### D. Replay-Safe Reads And Writes
 
@@ -265,20 +270,17 @@ and another host can attach by calling the same object method with
   proof.
 - Do not weaken the TanStack/S2 store proofs while adding object state.
 
-## Remaining Hardening
+## Completed Hardening
 
 The implemented proof suite covers durable state projection, same-key
-serialization, cross-host serialization, killed-owner recovery, replay-safe
-state reads/writes, and send handles. One production hardening item remains
-before treating object ownership as fully fenced under arbitrary scheduler
-behavior:
+serialization, cross-host serialization, killed-owner recovery, live
+deposed-owner fencing, replay-safe state reads/writes, and send handles.
 
-- **Live deposed-owner state-write fencing.** Current stale-owner proofs kill the
-  old owner. Add token-enforced state/invocation appends or equivalent CAS
-  ownership checks so an owner that keeps running after lease expiry cannot
-  append stale object state after a successor has taken over. The acceptance
-  proof should keep host A alive, advance host B past the lease, let B complete
-  takeover, then verify any late host-A state write is rejected or ignored.
+State stream messages written by S2 object handlers carry call/owner metadata.
+When an object owner changes, projection ignores stale owned state messages and
+new state writes verify that the caller still owns the invocation before
+appending. Completed/errored invocation events are also fenced by current owner,
+so a live but deposed host cannot finish an already-taken-over call.
 
 This is hardening of the implemented S2 object owner, not a new SDD ladder. The
 next product layer is the Restate-like fluent authoring/client surface on top of

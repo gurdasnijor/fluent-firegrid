@@ -11,6 +11,7 @@ import { FluentFiregridError } from "./error.ts"
 export interface FluentWorkflowInput {
   readonly input: unknown
   readonly key?: string
+  readonly stateContext?: unknown
 }
 
 export interface FluentDefinitionBindingContext {

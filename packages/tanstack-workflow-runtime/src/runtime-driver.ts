@@ -328,6 +328,7 @@ async function driveClaimedRun<
       runId: args.runId,
       input: args.input,
       resume: args.resume,
+      resumeInput: args.resume ? mergeResumeStateContext(claim.run.input, args.input) : undefined,
       signalDelivery: args.signalDelivery,
       approval: args.approval,
       threadId: args.threadId,
@@ -455,6 +456,23 @@ function classifyRun(
   if (run?.status === 'errored' || run?.status === 'aborted') return 'errored'
   if (run?.status === 'running' || run?.status === 'queued') return 'running'
   return eventCount > 0 ? 'running' : 'not-found'
+}
+
+function mergeResumeStateContext(durableInput: unknown, transientInput: unknown) {
+  if (
+    typeof durableInput !== 'object' ||
+    durableInput === null ||
+    typeof transientInput !== 'object' ||
+    transientInput === null ||
+    !('stateContext' in transientInput)
+  ) {
+    return durableInput
+  }
+  return {
+    ...durableInput,
+    stateContext: (transientInput as { readonly stateContext?: unknown })
+      .stateContext,
+  }
 }
 
 function normalizeSweepLimit(

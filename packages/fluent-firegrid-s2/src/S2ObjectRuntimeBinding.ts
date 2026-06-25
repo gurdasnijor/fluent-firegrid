@@ -24,7 +24,8 @@ import * as Stream from "effect/Stream"
 import {
   createS2ObjectStateBackend,
   type S2ObjectStateAddress,
-  type S2ObjectStateBackendConfig
+  type S2ObjectStateBackendConfig,
+  type S2ObjectStateOwner
 } from "./S2ObjectStateBackend.ts"
 
 export interface S2ObjectRuntimeBindingConfig extends S2ObjectStateBackendConfig {
@@ -75,11 +76,30 @@ interface InvocationProjection {
 export const s2FluentDefinitionBindingOptions = (
   config: S2ObjectStateBackendConfig
 ): FluentDefinitionBindingOptions => ({
-  stateBackendFor: ({ definition, input }) =>
-    definition._kind === "object" && input.key !== undefined
-      ? createS2ObjectStateBackend(config, { key: input.key, objectName: definition.name })
-      : undefined
+  stateBackendFor: ({ definition, input }) => {
+    if (definition._kind !== "object" || input.key === undefined) return undefined
+    const owner = s2ObjectStateOwnerFrom(input.stateContext)
+    return createS2ObjectStateBackend(
+      config,
+      { key: input.key, objectName: definition.name },
+      owner === undefined ? undefined : { owner }
+    )
+  }
 })
+
+const s2ObjectStateOwnerFrom = (value: unknown): S2ObjectStateOwner | undefined =>
+  typeof value === "object"
+    && value !== null
+    && (value as { readonly _tag?: unknown })._tag === "S2ObjectStateOwner"
+    && typeof (value as { readonly callId?: unknown }).callId === "string"
+    && typeof (value as { readonly invocationStreamName?: unknown }).invocationStreamName === "string"
+    && typeof (value as { readonly ownerId?: unknown }).ownerId === "string"
+    ? {
+      callId: (value as { readonly callId: string }).callId,
+      invocationStreamName: (value as { readonly invocationStreamName: string }).invocationStreamName,
+      ownerId: (value as { readonly ownerId: string }).ownerId
+    }
+    : undefined
 
 export const createS2ObjectRuntimeBinding = (
   host: FluentRuntimeHost,
@@ -270,6 +290,27 @@ const appendEvent = (
     )
   })
 
+const appendTerminalEvent = (
+  runtime: Runtime,
+  streamName: string,
+  ownerId: string,
+  callId: string,
+  event: CompletedEvent | ErroredEvent
+): Effect.Effect<void, unknown> =>
+  Effect.gen(function*() {
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      const projection = yield* readProjection(runtime, streamName)
+      if (projection.completed.has(callId) || projection.errored.has(callId)) return
+      if (projection.started.get(callId)?.ownerId !== ownerId) return
+      const result = yield* appendEvent(runtime, streamName, event, projection.nextSeqNum).pipe(Effect.exit)
+      if (result._tag === "Success") return
+      if (!isCasConflict(result.cause)) {
+        return yield* Effect.failCause(result.cause)
+      }
+    }
+    return yield* new FluentFiregridError({ message: `object invocation terminal CAS failed for ${streamName}` })
+  })
+
 const admit = (
   runtime: Runtime,
   streamName: string,
@@ -362,7 +403,13 @@ const drain = (
           host.runtime.startRun({
             input: {
               input: accepted.input,
-              ...(request.key === undefined ? {} : { key: request.key })
+              ...(request.key === undefined ? {} : { key: request.key }),
+              stateContext: {
+                _tag: "S2ObjectStateOwner",
+                callId: nextCallId,
+                invocationStreamName: streamName,
+                ownerId
+              }
             },
             leaseMs: ownerLeaseMs,
             leaseOwner: ownerId,
@@ -373,7 +420,7 @@ const drain = (
         catch: (cause) => cause
       }).pipe(Effect.exit)
       if (result._tag === "Failure") {
-        yield* appendEvent(runtime, streamName, {
+        yield* appendTerminalEvent(runtime, streamName, ownerId, nextCallId, {
           _tag: "Errored",
           callId: nextCallId,
           error: Cause.pretty(result.cause),
@@ -382,7 +429,7 @@ const drain = (
         return
       }
       if (result.value.kind === "completed") {
-        yield* appendEvent(runtime, streamName, {
+        yield* appendTerminalEvent(runtime, streamName, ownerId, nextCallId, {
           _tag: "Completed",
           callId: nextCallId,
           now: now(),

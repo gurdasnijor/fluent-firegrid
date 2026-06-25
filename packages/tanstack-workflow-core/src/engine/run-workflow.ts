@@ -37,6 +37,8 @@ export interface RunWorkflowOptions {
   approval?: ApprovalResult
   /** Force a claimed existing run to drive the handler from persisted state. */
   resume?: boolean
+  /** Host-local input used while resuming; durable stored input remains authoritative. */
+  resumeInput?: unknown
   /** Read-only subscription to an existing run. */
   attach?: boolean
   /** External cancellation. */
@@ -306,7 +308,8 @@ async function resumeRun(options: DriveOptions): Promise<void> {
   const updatedHistory = await runStore.getEvents(runId)
 
   const abortController = setupAbort(options.signal)
-  const state = buildInitialState(effectiveWorkflow, persistedState.input)
+  const input = options.resumeInput ?? persistedState.input
+  const state = buildInitialState(effectiveWorkflow, input)
 
   const runState: RunState = {
     ...persistedState,
@@ -332,7 +335,7 @@ async function resumeRun(options: DriveOptions): Promise<void> {
     options: { ...options, workflow: effectiveWorkflow },
     runId,
     runState,
-    input: persistedState.input,
+    input,
     state,
     history: updatedHistory,
     abortController,
