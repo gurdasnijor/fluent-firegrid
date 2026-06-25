@@ -36,6 +36,9 @@ runHostMain({ services: [greeter] })
   client invocation has its own S2-backed invocation journal.
 - `client(definition, ...)` appends an invocation request to S2 and waits for a
   completion record.
+- `sendClient(definition, ...)` appends an invocation request and returns an
+  `InvocationHandle` without waiting. `attach(handle)` waits for the completion
+  record later. This is the async call surface later orchestration builds on.
 - `run(name, effect)` is a durable step. If the host dies after the step is
   journaled, restart folds the journal and returns the recorded value instead
   of re-running the effect. The step checkpoint is committed as one atomic S2

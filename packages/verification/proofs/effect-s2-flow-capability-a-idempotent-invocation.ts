@@ -1,5 +1,5 @@
 import { greeter } from "effect-s2-flow/examples/greeter"
-import { client, FlowRuntime } from "effect-s2-flow"
+import { attach, FlowRuntime, sendClient } from "effect-s2-flow"
 import { decodeRecord, invocationStream } from "effect-s2-flow/invocation-journal"
 import * as Effect from "effect/Effect"
 
@@ -27,10 +27,16 @@ export default proof("effect-s2-flow.capability-a.idempotent-invocation")
           }
           const flowRuntime = FlowRuntime.layer({ s2Endpoint })
           const request = { name: "Ada" }
-          const first = yield* client(greeter, { invocationId }).process(request).pipe(
+          const firstHandle = yield* sendClient(greeter, { invocationId }).process(request).pipe(
             Effect.provide(flowRuntime)
           )
-          const second = yield* client(greeter, { invocationId }).process(request).pipe(
+          const first = yield* attach(firstHandle).pipe(
+            Effect.provide(flowRuntime)
+          )
+          const secondHandle = yield* sendClient(greeter, { invocationId }).process(request).pipe(
+            Effect.provide(flowRuntime)
+          )
+          const second = yield* attach(secondHandle).pipe(
             Effect.provide(flowRuntime)
           )
           const stream = yield* s2.stream({

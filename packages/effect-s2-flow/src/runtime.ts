@@ -95,6 +95,17 @@ export type ServiceClient<Handlers extends ServiceHandlers> = {
   ) => Effect.Effect<HandlerOutput<Handlers[Name]>, FlowError, FlowRuntime>
 }
 
+export interface InvocationHandle<_Output = unknown> {
+  readonly requestId: string
+  readonly streamName: string
+}
+
+export type SendClient<Handlers extends ServiceHandlers> = {
+  readonly [Name in keyof Handlers]: (
+    input: HandlerInput<Handlers[Name]>
+  ) => Effect.Effect<InvocationHandle<HandlerOutput<Handlers[Name]>>, FlowError, FlowRuntime>
+}
+
 export const service = <Handlers extends ServiceHandlers>(
   definition: Omit<ServiceDefinition<Handlers>, "kind">
 ): ServiceDefinition<Handlers> => ({ ...definition, kind: "service" })
@@ -102,6 +113,23 @@ export const service = <Handlers extends ServiceHandlers>(
 export const object = <Handlers extends ServiceHandlers>(
   definition: Omit<ObjectDefinition<Handlers>, "kind">
 ): ObjectDefinition<Handlers> => ({ ...definition, kind: "object" })
+
+const resolveClientOptions = (
+  keyOrOptions: string | ClientOptions,
+  maybeOptions: ClientOptions
+): ResolvedClientOptions => typeof keyOrOptions === "string" ? { ...maybeOptions, key: keyOrOptions } : keyOrOptions
+
+const invocationProxy = <Handlers extends ServiceHandlers, A>(
+  definition: FlowDefinition<Handlers>,
+  options: ResolvedClientOptions,
+  dispatch: (method: string, input: unknown, options: ResolvedClientOptions) => A
+): A =>
+  new Proxy({}, {
+    get: (_target, property) =>
+      typeof property === "string" && property in definition.handlers
+        ? (input: unknown) => dispatch(property, input, options)
+        : undefined
+  }) as A
 
 export function client<Handlers extends ServiceHandlers>(
   definition: ServiceDefinition<Handlers>,
@@ -117,18 +145,35 @@ export function client<Handlers extends ServiceHandlers>(
   keyOrOptions: string | ClientOptions = {},
   maybeOptions: ClientOptions = {}
 ): ServiceClient<Handlers> {
-  const options: ResolvedClientOptions = typeof keyOrOptions === "string"
-    ? { ...maybeOptions, key: keyOrOptions }
-    : keyOrOptions
-  return new Proxy({}, {
-    get: (_target, property) =>
-      typeof property === "string" && property in definition.handlers
-        ? (input: unknown) => invoke(definition, property, input, options) as any
-        : undefined
-  }) as ServiceClient<Handlers>
+  return invocationProxy(
+    definition,
+    resolveClientOptions(keyOrOptions, maybeOptions),
+    (method, input, options) => invoke(definition, method, input, options) as any
+  )
 }
 
-const invoke = Effect.fn("effect-s2-flow.client.invoke")(function*(
+export function sendClient<Handlers extends ServiceHandlers>(
+  definition: ServiceDefinition<Handlers>,
+  options?: ClientOptions
+): SendClient<Handlers>
+export function sendClient<Handlers extends ServiceHandlers>(
+  definition: ObjectDefinition<Handlers>,
+  key: string,
+  options?: ClientOptions
+): SendClient<Handlers>
+export function sendClient<Handlers extends ServiceHandlers>(
+  definition: FlowDefinition<Handlers>,
+  keyOrOptions: string | ClientOptions = {},
+  maybeOptions: ClientOptions = {}
+): SendClient<Handlers> {
+  return invocationProxy(
+    definition,
+    resolveClientOptions(keyOrOptions, maybeOptions),
+    (method, input, options) => submitInvocation(definition, method, input, options) as any
+  )
+}
+
+const submitInvocation = Effect.fn("effect-s2-flow.client.submit")(function*(
   definition: FlowDefinition<ServiceHandlers>,
   method: string,
   input: unknown,
@@ -209,26 +254,46 @@ const invoke = Effect.fn("effect-s2-flow.client.invoke")(function*(
     })
   )
 
-  const awaitCompletion: Effect.Effect<unknown, FlowError> = Effect.suspend(() =>
-    readInvocationJournal(streamApi).pipe(
-      Effect.flatMap((journal) => {
-        const completed = journal.records.find((record) =>
-          (record._tag === "Completed" || record._tag === "Failed") && record.requestId === requestId
-        )
-        if (completed === undefined) {
+  return { requestId, streamName }
+})
+
+export const attach = <A = unknown>(
+  handle: InvocationHandle<A>
+): Effect.Effect<A, FlowError, FlowRuntime> =>
+  Effect.gen(function*() {
+    const runtime = yield* FlowRuntime
+    const streamApi = yield* ensureInvocationJournalStream(runtime, handle.streamName)
+
+    const awaitCompletion: Effect.Effect<unknown, FlowError> = Effect.suspend(() =>
+      readInvocationJournal(streamApi).pipe(
+        Effect.flatMap((journal) => {
+          const completed = journal.records.find((record) =>
+            (record._tag === "Completed" || record._tag === "Failed") && record.requestId === handle.requestId
+          )
+          if (completed === undefined) {
+            return Effect.sleep("25 millis").pipe(Effect.andThen(awaitCompletion))
+          }
+          if (completed._tag === "Completed") {
+            return Effect.succeed(completed.value)
+          }
+          if (completed._tag === "Failed") {
+            return new FlowError({ message: `invocation ${handle.streamName} failed: ${completed.message}` })
+          }
           return Effect.sleep("25 millis").pipe(Effect.andThen(awaitCompletion))
-        }
-        if (completed._tag === "Completed") {
-          return Effect.succeed(completed.value)
-        }
-        if (completed._tag === "Failed") {
-          return new FlowError({ message: `invocation ${streamName} failed: ${completed.message}` })
-        }
-        return Effect.sleep("25 millis").pipe(Effect.andThen(awaitCompletion))
-      })
+        })
+      )
     )
-  )
-  return yield* awaitCompletion
+    return (yield* awaitCompletion) as A
+  })
+
+const invoke = Effect.fn("effect-s2-flow.client.invoke")(function*(
+  definition: FlowDefinition<ServiceHandlers>,
+  method: string,
+  input: unknown,
+  options: ResolvedClientOptions
+) {
+  const handle = yield* submitInvocation(definition, method, input, options)
+  return yield* attach(handle)
 })
 
 export interface CurrentInvocationScope {
