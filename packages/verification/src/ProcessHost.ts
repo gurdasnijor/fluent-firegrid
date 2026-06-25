@@ -57,6 +57,34 @@ interface ManagedProcessHost {
   readonly restart: Effect.Effect<void, VerificationError>
 }
 
+const killDescendants = (
+  pid: number,
+  signal: "SIGTERM" | "SIGKILL"
+): Effect.Effect<void> => {
+  const script = `
+descendants() {
+  pgrep -P "$1" 2>/dev/null | while read child; do
+    descendants "$child"
+    echo "$child"
+  done
+}
+descendants "${pid}" | while read child; do
+  kill -s ${signal} "$child" 2>/dev/null || true
+done
+`
+  return Effect.scoped(
+    ChildProcess.make("bash", ["-lc", script], {
+      stderr: "ignore",
+      stdin: "ignore",
+      stdout: "ignore"
+    }).pipe(
+      Effect.flatMap((handle) => handle.exitCode),
+      Effect.ignore,
+      Effect.provide(NodeServices.layer)
+    )
+  )
+}
+
 export const processHost = (config: ProcessHostConfig): ProcessHostDescriptor => ({
   [ProcessHostTypeId]: true,
   config
@@ -168,9 +196,15 @@ const makeManagedHost = Effect.fn("ProcessHost.makeManagedHost")(function*(
       Effect.mapError((cause) => new VerificationError({ message: `failed to start host ${name}`, cause }))
     )
 
+    const stopTree = (signal: "SIGTERM" | "SIGKILL", stopProcess: Effect.Effect<void, unknown>) =>
+      killDescendants(proc.pid, signal).pipe(
+        Effect.andThen(Effect.ignore(stopProcess)),
+        Effect.andThen(killDescendants(proc.pid, signal)),
+        Effect.ignore
+      )
     const handle = {
-      stop: proc.kill({ killSignal: "SIGTERM", forceKillAfter: "5 seconds" }).pipe(Effect.ignore),
-      kill: proc.kill({ killSignal: "SIGKILL" }).pipe(Effect.ignore)
+      stop: stopTree("SIGTERM", proc.kill({ killSignal: "SIGTERM", forceKillAfter: "5 seconds" })),
+      kill: stopTree("SIGKILL", proc.kill({ killSignal: "SIGKILL" }))
     }
     yield* waitUntilReady(name, config, launchContext).pipe(
       Effect.catch((cause) => handle.kill.pipe(Effect.andThen(Effect.fail(cause))))

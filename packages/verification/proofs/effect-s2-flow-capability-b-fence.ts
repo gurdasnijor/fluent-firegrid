@@ -3,16 +3,9 @@ import { client, FlowRuntime } from "effect-s2-flow"
 import { AppendInput, AppendRecord, FencingTokenMismatchError } from "effect-s2"
 import * as Effect from "effect/Effect"
 
-import { processHost as supervisedProcess } from "../src/ProcessHost.ts"
 import { proof } from "../src/Proof.ts"
 import { VerificationError } from "../src/VerificationError.ts"
-
-const counterHost = () =>
-  supervisedProcess({
-    command: "pnpm",
-    args: ["--filter", "effect-s2-flow", "host"],
-    stderr: "inherit"
-  })
+import { effectS2FlowHost } from "./effect-s2-flow-host.ts"
 
 export default proof("effect-s2-flow.capability-b.fenced-state")
   .describedAs(
@@ -22,7 +15,7 @@ export default proof("effect-s2-flow.capability-b.fenced-state")
     property("capability-b.effect-s2-flow.fenced-state-proof")
       .s2Lite({ persistence: "local-root" })
       .hosts({
-        "owner-a": counterHost()
+        "owner-a": effectS2FlowHost()
       })
       .workload(({ s2, s2Endpoint }) =>
         Effect.gen(function*() {

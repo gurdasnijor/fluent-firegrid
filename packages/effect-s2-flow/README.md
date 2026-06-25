@@ -21,10 +21,11 @@ import { client, run, runHostMain, service } from "effect-s2-flow"
 export const greeter = service({
   name: "greeter",
   handlers: {
-    *process(input: { readonly name: string }) {
-      const greeting = yield* run("format", Effect.succeed(`Hello, ${input.name}`))
-      return { greeting }
-    }
+    process: (input: { readonly name: string }) =>
+      Effect.gen(function*() {
+        const greeting = yield* run("format", Effect.succeed(`Hello, ${input.name}`))
+        return { greeting }
+      })
   }
 })
 
@@ -79,7 +80,9 @@ The load-bearing green proofs establish:
   after a fresh process, a stale object-stream token is rejected by S2 with
   `FencingTokenMismatchError`, and two would-be owners of one object stream
   contend without a lost update because the active lease admits one owner while
-  the other backs off.
+  the other backs off. A killed owner also stops blocking progress: after its
+  lease expires, a successor claims the object stream and completes the pending
+  invocation from the S2 journal.
 
 The root package export still stays Capability-A-only. The object/state/fence
 work is intentionally behind examples and package-internal modules until the
@@ -91,9 +94,9 @@ The package is no longer just stubs, but the product claim is intentionally
 small. These are deferred until their own proofs force them:
 
 - Public durable object/state APIs.
-- Lease refresh and eviction semantics for fenced owners. The current internal
-  lease token is enough to prove active-owner backoff, not long-running
-  production ownership.
+- Lease refresh and eviction semantics for long-running fenced owners. The
+  current internal lease token is enough to prove active-owner backoff and
+  dead-owner expiry, not full production ownership lifecycle.
 - Idempotent client retries and request de-duplication beyond the current
   explicit invocation id path.
 - Backpressure, stream discovery pagination, and long-running host lifecycle

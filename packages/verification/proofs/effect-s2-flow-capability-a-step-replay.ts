@@ -3,9 +3,9 @@ import { client, FlowRuntime } from "effect-s2-flow"
 import * as Effect from "effect/Effect"
 import * as Fiber from "effect/Fiber"
 
-import { processHost } from "../src/ProcessHost.ts"
 import { proof } from "../src/Proof.ts"
 import { VerificationError } from "../src/VerificationError.ts"
+import { effectS2FlowHost } from "./effect-s2-flow-host.ts"
 
 export default proof("effect-s2-flow.capability-a.step-replay")
   .describedAs(
@@ -16,15 +16,7 @@ export default proof("effect-s2-flow.capability-a.step-replay")
       .s2Lite({ persistence: "local-root" })
       .host(
         "worker",
-        processHost({
-          command: "pnpm",
-          args: [
-            "--filter",
-            "effect-s2-flow",
-            "host"
-          ],
-          stderr: "inherit"
-        })
+        effectS2FlowHost()
       )
       .workload(({ hosts, s2Endpoint }) =>
         Effect.gen(function*() {

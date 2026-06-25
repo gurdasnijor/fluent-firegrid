@@ -1,18 +1,11 @@
-import { counter } from "effect-s2-flow/examples/counter"
-import { client, FlowRuntime } from "effect-s2-flow"
 import * as Effect from "effect/Effect"
 import * as Fiber from "effect/Fiber"
+import { client, FlowRuntime } from "effect-s2-flow"
+import { counter } from "effect-s2-flow/examples/counter"
 
-import { processHost } from "../src/ProcessHost.ts"
 import { proof } from "../src/Proof.ts"
 import { VerificationError } from "../src/VerificationError.ts"
-
-const counterHost = () =>
-  processHost({
-    command: "pnpm",
-    args: ["--filter", "effect-s2-flow", "host"],
-    stderr: "inherit"
-  })
+import { effectS2FlowHost } from "./effect-s2-flow-host.ts"
 
 export default proof("effect-s2-flow.capability-b.owner-contention")
   .describedAs(
@@ -22,8 +15,8 @@ export default proof("effect-s2-flow.capability-b.owner-contention")
     property("capability-b.effect-s2-flow.owner-contention-proof")
       .s2Lite({ persistence: "local-root" })
       .hosts({
-        "owner-a": counterHost(),
-        "owner-b": counterHost()
+        "owner-a": effectS2FlowHost(),
+        "owner-b": effectS2FlowHost()
       })
       .workload(({ hosts, runtime, s2Endpoint }) =>
         Effect.gen(function*() {
@@ -42,7 +35,7 @@ export default proof("effect-s2-flow.capability-b.owner-contention")
             runCounter(
               client(counter, "contended-user", { invocationId: "counter-contended-add-5" }).add({
                 amount: 5,
-                delay: "2 seconds"
+                delay: "6 seconds"
               })
             )
           )
@@ -50,7 +43,7 @@ export default proof("effect-s2-flow.capability-b.owner-contention")
             runCounter(
               client(counter, "contended-user", { invocationId: "counter-contended-add-7" }).add({
                 amount: 7,
-                delay: "2 seconds"
+                delay: "6 seconds"
               })
             )
           )

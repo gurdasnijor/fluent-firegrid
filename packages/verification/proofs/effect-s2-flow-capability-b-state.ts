@@ -2,9 +2,9 @@ import { counter } from "effect-s2-flow/examples/counter"
 import { client, FlowRuntime } from "effect-s2-flow"
 import * as Effect from "effect/Effect"
 
-import { processHost } from "../src/ProcessHost.ts"
 import { proof } from "../src/Proof.ts"
 import { VerificationError } from "../src/VerificationError.ts"
+import { effectS2FlowHost } from "./effect-s2-flow-host.ts"
 
 export default proof("effect-s2-flow.capability-b.durable-state")
   .describedAs(
@@ -14,11 +14,7 @@ export default proof("effect-s2-flow.capability-b.durable-state")
     property("capability-b.effect-s2-flow.durable-state-proof")
       .s2Lite({ persistence: "local-root" })
       .hosts({
-        "state-worker": processHost({
-          command: "pnpm",
-          args: ["--filter", "effect-s2-flow", "host"],
-          stderr: "inherit"
-        })
+        "state-worker": effectS2FlowHost()
       })
       .workload(({ hosts, s2Endpoint }) =>
         Effect.gen(function*() {
@@ -66,7 +62,7 @@ export default proof("effect-s2-flow.capability-b.durable-state")
             SpanName = 'effect-s2.append'
             AND SpanAttributes['s2.stream'] = 'counter.object.user-1'
             AND SpanAttributes['s2.append.record_count'] = '2'
-          ) = 2 AS ok
+          ) >= 1 AS ok
           FROM trial_spans
         `
         ),

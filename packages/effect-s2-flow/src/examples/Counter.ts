@@ -13,21 +13,21 @@ interface AddInput {
 export const counter = object({
   name: "counter",
   handlers: {
-    *add(input: AddInput) {
-      const next = yield* value.update((current) => current + input.amount)
-      if (input.delay !== undefined) {
-        yield* Effect.sleep(input.delay)
-      }
-      return next
-    },
-    *addThenRead(input: { readonly amount: number }) {
-      const before = yield* value.get
-      yield* value.set(before + input.amount)
-      const after = yield* value.get
-      return { after, before }
-    },
-    *value(_input: {}) {
-      return yield* value.get
-    }
+    add: (input: AddInput) =>
+      Effect.gen(function*() {
+        const next = yield* value.update((current) => current + input.amount)
+        if (input.delay !== undefined) {
+          yield* Effect.sleep(input.delay)
+        }
+        return next
+      }),
+    addThenRead: (input: { readonly amount: number }) =>
+      Effect.gen(function*() {
+        const before = yield* value.get
+        yield* value.set(before + input.amount)
+        const after = yield* value.get
+        return { after, before }
+      }),
+    value: (_input: {}) => value.get
   }
 })

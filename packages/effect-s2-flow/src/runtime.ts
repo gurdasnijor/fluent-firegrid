@@ -66,9 +66,9 @@ export type FlowDefinition<Handlers extends ServiceHandlers> =
   | ServiceDefinition<Handlers>
   | ObjectDefinition<Handlers>
 
-export type ServiceHandler<Input = any, Output = any> = (
+export type ServiceHandler<Input = any, Output = any, Error = any> = (
   input: Input
-) => Generator<Effect.Effect<any, any, InvocationScope>, Output, any>
+) => Effect.Effect<Output, Error, InvocationScope>
 
 export type ServiceHandlers = Record<string, ServiceHandler>
 
@@ -81,9 +81,9 @@ interface ResolvedClientOptions {
   readonly key?: string
 }
 
-type HandlerInput<Handler> = Handler extends (input: infer Input) => Generator<any, any, any> ? Input : never
+type HandlerInput<Handler> = Handler extends (input: infer Input) => Effect.Effect<any, any, any> ? Input : never
 
-type HandlerOutput<Handler> = Handler extends (input: any) => Generator<any, infer Output, any> ? Output : never
+type HandlerOutput<Handler> = Handler extends (input: any) => Effect.Effect<infer Output, any, any> ? Output : never
 
 export type ServiceClient<Handlers extends ServiceHandlers> = {
   readonly [Name in keyof Handlers]: (
@@ -323,14 +323,12 @@ const methodEffect = (
   if (handler === undefined) {
     return new FlowError({ message: `unknown handler ${serviceDefinition.name}.${method}` })
   }
-  return Effect.gen(function*() {
-    return yield* handler(input)
-  })
+  return handler(input)
 }
 
 const hostFenceToken = (): string => (process.env.FIREGRID_HOST_ID ?? `pid-${process.pid}`).slice(0, 36)
 
-const fenceLeaseMillis = 5_000
+const fenceLeaseMillis = 8_000
 
 const hostId = (): string => (process.env.FIREGRID_HOST_ID ?? `pid-${process.pid}`).replace(/:/g, "-").slice(0, 20)
 
