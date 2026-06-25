@@ -20,7 +20,8 @@ export const orders = service({
 
 This package does not implement a second durable engine. `run` lowers to
 TanStack `ctx.step`, `sleep` lowers to TanStack sleep primitives, and hosting is
-provided by `@firegrid/tanstack-workflow-s2`.
+provided by `@firegrid/tanstack-workflow-s2`. `waitForSignal` lowers to
+TanStack `ctx.waitForEvent`.
 
 Transport-specific serving belongs in a separate binding package or process
 entrypoint. The core package only exposes descriptors, typed clients, and

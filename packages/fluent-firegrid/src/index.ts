@@ -40,4 +40,4 @@ export {
   type WorkflowDefinition
 } from "./definitions.ts"
 export { FluentFiregridError } from "./error.ts"
-export { run, type RunOptions, sleep, sleepUntil } from "./run.ts"
+export { run, type RunOptions, sleep, sleepUntil, waitForSignal } from "./run.ts"

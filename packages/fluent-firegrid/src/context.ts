@@ -1,5 +1,5 @@
 /* oxlint-disable effect/restricted-syntax -- This module bridges Effect handlers into TanStack's Promise-based ctx.step boundary. */
-import type { SleepOptions, StepContext, StepOptions } from "@tanstack/workflow-core"
+import type { SleepOptions, StepContext, StepOptions, WaitForEventOptions } from "@tanstack/workflow-core"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 
@@ -23,6 +23,10 @@ export interface FluentDurableContextService {
   ) => Effect.Effect<A, FluentFiregridError>
   readonly sleep: (ms: number, options?: SleepOptions) => Effect.Effect<void, FluentFiregridError>
   readonly sleepUntil: (timestamp: number, options?: SleepOptions) => Effect.Effect<void, FluentFiregridError>
+  readonly waitForSignal: <Payload>(
+    name: string,
+    options?: WaitForEventOptions<Payload>
+  ) => Effect.Effect<Payload, FluentFiregridError>
 }
 
 export class FluentDurableContext extends Context.Service<FluentDurableContext, FluentDurableContextService>()(
@@ -37,6 +41,7 @@ export interface TanStackWorkflowContext {
   ) => Promise<A>
   readonly sleep: (ms: number, options?: SleepOptions) => Promise<void>
   readonly sleepUntil: (timestamp: number, options?: SleepOptions) => Promise<void>
+  readonly waitForEvent: <Payload = unknown>(name: string, options?: WaitForEventOptions<Payload>) => Promise<Payload>
 }
 
 export const fluentContextFromTanStack = (ctx: TanStackWorkflowContext): FluentDurableContextService => ({
@@ -49,6 +54,11 @@ export const fluentContextFromTanStack = (ctx: TanStackWorkflowContext): FluentD
     Effect.tryPromise({
       try: () => ctx.sleepUntil(timestamp, options),
       catch: (cause) => new FluentFiregridError({ cause, message: `sleepUntil(${timestamp}) failed` })
+    }),
+  waitForSignal: (name, options) =>
+    Effect.tryPromise({
+      try: () => ctx.waitForEvent(name, options),
+      catch: (cause) => new FluentFiregridError({ cause, message: `waitForSignal(${name}) failed` })
     }),
   step: (name, action, options) =>
     Effect.tryPromise({

@@ -1,4 +1,4 @@
-import type { SleepOptions, StepOptions } from "@tanstack/workflow-core"
+import type { SleepOptions, StepOptions, WaitForEventOptions } from "@tanstack/workflow-core"
 import * as Effect from "effect/Effect"
 
 import { FluentDurableContext, type RunAction } from "./context.ts"
@@ -40,4 +40,12 @@ export const sleepUntil = (
 ): Effect.Effect<void, FluentFiregridError, FluentDurableContext> =>
   FluentDurableContext.pipe(
     Effect.flatMap((ctx) => ctx.sleepUntil(timestamp, options))
+  )
+
+export const waitForSignal = <Payload = unknown>(
+  name: string,
+  options?: WaitForEventOptions<Payload>
+): Effect.Effect<Payload, FluentFiregridError, FluentDurableContext> =>
+  FluentDurableContext.pipe(
+    Effect.flatMap((ctx) => ctx.waitForSignal(name, options))
   )
