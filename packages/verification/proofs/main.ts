@@ -8,6 +8,7 @@ import fluentFiregridObjectKeyRestartProof from "./fluent-firegrid-object-key-re
 import fluentFiregridS2ObjectCrossHostProof from "./fluent-firegrid-s2-object-cross-host.ts"
 import fluentFiregridS2ObjectSerializationProof from "./fluent-firegrid-s2-object-serialization.ts"
 import fluentFiregridS2ObjectStateProof from "./fluent-firegrid-s2-object-state.ts"
+import fluentFiregridS2ObjectStaleOwnerProof from "./fluent-firegrid-s2-object-stale-owner.ts"
 import fluentFiregridSignalRestartProof from "./fluent-firegrid-signal-restart.ts"
 import tanstackWorkflowS2HostCrashRestartProof from "./tanstack-workflow-s2-host-crash-restart.ts"
 import tanstackWorkflowS2HostTickProof from "./tanstack-workflow-s2-host-tick.ts"
@@ -28,6 +29,7 @@ const proofs = [
   fluentFiregridS2ObjectCrossHostProof,
   fluentFiregridS2ObjectSerializationProof,
   fluentFiregridS2ObjectStateProof,
+  fluentFiregridS2ObjectStaleOwnerProof,
   fluentFiregridSignalRestartProof,
   tanstackWorkflowS2HostCrashRestartProof,
   tanstackWorkflowS2HostTickProof,

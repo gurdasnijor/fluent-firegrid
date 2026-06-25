@@ -69,6 +69,8 @@ export interface FluentRuntimeHost {
       readonly workflowId: string
       readonly runId: string
       readonly input: unknown
+      readonly leaseMs?: number
+      readonly leaseOwner?: string
       readonly now?: number
     }) => Promise<WorkflowRuntimeRunResult>
   }

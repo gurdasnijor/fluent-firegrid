@@ -27,6 +27,7 @@ const s2Endpoint = requiredEnv("S2_ENDPOINT")
 const trialId = requiredEnv("FIREGRID_TRIAL_ID")
 const hostId = requiredEnv("FIREGRID_HOST_ID")
 const port = Number(requiredEnv("HOST_PORT"))
+let logicalNow = Number(process.env.FIREGRID_NOW ?? "1000")
 
 const counter = object({
   name: "cross-host-counter",
@@ -39,6 +40,25 @@ const counter = object({
       })
       const next = value + input.by
       yield* run(() => ({ hostId, next }), { name: `compute-${input.by}` })
+      yield* counterState.set({ id: "v", value: next })
+      return next
+    },
+    *slowAdd(input: { readonly by: number }) {
+      const current = yield* counterState.get("v")
+      const value = Option.match(current, {
+        onNone: () => 0,
+        onSome: (row) => row.value
+      })
+      const next = value + input.by
+      yield* run(
+        () =>
+          hostId === "a"
+            ? new Promise<{ readonly hostId: string; readonly next: number }>((resolve) => {
+              setTimeout(() => resolve({ hostId, next }), 60_000)
+            })
+            : { hostId, next },
+        { name: `slow-compute-${input.by}` }
+      )
       yield* counterState.set({ id: "v", value: next })
       return next
     },
@@ -64,7 +84,7 @@ const host = createS2WorkflowRuntimeHost({
 
 const binding = createS2ObjectRuntimeBinding(host, {
   ...config,
-  now: () => 1_000,
+  now: () => logicalNow,
   objectOwnerLeaseMs: 1_000
 })
 
@@ -75,9 +95,19 @@ const sendJson = (response: http.ServerResponse, value: unknown, status = 200) =
   response.end(JSON.stringify(value))
 }
 
+const errorJson = (cause: unknown) => ({
+  cause: cause instanceof Error && "cause" in cause ? String(cause.cause) : undefined,
+  error: String(cause)
+})
+
 const readBy = (request: http.IncomingMessage): number => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`)
   return Number(url.searchParams.get("by") ?? "0")
+}
+
+const readNow = (request: http.IncomingMessage): number => {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`)
+  return Number(url.searchParams.get("value") ?? String(logicalNow))
 }
 
 const server = http.createServer((request, response) => {
@@ -93,6 +123,18 @@ const server = http.createServer((request, response) => {
       return
     }
 
+    if (request.url?.startsWith("/slow-add") === true && request.method === "POST") {
+      const value = await Effect.runPromise(client.slowAdd({ by: readBy(request) }))
+      sendJson(response, { hostId, value })
+      return
+    }
+
+    if (request.url?.startsWith("/now") === true && request.method === "POST") {
+      logicalNow = readNow(request)
+      sendJson(response, { hostId, now: logicalNow })
+      return
+    }
+
     if (request.url === "/value") {
       const value = await Effect.runPromise(client.value(undefined))
       sendJson(response, { hostId, value })
@@ -101,7 +143,7 @@ const server = http.createServer((request, response) => {
 
     sendJson(response, { error: "not found" }, 404)
   })().catch((cause) => {
-    sendJson(response, { error: String(cause) }, 500)
+    sendJson(response, errorJson(cause), 500)
   })
 })
 

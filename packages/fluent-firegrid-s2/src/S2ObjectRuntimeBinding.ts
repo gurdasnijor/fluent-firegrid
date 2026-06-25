@@ -360,6 +360,8 @@ const drain = (
               input: accepted.input,
               ...(request.key === undefined ? {} : { key: request.key })
             },
+            leaseMs: ownerLeaseMs,
+            leaseOwner: ownerId,
             now: now(),
             runId: accepted.runId,
             workflowId: `${request.kind}:${request.name}:${accepted.handler}`
@@ -370,7 +372,7 @@ const drain = (
         yield* appendEvent(runtime, streamName, {
           _tag: "Errored",
           callId: nextCallId,
-          error: String(result.cause),
+          error: Cause.pretty(result.cause),
           now: now()
         })
         return
@@ -384,12 +386,6 @@ const drain = (
         })
         continue
       }
-      yield* appendEvent(runtime, streamName, {
-        _tag: "Errored",
-        callId: nextCallId,
-        error: { kind: result.value.kind, run: result.value.run },
-        now: now()
-      })
       return
     }
   })

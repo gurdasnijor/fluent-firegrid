@@ -55,7 +55,7 @@ async function startRun<
   const now = args.now ?? Date.now()
   const workflow = await loadWorkflow(config, args.workflowId)
   const workflowVersion = workflow.version
-  await config.store.createRun({
+  const created = await config.store.createRun({
     runId: args.runId,
     workflowId: args.workflowId,
     workflowVersion,
@@ -69,6 +69,7 @@ async function startRun<
     runId: args.runId,
     input: args.input,
     now,
+    resume: created.kind === 'existing',
     leaseOwner: args.leaseOwner,
     leaseMs: args.leaseMs,
     threadId: args.threadId,
@@ -281,6 +282,7 @@ async function driveClaimedRun<
     input?: unknown
     signalDelivery?: Parameters<typeof runWorkflow>[0]['signalDelivery']
     approval?: Parameters<typeof runWorkflow>[0]['approval']
+    resume?: boolean
     now: number
     leaseOwner?: string
     leaseMs?: number
@@ -325,6 +327,7 @@ async function driveClaimedRun<
       runStore,
       runId: args.runId,
       input: args.input,
+      resume: args.resume,
       signalDelivery: args.signalDelivery,
       approval: args.approval,
       threadId: args.threadId,

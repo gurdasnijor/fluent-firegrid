@@ -35,6 +35,8 @@ export interface RunWorkflowOptions {
   runId?: string
   signalDelivery?: SignalDelivery
   approval?: ApprovalResult
+  /** Force a claimed existing run to drive the handler from persisted state. */
+  resume?: boolean
   /** Read-only subscription to an existing run. */
   attach?: boolean
   /** External cancellation. */
@@ -140,6 +142,10 @@ async function drive(options: DriveOptions): Promise<void> {
     return
   }
   if (options.runId && (options.signalDelivery || options.approval)) {
+    await resumeRun(options)
+    return
+  }
+  if (options.runId && options.resume) {
     await resumeRun(options)
     return
   }

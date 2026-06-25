@@ -77,23 +77,25 @@ backend consumed by `state(Table)`.
 
 ## Physical Model
 
-Each virtual object key has one authoritative owner stream:
+Each virtual object key has an invocation owner stream and a state
+materialization stream:
 
 ```text
-obj/{objectName}/{encodedKey}
+obj/{objectName}/{encodedKey}/invocations
+obj/{objectName}/{encodedKey}/state
 ```
 
-That stream is the ordered source of truth for:
+The invocation stream is the ordered source of truth for:
 
 - accepted calls
 - call start/completion/error
-- table state changes
 - journaled state reads
 - durable `run` results
 - signal/awakeable resolution
 
-The projection is latest-value-per-`(table, key)` for state rows plus call/journal
-indexes for execution. Cold recovery folds the same stream.
+The state stream is the latest-value-per-`(table, key)` materialization for table
+rows. Cold recovery folds both streams: invocation order and call status from
+`/invocations`, object table state from `/state`.
 
 ## Actor Events
 
@@ -198,14 +200,18 @@ active call at a time.
 
 ### C3. Stale Owner Recovery And Fencing
 
+**Status:** Implemented.
+
 **Claim.** A killed object owner cannot block a key forever or allow stale writes
 after takeover.
 
-**Forces:** stale owner recovery, owner handoff, and fenced owner writes.
+**Forces:** stale owner recovery, owner handoff, object lease expiry, and matching
+TanStack runtime lease expiry for the abandoned run.
 
 **Proof:** host A starts a same-key call and is killed before completion; host B
-waits for lease expiry, claims ownership, completes from the owner stream, and
-trace evidence shows no unfenced owner writes.
+waits for lease expiry, claims ownership, resumes the abandoned run from S2, then
+serializes its own same-key call. `fluent-firegrid-s2.object-stale-owner` proves
+the final state is `12`.
 
 ### D. Replay-Safe Reads And Writes
 
