@@ -52,13 +52,13 @@ export default proof("effect-s2-flow.capability-b.lease-expiry")
           yield* runtime.waitForSpan("effect-s2-flow.fence.claim", {
             attributes: { "effect-s2-flow.invocation.stream": stream }
           })
-          yield* hosts.kill("owner-a")
 
           yield* hosts.restart("owner-b")
           yield* runtime.waitForSpan("effect-s2-flow.fence.busy", {
             attributes: { "effect-s2-flow.invocation.stream": stream },
             attempts: 400
           })
+          yield* hosts.kill("owner-a")
 
           const addResult = yield* joinFiber(addFiber)
           const finalValue = yield* runCounter(
