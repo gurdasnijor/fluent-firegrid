@@ -322,6 +322,35 @@ describe("fluent-firegrid public surface", () => {
     ])
   })
 
+  it("rejects delayed starts on bindings without durable delayed-send support", async () => {
+    const binding = createTanStackRuntimeBinding({
+      runtime: {
+        startRun: async () => ({
+          eventCount: 0,
+          events: [],
+          kind: "completed",
+          runId: "should-not-run"
+        })
+      }
+    })
+
+    await expect(
+      Effect.runPromise(
+        binding.send({
+          delayMs: 1_000,
+          handler: "triage",
+          input: "INC-9",
+          kind: "service",
+          name: "incident",
+          runId: "delayed"
+        })
+      )
+    ).rejects.toMatchObject({
+      _tag: "FluentFiregridError",
+      message: "delayed fluent invocations require a binding with durable delayed-send support"
+    })
+  })
+
   it("resolves ambient handler clients from FluentDurableContext", async () => {
     const incident = service({
       name: "incident",

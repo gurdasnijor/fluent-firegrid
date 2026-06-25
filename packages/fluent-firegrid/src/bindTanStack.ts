@@ -4,7 +4,7 @@ import type { WorkflowRegistrationMap, WorkflowRuntimeRunResult } from "@tanstac
 import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 
-import type { CallRequest, InvocationBinding, SendReference } from "./clients.ts"
+import type { CallRequest, InvocationBinding } from "./clients.ts"
 import {
   type ExternalSignalBinding,
   fluentContextFromTanStack,
@@ -197,19 +197,25 @@ export const createTanStackRuntimeBinding = (
     request.runId ?? `${request.kind}:${request.name}:${request.handler}:${nextRun++}`
 
   const start = (request: CallRequest): Effect.Effect<WorkflowRuntimeRunResult, FluentFiregridError> =>
-    Effect.tryPromise({
-      try: () =>
-        host.runtime.startRun({
-          input: {
-            input: request.input,
-            ...(request.key === undefined ? {} : { key: request.key })
-          } satisfies FluentWorkflowInput,
-          now: now(),
-          runId: runIdFor(request),
-          workflowId: workflowIdForRequest(request)
-        }),
-      catch: (cause) => new FluentFiregridError({ cause, message: "fluent TanStack binding failed to start run" })
-    })
+    request.delayMs !== undefined && request.delayMs > 0
+      ? Effect.fail(
+        new FluentFiregridError({
+          message: "delayed fluent invocations require a binding with durable delayed-send support"
+        })
+      )
+      : Effect.tryPromise({
+        try: () =>
+          host.runtime.startRun({
+            input: {
+              input: request.input,
+              ...(request.key === undefined ? {} : { key: request.key })
+            } satisfies FluentWorkflowInput,
+            now: now(),
+            runId: runIdFor(request),
+            workflowId: workflowIdForRequest(request)
+          }),
+        catch: (cause) => new FluentFiregridError({ cause, message: "fluent TanStack binding failed to start run" })
+      })
 
   return {
     call: <Output>(request: CallRequest) =>
@@ -226,24 +232,14 @@ export const createTanStackRuntimeBinding = (
       ),
     send: <Output>(request: CallRequest) => {
       const invocationId = runIdFor(request)
-      return Effect.tryPromise<SendReference<Output>, FluentFiregridError>({
-        try: async () => {
-          const result = await host.runtime.startRun({
-            input: {
-              input: request.input,
-              ...(request.key === undefined ? {} : { key: request.key })
-            } satisfies FluentWorkflowInput,
-            now: now(),
-            runId: invocationId,
-            workflowId: workflowIdForRequest(request)
-          })
+      return start({ ...request, runId: invocationId }).pipe(
+        Effect.map((result) => {
           return {
             invocationId,
             ...(result.run?.output === undefined ? {} : { output: result.run.output as Output })
           }
-        },
-        catch: (cause) => new FluentFiregridError({ cause, message: "fluent TanStack binding failed to send run" })
-      })
+        })
+      )
     }
   }
 }

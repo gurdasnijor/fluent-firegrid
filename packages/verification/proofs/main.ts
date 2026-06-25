@@ -5,6 +5,7 @@ import effectS2CapabilityAProof from "./effect-s2-capability-a.ts"
 import { effectS2SubstrateProofs } from "./effect-s2-substrate-proofs.ts"
 import fluentFiregridS2AwakeableProof from "./fluent-firegrid-s2-awakeable.ts"
 import fluentFiregridS2ObjectCrossHostProof from "./fluent-firegrid-s2-object-cross-host.ts"
+import fluentFiregridS2ObjectDelayedSendProof from "./fluent-firegrid-s2-object-delayed-send.ts"
 import fluentFiregridS2ObjectHandlesProof from "./fluent-firegrid-s2-object-handles.ts"
 import fluentFiregridS2ObjectLiveFencingProof from "./fluent-firegrid-s2-object-live-fencing.ts"
 import fluentFiregridS2ObjectReplayStateProof from "./fluent-firegrid-s2-object-replay-state.ts"
@@ -28,6 +29,7 @@ const proofs = [
   ...effectS2SubstrateProofs,
   fluentFiregridS2AwakeableProof,
   fluentFiregridS2ObjectCrossHostProof,
+  fluentFiregridS2ObjectDelayedSendProof,
   fluentFiregridS2ObjectHandlesProof,
   fluentFiregridS2ObjectLiveFencingProof,
   fluentFiregridS2ObjectReplayStateProof,

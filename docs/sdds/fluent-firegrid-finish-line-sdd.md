@@ -312,6 +312,19 @@ const approved = yield* serviceClient(approvals).request(
 )
 ```
 
+Implementation status as of June 25, 2026:
+
+- send clients and generic sends carry normalized `delayMs` in request
+  envelopes;
+- the S2 object runtime persists `notBefore` on accepted object invocations,
+  returns send handles immediately, skips delayed calls until due, and still
+  drains later same-key work that is already due;
+- `createTanStackRuntimeBinding` rejects delayed invocations rather than
+  silently executing them immediately;
+- remaining gaps are service/workflow delayed starts backed by the generic
+  runtime scheduler, `orTimeout` ergonomics, and schedule/cron authoring
+  helpers.
+
 `orTimeout` should be an Effect combinator returning a typed timeout error, not a
 new Future abstraction.
 
@@ -673,7 +686,7 @@ Ship:
 
 Tests:
 
-- delayed send is admitted, host loop wakes it later, and sender completes
+- delayed object send is admitted, wakes when due, and sender completes
   immediately;
 - timeout around a client call produces the expected typed failure.
 

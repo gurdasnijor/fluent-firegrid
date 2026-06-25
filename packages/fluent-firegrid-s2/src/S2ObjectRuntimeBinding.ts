@@ -42,6 +42,7 @@ type AcceptedEvent = {
   readonly callId: string
   readonly handler: string
   readonly input: unknown
+  readonly notBefore?: number
   readonly runId: string
   readonly now: number
 }
@@ -181,6 +182,7 @@ export const createS2ObjectRuntimeBinding = (
           callId,
           handler: request.handler,
           input: request.input,
+          ...(request.delayMs === undefined ? {} : { notBefore: now() + request.delayMs }),
           now: now(),
           runId: callId
         })
@@ -467,7 +469,7 @@ const drain = (
       const projection = yield* readProjection(runtime, streamName)
       const currentTime = now()
       const nextCallId = projection.orderedCallIds.find((callId) =>
-        !projection.completed.has(callId) && !projection.errored.has(callId)
+        isCallDue(projection, callId, currentTime)
         && stateWaitStatusForCall(projection, callId, currentTime)._tag !== "Pending"
       )
       if (nextCallId === undefined) return
@@ -595,6 +597,12 @@ type StateWaitStatus =
   | { readonly _tag: "None" }
   | { readonly _tag: "Pending" }
   | { readonly _tag: "Ready"; readonly ready: StateWaitReadyEvent }
+
+const isCallDue = (projection: InvocationProjection, callId: string, now: number): boolean => {
+  if (projection.completed.has(callId) || projection.errored.has(callId)) return false
+  const accepted = projection.accepted.get(callId)
+  return accepted !== undefined && (accepted.notBefore === undefined || accepted.notBefore <= now)
+}
 
 const stateWaitStatusForCall = (
   projection: InvocationProjection,
