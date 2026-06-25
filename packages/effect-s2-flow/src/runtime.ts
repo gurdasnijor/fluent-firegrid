@@ -6,6 +6,7 @@ import { AppendInput, type AppendOptions, AppendRecord, type StreamApi } from "e
 import * as Context from "effect/Context"
 import type * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
+import * as Equal from "effect/Equal"
 import * as Layer from "effect/Layer"
 import * as Random from "effect/Random"
 import * as Ref from "effect/Ref"
@@ -150,6 +151,24 @@ const invoke = Effect.fn("effect-s2-flow.client.invoke")(function*(
       service: definition.name
     }, recordTypeHeader("Invoke"))
   ]
+  const journalHasSameInvoke = Effect.fn("effect-s2-flow.client.journalHasSameInvoke")(function*(
+    currentStreamApi: StreamApi
+  ) {
+    const journal = yield* readInvocationJournal(currentStreamApi)
+    const existing = journal.records.find((record) => record._tag === "Invoke" && record.requestId === requestId)
+    if (existing === undefined) return false
+    if (
+      existing._tag === "Invoke"
+      && existing.service === definition.name
+      && existing.method === method
+      && Equal.equals(existing.input, input)
+    ) {
+      return true
+    }
+    return yield* new FlowError({
+      message: `invocation ${requestId} already exists with a different request shape`
+    })
+  })
   const appendInvoke = Effect.fn("effect-s2-flow.client.appendInvoke")(function*(
     remainingRetries: number,
     currentStreamApi: StreamApi
@@ -164,6 +183,10 @@ const invoke = Effect.fn("effect-s2-flow.client.invoke")(function*(
       )
     )
     if (exit._tag === "Success") return
+    if (definition.kind === "service") {
+      const alreadySubmitted = yield* journalHasSameInvoke(currentStreamApi)
+      if (alreadySubmitted) return
+    }
     if (remainingRetries <= 0) {
       return yield* Effect.failCause(exit.cause)
     }

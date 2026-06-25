@@ -76,6 +76,9 @@ The load-bearing green proofs establish:
 
 - Durable step replay survives a `kill -9` after a step journal ack and does not
   re-run the completed step.
+- Explicit service invocation IDs are idempotent: retrying the same request
+  attaches to the existing S2 journal, returns the recorded result, and does
+  not append a second `Invoke`.
 - The first internal Capability B slices are real-substrate proofs: state folds
   after a fresh process, a stale object-stream token is rejected by S2 with
   `FencingTokenMismatchError`, and two would-be owners of one object stream
@@ -97,8 +100,8 @@ small. These are deferred until their own proofs force them:
 - Lease refresh and eviction semantics for long-running fenced owners. The
   current internal lease token is enough to prove active-owner backoff and
   dead-owner expiry, not full production ownership lifecycle.
-- Idempotent client retries and request de-duplication beyond the current
-  explicit invocation id path.
+- Request de-duplication beyond the current explicit service invocation id
+  path.
 - Backpressure, stream discovery pagination, and long-running host lifecycle
   controls.
 - Fluent higher-level authoring APIs.
