@@ -13,12 +13,10 @@ export default proof("effect-s2-flow.capability-c.durable-sleep")
   .spec(({ property }) =>
     property("capability-c.effect-s2-flow.durable-sleep-proof")
       .s2Lite({ persistence: "local-root" })
-      .host(
-        "worker",
-        effectS2FlowHost()
-      )
-      .workload(({ hosts, s2Endpoint }) =>
+      .hosts({ worker: effectS2FlowHost() })
+      .workload((context) =>
         Effect.gen(function*() {
+          const { hosts, s2Endpoint } = context
           if (s2Endpoint === undefined) {
             return yield* new VerificationError({
               message: "Capability C durable-sleep proof requires s2Lite"

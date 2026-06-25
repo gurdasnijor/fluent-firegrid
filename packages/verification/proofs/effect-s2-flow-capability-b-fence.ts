@@ -2,6 +2,7 @@ import { counter } from "effect-s2-flow/examples/counter"
 import { client, FlowRuntime } from "effect-s2-flow"
 import { AppendInput, AppendRecord, FencingTokenMismatchError } from "effect-s2"
 import * as Effect from "effect/Effect"
+import * as Fiber from "effect/Fiber"
 
 import { proof } from "../src/Proof.ts"
 import { VerificationError } from "../src/VerificationError.ts"
@@ -17,7 +18,7 @@ export default proof("effect-s2-flow.capability-b.fenced-state")
       .hosts({
         "owner-a": effectS2FlowHost()
       })
-      .workload(({ s2, s2Endpoint }) =>
+      .workload(({ runtime, s2, s2Endpoint }) =>
         Effect.gen(function*() {
           if (s2Endpoint === undefined) {
             return yield* new VerificationError({
@@ -26,19 +27,16 @@ export default proof("effect-s2-flow.capability-b.fenced-state")
           }
           const flowRuntime = FlowRuntime.layer({ s2Endpoint })
 
-          const add5 = yield* client(counter, "fenced-user", { invocationId: "counter-fence-add-5" }).add({ amount: 5 })
-            .pipe(
-              Effect.provide(flowRuntime)
-            )
-          const add7 = yield* client(counter, "fenced-user", { invocationId: "counter-fence-add-7" }).add({ amount: 7 })
-            .pipe(
-              Effect.provide(flowRuntime)
-            )
-
-          const finalValue = yield* client(counter, "fenced-user", { invocationId: "counter-fence-value" }).value({})
-            .pipe(
-              Effect.provide(flowRuntime)
-            )
+          const add5Fiber = yield* client(counter, "fenced-user", { invocationId: "counter-fence-add-5" }).add({
+            amount: 5,
+            delay: "750 millis"
+          }).pipe(
+            Effect.provide(flowRuntime),
+            Effect.forkChild
+          )
+          yield* runtime.waitForSpan("effect-s2-flow.fence.claim", {
+            attributes: { "effect-s2-flow.invocation.stream": "counter.object.fenced-user" }
+          })
           const objectStream = yield* s2.stream({
             basin: "effect-s2-flow",
             stream: "counter.object.fenced-user"
@@ -55,6 +53,16 @@ export default proof("effect-s2-flow.capability-b.fenced-state")
               (error) => error
             )
           )
+          const add5 = yield* Fiber.join(add5Fiber)
+          const add7 = yield* client(counter, "fenced-user", { invocationId: "counter-fence-add-7" }).add({ amount: 7 })
+            .pipe(
+              Effect.provide(flowRuntime)
+            )
+
+          const finalValue = yield* client(counter, "fenced-user", { invocationId: "counter-fence-value" }).value({})
+            .pipe(
+              Effect.provide(flowRuntime)
+            )
 
           return {
             addResults: [add5, add7],
