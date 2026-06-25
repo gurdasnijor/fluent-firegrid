@@ -13,7 +13,6 @@ import {
   type StreamApi
 } from "effect-s2"
 import * as Effect from "effect/Effect"
-import * as Stream from "effect/Stream"
 
 import { BatchTooLarge, FlowError } from "./FlowError.ts"
 
@@ -107,7 +106,7 @@ export const s2Layer = (endpoint: string) =>
       account: endpoint,
       basin: endpoint
     },
-    retry: { maxAttempts: 1 }
+    retry: { maxAttempts: 3 }
   })
 
 export const flowS2Error = (message: string) => (cause: S2Error): FlowError => new FlowError({ message, cause })
@@ -185,15 +184,17 @@ export const readInvocationJournal = Effect.fn("effect-s2-flow.invocationJournal
         records: [] as ReadonlyArray<InvocationJournalRecord>
       }
     }
-    const records = yield* streamApi.readSession({
+    const batch = yield* streamApi.read({
       start: { from: { seqNum: 0 } },
+      ignoreCommandRecords: true,
       stop: { limits: { count: tail.tail.seqNum } }
     }).pipe(
-      Stream.runCollect,
-      Effect.mapError(flowS2Error("failed to read invocation journal")),
-      Effect.map((items) => Array.from(items, (record) => decodeRecord(record.body)))
+      Effect.mapError(flowS2Error("failed to read invocation journal"))
     )
-    return { nextSeqNum: tail.tail.seqNum, records }
+    return {
+      nextSeqNum: tail.tail.seqNum,
+      records: batch.records.map((record) => decodeRecord(record.body))
+    }
   }
 )
 

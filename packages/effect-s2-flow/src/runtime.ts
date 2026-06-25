@@ -2,7 +2,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
 import * as NodeSdk from "@effect/opentelemetry/NodeSdk"
 import { RemoteChdbSpanExporter } from "@firegrid/observability"
 import { SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base"
-import { AppendInput, type AppendRecord, type StreamApi } from "effect-s2"
+import { AppendInput, type AppendOptions, AppendRecord, type StreamApi } from "effect-s2"
 import * as Context from "effect/Context"
 import type * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
@@ -153,12 +153,28 @@ const invoke = Effect.fn("effect-s2-flow.client.invoke")(function*(
       service: definition.name
     }, recordTypeHeader("Invoke"))
   ]
-  yield* streamApi.append(
-    definition.kind === "service"
-      ? AppendInput.create(invokeRecords, { matchSeqNum: 0 })
-      : AppendInput.create(invokeRecords)
-  ).pipe(
-    Effect.mapError(flowS2Error(`failed to append Invoke for ${definition.name}.${method}`)),
+  const appendInvoke = Effect.fn("effect-s2-flow.client.appendInvoke")(function*(
+    remainingRetries: number,
+    currentStreamApi: StreamApi
+  ): Generator<Effect.Effect<any, FlowError>, void, any> {
+    const exit = yield* Effect.exit(
+      currentStreamApi.append(
+        definition.kind === "service"
+          ? AppendInput.create(invokeRecords, { matchSeqNum: 0 })
+          : AppendInput.create(invokeRecords)
+      ).pipe(
+        Effect.mapError(flowS2Error(`failed to append Invoke for ${definition.name}.${method}`))
+      )
+    )
+    if (exit._tag === "Success") return
+    if (remainingRetries <= 0) {
+      return yield* Effect.failCause(exit.cause)
+    }
+    const retryStreamApi = yield* ensureInvocationJournalStream(runtime, streamName)
+    return yield* appendInvoke(remainingRetries - 1, retryStreamApi)
+  })
+
+  yield* appendInvoke(3, streamApi).pipe(
     Effect.withSpan("effect-s2-flow.client.invoke", {
       attributes: {
         "effect-s2-flow.invocation.stream": streamName,
@@ -170,6 +186,7 @@ const invoke = Effect.fn("effect-s2-flow.client.invoke")(function*(
   )
 
   return yield* streamApi.readSession({
+    ignoreCommandRecords: true,
     start: { from: { seqNum: 0 } }
   }).pipe(
     Stream.map((record) => decodeRecord(record.body)),
@@ -199,6 +216,7 @@ const invoke = Effect.fn("effect-s2-flow.client.invoke")(function*(
 })
 
 export interface CurrentInvocationScope {
+  readonly fencingToken?: string
   readonly pendingRecords: Ref.Ref<ReadonlyArray<AppendRecord>>
   readonly requestId: string
   readonly streamName: string
@@ -211,6 +229,9 @@ export interface CurrentInvocationScope {
 export class InvocationScope extends Context.Service<InvocationScope, CurrentInvocationScope>()(
   "effect-s2-flow/runtime/InvocationScope"
 ) {}
+
+const appendOptions = (matchSeqNum: number, fencingToken: string | undefined): AppendOptions =>
+  fencingToken === undefined ? { matchSeqNum } : { fencingToken, matchSeqNum }
 
 export const run = <A, E, R>(
   name: string,
@@ -240,12 +261,13 @@ export const run = <A, E, R>(
           nextSeqNum: checkpointNext
         }, recordTypeHeader("CheckpointAdvanced"))
       ],
-      { matchSeqNum },
+      appendOptions(matchSeqNum, scope.fencingToken),
       `failed to append StepCompleted for ${name}`
     ).pipe(
       Effect.tap(() =>
         Effect.annotateCurrentSpan({
           "effect-s2-flow.invocation.stream": scope.streamName,
+          "effect-s2-flow.fencing.token": scope.fencingToken ?? "",
           "effect-s2-flow.record.type": "StepCompleted",
           "effect-s2-flow.step.name": name
         })
@@ -253,6 +275,7 @@ export const run = <A, E, R>(
       Effect.withSpan("effect-s2-flow.journal.append.ack", {
         attributes: {
           "effect-s2-flow.invocation.stream": scope.streamName,
+          "effect-s2-flow.fencing.token": scope.fencingToken ?? "",
           "effect-s2-flow.record.type": "StepCompleted",
           "effect-s2-flow.step.name": name
         }
@@ -316,6 +339,32 @@ const methodEffect = (
   })
 }
 
+const hostFenceToken = (): string => (process.env.FIREGRID_HOST_ID ?? `pid-${process.pid}`).slice(0, 36)
+
+const claimObjectFence = Effect.fn("effect-s2-flow.claimObjectFence")(function*(
+  streamApi: StreamApi,
+  streamName: string
+) {
+  const token = hostFenceToken()
+  const ack = yield* appendAtomic(
+    streamApi,
+    [AppendRecord.fence(token)],
+    undefined,
+    `failed to claim fence for ${streamName}`
+  ).pipe(
+    Effect.withSpan("effect-s2-flow.fence.claim", {
+      attributes: {
+        "effect-s2-flow.fencing.token": token,
+        "effect-s2-flow.invocation.stream": streamName
+      }
+    })
+  )
+  return {
+    nextSeqNum: ack.end.seqNum,
+    token
+  }
+})
+
 const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function*(
   runtime: Required<FlowRuntimeConfig>,
   serviceDefinition: FlowDefinition<ServiceHandlers>,
@@ -340,6 +389,10 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
   )
   if (invokeRecord?._tag !== "Invoke") return
 
+  const fence = serviceDefinition.kind === "object"
+    ? yield* claimObjectFence(streamApi, streamName)
+    : undefined
+
   const steps = new Map<string, unknown>()
   const states = new Map<string, unknown>()
   snapshot.records.forEach((record) => {
@@ -353,10 +406,11 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
   const pendingRecords = yield* Ref.make<ReadonlyArray<AppendRecord>>([])
   const stateRef = yield* Ref.make<ReadonlyMap<string, unknown>>(states)
   const stepRef = yield* Ref.make<ReadonlyMap<string, unknown>>(steps)
-  const nextSeqNum = yield* Ref.make(snapshot.nextSeqNum)
+  const nextSeqNum = yield* Ref.make(fence?.nextSeqNum ?? snapshot.nextSeqNum)
   const result = yield* Effect.exit(
     methodEffect(serviceDefinition, invokeRecord.method, invokeRecord.input).pipe(
       Effect.provideService(InvocationScope, {
+        ...(fence === undefined ? {} : { fencingToken: fence.token }),
         nextSeqNum,
         pendingRecords,
         requestId: invokeRecord.requestId,
@@ -381,12 +435,13 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
           value: result.value
         }, recordTypeHeader("Completed"))
       ],
-      { matchSeqNum },
+      appendOptions(matchSeqNum, fence?.token),
       `failed to append Completed for ${streamName}`
     ).pipe(
       Effect.withSpan("effect-s2-flow.invocation.completed", {
         attributes: {
           "effect-s2-flow.invocation.stream": streamName,
+          "effect-s2-flow.fencing.token": fence?.token ?? "",
           "effect-s2-flow.request.id": invokeRecord.requestId,
           "effect-s2-flow.state.record_count": String(records.length),
           "effect-s2-flow.service": serviceDefinition.name
@@ -405,7 +460,7 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
         message: String(result.cause)
       }, recordTypeHeader("Failed"))
     ],
-    { matchSeqNum },
+    appendOptions(matchSeqNum, fence?.token),
     `failed to append Failed for ${streamName}`
   )
 })
