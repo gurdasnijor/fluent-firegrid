@@ -1,5 +1,9 @@
 import {
+  awakeable,
   type CallRequest,
+  type ExternalSignalBinding,
+  FluentDurableContext,
+  FluentFiregridError,
   iface,
   implement,
   type InvocationBinding,
@@ -28,6 +32,58 @@ const request = (path: string, body: unknown, headers?: HeadersInit): Request =>
 const json = async <A>(response: Response): Promise<A> => await response.json() as A
 
 describe("createFluentHttpHandler", () => {
+  it("routes awakeable resolve and reject endpoints through external signal bindings", async () => {
+    const id = await Effect.runPromise(
+      awakeable<string>({ name: "review" }).pipe(
+        Effect.map((created) => created.id),
+        Effect.provideService(
+          FluentDurableContext,
+          FluentDurableContext.of({
+            runId: "run-1",
+            signalOperationId: ({ kind, name }) => `run-1:signal:0:${kind}:${name}`,
+            sleep: () => Effect.void,
+            sleepUntil: () => Effect.void,
+            step: () => Effect.fail(new FluentFiregridError({ message: "step not used" })),
+            waitForSignal: () => Effect.fail(new FluentFiregridError({ message: "waitForSignal not used" }))
+          })
+        )
+      )
+    )
+    const deliveries = new Array<unknown>()
+    const externalSignals: ExternalSignalBinding<never> = {
+      deliverSignal: (delivery) =>
+        Effect.sync(() => {
+          deliveries.push(delivery)
+          return { kind: "delivered", runId: delivery.runId }
+        })
+    }
+    const binding: InvocationBinding<never> = {
+      call: <Output>() => Effect.succeed("not-used" as Output),
+      send: <Output>() => Effect.succeed({ invocationId: "not-used" } satisfies SendReference<Output>)
+    }
+    const handler = createFluentHttpHandler({ binding, definitions: [], externalSignals })
+
+    const resolved = await handler(request(`/firegrid/awakeables/${encodeURIComponent(id)}/resolve`, { value: "ok" }))
+    const rejected = await handler(request(`/firegrid/awakeables/${encodeURIComponent(id)}/reject`, { reason: "no" }))
+
+    expect(resolved.status).toBe(202)
+    expect(rejected.status).toBe(202)
+    expect(await json(resolved)).toEqual({ kind: "delivered", runId: "run-1" })
+    expect(await json(rejected)).toEqual({ kind: "delivered", runId: "run-1" })
+    expect(deliveries).toMatchObject([
+      {
+        name: "__firegrid_awakeable:run-1:signal:0:awakeable:review",
+        payload: { _tag: "AwakeableResolved", value: "ok" },
+        runId: "run-1"
+      },
+      {
+        name: "__firegrid_awakeable:run-1:signal:0:awakeable:review",
+        payload: { _tag: "AwakeableRejected", reason: "no" },
+        runId: "run-1"
+      }
+    ])
+  })
+
   it("routes descriptor-backed service calls through the invocation binding", async () => {
     const incident = service({
       name: "incident",

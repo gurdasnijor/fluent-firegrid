@@ -4,9 +4,12 @@ import {
   type CallRequest,
   type Definition,
   type DefinitionKind,
+  type ExternalSignalBinding,
   FluentFiregridError,
   type HandlerDescriptor,
   type InvocationBinding,
+  rejectAwakeable,
+  resolveAwakeable,
   type SendRequest
 } from "@firegrid/fluent-firegrid"
 import * as Effect from "effect/Effect"
@@ -19,6 +22,7 @@ type TransportMode = "call" | "send"
 export interface FluentHttpHandlerOptions<Error = unknown> {
   readonly binding: InvocationBinding<Error>
   readonly definitions: ReadonlyArray<AnyDefinition>
+  readonly externalSignals?: ExternalSignalBinding<Error>
 }
 
 interface RouteMatch {
@@ -44,7 +48,13 @@ export const createFluentHttpHandler = <Error = unknown>(
       return jsonResponse({ error: "method_not_allowed" }, 405)
     }
 
-    const route = parseRoute(new URL(request.url))
+    const url = new URL(request.url)
+    const externalRoute = parseExternalEventRoute(url)
+    if (externalRoute !== undefined) {
+      return await handleExternalEventRoute(options, request, externalRoute)
+    }
+
+    const route = parseRoute(url)
     if (route === undefined) {
       return jsonResponse({ error: "not_found" }, 404)
     }
@@ -95,6 +105,11 @@ export const createFluentHttpHandler = <Error = unknown>(
   }
 }
 
+interface ExternalEventRoute {
+  readonly action: "reject" | "resolve"
+  readonly id: string
+}
+
 const createRegistry = (definitions: ReadonlyArray<AnyDefinition>): ReadonlyMap<string, RouteTarget> => {
   const registry = new Map<string, RouteTarget>()
   definitions.forEach((definition) => {
@@ -116,6 +131,15 @@ const createRegistry = (definitions: ReadonlyArray<AnyDefinition>): ReadonlyMap<
 
 const keyFor = (kind: DefinitionKind, name: string, handler: string): string => `${kind}:${name}:${handler}`
 
+const parseExternalEventRoute = (url: URL): ExternalEventRoute | undefined => {
+  const parts = url.pathname.split("/").filter((part) => part.length > 0).map(decodeURIComponent)
+  if (parts[0] !== "firegrid" || parts[1] !== "awakeables") return undefined
+  const id = parts[2]
+  const action = parts[3]
+  if (id === undefined || (action !== "resolve" && action !== "reject") || parts.length !== 4) return undefined
+  return { action, id }
+}
+
 const parseRoute = (url: URL): RouteMatch | undefined => {
   const parts = url.pathname.split("/").filter((part) => part.length > 0).map(decodeURIComponent)
   const mode = parts[0]
@@ -133,6 +157,38 @@ const parseRoute = (url: URL): RouteMatch | undefined => {
   const handler = parts[3]
   if (name === undefined || handler === undefined || parts.length !== 4) return undefined
   return { handler, kind, mode, name }
+}
+
+const handleExternalEventRoute = async <Error>(
+  options: FluentHttpHandlerOptions<Error>,
+  request: Request,
+  route: ExternalEventRoute
+): Promise<Response> => {
+  if (options.externalSignals === undefined) {
+    return jsonResponse({ error: "external_signals_not_configured" }, 500)
+  }
+  const body = await parseJsonBody(request)
+  if (body._tag === "Error") {
+    return jsonResponse({ error: "invalid_json", message: body.message }, 400)
+  }
+  const value = externalEventPayload(route.action, body.value)
+  const result = await runEffect(
+    route.action === "resolve"
+      ? resolveAwakeable(options.externalSignals, route.id, value)
+      : rejectAwakeable(options.externalSignals, route.id, value)
+  )
+  if (result._tag === "Error") {
+    return jsonResponse({ error: "external_signal_delivery_failed", message: result.message }, 500)
+  }
+  return jsonResponse(result.value, 202)
+}
+
+const externalEventPayload = (action: ExternalEventRoute["action"], body: unknown): unknown => {
+  if (typeof body === "object" && body !== null) {
+    if (action === "resolve" && "value" in body) return (body as { readonly value?: unknown }).value
+    if (action === "reject" && "reason" in body) return (body as { readonly reason?: unknown }).reason
+  }
+  return body
 }
 
 const isDefinitionKind = (value: string | undefined): value is DefinitionKind =>

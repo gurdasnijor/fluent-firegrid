@@ -1,6 +1,7 @@
 import {
   type AnyGeneratorHandler,
   bindFluentDefinitions,
+  createTanStackExternalSignalBinding,
   type Definition,
   type DefinitionKind
 } from "@firegrid/fluent-firegrid"
@@ -66,16 +67,21 @@ export interface FluentS2NodeServer extends FluentS2NodeRuntime, FluentNodeHttpS
 
 export const createFluentS2NodeRuntime = (options: FluentS2NodeRuntimeOptions): FluentS2NodeRuntime => {
   let binding: ReturnType<typeof createS2ObjectRuntimeBinding> | undefined
+  let externalSignals: ReturnType<typeof createTanStackExternalSignalBinding> | undefined
   const workflows = bindFluentDefinitions(
     options.definitions,
-    s2FluentDefinitionBindingOptions(options, { invocationBinding: () => binding })
+    {
+      ...s2FluentDefinitionBindingOptions(options, { invocationBinding: () => binding }),
+      externalSignals: () => externalSignals
+    }
   )
   const host = createS2WorkflowRuntimeHost({
     ...options,
     workflows
   })
+  externalSignals = createTanStackExternalSignalBinding(host)
   binding = createS2ObjectRuntimeBinding(host, options)
-  const handler = createFluentHttpHandler({ binding, definitions: options.definitions })
+  const handler = createFluentHttpHandler({ binding, definitions: options.definitions, externalSignals })
   return { binding, handler, host }
 }
 

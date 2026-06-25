@@ -548,10 +548,13 @@ Implementation status as of June 25, 2026:
   through explicit or ambient external-signal bindings;
 - `createTanStackExternalSignalBinding` adapts a runtime host's
   `deliverSignal` method for callback handlers and transport bindings;
+- `@firegrid/fluent-firegrid-http` exposes
+  `POST /firegrid/awakeables/:id/resolve` and
+  `POST /firegrid/awakeables/:id/reject`, and
+  `@firegrid/fluent-firegrid-node` wires those routes to the S2 runtime host;
 - rejected awakeables fail with the typed `AwakeableRejected` error;
-- remaining gaps are HTTP resolve/reject routes, workflow-scoped named event
-  ergonomics, and product examples that show how external systems receive and
-  complete tokens.
+- remaining gaps are workflow-scoped named event ergonomics and product examples
+  that show how external systems receive and complete tokens.
 
 ### Durable Webhook Example
 
