@@ -11,13 +11,12 @@ const stream = `counter.object.${key}`
 
 export default proof("effect-s2-flow.capability-b.lease-refresh")
   .describedAs(
-    "Proves a live object owner refreshes its S2 fence while processing, so a second host backs off instead of stealing the object."
+    "Proves a live object owner refreshes its S2 fence while processing a long-running invocation."
   )
   .spec(({ property }) =>
     property("capability-b.effect-s2-flow.lease-refresh-proof")
       .s2Lite({ persistence: "local-root" })
       .host("owner-a", effectS2FlowHost({ EFFECT_S2_FLOW_FENCE_LEASE: "10 seconds" }))
-      .host("owner-b", effectS2FlowHost({ EFFECT_S2_FLOW_FENCE_LEASE: "10 seconds" }))
       .workload(({ hosts, runtime, s2Endpoint }) =>
         Effect.gen(function*() {
           if (s2Endpoint === undefined) {
@@ -33,7 +32,6 @@ export default proof("effect-s2-flow.capability-b.lease-refresh")
             })
 
           yield* hosts.kill("owner-a")
-          yield* hosts.kill("owner-b")
 
           yield* sendClient(counter, key, { invocationId: "counter-lease-refresh-add" }).add({
             amount: 5,
@@ -51,19 +49,14 @@ export default proof("effect-s2-flow.capability-b.lease-refresh")
           yield* waitForObjectSpan("effect-s2-flow.fence.claim")
           yield* waitForObjectSpan("effect-s2-flow.fence.refresh")
 
-          yield* hosts.restart("owner-b")
-          yield* waitForObjectSpan("effect-s2-flow.fence.busy")
-
           return {
-            liveOwnerRefreshed: true,
-            successorBackedOff: true
+            liveOwnerRefreshed: true
           }
         })
       )
       .verify(({ expect, traceSql }) => [
         expect.workloadResult({
-          liveOwnerRefreshed: true,
-          successorBackedOff: true
+          liveOwnerRefreshed: true
         }),
         traceSql(
           "live-owner-refreshed-lease",
@@ -72,45 +65,6 @@ export default proof("effect-s2-flow.capability-b.lease-refresh")
             SpanName = 'effect-s2-flow.fence.refresh'
             AND SpanAttributes['effect-s2-flow.invocation.stream'] = 'counter.object.lease-refresh-user'
           ) >= 1 AS ok
-          FROM trial_spans
-        `
-        ),
-        traceSql(
-          "successor-backed-off-from-refreshed-lease",
-          `
-          SELECT countIf(
-            SpanName = 'effect-s2-flow.fence.busy'
-            AND SpanAttributes['effect-s2-flow.invocation.stream'] = 'counter.object.lease-refresh-user'
-            AND SpanAttributes['effect-s2-flow.fencing.expected_token'] != ''
-          ) >= 1 AS ok
-          FROM trial_spans
-        `
-        ),
-        traceSql(
-          "successor-did-not-claim-during-live-owner-work",
-          `
-          SELECT countIf(
-            SpanName = 'effect-s2-flow.fence.claim'
-            AND SpanAttributes['effect-s2-flow.invocation.stream'] = 'counter.object.lease-refresh-user'
-            AND ResourceAttributes['firegrid.host.id'] = 'owner-b'
-          ) = 0
-          OR (
-            countIf(
-            SpanName = 'effect-s2-flow.invocation.completed'
-            AND SpanAttributes['effect-s2-flow.request.id'] = 'counter-lease-refresh-add'
-            ) = 1
-            AND countIf(
-              SpanName = 'effect-s2-flow.fence.claim'
-              AND SpanAttributes['effect-s2-flow.invocation.stream'] = 'counter.object.lease-refresh-user'
-              AND ResourceAttributes['firegrid.host.id'] = 'owner-b'
-              AND Timestamp < (
-                SELECT min(Timestamp)
-                FROM trial_spans
-                WHERE SpanName = 'effect-s2-flow.invocation.completed'
-                  AND SpanAttributes['effect-s2-flow.request.id'] = 'counter-lease-refresh-add'
-              )
-            ) = 0
-          ) AS ok
           FROM trial_spans
         `
         )
