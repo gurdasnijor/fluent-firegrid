@@ -3,15 +3,12 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
 import { runCli } from "../src/CliApp.ts"
 import effectS2CapabilityAProof from "./effect-s2-capability-a.ts"
 import { effectS2SubstrateProofs } from "./effect-s2-substrate-proofs.ts"
-import fluentFiregridHostCrashRestartProof from "./fluent-firegrid-host-crash-restart.ts"
-import fluentFiregridObjectKeyRestartProof from "./fluent-firegrid-object-key-restart.ts"
 import fluentFiregridS2ObjectCrossHostProof from "./fluent-firegrid-s2-object-cross-host.ts"
 import fluentFiregridS2ObjectHandlesProof from "./fluent-firegrid-s2-object-handles.ts"
 import fluentFiregridS2ObjectReplayStateProof from "./fluent-firegrid-s2-object-replay-state.ts"
 import fluentFiregridS2ObjectSerializationProof from "./fluent-firegrid-s2-object-serialization.ts"
 import fluentFiregridS2ObjectStateProof from "./fluent-firegrid-s2-object-state.ts"
 import fluentFiregridS2ObjectStaleOwnerProof from "./fluent-firegrid-s2-object-stale-owner.ts"
-import fluentFiregridSignalRestartProof from "./fluent-firegrid-signal-restart.ts"
 import tanstackWorkflowS2HostCrashRestartProof from "./tanstack-workflow-s2-host-crash-restart.ts"
 import tanstackWorkflowS2HostTickProof from "./tanstack-workflow-s2-host-tick.ts"
 import tanstackWorkflowS2EventLogProof from "./tanstack-workflow-s2-event-log.ts"
@@ -26,15 +23,12 @@ import tanstackWorkflowS2TimersSignalsProof from "./tanstack-workflow-s2-timers-
 const proofs = [
   effectS2CapabilityAProof,
   ...effectS2SubstrateProofs,
-  fluentFiregridHostCrashRestartProof,
-  fluentFiregridObjectKeyRestartProof,
   fluentFiregridS2ObjectCrossHostProof,
   fluentFiregridS2ObjectHandlesProof,
   fluentFiregridS2ObjectReplayStateProof,
   fluentFiregridS2ObjectSerializationProof,
   fluentFiregridS2ObjectStateProof,
   fluentFiregridS2ObjectStaleOwnerProof,
-  fluentFiregridSignalRestartProof,
   tanstackWorkflowS2HostCrashRestartProof,
   tanstackWorkflowS2HostTickProof,
   tanstackWorkflowS2EventLogProof,

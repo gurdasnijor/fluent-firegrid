@@ -4,7 +4,7 @@
 
 |   |   |
 | --- | --- |
-| Status | Active implementation target |
+| Status | Implemented through A-E; active hardening substrate |
 | Date | 2026-06-25 |
 | Package | `@firegrid/tanstack-workflow-s2` (working name) |
 | Primary contract | `WorkflowExecutionStore` from `@tanstack/workflow-runtime` |
@@ -17,7 +17,7 @@
 
 Do not design a bespoke durable-function API in this repo. Use TanStack Workflow's API/runtime shape and implement the S2-backed store/runtime adapter it needs.
 
-The product surface for this phase is:
+The product surface for this phase is implemented as:
 
 ```ts
 export const s2WorkflowExecutionStore: (config: {
@@ -25,9 +25,15 @@ export const s2WorkflowExecutionStore: (config: {
   readonly basin?: string
   readonly namespace?: string
 }) => WorkflowExecutionStore
+
+export const createS2WorkflowRuntimeHost: (config) => S2WorkflowRuntimeHost
 ```
 
-TanStack Workflow already separates workflow authoring/runtime from persistence. Its runtime consumes a `WorkflowExecutionStore`; the bundled `in-memory-store.ts` is the reference implementation. Our job is to replace that in-memory store with S2 semantics.
+TanStack Workflow already separates workflow authoring/runtime from persistence.
+Its runtime consumes a `WorkflowExecutionStore`; the bundled
+`in-memory-store.ts` is the reference implementation. This repo has replaced
+that in-memory store with S2 semantics and added a host wrapper for recovery,
+sweeps, timers, schedules, and test/runtime orchestration.
 
 ## Source Contract
 
@@ -46,7 +52,7 @@ The current npm packages are early (`@tanstack/workflow-runtime` `0.0.x`), so im
 
 - Do not expand `effect-s2-flow` as the workflow API.
 - Do not create a parallel durable-function API.
-- Do not implement `service(...)`, `object(...)`, `workflow(...)`, generated clients, or virtual-object `state(...)` for this phase.
+- Do not implement `service(...)`, `object(...)`, `workflow(...)`, generated clients, or virtual-object `state(...)` inside the TanStack/S2 store package. Those are fluent-layer concerns.
 - Do not add proof-only runtime APIs.
 - Do not add an in-memory S2 substitute.
 - Runtime I/O uses `effect-s2` / `S2Client.ts`; no second transport facade.
@@ -64,7 +70,33 @@ The adapter must satisfy TanStack's `WorkflowExecutionStore`:
 - Schedules: `upsertSchedule`, `claimDueScheduleBuckets`, `markScheduleBucketStarted`.
 - Visibility: `listRuns`, `getRunTimeline`.
 
-The in-memory store's behavior is the compatibility oracle. The S2 store should pass the same behavioral tests, then add real-substrate crash/failover proofs.
+The in-memory store's behavior is the compatibility oracle. The S2 store mirrors
+that behavior and adds real-substrate crash/failover proofs.
+
+## Implementation Status
+
+The A-E store ladder is implemented. The active remaining work is hardening,
+cleanup, and the fluent API layer above this substrate, not more narrow
+store-proof PRs.
+
+| Slice | Status | Production surface | Real-`s2 lite` proof |
+| --- | --- | --- | --- |
+| A. Event Log CAS | Implemented | `appendEvents`, `readEvents`, `loadExecution` | `tanstack-workflow-s2.event-log-cas` |
+| B. Run Lifecycle | Implemented | `createRun`, run state load/save, terminal state, timeline | `tanstack-workflow-s2.run-lifecycle`, `tanstack-workflow-s2.runtime-end-to-end`, `tanstack-workflow-s2.host-crash-restart` |
+| C. Leases And Stale Claims | Implemented | `claimRun`, `heartbeatRunLease`, `releaseRunLease`, `claimStaleRuns`, host recovery | `tanstack-workflow-s2.leases`, `tanstack-workflow-s2.host-crash-restart`, `tanstack-workflow-s2.host-tick` |
+| D. Timers, Signals, And Approvals | Implemented | `scheduleTimer`, `claimDueTimers`, `deliverSignal`, `deliverApproval`, runtime sweeps | `tanstack-workflow-s2.timers-signals`, `tanstack-workflow-s2.runtime-timer-sweep`, `tanstack-workflow-s2.runtime-approval` |
+| E. Schedules | Implemented | `upsertSchedule`, `claimDueScheduleBuckets`, `markScheduleBucketStarted`, schedule sweep | `tanstack-workflow-s2.runtime-schedule-sweep` |
+
+### Remaining Hardening
+
+- `subscribeEvents` remains the optional store method most likely to matter for
+  UI/devtools or live output streaming. Implement it with `readSession` when a
+  concrete consumer needs it.
+- Lease facts currently provide the store-level coordination. S2 command-record
+  fences should be introduced only where a later writer needs token-enforced S2
+  writes after lease ownership, rather than as blanket complexity.
+- Timer and schedule bucket retention/granularity are simple v1 choices. Revisit
+  when operational load or retention requirements become concrete.
 
 ## S2 Physical Model
 
@@ -196,43 +228,65 @@ Build the adapter in thin vertical slices. Each slice uses TanStack's runtime co
 
 ### A. Event Log CAS
 
+**Status:** Implemented.
+
 **Claim.** S2 can back TanStack's append-only run log.
 
 **Forces:** `appendEvents`, `readEvents`, `loadExecution` event hydration.
 
-**Proof:** two writers append to the same run with the same `expectedNextIndex`; one succeeds, one maps to `LogConflictError`; reading from S2 returns exactly the committed ordered events.
+**Proof:** `tanstack-workflow-s2.event-log-cas` races two writers with the same
+`expectedNextIndex`; one succeeds, one maps to `LogConflictError`, and reading
+from S2 returns exactly the committed ordered events.
 
 ### B. Run Lifecycle
+
+**Status:** Implemented.
 
 **Claim.** S2 can back run creation, state save/load, and terminal transitions.
 
 **Forces:** `createRun`, `loadRun`, `loadRunState`, `saveRunState`, `markRunPaused`, `markRunFinished`, `markRunErrored`, `getRunTimeline`.
 
-**Proof:** start a TanStack workflow through `createRuntimeDriver` using the S2 store, kill the host after event append/state save, restart, load execution from S2, and continue without losing run state or duplicating events.
+**Proof:** `tanstack-workflow-s2.run-lifecycle`,
+`tanstack-workflow-s2.runtime-end-to-end`, and
+`tanstack-workflow-s2.host-crash-restart` start workflows through the S2 store,
+load execution from S2, and continue without losing run state or duplicating
+events.
 
 ### C. Leases And Stale Claims
+
+**Status:** Implemented.
 
 **Claim.** S2 fencing/CAS can safely lease a run to one owner and allow failover after expiry.
 
 **Forces:** `claimRun`, `heartbeatRunLease`, `releaseRunLease`, `claimStaleRuns`.
 
-**Proof:** two hosts race `claimRun`; only one owns the run. A live owner heartbeats and cannot be stolen. A killed owner expires; a successor claims and continues from S2.
+**Proof:** `tanstack-workflow-s2.leases` races claims and validates heartbeat
+protection; `tanstack-workflow-s2.host-crash-restart` and
+`tanstack-workflow-s2.host-tick` validate stale recovery from S2.
 
 ### D. Timers, Signals, And Approvals
+
+**Status:** Implemented.
 
 **Claim.** Paused TanStack runs can wake from S2-backed timers, signals, and approvals.
 
 **Forces:** `scheduleTimer`, `claimDueTimers`, `deliverSignal`, `deliverApproval`.
 
-**Proof:** a workflow sleeps or waits for approval, host exits while paused, another process delivers the wakeup, runtime sweep/driver resumes the run from S2 exactly once.
+**Proof:** `tanstack-workflow-s2.timers-signals`,
+`tanstack-workflow-s2.runtime-timer-sweep`, and
+`tanstack-workflow-s2.runtime-approval` prove timer and approval wakeups resume
+paused runs from S2 exactly once.
 
 ### E. Schedules
+
+**Status:** Implemented.
 
 **Claim.** S2 can back recurring schedule definitions and due bucket claims.
 
 **Forces:** `upsertSchedule`, `claimDueScheduleBuckets`, `markScheduleBucketStarted`.
 
-**Proof:** two sweepers race a due schedule bucket; exactly one starts the scheduled run for that bucket.
+**Proof:** `tanstack-workflow-s2.runtime-schedule-sweep` proves schedule
+materialization and due bucket claiming start the scheduled run exactly once.
 
 ## PR Contract
 
@@ -246,13 +300,18 @@ Every implementation PR must state:
 
 Reject proof-only PRs and PRs that expand the workflow authoring API instead of implementing the S2 store.
 
-## Open Questions
+## Resolved And Deferred Questions
 
-- Whether to depend on `@tanstack/workflow-runtime` directly or lift the needed interfaces into a compatibility package while TanStack's package is `0.0.x`.
-- Whether run leases should use S2 fence command records everywhere or CAS lease facts for metadata-only phases.
-- Timer bucket granularity and retention strategy.
-- Whether to implement `subscribeEvents` immediately with `readSession` or defer until UI/devtools need it.
-- Whether schedule indexing should be purely S2 streams or initially run through a folded in-process index rebuilt by sweeps.
+- TanStack source is lifted into local workspace packages for now; keep the
+  compatibility boundary explicit while upstream remains early.
+- Run leases use CAS-protected metadata facts for the implemented store. S2
+  command-record fences are deferred until a production writer needs tokened
+  follow-on S2 writes.
+- `subscribeEvents` is deferred until a UI/devtools/live-output consumer needs
+  it.
+- Timer bucket granularity and retention remain operational tuning concerns.
+- Schedule indexing is S2-stream backed in the implemented runtime; revisit only
+  if sweep scale forces a different projection strategy.
 
 ## References
 

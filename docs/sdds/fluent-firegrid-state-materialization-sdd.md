@@ -4,7 +4,7 @@
 
 |   |   |
 | --- | --- |
-| Status | Implemented through A-E |
+| Status | Implemented through A-E; complete for current state/materialization layer |
 | Date | 2026-06-25 |
 | Package | `@firegrid/fluent-firegrid` plus S2 object-owner support |
 | Prior art | `effect-s2-durable` user-defined durable state; `effect-s2-stream-db` |
@@ -16,6 +16,10 @@
 
 Virtual object state uses the old table/materialization authoring shape, not a
 string-slot API.
+
+This SDD is complete for the current layer. Future fluent API work should build
+above it; it should not add more proof-only object packages or reopen
+`effect-s2-flow` as the runtime.
 
 The public authoring target is:
 
@@ -260,3 +264,22 @@ and another host can attach by calling the same object method with
 - Do not claim object-state correctness without a real `s2 lite` crash/restart
   proof.
 - Do not weaken the TanStack/S2 store proofs while adding object state.
+
+## Remaining Hardening
+
+The implemented proof suite covers durable state projection, same-key
+serialization, cross-host serialization, killed-owner recovery, replay-safe
+state reads/writes, and send handles. One production hardening item remains
+before treating object ownership as fully fenced under arbitrary scheduler
+behavior:
+
+- **Live deposed-owner state-write fencing.** Current stale-owner proofs kill the
+  old owner. Add token-enforced state/invocation appends or equivalent CAS
+  ownership checks so an owner that keeps running after lease expiry cannot
+  append stale object state after a successor has taken over. The acceptance
+  proof should keep host A alive, advance host B past the lease, let B complete
+  takeover, then verify any late host-A state write is rejected or ignored.
+
+This is hardening of the implemented S2 object owner, not a new SDD ladder. The
+next product layer is the Restate-like fluent authoring/client surface on top of
+the completed TanStack/S2 and object-state substrate.

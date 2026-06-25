@@ -4,9 +4,9 @@
 
 |   |   |
 | --- | --- |
-| Status | Architecture reference — **active implementation moved to [`tanstack-workflow-s2-store-sdd.md`](./tanstack-workflow-s2-store-sdd.md)** |
+| Status | Superseded architecture reference — **do not implement directly** |
 | Date | 2026-06-24; revised 2026-06-25 |
-| Packages | `effect-s2` (the substrate) · `@firegrid/tanstack-workflow-s2` (active S2-backed TanStack Workflow store adapter, working name) · `effect-s2-flow` / `fluent-firegrid` (future higher-level Firegrid conveniences if still needed). `effect-s2-stream-db` / `effect-s2-durable` are archived — reference only. |
+| Packages | `effect-s2` (the substrate) · `@firegrid/tanstack-workflow-s2` (S2-backed TanStack Workflow store/runtime adapter) · `@firegrid/fluent-firegrid` / `@firegrid/fluent-firegrid-s2` (higher-level Firegrid conveniences). `effect-s2-flow`, `effect-s2-stream-db`, and `effect-s2-durable` are reference/archived material only. |
 | Reference vocabulary | TanStack Workflow; the S2 shared-log KV demo; Restate / `restate-sdk-gen`; Pulsar (vocabulary only) |
 | effect-smol | Effect v4 (`Context.Service`, `Layer`, `Stream`, `Queue`, `PubSub`, `Deferred`, `Fiber`, `FiberRef`, `LayerMap`) |
 
@@ -22,7 +22,13 @@
 
 That package shape is inviting implementation drift. Agents can add a `sleep` proof, weaken a keyed-state proof, or expand `service/object` vocabulary and still plausibly claim to be "implementing flow."
 
-TanStack Workflow already provides the runtime seam this repo needs: `WorkflowExecutionStore`. Its bundled in-memory store is the reference implementation; this repo should implement the S2-backed version instead of designing a bespoke durable-function API. The active implementation target is [`tanstack-workflow-s2-store-sdd.md`](./tanstack-workflow-s2-store-sdd.md).
+TanStack Workflow already provides the runtime seam this repo needs:
+`WorkflowExecutionStore`. Its bundled in-memory store is the reference
+implementation. This repo implements the S2-backed version in
+[`tanstack-workflow-s2-store-sdd.md`](./tanstack-workflow-s2-store-sdd.md) and
+builds virtual-object state in
+[`fluent-firegrid-state-materialization-sdd.md`](./fluent-firegrid-state-materialization-sdd.md).
+Do not implement new production work directly from this document.
 
 The vendored TanStack source lives at `repos/tanstack-workflow` and is reference-only, matching the repo's existing `repos/` policy.
 
@@ -32,10 +38,13 @@ The previous draft was a stack of thirteen horizontal layers, each with its own 
 
 The corrected build is now:
 
-1. **TanStack Workflow API/runtime** — imported or lifted from the vendored source.
+1. **TanStack Workflow API/runtime** — lifted into local workspace packages.
 2. **S2 store adapter** — implements `WorkflowExecutionStore` with `effect-s2`.
-3. **Optional Firegrid conveniences** — only after the S2 adapter is production-backed.
-4. **Components below** — retained as design reference for S2 facts, leases, timers, activation, and materialized views. Components are not the implementation order.
+3. **Fluent Firegrid conveniences** — implemented above the TanStack/S2 runtime,
+   not inside `effect-s2-flow`.
+4. **Components below** — retained as design reference for S2 facts, leases,
+   timers, activation, and materialized views. Components are not the
+   implementation order.
 
 ### The governing rule
 
@@ -44,7 +53,9 @@ Three rules, and they are the point of the whole document:
 1. **Every gate is a behavioral property of the real substrate.** Crash (`kill -9`), contention, replay, linearizability — chosen so that passing it against a mock is impossible or meaningless. *There is no honest mock of durability.* If a test passes against a fake substrate, the test is wrong.
 2. **No code is built unless it is on the critical path of the current capability's acceptance test.** A component-sliver that isn't load-bearing for the test does not get written. This is how each horizontal concern is *forced to justify itself* — by being necessary to make a real-substrate property pass.
 3. **Slices are vertical and thin.** A slice cuts through every component it needs, minimally. We do **not** build a component "fully" before a capability needs it — `effect-s2` itself is sliced to what each capability exercises. There is no "finish the substrate, then start the runtime" phase.
-4. **Do not invent workflow APIs while the store adapter is active.** `service`, `object`, `workflow`, generated clients, and virtual-object state are blocked unless the active TanStack store adapter SDD explicitly calls for them.
+4. **Do not invent workflow APIs inside `effect-s2-flow` or the store adapter.**
+   `service`, `object`, `workflow`, generated clients, and virtual-object state
+   belong in the fluent layer above TanStack/S2.
 
 The consequence for build agents is mechanical: you cannot satisfy a capability gate with a fake, because the gate runs against `s2 lite` and a fake fails it. The reviewer's check is one glance — *did this PR's test kill the process and survive on real S2?*
 
@@ -52,13 +63,16 @@ The consequence for build agents is mechanical: you cannot satisfy a capability 
 
 A **per-run S2 event stream is the unit of TanStack Workflow replay**; metadata/index streams provide run state, leases, timers, schedules, and visibility. The conditional append is the coordination primitive. TanStack owns the workflow API; this repo owns the S2-backed persistence/runtime substrate.
 
-## Current status & next step
+## Current status
 
 - **`effect-s2` exists** as the production S2 substrate (`S2Client.ts`), sliced to what the runtime needs.
-- **The active implementation target is an S2-backed TanStack `WorkflowExecutionStore`.** Build against [`tanstack-workflow-s2-store-sdd.md`](./tanstack-workflow-s2-store-sdd.md).
-- **`effect-s2-flow` is demoted to architecture/reference material.** Do not expand `service` / `object` / `workflow` / generated-client ergonomics while the TanStack store adapter is active.
+- **The S2-backed TanStack `WorkflowExecutionStore` ladder is implemented.** See [`tanstack-workflow-s2-store-sdd.md`](./tanstack-workflow-s2-store-sdd.md).
+- **The fluent virtual-object state/materialization ladder is implemented.** See [`fluent-firegrid-state-materialization-sdd.md`](./fluent-firegrid-state-materialization-sdd.md).
+- **`effect-s2-flow` is demoted to architecture/reference material.** Do not expand `service` / `object` / `workflow` / generated-client ergonomics in `effect-s2-flow`.
 - **PRs that only add verification proofs are not implementation progress.** A proof is an acceptance gate for a named production `WorkflowExecutionStore` method or adapter behavior.
-- **PR #68-style durable sleep work is parked.** Reuse it only as a TanStack `scheduleTimer` / `claimDueTimers` / `deliverSignal` proof, and do not weaken existing virtual-object/state proofs.
+- **PR #68-style durable sleep work is parked.** Reuse it only as a TanStack
+  `scheduleTimer` / `claimDueTimers` / `deliverSignal` proof or delete it.
+  Do not weaken existing virtual-object/state proofs.
 
 ## Guardrails (what not to build)
 
@@ -73,13 +87,19 @@ A **per-run S2 event stream is the unit of TanStack Workflow replay**; metadata/
 
 # Implementation Ladder
 
-The implementation ladder now lives in [`tanstack-workflow-s2-store-sdd.md`](./tanstack-workflow-s2-store-sdd.md):
+The runtime implementation ladder lives in
+[`tanstack-workflow-s2-store-sdd.md`](./tanstack-workflow-s2-store-sdd.md) and is
+implemented:
 
 - A. Event log CAS
 - B. Run lifecycle
 - C. Leases and stale claims
 - D. Timers, signals, and approvals
 - E. Schedules
+
+The object-state/materialization ladder lives in
+[`fluent-firegrid-state-materialization-sdd.md`](./fluent-firegrid-state-materialization-sdd.md)
+and is implemented through send handles.
 
 The older capability notes below are retained only as conceptual mapping for how S2 facts, leases, timers, and materialized views relate to workflow execution. They are not the active work order.
 
