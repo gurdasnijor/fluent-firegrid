@@ -28,7 +28,8 @@ export default proof("effect-s2-flow.capability-b.lease-refresh")
           const waitForObjectSpan = (span: string) =>
             runtime.waitForSpan(span, {
               attributes: { "effect-s2-flow.invocation.stream": stream },
-              attempts: 800
+              attempts: 80,
+              interval: "250 millis"
             })
 
           yield* hosts.kill("owner-a")
@@ -42,7 +43,8 @@ export default proof("effect-s2-flow.capability-b.lease-refresh")
           )
           yield* runtime.waitForSpan("effect-s2-flow.client.invoke", {
             attributes: { "effect-s2-flow.request.id": "counter-lease-refresh-add" },
-            attempts: 800
+            attempts: 80,
+            interval: "250 millis"
           })
 
           yield* hosts.restart("owner-a")
