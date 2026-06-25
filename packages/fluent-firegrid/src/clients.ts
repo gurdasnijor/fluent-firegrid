@@ -54,6 +54,18 @@ export type SendClient<
   ) => Effect.Effect<SendReference<HandlerOutput<Handlers[Key]>>, Error, Requirements>
 }
 
+export type ObjectClient<
+  Handlers extends Record<string, GeneratorHandler>,
+  Error = unknown,
+  Requirements = never
+> = (key: string) => Client<Handlers, Error, Requirements>
+
+export type SendObjectClient<
+  Handlers extends Record<string, GeneratorHandler>,
+  Error = unknown,
+  Requirements = never
+> = (key: string) => SendClient<Handlers, Error, Requirements>
+
 type ClientMode = "call" | "send"
 
 type ClientFor<
@@ -115,6 +127,56 @@ const bindInvocationBinding = (mode: ClientMode) =>
     ])
   ) as ClientFor<typeof mode, Handlers, Error, Requirements>
 
-export const client = bindInvocationBinding("call")
+export const client = bindInvocationBinding("call") as <
+  const Name extends string,
+  const Kind extends DefinitionKind,
+  const Handlers extends Record<string, GeneratorHandler>,
+  Error = unknown,
+  Requirements = never
+>(
+  binding: InvocationBinding<Error, Requirements>,
+  definition: BindableDefinition<Name, Kind, Handlers>,
+  key?: string
+) => Client<Handlers, Error, Requirements>
 
-export const sendClient = bindInvocationBinding("send")
+export const sendClient = bindInvocationBinding("send") as <
+  const Name extends string,
+  const Kind extends DefinitionKind,
+  const Handlers extends Record<string, GeneratorHandler>,
+  Error = unknown,
+  Requirements = never
+>(
+  binding: InvocationBinding<Error, Requirements>,
+  definition: BindableDefinition<Name, Kind, Handlers>,
+  key?: string
+) => SendClient<Handlers, Error, Requirements>
+
+export const serviceClient = client
+
+export const workflowClient = client
+
+export const sendServiceClient = sendClient
+
+export const sendWorkflowClient = sendClient
+
+export const objectClient = <
+  const Name extends string,
+  const Handlers extends Record<string, GeneratorHandler>,
+  Error = unknown,
+  Requirements = never
+>(
+  binding: InvocationBinding<Error, Requirements>,
+  definition: BindableDefinition<Name, "object", Handlers>
+): ObjectClient<Handlers, Error, Requirements> =>
+(key) => client(binding, definition, key)
+
+export const sendObjectClient = <
+  const Name extends string,
+  const Handlers extends Record<string, GeneratorHandler>,
+  Error = unknown,
+  Requirements = never
+>(
+  binding: InvocationBinding<Error, Requirements>,
+  definition: BindableDefinition<Name, "object", Handlers>
+): SendObjectClient<Handlers, Error, Requirements> =>
+(key) => sendClient(binding, definition, key)

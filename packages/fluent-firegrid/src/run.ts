@@ -49,3 +49,11 @@ export const waitForSignal = <Payload = unknown>(
   FluentDurableContext.pipe(
     Effect.flatMap((ctx) => ctx.waitForSignal(name, options))
   )
+
+export const objectKey: Effect.Effect<string, FluentFiregridError, FluentDurableContext> = FluentDurableContext.pipe(
+  Effect.flatMap((ctx) =>
+    ctx.key === undefined
+      ? Effect.fail(new FluentFiregridError({ message: "objectKey can only be used in keyed object handlers" }))
+      : Effect.succeed(ctx.key)
+  )
+)

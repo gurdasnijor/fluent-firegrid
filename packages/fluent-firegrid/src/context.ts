@@ -16,6 +16,7 @@ export type RunAction<A> = (
 ) => A | PromiseLike<A> | Effect.Effect<A, unknown, never>
 
 export interface FluentDurableContextService {
+  readonly key?: string
   readonly step: <A>(
     name: string,
     action: RunAction<A>,
@@ -44,7 +45,11 @@ export interface TanStackWorkflowContext {
   readonly waitForEvent: <Payload = unknown>(name: string, options?: WaitForEventOptions<Payload>) => Promise<Payload>
 }
 
-export const fluentContextFromTanStack = (ctx: TanStackWorkflowContext): FluentDurableContextService => ({
+export const fluentContextFromTanStack = (
+  ctx: TanStackWorkflowContext,
+  options: { readonly key?: string } = {}
+): FluentDurableContextService => ({
+  ...(options.key === undefined ? {} : { key: options.key }),
   sleep: (ms, options) =>
     Effect.tryPromise({
       try: () => ctx.sleep(ms, options),

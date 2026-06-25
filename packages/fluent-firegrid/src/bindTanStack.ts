@@ -10,6 +10,7 @@ import { FluentFiregridError } from "./error.ts"
 
 export interface FluentWorkflowInput {
   readonly input: unknown
+  readonly key?: string
 }
 
 export const workflowIdForHandler = (
@@ -28,8 +29,12 @@ export const bindFluentDefinitions = (
       Object.entries(definition.handlers).map(([handlerName, handler]) => {
         const workflowId = workflowIdForHandler(definition, handlerName)
         const workflow = createWorkflow({ id: workflowId }).handler(async (ctx) => {
-          const effect = Effect.gen(() => handler((ctx.input as FluentWorkflowInput).input)).pipe(
-            Effect.provideService(FluentDurableContext, fluentContextFromTanStack(ctx))
+          const input = ctx.input as FluentWorkflowInput
+          const effect = Effect.gen(() => handler(input.input)).pipe(
+            Effect.provideService(
+              FluentDurableContext,
+              fluentContextFromTanStack(ctx, input.key === undefined ? {} : { key: input.key })
+            )
           )
           return await Effect.runPromise(effect)
         })
@@ -67,7 +72,10 @@ export const createTanStackRuntimeBinding = (
     Effect.tryPromise({
       try: () =>
         host.runtime.startRun({
-          input: { input: request.input } satisfies FluentWorkflowInput,
+          input: {
+            input: request.input,
+            ...(request.key === undefined ? {} : { key: request.key })
+          } satisfies FluentWorkflowInput,
           now: now(),
           runId: runIdFor(request),
           workflowId: workflowIdForRequest(request)
@@ -93,7 +101,10 @@ export const createTanStackRuntimeBinding = (
       return Effect.tryPromise<SendReference<Output>, FluentFiregridError>({
         try: async () => {
           const result = await host.runtime.startRun({
-            input: { input: request.input } satisfies FluentWorkflowInput,
+            input: {
+              input: request.input,
+              ...(request.key === undefined ? {} : { key: request.key })
+            } satisfies FluentWorkflowInput,
             now: now(),
             runId: invocationId,
             workflowId: workflowIdForRequest(request)

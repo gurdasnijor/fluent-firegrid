@@ -4,6 +4,7 @@ import { runCli } from "../src/CliApp.ts"
 import effectS2CapabilityAProof from "./effect-s2-capability-a.ts"
 import { effectS2SubstrateProofs } from "./effect-s2-substrate-proofs.ts"
 import fluentFiregridHostCrashRestartProof from "./fluent-firegrid-host-crash-restart.ts"
+import fluentFiregridObjectKeyRestartProof from "./fluent-firegrid-object-key-restart.ts"
 import fluentFiregridSignalRestartProof from "./fluent-firegrid-signal-restart.ts"
 import tanstackWorkflowS2HostCrashRestartProof from "./tanstack-workflow-s2-host-crash-restart.ts"
 import tanstackWorkflowS2HostTickProof from "./tanstack-workflow-s2-host-tick.ts"
@@ -20,6 +21,7 @@ const proofs = [
   effectS2CapabilityAProof,
   ...effectS2SubstrateProofs,
   fluentFiregridHostCrashRestartProof,
+  fluentFiregridObjectKeyRestartProof,
   fluentFiregridSignalRestartProof,
   tanstackWorkflowS2HostCrashRestartProof,
   tanstackWorkflowS2HostTickProof,

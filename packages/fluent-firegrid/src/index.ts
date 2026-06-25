@@ -10,10 +10,18 @@ export {
   type Client,
   client,
   type InvocationBinding,
+  type ObjectClient,
+  objectClient,
   type SendClient,
   sendClient,
+  type SendObjectClient,
+  sendObjectClient,
   type SendReference,
-  type SendRequest
+  type SendRequest,
+  sendServiceClient,
+  sendWorkflowClient,
+  serviceClient,
+  workflowClient
 } from "./clients.ts"
 export { all, race, raceAll } from "./combinators.ts"
 export {
@@ -41,4 +49,4 @@ export {
   type WorkflowDefinition
 } from "./definitions.ts"
 export { FluentFiregridError } from "./error.ts"
-export { run, type RunOptions, sleep, sleepUntil, waitForSignal } from "./run.ts"
+export { objectKey, run, type RunOptions, sleep, sleepUntil, waitForSignal } from "./run.ts"

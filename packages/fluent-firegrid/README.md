@@ -29,3 +29,6 @@ runtime bindings such as `createTanStackRuntimeBinding`.
 
 Composition helpers such as `all` and `race` are Effect aliases. Firegrid does
 not introduce a separate Operation/Future scheduler.
+
+Keyed object invocations use `objectClient(binding, definition)(key)`, and the
+handler can read the durable invocation key with `yield* objectKey`.
