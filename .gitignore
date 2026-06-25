@@ -12,3 +12,5 @@ coverage/
 
 # Vendored source for reference only - not checked in
 repos/
+
+.verification-reports/
