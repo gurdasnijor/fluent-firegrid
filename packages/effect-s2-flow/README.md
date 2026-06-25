@@ -83,7 +83,9 @@ The load-bearing green proofs establish:
   after a fresh process, a stale object-stream token is rejected by S2 with
   `FencingTokenMismatchError`, and two would-be owners of one object stream
   contend without a lost update because the active lease admits one owner while
-  the other backs off. A killed owner also stops blocking progress: after its
+  the other backs off. A live owner refreshes its fence while processing work
+  that runs longer than the initial lease, so a successor cannot steal the
+  object mid-handler. A killed owner also stops blocking progress: after its
   lease expires, a successor claims the object stream and completes the pending
   invocation from the S2 journal.
 
@@ -97,9 +99,9 @@ The package is no longer just stubs, but the product claim is intentionally
 small. These are deferred until their own proofs force them:
 
 - Public durable object/state APIs.
-- Lease refresh and eviction semantics for long-running fenced owners. The
-  current internal lease token is enough to prove active-owner backoff and
-  dead-owner expiry, not full production ownership lifecycle.
+- Eviction semantics and host-health policy for long-running fenced owners.
+  Lease refresh for active owners is implemented and proven, but the broader
+  production ownership lifecycle still needs explicit proofs.
 - Request de-duplication beyond the current explicit service invocation id
   path.
 - Backpressure, stream discovery pagination, and long-running host lifecycle

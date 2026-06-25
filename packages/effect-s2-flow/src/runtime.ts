@@ -7,9 +7,11 @@ import * as Context from "effect/Context"
 import type * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
 import * as Equal from "effect/Equal"
+import * as Fiber from "effect/Fiber"
 import * as Layer from "effect/Layer"
 import * as Random from "effect/Random"
 import * as Ref from "effect/Ref"
+import * as Semaphore from "effect/Semaphore"
 
 import { type BatchTooLarge, FlowError } from "./FlowError.ts"
 import {
@@ -190,11 +192,12 @@ const invoke = Effect.fn("effect-s2-flow.client.invoke")(function*(
     if (remainingRetries <= 0) {
       return yield* Effect.failCause(exit.cause)
     }
+    yield* Effect.sleep("50 millis")
     const retryStreamApi = yield* ensureInvocationJournalStream(runtime, streamName)
     return yield* appendInvoke(remainingRetries - 1, retryStreamApi)
   })
 
-  yield* appendInvoke(3, streamApi).pipe(
+  yield* appendInvoke(10, streamApi).pipe(
     Effect.withSpan("effect-s2-flow.client.invoke", {
       attributes: {
         "effect-s2-flow.invocation.stream": streamName,
@@ -228,7 +231,8 @@ const invoke = Effect.fn("effect-s2-flow.client.invoke")(function*(
 })
 
 export interface CurrentInvocationScope {
-  readonly fencingToken?: string
+  readonly appendLock: Semaphore.Semaphore
+  readonly fencingToken: Ref.Ref<string | undefined>
   readonly pendingRecords: Ref.Ref<ReadonlyArray<AppendRecord>>
   readonly requestId: string
   readonly streamName: string
@@ -257,44 +261,49 @@ export const run = <A, E, R>(
     }
 
     const value = yield* effect
-    const matchSeqNum = yield* Ref.get(scope.nextSeqNum)
-    const checkpointNext = matchSeqNum + 2
-    yield* appendAtomic(
-      scope.streamApi,
-      [
-        encodeRecord({
-          _tag: "StepCompleted",
-          requestId: scope.requestId,
-          stepName: name,
-          value
-        }, stepHeaders("StepCompleted", name)),
-        encodeRecord({
-          _tag: "CheckpointAdvanced",
-          nextSeqNum: checkpointNext
-        }, recordTypeHeader("CheckpointAdvanced"))
-      ],
-      appendOptions(matchSeqNum, scope.fencingToken),
-      `failed to append StepCompleted for ${name}`
-    ).pipe(
-      Effect.tap(() =>
-        Effect.annotateCurrentSpan({
-          "effect-s2-flow.invocation.stream": scope.streamName,
-          "effect-s2-flow.fencing.token": scope.fencingToken ?? "",
-          "effect-s2-flow.record.type": "StepCompleted",
-          "effect-s2-flow.step.name": name
-        })
-      ),
-      Effect.withSpan("effect-s2-flow.journal.append.ack", {
-        attributes: {
-          "effect-s2-flow.invocation.stream": scope.streamName,
-          "effect-s2-flow.fencing.token": scope.fencingToken ?? "",
-          "effect-s2-flow.record.type": "StepCompleted",
-          "effect-s2-flow.step.name": name
-        }
+    yield* scope.appendLock.withPermit(
+      Effect.gen(function*() {
+        const matchSeqNum = yield* Ref.get(scope.nextSeqNum)
+        const fencingToken = yield* Ref.get(scope.fencingToken)
+        const checkpointNext = matchSeqNum + 2
+        const ack = yield* appendAtomic(
+          scope.streamApi,
+          [
+            encodeRecord({
+              _tag: "StepCompleted",
+              requestId: scope.requestId,
+              stepName: name,
+              value
+            }, stepHeaders("StepCompleted", name)),
+            encodeRecord({
+              _tag: "CheckpointAdvanced",
+              nextSeqNum: checkpointNext
+            }, recordTypeHeader("CheckpointAdvanced"))
+          ],
+          appendOptions(matchSeqNum, fencingToken),
+          `failed to append StepCompleted for ${name}`
+        ).pipe(
+          Effect.tap(() =>
+            Effect.annotateCurrentSpan({
+              "effect-s2-flow.invocation.stream": scope.streamName,
+              "effect-s2-flow.fencing.token": fencingToken ?? "",
+              "effect-s2-flow.record.type": "StepCompleted",
+              "effect-s2-flow.step.name": name
+            })
+          ),
+          Effect.withSpan("effect-s2-flow.journal.append.ack", {
+            attributes: {
+              "effect-s2-flow.invocation.stream": scope.streamName,
+              "effect-s2-flow.fencing.token": fencingToken ?? "",
+              "effect-s2-flow.record.type": "StepCompleted",
+              "effect-s2-flow.step.name": name
+            }
+          })
+        )
+        yield* Ref.update(scope.steps, (current) => new Map(current).set(name, value))
+        yield* Ref.set(scope.nextSeqNum, ack.end.seqNum)
       })
     )
-    yield* Ref.update(scope.steps, (current) => new Map(current).set(name, value))
-    yield* Ref.set(scope.nextSeqNum, checkpointNext)
     return value
   })
 
@@ -352,6 +361,8 @@ const methodEffect = (
 const hostFenceToken = (): string => (process.env.FIREGRID_HOST_ID ?? `pid-${process.pid}`).slice(0, 36)
 
 const fenceLeaseMillis = 8_000
+
+const fenceRefreshInterval: Duration.Input = "2 seconds"
 
 const hostId = (): string => (process.env.FIREGRID_HOST_ID ?? `pid-${process.pid}`).replace(/:/g, "-").slice(0, 20)
 
@@ -414,6 +425,46 @@ const claimObjectFence = Effect.fn("effect-s2-flow.claimObjectFence")(function*(
   }
 })
 
+const refreshObjectFence = Effect.fn("effect-s2-flow.refreshObjectFence")(function*(
+  streamApi: StreamApi,
+  streamName: string,
+  appendLock: Semaphore.Semaphore,
+  nextSeqNum: Ref.Ref<number>,
+  fencingToken: Ref.Ref<string | undefined>
+) {
+  const refreshOnce = appendLock.withPermit(
+    Effect.gen(function*() {
+      const previousToken = yield* Ref.get(fencingToken)
+      if (previousToken === undefined) return
+      const matchSeqNum = yield* Ref.get(nextSeqNum)
+      const token = makeFenceToken()
+      const ack = yield* appendAtomic(
+        streamApi,
+        [AppendRecord.fence(token)],
+        appendOptions(matchSeqNum, previousToken),
+        `failed to refresh fence for ${streamName}`
+      ).pipe(
+        Effect.withSpan("effect-s2-flow.fence.refresh", {
+          attributes: {
+            "effect-s2-flow.fencing.previous_token": previousToken,
+            "effect-s2-flow.fencing.token": token,
+            "effect-s2-flow.invocation.stream": streamName
+          }
+        })
+      )
+      yield* Ref.set(fencingToken, token)
+      yield* Ref.set(nextSeqNum, ack.end.seqNum)
+    })
+  )
+
+  return yield* Effect.gen(function*() {
+    yield* Effect.sleep(fenceRefreshInterval)
+    yield* refreshOnce
+  }).pipe(
+    Effect.forever
+  )
+})
+
 const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function*(
   runtime: Required<FlowRuntimeConfig>,
   serviceDefinition: FlowDefinition<ServiceHandlers>,
@@ -457,10 +508,19 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
   const stateRef = yield* Ref.make<ReadonlyMap<string, unknown>>(states)
   const stepRef = yield* Ref.make<ReadonlyMap<string, unknown>>(steps)
   const nextSeqNum = yield* Ref.make(fence?.nextSeqNum ?? snapshot.nextSeqNum)
+  const fencingToken = yield* Ref.make<string | undefined>(fence?.token)
+  const appendLock = yield* Semaphore.make(1)
+  const refreshFiber = fence === undefined
+    ? undefined
+    : yield* refreshObjectFence(streamApi, streamName, appendLock, nextSeqNum, fencingToken).pipe(
+      Effect.catch((cause) => Effect.logError(`failed refreshing fence for ${streamName}`, cause)),
+      Effect.forkChild
+    )
   const result = yield* Effect.exit(
     methodEffect(serviceDefinition, invokeRecord.method, invokeRecord.input).pipe(
       Effect.provideService(InvocationScope, {
-        ...(fence === undefined ? {} : { fencingToken: fence.token }),
+        appendLock,
+        fencingToken,
         nextSeqNum,
         pendingRecords,
         requestId: invokeRecord.requestId,
@@ -468,50 +528,64 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
         steps: stepRef,
         streamApi,
         streamName
-      })
+      }),
+      Effect.ensuring(refreshFiber === undefined ? Effect.void : Fiber.interrupt(refreshFiber))
     )
   )
 
-  const matchSeqNum = yield* Ref.get(nextSeqNum)
   if (result._tag === "Success") {
-    const records = yield* Ref.get(pendingRecords)
-    yield* appendAtomic(
-      streamApi,
-      [
-        ...records,
-        encodeRecord({
-          _tag: "Completed",
-          requestId: invokeRecord.requestId,
-          value: result.value
-        }, recordTypeHeader("Completed"))
-      ],
-      appendOptions(matchSeqNum, fence?.token),
-      `failed to append Completed for ${streamName}`
-    ).pipe(
-      Effect.withSpan("effect-s2-flow.invocation.completed", {
-        attributes: {
-          "effect-s2-flow.invocation.stream": streamName,
-          "effect-s2-flow.fencing.token": fence?.token ?? "",
-          "effect-s2-flow.request.id": invokeRecord.requestId,
-          "effect-s2-flow.state.record_count": String(records.length),
-          "effect-s2-flow.service": serviceDefinition.name
-        }
+    yield* appendLock.withPermit(
+      Effect.gen(function*() {
+        const matchSeqNum = yield* Ref.get(nextSeqNum)
+        const token = yield* Ref.get(fencingToken)
+        const records = yield* Ref.get(pendingRecords)
+        const ack = yield* appendAtomic(
+          streamApi,
+          [
+            ...records,
+            encodeRecord({
+              _tag: "Completed",
+              requestId: invokeRecord.requestId,
+              value: result.value
+            }, recordTypeHeader("Completed"))
+          ],
+          appendOptions(matchSeqNum, token),
+          `failed to append Completed for ${streamName}`
+        ).pipe(
+          Effect.withSpan("effect-s2-flow.invocation.completed", {
+            attributes: {
+              "effect-s2-flow.invocation.stream": streamName,
+              "effect-s2-flow.fencing.token": token ?? "",
+              "effect-s2-flow.request.id": invokeRecord.requestId,
+              "effect-s2-flow.state.record_count": String(records.length),
+              "effect-s2-flow.service": serviceDefinition.name
+            }
+          })
+        )
+        yield* Ref.set(nextSeqNum, ack.end.seqNum)
       })
     )
     return
   }
 
-  yield* appendAtomic(
-    streamApi,
-    [
-      encodeRecord({
-        _tag: "Failed",
-        requestId: invokeRecord.requestId,
-        message: String(result.cause)
-      }, recordTypeHeader("Failed"))
-    ],
-    appendOptions(matchSeqNum, fence?.token),
-    `failed to append Failed for ${streamName}`
+  yield* appendLock.withPermit(
+    Effect.gen(function*() {
+      const matchSeqNum = yield* Ref.get(nextSeqNum)
+      const token = yield* Ref.get(fencingToken)
+      const ack = yield* appendAtomic(
+        streamApi,
+        [
+          encodeRecord({
+            _tag: "Failed",
+            requestId: invokeRecord.requestId,
+            message: String(result.cause)
+          }, recordTypeHeader("Failed"))
+        ],
+        appendOptions(matchSeqNum, token),
+        `failed to append Failed for ${streamName}`
+      )
+      yield* Ref.set(nextSeqNum, ack.end.seqNum)
+    })
   )
 })
 
