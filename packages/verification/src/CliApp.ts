@@ -12,6 +12,7 @@ import { layer as TraceRuntimeLayer } from "./TraceRuntime.ts"
 import { VerificationError } from "./VerificationError.ts"
 
 const version = "0.0.0"
+const proofTimeout = "10 minutes"
 
 const outputFlag = Flag.choice("output", ["text", "json"]).pipe(
   Flag.withDescription("Output format"),
@@ -121,12 +122,12 @@ const makeRunCommand = (proofs: ReadonlyArray<Proof<any>>) =>
           ...(reportPath === undefined ? {} : { reportDir: reportPath }),
           ...(requestedTrialId === undefined ? {} : { trialId: requestedTrialId })
         }).pipe(
-          Effect.timeout("4 minutes"),
+          Effect.timeout(proofTimeout),
           Effect.mapError((cause) =>
             isVerificationError(cause)
               ? cause
               : new VerificationError({
-                message: `proof ${proof.name} did not complete within 4 minutes`,
+                message: `proof ${proof.name} did not complete within ${proofTimeout}`,
                 cause
               })
           ),
