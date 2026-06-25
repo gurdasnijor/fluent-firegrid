@@ -330,7 +330,7 @@ const methodEffect = (
 
 const hostFenceToken = (): string => (process.env.FIREGRID_HOST_ID ?? `pid-${process.pid}`).slice(0, 36)
 
-const fenceLeaseMillis = 5_000
+const fenceLeaseMillis = 8_000
 
 const hostId = (): string => (process.env.FIREGRID_HOST_ID ?? `pid-${process.pid}`).replace(/:/g, "-").slice(0, 20)
 
