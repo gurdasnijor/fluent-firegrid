@@ -257,7 +257,7 @@ async function deliverTimer<
   return deliverSignal(config, {
     runId: args.timer.runId,
     signalId: args.timer.signalId,
-    name: "__timer",
+    name: args.timer.signalName ?? "__timer",
     payload: undefined,
     now: args.now,
     leaseOwner: args.leaseOwner,
@@ -360,7 +360,8 @@ async function syncTimerFromRunState<
 ) {
   const state = await config.store.loadRunState(runId)
   const deadline = state?.waitingFor?.deadline
-  if (state?.waitingFor?.signalName !== "__timer" || deadline === undefined) {
+  const signalName = state?.waitingFor?.signalName
+  if (deadline === undefined || signalName === undefined) {
     return
   }
 
@@ -370,6 +371,7 @@ async function syncTimerFromRunState<
     workflowVersion: state.workflowVersion,
     wakeAt: deadline,
     signalId: `timer:${runId}:${deadline}`,
+    signalName,
     now
   })
 }

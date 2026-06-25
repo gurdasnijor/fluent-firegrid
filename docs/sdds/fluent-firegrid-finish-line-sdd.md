@@ -417,9 +417,11 @@ Resolution is deterministic:
    match the change.
 4. When the expression returns true, append `StateWaitReady` with the row or
    selected projection value.
-5. The object queue owner resumes the parked run by delivering the corresponding
+5. If `timeoutAt` elapses first, the object queue owner delivers the same
+   signal with a typed timeout payload and records the invocation failure.
+6. The object queue owner resumes the parked run by delivering the corresponding
    TanStack signal, then appends `StateWaitDelivered`.
-6. On replay, TanStack's recorded `SIGNAL_RESOLVED` value returns the selected
+7. On replay, TanStack's recorded `SIGNAL_RESOLVED` value returns the selected
    row without re-evaluating against newer state.
 
 Keyed waits are the first production slice:
@@ -439,9 +441,10 @@ Implementation status as of June 25, 2026:
 - the S2 object state backend evaluates keyed waits against the materialized row
   projection and appends `StateWaitRegistered` / `StateWaitReady` records;
 - the S2 object runtime skips pending state-wait calls, continues draining later
-  same-key calls, and resumes ready waits through the queue-owned signal path;
-- remaining gaps are timeout scheduling, schema-derived CEL environment
-  generation, query/index waits, and richer typed CEL builder ergonomics.
+  same-key calls, resumes ready waits through the queue-owned signal path, and
+  turns expired `timeoutAt` registrations into typed wait failures;
+- remaining gaps are schema-derived CEL environment generation, query/index
+  waits, and richer typed CEL builder ergonomics.
 
 Query waits can come later, but must require an indexable declaration so the
 runtime does not scan all rows/waits:
@@ -615,7 +618,7 @@ Ship:
 - parse/type-check at registration time;
 - persisted wait registrations with expression text and environment version;
 - keyed wait index by `(table, key)`;
-- timeout support;
+- timeout support through object-queue-owned `timeoutAt` delivery;
 - replay from the recorded signal resolution value.
 
 Tests:

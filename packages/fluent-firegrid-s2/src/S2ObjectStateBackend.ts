@@ -69,6 +69,7 @@ interface StateWaitRegisteredEvent {
   readonly predicate: StatePredicate
   readonly signalName: string
   readonly table: string
+  readonly timeoutAt?: number
   readonly timeoutMs?: number
   readonly waitId: string
 }
@@ -428,6 +429,7 @@ const waitForState = (
       predicate,
       signalName: options.signalName,
       table,
+      ...(options.timeoutAt === undefined ? {} : { timeoutAt: options.timeoutAt }),
       ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       waitId: options.waitId
     })

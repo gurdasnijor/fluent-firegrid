@@ -486,6 +486,7 @@ const scheduleTimer = (runtime: S2StoreRuntime, args: ScheduleTimerArgs): Effect
     const timer = {
       runId: args.runId,
       signalId: args.signalId,
+      ...(args.signalName === undefined ? {} : { signalName: args.signalName }),
       wakeAt: args.wakeAt,
       workflowId: args.workflowId,
       ...(args.workflowVersion === undefined ? {} : { workflowVersion: args.workflowVersion })
@@ -519,7 +520,11 @@ const claimDueTimers = (
       if (due.length >= args.limit) break
       if (timer.wakeAt > args.now || !canClaim(timer.lease, args.leaseOwner, args.now)) continue
       const runProjection = yield* readRunMeta(runtime, timer.runId)
-      const delivery = { name: "__timer", payload: undefined, signalId: timer.signalId } satisfies SignalDelivery
+      const delivery = {
+        name: timer.signalName ?? "__timer",
+        payload: undefined,
+        signalId: timer.signalId
+      } satisfies SignalDelivery
       if (
         runProjection.run === undefined
         || isTerminal(runProjection.run.status)
@@ -942,7 +947,7 @@ const executionFromRunState = (state: RunState, leaseValue?: WorkflowLease): Wor
   ...(state.awaiting === undefined ? {} : { awaiting: clone(state.awaiting) }),
   ...(state.waitingFor === undefined ? {} : { waitingFor: clone(state.waitingFor) }),
   ...(state.pendingApproval === undefined ? {} : { pendingApproval: clone(state.pendingApproval) }),
-  ...(state.waitingFor?.signalName === "__timer" && state.waitingFor.deadline !== undefined
+  ...(state.waitingFor?.deadline !== undefined
     ? { wakeAt: state.waitingFor.deadline }
     : {}),
   ...(leaseValue === undefined ? {} : { lease: cloneLease(leaseValue) })
@@ -996,6 +1001,7 @@ const scheduleBucketKey = (scheduleId: ScheduleId, bucketId: ScheduleBucketId): 
 const timerWakeup = (timer: TimerWakeup): TimerWakeup => ({
   runId: timer.runId,
   signalId: timer.signalId,
+  ...(timer.signalName === undefined ? {} : { signalName: timer.signalName }),
   wakeAt: timer.wakeAt,
   workflowId: timer.workflowId,
   ...(timer.workflowVersion === undefined ? {} : { workflowVersion: timer.workflowVersion })

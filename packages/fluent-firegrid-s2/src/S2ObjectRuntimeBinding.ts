@@ -67,6 +67,7 @@ type StateWaitRegisteredEvent = {
   readonly name: string
   readonly signalName: string
   readonly table: string
+  readonly timeoutAt?: number
   readonly timeoutMs?: number
   readonly waitId: string
 }
@@ -464,16 +465,16 @@ const drain = (
   Effect.gen(function*() {
     while (true) {
       const projection = yield* readProjection(runtime, streamName)
+      const currentTime = now()
       const nextCallId = projection.orderedCallIds.find((callId) =>
         !projection.completed.has(callId) && !projection.errored.has(callId)
-        && stateWaitStatusForCall(projection, callId)._tag !== "Pending"
+        && stateWaitStatusForCall(projection, callId, currentTime)._tag !== "Pending"
       )
       if (nextCallId === undefined) return
       const accepted = projection.accepted.get(nextCallId)
       if (accepted === undefined) return
       const started = projection.started.get(nextCallId)
-      const currentTime = now()
-      const stateWaitStatus = stateWaitStatusForCall(projection, nextCallId)
+      const stateWaitStatus = stateWaitStatusForCall(projection, nextCallId, currentTime)
       if (started !== undefined && started.ownerId !== ownerId && started.leaseExpiresAt > currentTime) return
       if (
         started !== undefined
@@ -508,6 +509,14 @@ const drain = (
             callId: nextCallId,
             now: now(),
             output: result.value.run?.output
+          })
+        }
+        if (result.value.kind === "errored") {
+          yield* appendTerminalEvent(runtime, streamName, started.ownerId, nextCallId, {
+            _tag: "Errored",
+            callId: nextCallId,
+            error: result.value.run?.error ?? "state wait resume failed",
+            now: now()
           })
         }
         continue
@@ -569,6 +578,15 @@ const drain = (
         })
         continue
       }
+      if (result.value.kind === "errored") {
+        yield* appendTerminalEvent(runtime, streamName, ownerId, nextCallId, {
+          _tag: "Errored",
+          callId: nextCallId,
+          error: result.value.run?.error ?? "object invocation failed",
+          now: now()
+        })
+        continue
+      }
       continue
     }
   })
@@ -578,13 +596,30 @@ type StateWaitStatus =
   | { readonly _tag: "Pending" }
   | { readonly _tag: "Ready"; readonly ready: StateWaitReadyEvent }
 
-const stateWaitStatusForCall = (projection: InvocationProjection, callId: string): StateWaitStatus => {
+const stateWaitStatusForCall = (
+  projection: InvocationProjection,
+  callId: string,
+  now: number
+): StateWaitStatus => {
   const wait = projection.stateWaits.find((registered) =>
     registered.callId === callId && !projection.stateWaitDelivered.has(registered.waitId)
   )
   if (wait === undefined) return { _tag: "None" }
   const ready = projection.stateWaitReady.get(wait.waitId)
-  return ready === undefined ? { _tag: "Pending" } : { _tag: "Ready", ready }
+  if (ready !== undefined) return { _tag: "Ready", ready }
+  if (wait.timeoutAt !== undefined && wait.timeoutAt <= now) {
+    return {
+      _tag: "Ready",
+      ready: {
+        _tag: "StateWaitReady",
+        callId,
+        signalName: wait.signalName,
+        value: { _tag: "StateWaitTimedOut", name: wait.name },
+        waitId: wait.waitId
+      }
+    }
+  }
+  return { _tag: "Pending" }
 }
 
 const deliverStateWait = (

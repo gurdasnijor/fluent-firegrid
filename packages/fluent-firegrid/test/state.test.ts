@@ -162,6 +162,7 @@ describe("state(Table)", () => {
         readonly name: string
         readonly signalName: string
         readonly table: string
+        readonly timeoutAt?: number
         readonly timeoutMs?: number
         readonly waitId?: string
         readonly expression: string
@@ -180,6 +181,7 @@ describe("state(Table)", () => {
             name: options.name,
             signalName: options.signalName,
             table,
+            ...(options.timeoutAt === undefined ? {} : { timeoutAt: options.timeoutAt }),
             ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
             ...(options.waitId === undefined ? {} : { waitId: options.waitId })
           }
@@ -194,7 +196,10 @@ describe("state(Table)", () => {
     }).pipe(
       Effect.provideService(
         FluentDurableContext,
-        testContext(backend, ({ kind, table, key }) => `state-op:${nextOperation++}:${kind}:${table}:${key}`)
+        {
+          ...testContext(backend, ({ kind, table, key }) => `state-op:${nextOperation++}:${kind}:${table}:${key}`),
+          now: () => Effect.succeed(1_000)
+        }
       )
     )
 
@@ -205,6 +210,7 @@ describe("state(Table)", () => {
       name: "value-ready",
       signalName: "__firegrid_state_wait:items:a:value-ready",
       table: "items",
+      timeoutAt: 2_000,
       timeoutMs: 1_000,
       waitId: "state-op:0:waitFor:items:a"
     })
@@ -227,6 +233,7 @@ describe("state(Table)", () => {
 
     const program = state(Item).waitFor("a", {
       name: "value-ready",
+      timeoutMs: 5_000,
       when: cel("row.value >= 7")
     }).pipe(
       Effect.provideService(
@@ -234,11 +241,12 @@ describe("state(Table)", () => {
         FluentDurableContext.of({
           key: "object-1",
           state: backend,
+          now: () => Effect.succeed(1_000),
           stateOperationId: ({ kind, table, key }) => `state-op:${nextOperation++}:${kind}:${table}:${key}`,
           sleep: () => Effect.void,
           sleepUntil: () => Effect.void,
           step: () => Effect.fail(new FluentFiregridError({ message: "step not used" })),
-          waitForSignal: <Payload>(name: string, options?: { readonly id?: string }) =>
+          waitForSignal: <Payload>(name: string, options?: { readonly deadline?: number; readonly id?: string }) =>
             Effect.sync(() => {
               capturedSignal = {
                 ...(options?.id === undefined ? {} : { id: options.id }),
@@ -254,6 +262,40 @@ describe("state(Table)", () => {
     expect(capturedSignal).toEqual({
       id: "state-op:0:waitFor:items:a",
       name: "__firegrid_state_wait:items:a:value-ready"
+    })
+  })
+
+  it("fails with a typed timeout error when the timer wins a state wait", async () => {
+    const backend: ObjectStateBackend = {
+      get: () => Effect.succeed(Option.none()),
+      set: () => Effect.void,
+      delete: () => Effect.void,
+      waitFor: () => Effect.succeed(Option.none())
+    }
+
+    const program = state(Item).waitFor("a", {
+      name: "value-ready",
+      timeoutMs: 5_000,
+      when: cel("row.value >= 7")
+    }).pipe(
+      Effect.provideService(
+        FluentDurableContext,
+        FluentDurableContext.of({
+          key: "object-1",
+          state: backend,
+          now: () => Effect.succeed(1_000),
+          stateOperationId: ({ kind, table, key }) => `state-op:0:${kind}:${table}:${key}`,
+          sleep: () => Effect.void,
+          sleepUntil: () => Effect.void,
+          step: () => Effect.fail(new FluentFiregridError({ message: "step not used" })),
+          waitForSignal: <Payload>() => Effect.succeed({ _tag: "StateWaitTimedOut", name: "value-ready" } as Payload)
+        })
+      )
+    )
+
+    await expect(Effect.runPromise(program)).rejects.toMatchObject({
+      _tag: "FluentFiregridError",
+      message: "state.waitFor value-ready timed out"
     })
   })
 })

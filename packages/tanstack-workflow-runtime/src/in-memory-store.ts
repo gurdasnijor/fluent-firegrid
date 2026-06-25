@@ -288,7 +288,8 @@ export function inMemoryWorkflowExecutionStore(): InMemoryWorkflowExecutionStore
         workflowId: args.workflowId,
         workflowVersion: args.workflowVersion,
         wakeAt: args.wakeAt,
-        signalId: args.signalId
+        signalId: args.signalId,
+        ...(args.signalName === undefined ? {} : { signalName: args.signalName })
       })
       updateRun(args.runId, (run) => ({
         ...run,

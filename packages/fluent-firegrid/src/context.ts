@@ -1,5 +1,11 @@
 /* oxlint-disable effect/restricted-syntax -- This module bridges Effect handlers into TanStack's Promise-based ctx.step boundary. */
-import type { SleepOptions, StepContext, StepOptions, WaitForEventOptions } from "@tanstack/workflow-core"
+import type {
+  DeterministicValueOptions,
+  SleepOptions,
+  StepContext,
+  StepOptions,
+  WaitForEventOptions
+} from "@tanstack/workflow-core"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import type * as Option from "effect/Option"
@@ -11,6 +17,7 @@ import type { StatePredicate } from "./statePredicate.ts"
 export interface StateWaitBackendOptions {
   readonly name: string
   readonly signalName: string
+  readonly timeoutAt?: number
   readonly timeoutMs?: number
   readonly waitId?: string
 }
@@ -66,6 +73,7 @@ export interface FluentDurableContextService {
     action: RunAction<A>,
     options?: StepOptions
   ) => Effect.Effect<A, FluentFiregridError>
+  readonly now?: (options?: DeterministicValueOptions) => Effect.Effect<number, FluentFiregridError>
   readonly sleep: (ms: number, options?: SleepOptions) => Effect.Effect<void, FluentFiregridError>
   readonly sleepUntil: (timestamp: number, options?: SleepOptions) => Effect.Effect<void, FluentFiregridError>
   readonly waitForSignal: <Payload>(
@@ -87,6 +95,7 @@ export interface TanStackWorkflowContext {
   ) => Promise<A>
   readonly sleep: (ms: number, options?: SleepOptions) => Promise<void>
   readonly sleepUntil: (timestamp: number, options?: SleepOptions) => Promise<void>
+  readonly now?: (options?: DeterministicValueOptions) => Promise<number>
   readonly waitForEvent: <Payload = unknown>(name: string, options?: WaitForEventOptions<Payload>) => Promise<Payload>
 }
 
@@ -100,11 +109,21 @@ export const fluentContextFromTanStack = (
 ): FluentDurableContextService => {
   let nextStateOperation = 0
   const runId = ctx.runId ?? "unknown-run"
+  const now = ctx.now
   return {
     ...(options.binding === undefined ? {} : { binding: options.binding }),
     ...(options.key === undefined ? {} : { key: options.key }),
     ...(options.state === undefined ? {} : { state: options.state }),
     stateOperationId: (input) => `${runId}:state:${nextStateOperation++}:${input.kind}:${input.table}:${input.key}`,
+    ...(now === undefined
+      ? {}
+      : {
+        now: (options) =>
+          Effect.tryPromise({
+            try: () => now(options),
+            catch: (cause) => new FluentFiregridError({ cause, message: "now failed" })
+          })
+      }),
     sleep: (ms, options) =>
       Effect.tryPromise({
         try: () => ctx.sleep(ms, options),

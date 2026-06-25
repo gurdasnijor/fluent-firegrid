@@ -220,6 +220,16 @@ export interface StateWaitOptions {
 const stateWaitSignalName = (table: string, key: string, name: string): string =>
   `__firegrid_state_wait:${table}:${key}:${name}`
 
+interface StateWaitTimedOutPayload {
+  readonly _tag: "StateWaitTimedOut"
+  readonly name: string
+}
+
+const isStateWaitTimedOutPayload = (value: unknown): value is StateWaitTimedOutPayload =>
+  typeof value === "object"
+  && value !== null
+  && (value as { readonly _tag?: unknown })._tag === "StateWaitTimedOut"
+
 const encodeRowFor = <Tbl extends AnyTable>(
   table: Tbl,
   row: RowOf<Tbl>
@@ -298,24 +308,32 @@ export const state = <Tbl extends AnyTable>(table: Tbl): StateBinding<RowOf<Tbl>
       return backend.delete(table.tableName, key, opId === undefined ? undefined : { opId })
     }),
   waitFor: (key, options) =>
-    withStateBackend("state.waitFor", (backend, ctx) => {
-      if (backend.waitFor === undefined) {
-        return Effect.fail(new FluentFiregridError({ message: "state.waitFor is not supported by this state backend" }))
-      }
-      const waitId = ctx.stateOperationId?.({ key, kind: "waitFor", table: table.tableName })
-      const signalName = stateWaitSignalName(table.tableName, key, options.name)
-      return backend.waitFor(table.tableName, key, options.when, {
-        name: options.name,
-        signalName,
-        ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-        ...(waitId === undefined ? {} : { waitId })
-      }).pipe(
-        Effect.flatMap((value) =>
-          Option.isSome(value)
-            ? Effect.succeed(value.value)
-            : ctx.waitForSignal<unknown>(signalName, waitId === undefined ? undefined : { id: waitId })
-        ),
-        Effect.flatMap((value) => decodeRowFor(table, value))
-      )
-    })
+    withStateBackend("state.waitFor", (backend, ctx) =>
+      Effect.gen(function*() {
+        if (backend.waitFor === undefined) {
+          return yield* Effect.fail(
+            new FluentFiregridError({ message: "state.waitFor is not supported by this state backend" })
+          )
+        }
+        const waitId = ctx.stateOperationId?.({ key, kind: "waitFor", table: table.tableName })
+        const signalName = stateWaitSignalName(table.tableName, key, options.name)
+        const timeoutAt = options.timeoutMs === undefined || ctx.now === undefined
+          ? undefined
+          : (yield* ctx.now(waitId === undefined ? undefined : { id: `${waitId}:timeoutAt` })) + options.timeoutMs
+        const registered = yield* backend.waitFor(table.tableName, key, options.when, {
+          name: options.name,
+          signalName,
+          ...(timeoutAt === undefined ? {} : { timeoutAt }),
+          ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+          ...(waitId === undefined ? {} : { waitId })
+        })
+        if (Option.isSome(registered)) {
+          return yield* decodeRowFor(table, registered.value)
+        }
+        const value = yield* ctx.waitForSignal<unknown>(signalName, waitId === undefined ? undefined : { id: waitId })
+        if (isStateWaitTimedOutPayload(value)) {
+          return yield* Effect.fail(new FluentFiregridError({ message: `state.waitFor ${options.name} timed out` }))
+        }
+        return yield* decodeRowFor(table, value)
+      }))
 })

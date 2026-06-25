@@ -134,6 +134,7 @@ export interface ScheduleTimerArgs {
   workflowVersion?: WorkflowVersion
   wakeAt: number
   signalId: string
+  signalName?: string
   now: number
 }
 
@@ -150,6 +151,7 @@ export interface TimerWakeup {
   workflowVersion?: WorkflowVersion
   wakeAt: number
   signalId: string
+  signalName?: string
 }
 
 export interface DeliverSignalArgs<TPayload = unknown> {
