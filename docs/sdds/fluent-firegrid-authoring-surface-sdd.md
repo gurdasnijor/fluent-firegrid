@@ -6,7 +6,7 @@
 | --- | --- |
 | Status | Implemented through transport binding |
 | Date | 2026-06-25 |
-| Package | `@firegrid/fluent-firegrid`, `@firegrid/fluent-firegrid-http` |
+| Package | `@firegrid/fluent-firegrid`, `@firegrid/fluent-firegrid-http`, `@firegrid/fluent-firegrid-node` |
 | Lower runtime | TanStack Workflow over `@firegrid/tanstack-workflow-s2` |
 
 ---
@@ -151,3 +151,19 @@ methods out of JSON/enumeration.
 **Proof:** `packages/fluent-firegrid/test/public-surface.test.ts` verifies
 typed explicit send handles, ambient send handles, descriptor-bearing attach
 requests, and context-free `attach()` after the ambient handle has been created.
+
+### F. Production Node Binding
+
+**Status:** Implemented.
+
+**Claim.** A deployable Node process can expose fluent definitions over HTTP
+while core fluent remains transport-free.
+
+**Forces:** compose S2 runtime host, S2 object runtime binding,
+transport-neutral HTTP handler, health/readiness routes, host loop lifecycle, and
+graceful shutdown in a separate package.
+
+**Proof:** `@firegrid/fluent-firegrid-node` exposes `serveFluentS2`,
+`createFluentS2NodeRuntime`, and `listenFluentHttp`.
+`packages/fluent-firegrid-node/test/server.test.ts` covers health, readiness,
+call/send routing, and S2 runtime construction without starting a listener.

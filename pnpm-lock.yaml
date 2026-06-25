@@ -136,6 +136,40 @@ importers:
         specifier: ^3.2.0
         version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
 
+  packages/fluent-firegrid-node:
+    dependencies:
+      '@firegrid/fluent-firegrid':
+        specifier: workspace:*
+        version: link:../fluent-firegrid
+      '@firegrid/fluent-firegrid-http':
+        specifier: workspace:*
+        version: link:../fluent-firegrid-http
+      '@firegrid/fluent-firegrid-s2':
+        specifier: workspace:*
+        version: link:../fluent-firegrid-s2
+      '@firegrid/tanstack-workflow-s2':
+        specifier: workspace:*
+        version: link:../tanstack-workflow-s2
+      '@tanstack/workflow-runtime':
+        specifier: workspace:*
+        version: link:../tanstack-workflow-runtime
+    devDependencies:
+      '@effect/language-service':
+        specifier: ^0.86.2
+        version: 0.86.2
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.20
+      effect:
+        specifier: 4.0.0-beta.87
+        version: 4.0.0-beta.87
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.6(@types/node@22.19.20)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
+
   packages/fluent-firegrid-s2:
     dependencies:
       '@firegrid/fluent-firegrid':
