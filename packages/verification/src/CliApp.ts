@@ -46,6 +46,12 @@ const completedProofJson = (completed: CompletedProof): unknown => ({
   report: completed.trial.report?.path
 })
 
+const isVerificationError = (cause: unknown): cause is VerificationError =>
+  typeof cause === "object"
+  && cause !== null
+  && "_tag" in cause
+  && cause._tag === "VerificationError"
+
 const printCompletedProof = Effect.fn("verification.cli.printCompletedProof")(function*(
   completed: CompletedProof
 ) {
@@ -115,6 +121,15 @@ const makeRunCommand = (proofs: ReadonlyArray<Proof<any>>) =>
           ...(reportPath === undefined ? {} : { reportDir: reportPath }),
           ...(requestedTrialId === undefined ? {} : { trialId: requestedTrialId })
         }).pipe(
+          Effect.timeout("4 minutes"),
+          Effect.mapError((cause) =>
+            isVerificationError(cause)
+              ? cause
+              : new VerificationError({
+                message: `proof ${proof.name} did not complete within 4 minutes`,
+                cause
+              })
+          ),
           Effect.flatMap(printCompletedProof)
         ), { discard: true })
     })
