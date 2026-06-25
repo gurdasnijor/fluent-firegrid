@@ -10,6 +10,7 @@ import type { StatePredicate } from "./statePredicate.ts"
 
 export interface StateWaitBackendOptions {
   readonly name: string
+  readonly signalName: string
   readonly timeoutMs?: number
   readonly waitId?: string
 }
@@ -36,7 +37,7 @@ export interface ObjectStateBackend {
     key: string,
     predicate: StatePredicate,
     options: StateWaitBackendOptions
-  ) => Effect.Effect<unknown, FluentFiregridError>
+  ) => Effect.Effect<Option.Option<unknown>, FluentFiregridError>
 }
 
 interface StateOperationIdentityInput {

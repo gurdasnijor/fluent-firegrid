@@ -415,10 +415,12 @@ Resolution is deterministic:
 2. Otherwise append `StateWaitRegistered`.
 3. On every relevant state change, evaluate open waits whose table/key index can
    match the change.
-4. When the expression returns true, append `StateWaitResolved` with the row or
-   selected projection value and resume the run.
-5. On replay, `StateWaitResolved` returns the recorded value without
-   re-evaluating against newer state.
+4. When the expression returns true, append `StateWaitReady` with the row or
+   selected projection value.
+5. The object queue owner resumes the parked run by delivering the corresponding
+   TanStack signal, then appends `StateWaitDelivered`.
+6. On replay, TanStack's recorded `SIGNAL_RESOLVED` value returns the selected
+   row without re-evaluating against newer state.
 
 Keyed waits are the first production slice:
 
@@ -434,11 +436,12 @@ Implementation status as of June 25, 2026:
 - `cel("...")`, predicate validation/evaluation, and
   `state(Table).waitFor(key, { name, when, timeoutMs })` exist in
   `@firegrid/fluent-firegrid`;
-- the S2 object state backend can evaluate keyed waits against the current
-  materialized row projection;
-- this is not yet the final parked invocation scheduler. A same-object wait that
-  depends on a later handler for the same object key still needs persisted
-  `StateWaitRegistered` / `StateWaitResolved` records and queue unblocking.
+- the S2 object state backend evaluates keyed waits against the materialized row
+  projection and appends `StateWaitRegistered` / `StateWaitReady` records;
+- the S2 object runtime skips pending state-wait calls, continues draining later
+  same-key calls, and resumes ready waits through the queue-owned signal path;
+- remaining gaps are timeout scheduling, schema-derived CEL environment
+  generation, query/index waits, and richer typed CEL builder ergonomics.
 
 Query waits can come later, but must require an indexable declaration so the
 runtime does not scan all rows/waits:
@@ -600,7 +603,7 @@ Ship:
 - persisted wait registrations with expression text and environment version;
 - keyed wait index by `(table, key)`;
 - timeout support;
-- replay from recorded `StateWaitResolved` value.
+- replay from the recorded signal resolution value.
 
 Tests:
 

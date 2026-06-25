@@ -160,6 +160,7 @@ describe("state(Table)", () => {
       | {
         readonly key: string
         readonly name: string
+        readonly signalName: string
         readonly table: string
         readonly timeoutMs?: number
         readonly waitId?: string
@@ -177,11 +178,12 @@ describe("state(Table)", () => {
             expression: predicate.expression,
             key,
             name: options.name,
+            signalName: options.signalName,
             table,
             ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
             ...(options.waitId === undefined ? {} : { waitId: options.waitId })
           }
-          return { id: key, value: 7 }
+          return Option.some({ id: key, value: 7 })
         })
     }
 
@@ -201,9 +203,57 @@ describe("state(Table)", () => {
       expression: "row.value >= 7",
       key: "a",
       name: "value-ready",
+      signalName: "__firegrid_state_wait:items:a:value-ready",
       table: "items",
       timeoutMs: 1_000,
       waitId: "state-op:0:waitFor:items:a"
+    })
+  })
+
+  it("parks on the ambient signal when the backend registers a wait", async () => {
+    let capturedSignal:
+      | {
+        readonly id?: string
+        readonly name: string
+      }
+      | undefined
+    let nextOperation = 0
+    const backend: ObjectStateBackend = {
+      get: () => Effect.succeed(Option.none()),
+      set: () => Effect.void,
+      delete: () => Effect.void,
+      waitFor: () => Effect.succeed(Option.none())
+    }
+
+    const program = state(Item).waitFor("a", {
+      name: "value-ready",
+      when: cel("row.value >= 7")
+    }).pipe(
+      Effect.provideService(
+        FluentDurableContext,
+        FluentDurableContext.of({
+          key: "object-1",
+          state: backend,
+          stateOperationId: ({ kind, table, key }) => `state-op:${nextOperation++}:${kind}:${table}:${key}`,
+          sleep: () => Effect.void,
+          sleepUntil: () => Effect.void,
+          step: () => Effect.fail(new FluentFiregridError({ message: "step not used" })),
+          waitForSignal: <Payload>(name: string, options?: { readonly id?: string }) =>
+            Effect.sync(() => {
+              capturedSignal = {
+                ...(options?.id === undefined ? {} : { id: options.id }),
+                name
+              }
+              return { id: "a", value: 9 } as Payload
+            })
+        })
+      )
+    )
+
+    await expect(Effect.runPromise(program)).resolves.toEqual({ id: "a", value: 9 })
+    expect(capturedSignal).toEqual({
+      id: "state-op:0:waitFor:items:a",
+      name: "__firegrid_state_wait:items:a:value-ready"
     })
   })
 })

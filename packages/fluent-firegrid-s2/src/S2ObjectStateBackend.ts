@@ -55,6 +55,35 @@ interface Projection {
 
 interface InvocationProjection {
   readonly started: ReadonlyMap<string, { readonly ownerId: string }>
+  readonly stateWaitDelivered: ReadonlySet<string>
+  readonly stateWaitReady: ReadonlySet<string>
+  readonly stateWaits: ReadonlyMap<string, StateWaitRegisteredEvent>
+  readonly nextSeqNum: number
+}
+
+interface StateWaitRegisteredEvent {
+  readonly _tag: "StateWaitRegistered"
+  readonly callId: string
+  readonly key: string
+  readonly name: string
+  readonly predicate: StatePredicate
+  readonly signalName: string
+  readonly table: string
+  readonly timeoutMs?: number
+  readonly waitId: string
+}
+
+interface StateWaitReadyEvent {
+  readonly _tag: "StateWaitReady"
+  readonly callId: string
+  readonly signalName: string
+  readonly value: unknown
+  readonly waitId: string
+}
+
+interface StateWaitDeliveredEvent {
+  readonly _tag: "StateWaitDelivered"
+  readonly waitId: string
 }
 
 export const objectStateStreamName = (
@@ -110,7 +139,9 @@ export const createS2ObjectStateBackend = (
           key,
           type: table,
           value
-        }, owner).pipe(Effect.asVoid)
+        }, owner).pipe(
+          Effect.flatMap(() => resolveStateWaits(runtime, streamName, owner?.invocationStreamName, table, key))
+        )
       ),
     delete: (table, key, options) =>
       run(
@@ -125,7 +156,9 @@ export const createS2ObjectStateBackend = (
           },
           key,
           type: table
-        }, owner).pipe(Effect.asVoid)
+        }, owner).pipe(
+          Effect.flatMap(() => resolveStateWaits(runtime, streamName, owner?.invocationStreamName, table, key))
+        )
       ),
     waitFor: (table, key, predicate, options) =>
       run(waitForState(runtime, streamName, owner, table, key, predicate, options))
@@ -162,7 +195,12 @@ const readInvocationProjection = (
     const stream = yield* getStream(runtime, streamName)
     const tail = yield* stream.checkTail()
     const started = new Map<string, { readonly ownerId: string }>()
-    if (tail.tail.seqNum <= 0) return { started }
+    const stateWaitDelivered = new Set<string>()
+    const stateWaitReady = new Set<string>()
+    const stateWaits = new Map<string, StateWaitRegisteredEvent>()
+    if (tail.tail.seqNum <= 0) {
+      return { nextSeqNum: tail.tail.seqNum, started, stateWaitDelivered, stateWaitReady, stateWaits }
+    }
     const records = yield* stream.readSession({
       start: { from: { seqNum: 0 } },
       stop: { limits: { count: tail.tail.seqNum } }
@@ -172,13 +210,34 @@ const readInvocationProjection = (
         readonly _tag?: string
         readonly callId?: string
         readonly ownerId?: string
+        readonly waitId?: string
       }).forEach((event) => {
         if (event._tag === "Started" && event.callId !== undefined && event.ownerId !== undefined) {
           started.set(event.callId, { ownerId: event.ownerId })
         }
+        if (isStateWaitRegisteredEvent(event)) {
+          stateWaits.set(event.waitId, event)
+        }
+        if (event._tag === "StateWaitReady" && event.waitId !== undefined) {
+          stateWaitReady.add(event.waitId)
+        }
+        if (event._tag === "StateWaitDelivered" && event.waitId !== undefined) {
+          stateWaitDelivered.add(event.waitId)
+        }
       })
-    return { started }
+    return { nextSeqNum: tail.tail.seqNum, started, stateWaitDelivered, stateWaitReady, stateWaits }
   })
+
+const isStateWaitRegisteredEvent = (event: unknown): event is StateWaitRegisteredEvent =>
+  typeof event === "object"
+  && event !== null
+  && (event as { readonly _tag?: unknown })._tag === "StateWaitRegistered"
+  && typeof (event as { readonly callId?: unknown }).callId === "string"
+  && typeof (event as { readonly key?: unknown }).key === "string"
+  && typeof (event as { readonly name?: unknown }).name === "string"
+  && typeof (event as { readonly signalName?: unknown }).signalName === "string"
+  && typeof (event as { readonly table?: unknown }).table === "string"
+  && typeof (event as { readonly waitId?: unknown }).waitId === "string"
 
 const readProjection = (
   runtime: Runtime,
@@ -338,49 +397,160 @@ const waitForState = (
   key: string,
   predicate: StatePredicate,
   options: StateWaitBackendOptions
-): Effect.Effect<unknown, unknown> =>
-  Effect.suspend(() => {
-    const pollIntervalMs = 50
-    const maxAttempts = options.timeoutMs === undefined
-      ? Number.POSITIVE_INFINITY
-      : Math.max(1, Math.ceil(options.timeoutMs / pollIntervalMs))
-    const timedOut = Effect.fail(
-      new FluentFiregridError({
-        message: `S2 object state wait ${options.name} timed out for ${table}:${key}`
-      })
+): Effect.Effect<Option.Option<unknown>, unknown> =>
+  Effect.gen(function*() {
+    if (owner !== undefined && options.waitId !== undefined) {
+      const invocation = yield* readInvocationProjection(runtime, owner.invocationStreamName)
+      if (invocation.stateWaits.has(options.waitId)) {
+        return Option.none()
+      }
+    }
+    const current = yield* matchingCurrentState(
+      runtime,
+      streamName,
+      owner?.invocationStreamName,
+      table,
+      key,
+      predicate,
+      "snapshot"
     )
-
-    const readCurrent = readProjection(runtime, streamName, owner?.invocationStreamName).pipe(
-      Effect.flatMap((projection) => {
-        const current = projection.materialized.get(table, key)
-        if (Option.isNone(current)) return Effect.succeed(Option.none<unknown>())
-        return evaluateStatePredicate(predicate, {
-          change: {
-            key,
-            operation: "snapshot",
-            table
-          },
-          row: current.value
-        }).pipe(Effect.map((matches) => matches ? current : Option.none<unknown>()))
+    if (Option.isSome(current)) return current
+    if (owner === undefined || options.waitId === undefined) {
+      return yield* new FluentFiregridError({
+        message: `S2 object state wait ${options.name} for ${table}:${key} requires an object invocation owner`
       })
-    )
-
-    const poll = (attempt: number): Effect.Effect<unknown, unknown> =>
-      attempt >= maxAttempts
-        ? timedOut
-        : readCurrent.pipe(
-          Effect.flatMap((value) =>
-            Option.isSome(value)
-              ? Effect.succeed(value.value)
-              : verifyOwner(runtime, owner).pipe(
-                Effect.flatMap(() => Effect.sleep(pollIntervalMs)),
-                Effect.flatMap(() => poll(attempt + 1))
-              )
-          )
-        )
-
-    return poll(0)
+    }
+    yield* appendStateWaitRegistration(runtime, owner.invocationStreamName, {
+      _tag: "StateWaitRegistered",
+      callId: owner.callId,
+      key,
+      name: options.name,
+      predicate,
+      signalName: options.signalName,
+      table,
+      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      waitId: options.waitId
+    })
+    return Option.none()
   })
+
+const matchingCurrentState = (
+  runtime: Runtime,
+  streamName: string,
+  invocationStreamName: string | undefined,
+  table: string,
+  key: string,
+  predicate: StatePredicate,
+  operation: "snapshot" | "update" | "delete"
+): Effect.Effect<Option.Option<unknown>, unknown> =>
+  readProjection(runtime, streamName, invocationStreamName).pipe(
+    Effect.flatMap((projection) => {
+      const current = projection.materialized.get(table, key)
+      if (Option.isNone(current)) return Effect.succeed(Option.none<unknown>())
+      return evaluateStatePredicate(predicate, {
+        change: {
+          key,
+          operation,
+          table
+        },
+        row: current.value
+      }).pipe(Effect.map((matches) => matches ? current : Option.none<unknown>()))
+    })
+  )
+
+const appendInvocationEvent = (
+  runtime: Runtime,
+  streamName: string,
+  event: StateWaitRegisteredEvent | StateWaitReadyEvent | StateWaitDeliveredEvent,
+  matchSeqNum?: number
+): Effect.Effect<void, unknown> =>
+  Effect.gen(function*() {
+    const stream = yield* getStream(runtime, streamName)
+    yield* stream.append(
+      AppendInput.create(
+        [AppendRecord.string({ body: JSON.stringify(event) })],
+        matchSeqNum === undefined ? undefined : { matchSeqNum }
+      )
+    )
+  })
+
+const appendStateWaitRegistration = (
+  runtime: Runtime,
+  invocationStreamName: string,
+  event: StateWaitRegisteredEvent
+): Effect.Effect<void, unknown> =>
+  Effect.gen(function*() {
+    let attempts = 0
+    while (attempts < 16) {
+      attempts += 1
+      const projection = yield* readInvocationProjection(runtime, invocationStreamName)
+      if (projection.stateWaits.has(event.waitId)) return
+      const result = yield* appendInvocationEvent(runtime, invocationStreamName, event, projection.nextSeqNum).pipe(
+        Effect.exit
+      )
+      if (result._tag === "Success") return
+      if (!isCasConflict(result.cause)) return yield* Effect.failCause(result.cause)
+    }
+    return yield* new FluentFiregridError({
+      message: `S2 object state wait registration CAS failed for ${event.waitId}`
+    })
+  })
+
+const appendStateWaitReady = (
+  runtime: Runtime,
+  invocationStreamName: string,
+  event: StateWaitReadyEvent
+): Effect.Effect<void, unknown> =>
+  Effect.gen(function*() {
+    let attempts = 0
+    while (attempts < 16) {
+      attempts += 1
+      const projection = yield* readInvocationProjection(runtime, invocationStreamName)
+      if (projection.stateWaitReady.has(event.waitId) || projection.stateWaitDelivered.has(event.waitId)) return
+      const result = yield* appendInvocationEvent(runtime, invocationStreamName, event, projection.nextSeqNum).pipe(
+        Effect.exit
+      )
+      if (result._tag === "Success") return
+      if (!isCasConflict(result.cause)) return yield* Effect.failCause(result.cause)
+    }
+    return yield* new FluentFiregridError({ message: `S2 object state wait ready CAS failed for ${event.waitId}` })
+  })
+
+const resolveStateWaits = (
+  runtime: Runtime,
+  streamName: string,
+  invocationStreamName: string | undefined,
+  table: string,
+  key: string
+): Effect.Effect<void, unknown> =>
+  invocationStreamName === undefined
+    ? Effect.void
+    : Effect.gen(function*() {
+      const invocation = yield* readInvocationProjection(runtime, invocationStreamName)
+      yield* Effect.forEach(
+        Array.from(invocation.stateWaits.values()).filter((wait) =>
+          wait.table === table
+          && wait.key === key
+          && !invocation.stateWaitReady.has(wait.waitId)
+          && !invocation.stateWaitDelivered.has(wait.waitId)
+        ),
+        (wait) =>
+          matchingCurrentState(runtime, streamName, invocationStreamName, table, key, wait.predicate, "update").pipe(
+            Effect.flatMap((current) =>
+              Option.isNone(current)
+                ? Effect.void
+                : appendStateWaitReady(runtime, invocationStreamName, {
+                  _tag: "StateWaitReady",
+                  callId: wait.callId,
+                  signalName: wait.signalName,
+                  value: current.value,
+                  waitId: wait.waitId
+                })
+            )
+          ),
+        { discard: true }
+      )
+    })
 
 const isCasConflict = (cause: unknown): boolean =>
   cause instanceof SeqNumMismatchError

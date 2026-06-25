@@ -60,8 +60,38 @@ type CompletedEvent = {
   readonly now: number
 }
 type ErroredEvent = { readonly _tag: "Errored"; readonly callId: string; readonly error: unknown; readonly now: number }
+type StateWaitRegisteredEvent = {
+  readonly _tag: "StateWaitRegistered"
+  readonly callId: string
+  readonly key: string
+  readonly name: string
+  readonly signalName: string
+  readonly table: string
+  readonly timeoutMs?: number
+  readonly waitId: string
+}
+type StateWaitReadyEvent = {
+  readonly _tag: "StateWaitReady"
+  readonly callId: string
+  readonly signalName: string
+  readonly value: unknown
+  readonly waitId: string
+}
+type StateWaitDeliveredEvent = {
+  readonly _tag: "StateWaitDelivered"
+  readonly waitId: string
+}
 
-type ObjectInvocationEvent = AcceptedEvent | StartedEvent | CompletedEvent | ErroredEvent
+type ObjectInvocationEvent =
+  | AcceptedEvent
+  | StartedEvent
+  | CompletedEvent
+  | ErroredEvent
+  | StateWaitRegisteredEvent
+  | StateWaitReadyEvent
+  | StateWaitDeliveredEvent
+
+type RuntimeRunResult = Awaited<ReturnType<NonNullable<FluentRuntimeHost["runtime"]["deliverSignal"]>>>
 
 interface Runtime {
   readonly basinName: string
@@ -74,6 +104,9 @@ interface InvocationProjection {
   readonly errored: ReadonlyMap<string, ErroredEvent>
   readonly orderedCallIds: ReadonlyArray<string>
   readonly started: ReadonlyMap<string, StartedEvent>
+  readonly stateWaitDelivered: ReadonlySet<string>
+  readonly stateWaitReady: ReadonlyMap<string, StateWaitReadyEvent>
+  readonly stateWaits: ReadonlyArray<StateWaitRegisteredEvent>
   readonly nextSeqNum: number
 }
 
@@ -257,6 +290,9 @@ const foldInvocationEvents = (
   const errored = new Map<string, ErroredEvent>()
   const orderedCallIds = new Array<string>()
   const started = new Map<string, StartedEvent>()
+  const stateWaitDelivered = new Set<string>()
+  const stateWaitReady = new Map<string, StateWaitReadyEvent>()
+  const stateWaits = new Array<StateWaitRegisteredEvent>()
   events.forEach((event) => {
     switch (event._tag) {
       case "Accepted": {
@@ -278,9 +314,31 @@ const foldInvocationEvents = (
         errored.set(event.callId, event)
         break
       }
+      case "StateWaitRegistered": {
+        stateWaits.push(event)
+        break
+      }
+      case "StateWaitReady": {
+        stateWaitReady.set(event.waitId, event)
+        break
+      }
+      case "StateWaitDelivered": {
+        stateWaitDelivered.add(event.waitId)
+        break
+      }
     }
   })
-  return { accepted, completed, errored, nextSeqNum, orderedCallIds, started }
+  return {
+    accepted,
+    completed,
+    errored,
+    nextSeqNum,
+    orderedCallIds,
+    started,
+    stateWaitDelivered,
+    stateWaitReady,
+    stateWaits
+  }
 }
 
 const appendEvent = (
@@ -318,6 +376,29 @@ const appendTerminalEvent = (
       }
     }
     return yield* new FluentFiregridError({ message: `object invocation terminal CAS failed for ${streamName}` })
+  })
+
+const appendStateWaitDelivered = (
+  runtime: Runtime,
+  streamName: string,
+  waitId: string
+): Effect.Effect<void, unknown> =>
+  Effect.gen(function*() {
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      const projection = yield* readProjection(runtime, streamName)
+      if (projection.stateWaitDelivered.has(waitId)) return
+      const result = yield* appendEvent(
+        runtime,
+        streamName,
+        { _tag: "StateWaitDelivered", waitId },
+        projection.nextSeqNum
+      ).pipe(Effect.exit)
+      if (result._tag === "Success") return
+      if (!isCasConflict(result.cause)) {
+        return yield* Effect.failCause(result.cause)
+      }
+    }
+    return yield* new FluentFiregridError({ message: `object state wait delivered CAS failed for ${waitId}` })
   })
 
 const admit = (
@@ -385,13 +466,52 @@ const drain = (
       const projection = yield* readProjection(runtime, streamName)
       const nextCallId = projection.orderedCallIds.find((callId) =>
         !projection.completed.has(callId) && !projection.errored.has(callId)
+        && stateWaitStatusForCall(projection, callId)._tag !== "Pending"
       )
       if (nextCallId === undefined) return
       const accepted = projection.accepted.get(nextCallId)
       if (accepted === undefined) return
       const started = projection.started.get(nextCallId)
       const currentTime = now()
+      const stateWaitStatus = stateWaitStatusForCall(projection, nextCallId)
       if (started !== undefined && started.ownerId !== ownerId && started.leaseExpiresAt > currentTime) return
+      if (
+        started !== undefined
+        && started.ownerId === ownerId
+        && started.leaseExpiresAt > currentTime
+        && stateWaitStatus._tag !== "Ready"
+      ) {
+        return
+      }
+      if (stateWaitStatus._tag === "Ready" && started !== undefined) {
+        const result = yield* deliverStateWait(host, {
+          callId: nextCallId,
+          leaseMs: ownerLeaseMs,
+          leaseOwner: started.ownerId,
+          now: now(),
+          ready: stateWaitStatus.ready,
+          request
+        }).pipe(Effect.exit)
+        if (result._tag === "Failure") {
+          yield* appendTerminalEvent(runtime, streamName, started.ownerId, nextCallId, {
+            _tag: "Errored",
+            callId: nextCallId,
+            error: Cause.pretty(result.cause),
+            now: now()
+          })
+          return
+        }
+        yield* appendStateWaitDelivered(runtime, streamName, stateWaitStatus.ready.waitId)
+        if (result.value.kind === "completed") {
+          yield* appendTerminalEvent(runtime, streamName, started.ownerId, nextCallId, {
+            _tag: "Completed",
+            callId: nextCallId,
+            now: now(),
+            output: result.value.run?.output
+          })
+        }
+        continue
+      }
       if (started === undefined || (started.ownerId !== ownerId && started.leaseExpiresAt <= currentTime)) {
         const startResult = yield* appendEvent(
           runtime,
@@ -449,9 +569,59 @@ const drain = (
         })
         continue
       }
-      return
+      continue
     }
   })
+
+type StateWaitStatus =
+  | { readonly _tag: "None" }
+  | { readonly _tag: "Pending" }
+  | { readonly _tag: "Ready"; readonly ready: StateWaitReadyEvent }
+
+const stateWaitStatusForCall = (projection: InvocationProjection, callId: string): StateWaitStatus => {
+  const wait = projection.stateWaits.find((registered) =>
+    registered.callId === callId && !projection.stateWaitDelivered.has(registered.waitId)
+  )
+  if (wait === undefined) return { _tag: "None" }
+  const ready = projection.stateWaitReady.get(wait.waitId)
+  return ready === undefined ? { _tag: "Pending" } : { _tag: "Ready", ready }
+}
+
+const deliverStateWait = (
+  host: FluentRuntimeHost,
+  args: {
+    readonly callId: string
+    readonly leaseMs: number
+    readonly leaseOwner: string
+    readonly now: number
+    readonly ready: StateWaitReadyEvent
+    readonly request: CallRequest
+  }
+): Effect.Effect<RuntimeRunResult, FluentFiregridError> => {
+  const deliverSignal = host.runtime.deliverSignal
+  return deliverSignal === undefined
+    ? Effect.fail(
+      new FluentFiregridError({ message: "S2 object state waits require a runtime host with deliverSignal" })
+    )
+    : Effect.tryPromise({
+      try: () =>
+        deliverSignal({
+          leaseMs: args.leaseMs,
+          leaseOwner: args.leaseOwner,
+          name: args.ready.signalName,
+          now: args.now,
+          payload: args.ready.value,
+          runId: args.callId,
+          signalId: `state-wait:${args.ready.waitId}`,
+          stepId: args.ready.waitId
+        }),
+      catch: (cause) =>
+        new FluentFiregridError({
+          cause,
+          message: `object invocation ${args.request.name}.${args.request.handler} state wait resume failed`
+        })
+    })
+}
 
 const isCasConflict = (cause: unknown): boolean =>
   Cause.isCause(cause)

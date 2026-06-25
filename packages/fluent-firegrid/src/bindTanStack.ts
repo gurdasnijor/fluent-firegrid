@@ -118,6 +118,16 @@ const decodeHandlerOutput = (
 
 export interface FluentRuntimeHost {
   readonly runtime: {
+    readonly deliverSignal?: (args: {
+      readonly runId: string
+      readonly signalId: string
+      readonly stepId?: string
+      readonly name: string
+      readonly payload: unknown
+      readonly leaseMs?: number
+      readonly leaseOwner?: string
+      readonly now?: number
+    }) => Promise<WorkflowRuntimeRunResult>
     readonly startRun: (args: {
       readonly workflowId: string
       readonly runId: string

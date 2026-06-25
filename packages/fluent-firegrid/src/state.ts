@@ -217,6 +217,9 @@ export interface StateWaitOptions {
   readonly when: StatePredicate
 }
 
+const stateWaitSignalName = (table: string, key: string, name: string): string =>
+  `__firegrid_state_wait:${table}:${key}:${name}`
+
 const encodeRowFor = <Tbl extends AnyTable>(
   table: Tbl,
   row: RowOf<Tbl>
@@ -300,10 +303,19 @@ export const state = <Tbl extends AnyTable>(table: Tbl): StateBinding<RowOf<Tbl>
         return Effect.fail(new FluentFiregridError({ message: "state.waitFor is not supported by this state backend" }))
       }
       const waitId = ctx.stateOperationId?.({ key, kind: "waitFor", table: table.tableName })
+      const signalName = stateWaitSignalName(table.tableName, key, options.name)
       return backend.waitFor(table.tableName, key, options.when, {
         name: options.name,
+        signalName,
         ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
         ...(waitId === undefined ? {} : { waitId })
-      }).pipe(Effect.flatMap((value) => decodeRowFor(table, value)))
+      }).pipe(
+        Effect.flatMap((value) =>
+          Option.isSome(value)
+            ? Effect.succeed(value.value)
+            : ctx.waitForSignal<unknown>(signalName, waitId === undefined ? undefined : { id: waitId })
+        ),
+        Effect.flatMap((value) => decodeRowFor(table, value))
+      )
     })
 })
