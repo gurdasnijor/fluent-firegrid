@@ -5,16 +5,15 @@ import {
   basin,
   basins,
   layer as S2Layer,
+  type S2Client,
   SeqNumMismatchError,
   stream as s2Stream,
-  type S2Client,
   type StreamApi
 } from "effect-s2"
 import * as Effect from "effect/Effect"
 import * as Stream from "effect/Stream"
 
 import {
-  LogConflictError,
   type AppendEventsArgs,
   type AppendEventsResult,
   type ApprovalResult,
@@ -34,6 +33,7 @@ import {
   type LeaseOwner,
   type ListRunsArgs,
   type LoadedExecution,
+  LogConflictError,
   type MarkScheduleBucketStartedArgs,
   type ReadEventsArgs,
   type ReleaseRunLeaseArgs,
@@ -51,9 +51,9 @@ import {
   type StoredWorkflowEvent,
   type TimerWakeup,
   type UpsertScheduleArgs,
+  type WorkflowEvent,
   type WorkflowExecution,
   type WorkflowExecutionStore,
-  type WorkflowEvent,
   type WorkflowLease,
   type WorkflowOverlapPolicy,
   type WorkflowScheduleSpec
@@ -110,6 +110,7 @@ type RunIndexFact = { readonly _tag: "RunIndexed"; readonly runId: RunId }
 type TimerFact =
   | { readonly _tag: "TimerScheduled"; readonly timer: TimerWakeup }
   | { readonly _tag: "TimerClaimed"; readonly key: string; readonly lease: WorkflowLease }
+  | { readonly _tag: "TimerConsumed"; readonly key: string }
 
 interface TimerProjection {
   readonly timers: ReadonlyMap<string, TimerWakeup & { readonly lease?: WorkflowLease }>
@@ -183,9 +184,15 @@ export const s2WorkflowExecutionStore = (config: S2WorkflowExecutionStoreConfig)
         }))
       ),
     deleteRun: (runId, reason) =>
-      run(appendFact(runtime, streamNames(runtime).runMeta(runId), { _tag: "RunDeleted", now: Date.now(), reason } satisfies RunMetaFact).pipe(
-        Effect.asVoid
-      )),
+      run(
+        appendFact(
+          runtime,
+          streamNames(runtime).runMeta(runId),
+          { _tag: "RunDeleted", now: Date.now(), reason } satisfies RunMetaFact
+        ).pipe(
+          Effect.asVoid
+        )
+      ),
     createRun: (args) => run(createRun(runtime, args)),
     loadRun: async (runId) => (await readRun(runId)).run,
     loadExecution: (runId) => run(loadExecution(runtime, runId)),
@@ -322,22 +329,26 @@ const appendEvents = (runtime: S2StoreRuntime, args: AppendEventsArgs): Effect.E
       ({
         event: clone(event),
         eventIndex: args.expectedNextIndex + index
-      }) satisfies EventEnvelope)
+      }) satisfies EventEnvelope
+    )
     const records = envelopes.map((envelope) =>
       jsonRecord(envelope, [
         ["tanstack.workflow.run_id", args.runId],
         ["tanstack.workflow.event_index", String(envelope.eventIndex)],
         ["tanstack.workflow.event_type", envelope.event.type],
         ["tanstack.workflow.step_id", eventStepId(envelope.event) ?? ""]
-      ]))
+      ])
+    )
     const ack = yield* stream.append(AppendInput.create(records, { matchSeqNum: args.expectedNextIndex })).pipe(
       Effect.catch((error) =>
         error instanceof SeqNumMismatchError
           ? readEvents(runtime, { fromIndex: args.expectedNextIndex, runId: args.runId }).pipe(
             Effect.flatMap((events) =>
-              Effect.fail(new LogConflictError(args.runId, args.expectedNextIndex, events[0]?.event)))
+              Effect.fail(new LogConflictError(args.runId, args.expectedNextIndex, events[0]?.event))
+            )
           )
-          : Effect.fail(error))
+          : Effect.fail(error)
+      )
     )
     return { nextIndex: ack.end.seqNum }
   })
@@ -347,9 +358,7 @@ const readEvents = (
   args: ReadEventsArgs
 ): Effect.Effect<ReadonlyArray<StoredWorkflowEvent>, unknown> =>
   readJsonRecords<EventEnvelope>(runtime, streamNames(runtime).events(args.runId), args.fromIndex ?? 0).pipe(
-    Effect.map((result) =>
-      result.records.map((envelope) =>
-        storedWorkflowEvent(args.runId, envelope)))
+    Effect.map((result) => result.records.map((envelope) => storedWorkflowEvent(args.runId, envelope)))
   )
 
 const storedWorkflowEvent = (runId: RunId, envelope: EventEnvelope): StoredWorkflowEvent => {
@@ -392,7 +401,11 @@ const createRun = (runtime: S2StoreRuntime, args: CreateRunArgs): Effect.Effect<
         ? { kind: "created" as const, run: runValue }
         : { kind: "existing" as const, run: existing.run }
     }
-    yield* appendFact(runtime, streamNames(runtime).runIndex, { _tag: "RunIndexed", runId: args.runId } satisfies RunIndexFact)
+    yield* appendFact(
+      runtime,
+      streamNames(runtime).runIndex,
+      { _tag: "RunIndexed", runId: args.runId } satisfies RunIndexFact
+    )
     return { kind: "created" as const, run: runValue }
   })
 
@@ -416,9 +429,10 @@ const updateRunMeta = (
     const projection = yield* readRunMeta(runtime, runId)
     const update = make(projection)
     if (update === undefined) return
-    const result = yield* appendFact(runtime, streamNames(runtime).runMeta(runId), update.fact, update.matchSeqNum).pipe(
-      Effect.exit
-    )
+    const result = yield* appendFact(runtime, streamNames(runtime).runMeta(runId), update.fact, update.matchSeqNum)
+      .pipe(
+        Effect.exit
+      )
     if (result._tag === "Success") return
     if (isSeqNumMismatch(result.cause) && retries > 0) {
       return yield* updateRunMeta(runtime, runId, make, retries - 1)
@@ -476,10 +490,14 @@ const scheduleTimer = (runtime: S2StoreRuntime, args: ScheduleTimerArgs): Effect
       workflowId: args.workflowId,
       ...(args.workflowVersion === undefined ? {} : { workflowVersion: args.workflowVersion })
     } satisfies TimerWakeup
-    yield* appendFact(runtime, streamNames(runtime).timers, {
-      _tag: "TimerScheduled",
-      timer
-    } satisfies TimerFact)
+    yield* appendFact(
+      runtime,
+      streamNames(runtime).timers,
+      {
+        _tag: "TimerScheduled",
+        timer
+      } satisfies TimerFact
+    )
     yield* updateRunMeta(runtime, args.runId, (projection) =>
       projection.run === undefined
         ? undefined
@@ -496,21 +514,55 @@ const claimDueTimers = (
   Effect.gen(function*() {
     const projection = yield* readTimers(runtime)
     const due: Array<TimerWakeup> = []
+    let nextSeqNum = projection.nextSeqNum
     for (const [key, timer] of projection.timers) {
       if (due.length >= args.limit) break
       if (timer.wakeAt > args.now || !canClaim(timer.lease, args.leaseOwner, args.now)) continue
+      const runProjection = yield* readRunMeta(runtime, timer.runId)
+      const delivery = { name: "__timer", payload: undefined, signalId: timer.signalId } satisfies SignalDelivery
+      if (
+        runProjection.run === undefined
+        || isTerminal(runProjection.run.status)
+        || runProjection.signalDeliveries.has(signalKey(timer.runId, timer.signalId))
+        || !isRunWaitingForSignal(runProjection.run, delivery)
+      ) {
+        const consumed = yield* consumeTimer(runtime, key, nextSeqNum).pipe(Effect.exit)
+        if (consumed._tag === "Success") nextSeqNum = consumed.value.end.seqNum
+        continue
+      }
       const leaseValue = lease(args.leaseOwner, args.leaseMs, args.now)
-      const result = yield* appendFact(runtime, streamNames(runtime).timers, {
-        _tag: "TimerClaimed",
-        key,
-        lease: leaseValue
-      } satisfies TimerFact, projection.nextSeqNum).pipe(Effect.exit)
+      const result = yield* appendFact(
+        runtime,
+        streamNames(runtime).timers,
+        {
+          _tag: "TimerClaimed",
+          key,
+          lease: leaseValue
+        } satisfies TimerFact,
+        nextSeqNum
+      ).pipe(Effect.exit)
       if (result._tag === "Success") {
+        nextSeqNum = result.value.end.seqNum
         due.push(timerWakeup(timer))
       }
     }
     return due
   })
+
+const consumeTimer = (
+  runtime: S2StoreRuntime,
+  key: string,
+  matchSeqNum?: number
+) =>
+  appendFact(
+    runtime,
+    streamNames(runtime).timers,
+    {
+      _tag: "TimerConsumed",
+      key
+    } satisfies TimerFact,
+    matchSeqNum
+  )
 
 const deliverSignal = <TPayload>(
   runtime: S2StoreRuntime,
@@ -524,11 +576,19 @@ const deliverSignal = <TPayload>(
     if (projection.signalDeliveries.has(key)) return { kind: "duplicate" as const, run: current }
     if (!isRunWaitingForSignal(current, args.delivery)) return { kind: "not-waiting" as const, run: current }
     const updated = queuedAfterDelivery(current, args.now)
-    yield* appendFact(runtime, streamNames(runtime).runMeta(args.runId), {
-      _tag: "SignalDelivered",
-      delivery: args.delivery,
-      now: args.now
-    } satisfies RunMetaFact, projection.nextSeqNum)
+    yield* appendFact(
+      runtime,
+      streamNames(runtime).runMeta(args.runId),
+      {
+        _tag: "SignalDelivered",
+        delivery: args.delivery,
+        now: args.now
+      } satisfies RunMetaFact,
+      projection.nextSeqNum
+    )
+    if (args.delivery.name === "__timer") {
+      yield* consumeTimer(runtime, key)
+    }
     return { kind: "delivered" as const, run: updated }
   })
 
@@ -544,26 +604,35 @@ const deliverApproval = (
     if (projection.signalDeliveries.has(key)) return { kind: "duplicate" as const, run: current }
     if (!isRunWaitingForApproval(current, args.approval)) return { kind: "not-waiting" as const, run: current }
     const updated = queuedAfterDelivery(current, args.now)
-    yield* appendFact(runtime, streamNames(runtime).runMeta(args.runId), {
-      _tag: "ApprovalDelivered",
-      approval: args.approval,
-      now: args.now
-    } satisfies RunMetaFact, projection.nextSeqNum)
+    yield* appendFact(
+      runtime,
+      streamNames(runtime).runMeta(args.runId),
+      {
+        _tag: "ApprovalDelivered",
+        approval: args.approval,
+        now: args.now
+      } satisfies RunMetaFact,
+      projection.nextSeqNum
+    )
     return { kind: "delivered" as const, run: updated }
   })
 
 const upsertSchedule = (runtime: S2StoreRuntime, args: UpsertScheduleArgs): Effect.Effect<void, unknown> =>
-  appendFact(runtime, streamNames(runtime).schedules, {
-    _tag: "ScheduleUpserted",
-    enabled: args.enabled,
-    overlapPolicy: args.overlapPolicy,
-    schedule: clone(args.schedule),
-    scheduleId: args.scheduleId,
-    workflowId: args.workflowId,
-    ...(args.input === undefined ? {} : { input: clone(args.input) }),
-    ...(args.nextFireAt === undefined ? {} : { nextFireAt: args.nextFireAt }),
-    ...(args.workflowVersion === undefined ? {} : { workflowVersion: args.workflowVersion })
-  } satisfies ScheduleFact).pipe(Effect.asVoid)
+  appendFact(
+    runtime,
+    streamNames(runtime).schedules,
+    {
+      _tag: "ScheduleUpserted",
+      enabled: args.enabled,
+      overlapPolicy: args.overlapPolicy,
+      schedule: clone(args.schedule),
+      scheduleId: args.scheduleId,
+      workflowId: args.workflowId,
+      ...(args.input === undefined ? {} : { input: clone(args.input) }),
+      ...(args.nextFireAt === undefined ? {} : { nextFireAt: args.nextFireAt }),
+      ...(args.workflowVersion === undefined ? {} : { workflowVersion: args.workflowVersion })
+    } satisfies ScheduleFact
+  ).pipe(Effect.asVoid)
 
 const claimDueScheduleBuckets = (
   runtime: S2StoreRuntime,
@@ -580,15 +649,25 @@ const claimDueScheduleBuckets = (
       const existing = projection.buckets.get(key)
       if (existing?.status === "started") continue
       if (existing !== undefined && !canClaim(existing.lease, args.leaseOwner, args.now)) continue
-      const bucket = scheduleBucket(schedule, bucketId, schedule.nextFireAt, lease(args.leaseOwner, args.leaseMs, args.now))
-      const result = yield* appendFact(runtime, streamNames(runtime).schedules, {
-        _tag: "ScheduleBucketClaimed",
+      const bucket = scheduleBucket(
+        schedule,
         bucketId,
-        fireAt: schedule.nextFireAt,
-        lease: bucket.lease!,
-        runId: bucket.runId,
-        scheduleId: schedule.scheduleId
-      } satisfies ScheduleFact, projection.nextSeqNum).pipe(Effect.exit)
+        schedule.nextFireAt,
+        lease(args.leaseOwner, args.leaseMs, args.now)
+      )
+      const result = yield* appendFact(
+        runtime,
+        streamNames(runtime).schedules,
+        {
+          _tag: "ScheduleBucketClaimed",
+          bucketId,
+          fireAt: schedule.nextFireAt,
+          lease: bucket.lease!,
+          runId: bucket.runId,
+          scheduleId: schedule.scheduleId
+        } satisfies ScheduleFact,
+        projection.nextSeqNum
+      ).pipe(Effect.exit)
       if (result._tag === "Success") due.push(scheduleBucketWakeup(bucket))
     }
     return due
@@ -598,13 +677,17 @@ const markScheduleBucketStarted = (
   runtime: S2StoreRuntime,
   args: MarkScheduleBucketStartedArgs
 ): Effect.Effect<void, unknown> =>
-  appendFact(runtime, streamNames(runtime).schedules, {
-    _tag: "ScheduleBucketStarted",
-    bucketId: args.bucketId,
-    now: args.now,
-    runId: args.runId,
-    scheduleId: args.scheduleId
-  } satisfies ScheduleFact).pipe(Effect.asVoid)
+  appendFact(
+    runtime,
+    streamNames(runtime).schedules,
+    {
+      _tag: "ScheduleBucketStarted",
+      bucketId: args.bucketId,
+      now: args.now,
+      runId: args.runId,
+      scheduleId: args.scheduleId
+    } satisfies ScheduleFact
+  ).pipe(Effect.asVoid)
 
 const claimStaleRuns = (
   runtime: S2StoreRuntime,
@@ -777,11 +860,13 @@ const readTimers = (runtime: S2StoreRuntime): Effect.Effect<TimerProjection, unk
       for (const fact of result.records) {
         if (fact._tag === "TimerScheduled") {
           timers.set(timerKey(fact.timer.runId, fact.timer.signalId), fact.timer)
-        } else {
+        } else if (fact._tag === "TimerClaimed") {
           const existing = timers.get(fact.key)
           if (existing !== undefined) {
             timers.set(fact.key, { ...existing, lease: fact.lease })
           }
+        } else {
+          timers.delete(fact.key)
         }
       }
       return { nextSeqNum: result.nextSeqNum, timers }
@@ -884,10 +969,10 @@ const clearRunWaitFields = (run: WorkflowExecution): WorkflowExecution => {
 const isRunWaitingForSignal = (run: WorkflowExecution, delivery: SignalDelivery): boolean =>
   signalAwaitableMatches(run.waitingFor, delivery)
   || run.awaiting?.some((awaitable) =>
-    awaitable.type === "signal"
-    && awaitable.signalName === delivery.name
-    && (delivery.stepId === undefined || awaitable.stepId === undefined || awaitable.stepId === delivery.stepId)
-  ) === true
+      awaitable.type === "signal"
+      && awaitable.signalName === delivery.name
+      && (delivery.stepId === undefined || awaitable.stepId === undefined || awaitable.stepId === delivery.stepId)
+    ) === true
 
 const signalAwaitableMatches = (
   awaitable: WorkflowExecution["waitingFor"] | undefined,
@@ -899,7 +984,8 @@ const signalAwaitableMatches = (
 const isRunWaitingForApproval = (run: WorkflowExecution, approval: ApprovalResult): boolean =>
   run.pendingApproval?.approvalId === approval.approvalId
   || run.awaiting?.some((awaitable) =>
-    awaitable.type === "approval" && awaitable.approvalId === approval.approvalId) === true
+      awaitable.type === "approval" && awaitable.approvalId === approval.approvalId
+    ) === true
 
 const timerKey = (runId: RunId, signalId: string): string => `${runId}:${signalId}`
 
