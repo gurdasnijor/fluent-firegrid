@@ -131,6 +131,288 @@ Remaining gaps:
 - examples for human approval, webhook callback, and async external task-token
   patterns.
 
+## Target API Shape
+
+These examples are the intended authoring direction. Names can still move, but
+the shape should stay Effect-native: handler bodies are generators and durable
+operations are `Effect`s.
+
+### Definitions And Serving
+
+Definitions remain the root of type sharing. Apps should be able to expose them
+through the Node/S2 binding without writing fixture server code.
+
+```ts
+import { iface, implement, run } from "@firegrid/fluent-firegrid"
+import { serveFluentS2 } from "@firegrid/fluent-firegrid-node"
+import { Schema } from "effect"
+
+const ordersContract = iface.service("orders", {
+  submit: iface.schemas({
+    input: Schema.Struct({ orderId: Schema.String }),
+    output: Schema.Struct({ accepted: Schema.Boolean })
+  })
+})
+
+const orders = implement(ordersContract, {
+  handlers: {
+    *submit(input) {
+      yield* run(() => reserveInventory(input.orderId), { name: "reserve" })
+      return { accepted: true }
+    }
+  }
+})
+
+await serveFluentS2({
+  definitions: [orders],
+  namespace: "orders-prod",
+  port: 8080,
+  s2Endpoint: process.env.S2_ENDPOINT!
+})
+```
+
+### Typed Service Communication
+
+Call clients should stay simple. Send clients should use Restate-familiar names
+while keeping the existing aliases for compatibility.
+
+```ts
+import {
+  serviceClient,
+  serviceSendClient,
+  objectClient,
+  objectSendClient,
+  workflowClient,
+  workflowSendClient,
+  rpc
+} from "@firegrid/fluent-firegrid"
+
+const receipt = yield* serviceClient(orders).submit(
+  { orderId: "order-1" },
+  rpc.opts({ idempotencyKey: "stripe:event-1" })
+)
+
+const handle = yield* serviceSendClient(orders).submit(
+  { orderId: "order-2" },
+  rpc.sendOpts({
+    idempotencyKey: "order-2:submit",
+    delay: { seconds: 30 }
+  })
+)
+
+const submitted = yield* handle.attach()
+
+const counter = objectClient(counters, "user-1")
+const value = yield* counter.add({ by: 1 })
+
+yield* objectSendClient(counters, "user-1").add(
+  { by: 1 },
+  rpc.sendOpts({ idempotencyKey: "counter:user-1:event-1" })
+)
+
+const run = workflowClient(reviewWorkflow, "review-123")
+const result = yield* run.status(undefined)
+
+yield* workflowSendClient(reviewWorkflow, "review-123").nudge(undefined)
+```
+
+The existing `objectClient(definition)(key)` shape may remain, but the finish
+line should include the direct Restate-like overload:
+`objectClient(definition, key)`.
+
+### Generic Calls And Sends
+
+Generic APIs should exist for dynamic names and cross-language callers that only
+have descriptors or route metadata at runtime.
+
+```ts
+import { genericCall, genericSend, rpc } from "@firegrid/fluent-firegrid"
+
+const output = yield* genericCall<string>({
+  kind: "service",
+  name: "orders",
+  handler: "submit",
+  input: { orderId: "order-3" },
+  idempotencyKey: "order-3:submit"
+})
+
+const handle = yield* genericSend<{ accepted: boolean }>({
+  kind: "object",
+  name: "payment-tracker",
+  key: "invoice-1",
+  handler: "onPaymentSucceeded",
+  input: { invoiceId: "invoice-1" },
+  delay: rpc.duration({ minutes: 5 })
+})
+```
+
+### Invocation Handles, Attach, And Cancel
+
+Send handles should be useful immediately and serializable for later attach.
+
+```ts
+import { attach, cancel, invocation } from "@firegrid/fluent-firegrid"
+
+const handle = yield* serviceSendClient(orders).submit(
+  { orderId: "order-4" },
+  rpc.sendOpts({ idempotencyKey: "order-4:submit" })
+)
+
+yield* state(SubmittedOrders).set({
+  id: "order-4",
+  invocationId: handle.invocationId
+})
+
+const sameHandle = invocation<typeof handle.output>("orders.submit", handle.invocationId)
+const output = yield* sameHandle.attach()
+
+const outputAgain = yield* attach<typeof output>(handle.invocationId)
+yield* cancel(handle.invocationId)
+```
+
+If the lower runtime cannot enforce cancellation yet, expose `cancel` only after
+there is a real terminal/cancel event in the persisted execution state.
+
+### Durable Timers, Delayed Messages, And Timeouts
+
+Raw sleep is already available. The finish line adds send delays and timeout
+ergonomics.
+
+```ts
+import { orTimeout, rpc, serviceSendClient, sleep, sleepUntil } from "@firegrid/fluent-firegrid"
+
+yield* sleep("10 seconds")
+yield* sleepUntil(Date.now() + 60_000)
+
+yield* serviceSendClient(emails).sendReceipt(
+  { orderId: "order-5" },
+  rpc.sendOpts({ delay: { hours: 1 } })
+)
+
+const approved = yield* serviceClient(approvals).request(
+  { documentId: "doc-1" }
+).pipe(
+  orTimeout("5 minutes")
+)
+```
+
+`orTimeout` should be an Effect combinator returning a typed timeout error, not a
+new Future abstraction.
+
+### Awakeables
+
+Awakeables cover task-token and human-in-the-loop patterns for services and
+objects.
+
+```ts
+import { awakeable, resolveAwakeable, rejectAwakeable, run } from "@firegrid/fluent-firegrid"
+
+const reviews = service({
+  name: "reviews",
+  handlers: {
+    *request(input: { readonly documentId: string }) {
+      const review = yield* awakeable<string>()
+
+      yield* run(
+        () => sendReviewEmail({ documentId: input.documentId, token: review.id }),
+        { name: "send-review-email" }
+      )
+
+      return yield* review.await
+    },
+
+    *approve(input: { readonly token: string; readonly decision: string }) {
+      yield* resolveAwakeable(input.token, input.decision)
+    },
+
+    *reject(input: { readonly token: string; readonly reason: string }) {
+      yield* rejectAwakeable(input.token, input.reason)
+    }
+  }
+})
+```
+
+The Node binding should also expose transport endpoints for external systems:
+
+```text
+POST /firegrid/awakeables/:id/resolve
+POST /firegrid/awakeables/:id/reject
+```
+
+### Workflow Promises
+
+Workflow promises are named, workflow-scoped events. They are more ergonomic
+than manually passing awakeable ids when every signal is scoped to one workflow
+instance.
+
+```ts
+import { workflow, workflowClient, workflowPromise, run } from "@firegrid/fluent-firegrid"
+
+const reviewWorkflow = workflow({
+  name: "review",
+  handlers: {
+    *run(input: { readonly documentId: string }) {
+      yield* run(() => askReviewer(input.documentId), { name: "ask-reviewer" })
+      const decision = yield* workflowPromise<string>("decision").await
+      return { decision }
+    },
+
+    *submitDecision(input: { readonly decision: string }) {
+      yield* workflowPromise<string>("decision").resolve(input.decision)
+    }
+  }
+})
+
+yield* workflowClient(reviewWorkflow, "review-123").submitDecision({
+  decision: "approved"
+})
+```
+
+### Durable Webhook Example
+
+The webhook product shape should be a normal service handler, plus idempotency
+key support at the transport boundary.
+
+```ts
+import { objectSendClient, run, service } from "@firegrid/fluent-firegrid"
+import { serveFluentS2 } from "@firegrid/fluent-firegrid-node"
+
+const stripeWebhook = service({
+  name: "stripe-webhook",
+  handlers: {
+    *onEvent(event: StripeEvent) {
+      yield* run(() => verifyStripeEvent(event), { name: "verify-stripe-event" })
+
+      const invoiceId = event.data.object.id
+      if (event.type === "invoice.payment_failed") {
+        yield* objectSendClient(paymentTracker, invoiceId).onPaymentFailed(event)
+      }
+      if (event.type === "invoice.payment_succeeded") {
+        yield* objectSendClient(paymentTracker, invoiceId).onPaymentSucceeded(event)
+      }
+    }
+  }
+})
+
+await serveFluentS2({
+  definitions: [stripeWebhook, paymentTracker],
+  namespace: "billing",
+  port: 8080,
+  s2Endpoint: process.env.S2_ENDPOINT!,
+  webhooks: {
+    "/webhooks/stripe": {
+      definition: stripeWebhook,
+      handler: "onEvent",
+      idempotencyKey: (request) => request.headers.get("stripe-event-id"),
+      verify: verifyStripeSignature
+    }
+  }
+})
+```
+
+The `webhooks` option is intentionally transport-specific and belongs in
+`@firegrid/fluent-firegrid-node`, not fluent core.
+
 ## Finish-Line Acceptance Ladder
 
 ### A. Service Communication Parity
