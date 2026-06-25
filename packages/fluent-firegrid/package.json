@@ -1,0 +1,36 @@
+{
+  "name": "@firegrid/fluent-firegrid",
+  "version": "0.0.0",
+  "description": "Restate-like fluent API over the Firegrid TanStack/S2 durable runtime.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": ["src", "README.md"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
+    "lint": "oxlint -f unix --config ../../.oxlintrc.json .",
+    "test": "vitest run --root ../.. --project fluent-firegrid --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tanstack/workflow-core": "workspace:*",
+    "@tanstack/workflow-runtime": "workspace:*",
+    "effect": "4.0.0-beta.87"
+  },
+  "devDependencies": {
+    "@effect/language-service": "^0.86.2",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.0"
+  }
+}

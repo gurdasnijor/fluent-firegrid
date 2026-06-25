@@ -129,6 +129,28 @@ importers:
         specifier: ^3.2.0
         version: 3.2.6(@types/node@22.19.20)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
 
+  packages/fluent-firegrid:
+    dependencies:
+      '@tanstack/workflow-core':
+        specifier: workspace:*
+        version: link:../tanstack-workflow-core
+      '@tanstack/workflow-runtime':
+        specifier: workspace:*
+        version: link:../tanstack-workflow-runtime
+      effect:
+        specifier: 4.0.0-beta.87
+        version: 4.0.0-beta.87
+    devDependencies:
+      '@effect/language-service':
+        specifier: ^0.86.2
+        version: 0.86.2
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
+
   packages/observability:
     dependencies:
       '@opentelemetry/api':
@@ -237,6 +259,9 @@ importers:
       '@effect/platform-node':
         specifier: 4.0.0-beta.87
         version: 4.0.0-beta.87(effect@4.0.0-beta.87)(ioredis@5.11.1)
+      '@firegrid/fluent-firegrid':
+        specifier: workspace:*
+        version: link:../fluent-firegrid
       '@firegrid/observability':
         specifier: workspace:*
         version: link:../observability
