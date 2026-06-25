@@ -67,7 +67,7 @@ not introduce a separate Operation/Future scheduler.
 Keyed object invocations use `objectClient(binding, definition)(key)`, and the
 handler can read the durable invocation key with `yield* objectKey`.
 
-Virtual object state follows the table/materialization shape from the prior
-`effect-s2-stream-db` work: define rows with `Table` and `primaryKey`, then use
-`state(Table)` inside object handlers. The fluent core owns this authoring
-surface while S2 object-owner storage provides the runtime backend.
+Virtual object state follows a table/materialization shape: define rows with
+`Table` and `primaryKey`, then use `state(Table)` inside object handlers. The
+fluent core owns this authoring surface while S2 object-owner storage provides
+the runtime backend.

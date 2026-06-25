@@ -7,7 +7,7 @@
 | Status | Implemented through A-E; complete for current state/materialization layer |
 | Date | 2026-06-25 |
 | Package | `@firegrid/fluent-firegrid` plus S2 object-owner support |
-| Prior art | `effect-s2-durable` user-defined durable state; `effect-s2-stream-db` |
+| Design lineage | table-shaped fluent object state over S2 object-owner storage |
 | Lower runtime | TanStack Workflow over `@firegrid/tanstack-workflow-s2` |
 
 ---
