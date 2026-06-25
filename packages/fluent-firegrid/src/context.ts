@@ -4,6 +4,7 @@ import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import type * as Option from "effect/Option"
 
+import type { InvocationBinding } from "./clients.ts"
 import { FluentFiregridError } from "./error.ts"
 
 export interface ObjectStateBackend {
@@ -42,6 +43,7 @@ export type RunAction<A> = (
 ) => A | PromiseLike<A> | Effect.Effect<A, unknown, never>
 
 export interface FluentDurableContextService {
+  readonly binding?: InvocationBinding<FluentFiregridError>
   readonly key?: string
   readonly state?: ObjectStateBackend
   readonly stateOperationId?: (input: StateOperationIdentityInput) => string
@@ -76,11 +78,16 @@ export interface TanStackWorkflowContext {
 
 export const fluentContextFromTanStack = (
   ctx: TanStackWorkflowContext,
-  options: { readonly key?: string; readonly state?: ObjectStateBackend } = {}
+  options: {
+    readonly binding?: InvocationBinding<FluentFiregridError>
+    readonly key?: string
+    readonly state?: ObjectStateBackend
+  } = {}
 ): FluentDurableContextService => {
   let nextStateOperation = 0
   const runId = ctx.runId ?? "unknown-run"
   return {
+    ...(options.binding === undefined ? {} : { binding: options.binding }),
     ...(options.key === undefined ? {} : { key: options.key }),
     ...(options.state === undefined ? {} : { state: options.state }),
     stateOperationId: (input) =>

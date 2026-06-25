@@ -41,18 +41,32 @@ export {
   type DefinitionKind,
   type GeneratorHandler,
   type HandlerDescriptor,
+  type HandlerDescriptorOptions,
   type HandlerDescriptors,
   type HandlerInput,
   type HandlerOutput,
+  json,
   object,
   type ObjectDefinition,
   type Operation,
+  schemas,
   service,
   type ServiceDefinition,
+  serdes,
   workflow,
   type WorkflowDefinition
 } from "./definitions.ts"
 export { FluentFiregridError } from "./error.ts"
+export {
+  implement,
+  type DefinitionDescriptor,
+  type ImplementHandlers,
+  type ObjectDescriptor,
+  type ServiceDescriptor,
+  type WorkflowDescriptor
+} from "./interface.ts"
+import * as iface from "./interface.ts"
+export { iface }
 export { objectKey, run, type RunOptions, sleep, sleepUntil, waitForSignal } from "./run.ts"
 export { state } from "./state.ts"
 export type { StateBinding } from "./state.ts"

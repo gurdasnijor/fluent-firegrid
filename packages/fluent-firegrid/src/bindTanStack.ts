@@ -2,10 +2,11 @@
 import { createWorkflow } from "@tanstack/workflow-core"
 import type { WorkflowRegistrationMap, WorkflowRuntimeRunResult } from "@tanstack/workflow-runtime"
 import * as Effect from "effect/Effect"
+import * as Schema from "effect/Schema"
 
 import type { CallRequest, InvocationBinding, SendReference } from "./clients.ts"
 import { fluentContextFromTanStack, FluentDurableContext, type ObjectStateBackend } from "./context.ts"
-import type { AnyGeneratorHandler, Definition, DefinitionKind } from "./definitions.ts"
+import type { AnyGeneratorHandler, Definition, DefinitionKind, HandlerDescriptor } from "./definitions.ts"
 import { FluentFiregridError } from "./error.ts"
 
 export interface FluentWorkflowInput {
@@ -21,6 +22,7 @@ export interface FluentDefinitionBindingContext {
 }
 
 export interface FluentDefinitionBindingOptions {
+  readonly invocationBinding?: InvocationBinding<FluentFiregridError> | (() => InvocationBinding<FluentFiregridError> | undefined)
   readonly stateBackendFor?: (context: FluentDefinitionBindingContext) => ObjectStateBackend | undefined
 }
 
@@ -43,10 +45,17 @@ export const bindFluentDefinitions = (
         const workflow = createWorkflow({ id: workflowId }).handler(async (ctx) => {
           const input = ctx.input as FluentWorkflowInput
           const state = options.stateBackendFor?.({ definition, handlerName, input })
-          const effect = Effect.gen(() => handler(input.input)).pipe(
+          const descriptor = definition._handlers[handlerName]
+          const binding = invocationBindingFrom(options)
+          const effect = Effect.gen(function*() {
+            const handlerInput = yield* decodeHandlerInput(definition, handlerName, descriptor, input.input)
+            const output = yield* Effect.gen(() => handler(handlerInput))
+            return yield* decodeHandlerOutput(definition, handlerName, descriptor, output)
+          }).pipe(
             Effect.provideService(
               FluentDurableContext,
               fluentContextFromTanStack(ctx, {
+                ...(binding === undefined ? {} : { binding }),
                 ...(input.key === undefined ? {} : { key: input.key }),
                 ...(state === undefined ? {} : { state })
               })
@@ -63,6 +72,47 @@ export const bindFluentDefinitions = (
       })
     )
   )
+
+const invocationBindingFrom = (
+  options: FluentDefinitionBindingOptions
+): InvocationBinding<FluentFiregridError> | undefined =>
+  typeof options.invocationBinding === "function"
+    ? options.invocationBinding()
+    : options.invocationBinding
+
+const decodeHandlerInput = (
+  definition: { readonly name: string },
+  handlerName: string,
+  descriptor: HandlerDescriptor | undefined,
+  input: unknown
+): Effect.Effect<unknown, FluentFiregridError> =>
+  descriptor?.input === undefined
+    ? Effect.succeed(input)
+    : Schema.decodeUnknownEffect(descriptor.input)(input).pipe(
+      Effect.mapError((cause) =>
+        new FluentFiregridError({
+          cause,
+          message: `invalid input for fluent handler ${definition.name}.${handlerName}`
+        })
+      )
+    ) as Effect.Effect<unknown, FluentFiregridError>
+
+const decodeHandlerOutput = (
+  definition: { readonly name: string },
+  handlerName: string,
+  descriptor: HandlerDescriptor | undefined,
+  output: unknown
+): Effect.Effect<unknown, FluentFiregridError> =>
+  descriptor?.output === undefined
+    ? Effect.succeed(output)
+    : Schema.decodeUnknownEffect(descriptor.output)(output).pipe(
+      Effect.mapError((cause) =>
+        new FluentFiregridError({
+          cause,
+          message: `invalid output for fluent handler ${definition.name}.${handlerName}`
+        })
+      )
+    ) as Effect.Effect<unknown, FluentFiregridError>
 
 export interface FluentRuntimeHost {
   readonly runtime: {

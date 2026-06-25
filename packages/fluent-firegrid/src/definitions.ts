@@ -1,4 +1,5 @@
 import type * as Effect from "effect/Effect"
+import type * as Schema from "effect/Schema"
 
 import type { FluentDurableContext } from "./context.ts"
 
@@ -16,6 +17,8 @@ declare const descriptorTypes: unique symbol
 
 export interface HandlerDescriptor<Input = unknown, Output = unknown> {
   readonly _tag: "HandlerDescriptor"
+  readonly input?: Schema.Schema<unknown>
+  readonly output?: Schema.Schema<unknown>
   readonly [descriptorTypes]?: {
     readonly input: Input
     readonly output: Output
@@ -64,15 +67,40 @@ export type ObjectDefinition<Name extends string, Handlers extends Record<string
 interface DefinitionConfig<Name extends string, Handlers extends Record<string, AnyGeneratorHandler>> {
   readonly name: Name
   readonly handlers: Handlers
+  readonly descriptors?: Partial<Record<keyof Handlers, HandlerDescriptor>>
 }
 
-const descriptor = <Input = void, Output = void>(): HandlerDescriptor<Input, Output> => ({ _tag: "HandlerDescriptor" })
+export type HandlerDescriptorOptions<Input, Output> = {
+  readonly input?: Schema.Schema<Input>
+  readonly output?: Schema.Schema<Output>
+}
+
+const descriptor = <Input = void, Output = void>(
+  options?: HandlerDescriptorOptions<Input, Output>
+): HandlerDescriptor<Input, Output> => ({
+  _tag: "HandlerDescriptor",
+  ...(options?.input === undefined ? {} : { input: options.input }),
+  ...(options?.output === undefined ? {} : { output: options.output })
+})
+
+export const json = <Input = void, Output = void>(): HandlerDescriptor<Input, Output> =>
+  descriptor<Input, Output>()
+
+export const schemas = <Input = void, Output = void>(
+  options: HandlerDescriptorOptions<Input, Output>
+): HandlerDescriptor<Input, Output> => descriptor(options)
+
+export const serdes: typeof schemas = (options) => descriptor(options)
 
 const makeDescriptors = <Handlers extends Record<string, AnyGeneratorHandler>>(
-  handlers: Handlers
+  handlers: Handlers,
+  descriptors: Partial<Record<keyof Handlers, HandlerDescriptor>> | undefined
 ): HandlerDescriptors<Handlers> =>
   Object.fromEntries(
-    Object.keys(handlers).map((key) => [key, descriptor()])
+    Object.keys(handlers).map((key) => [
+      key,
+      descriptors?.[key as keyof Handlers] ?? descriptor()
+    ])
   ) as HandlerDescriptors<Handlers>
 
 const makeDefinition = <
@@ -83,7 +111,7 @@ const makeDefinition = <
   kind: Kind,
   definition: DefinitionConfig<Name, Handlers>
 ): Definition<Name, Kind, Handlers> => ({
-  _handlers: makeDescriptors(definition.handlers),
+  _handlers: makeDescriptors(definition.handlers, definition.descriptors),
   _kind: kind,
   handlers: definition.handlers,
   name: definition.name

@@ -18,14 +18,48 @@ export const orders = service({
 })
 ```
 
+Generated-SDK-style contracts can be declared separately from their
+implementation:
+
+```ts
+import { iface, implement, run } from "@firegrid/fluent-firegrid"
+import { Schema } from "effect"
+
+export const incidentContract = iface.service("incident", {
+  triage: iface.schemas({
+    input: Schema.String,
+    output: Schema.String
+  })
+})
+
+export const incident = implement(incidentContract, {
+  handlers: {
+    *triage(input: string) {
+      return yield* run(() => `triaged:${input}`, { name: "triage" })
+    }
+  }
+})
+```
+
+Handlers can use ambient clients once the host binding provides an invocation
+binding to `bindFluentDefinitions`:
+
+```ts
+import { serviceClient } from "@firegrid/fluent-firegrid"
+
+const reviews = serviceClient(incident)
+const result = yield* reviews.triage("INC-1")
+```
+
 This package does not implement a second durable engine. `run` lowers to
 TanStack `ctx.step`, `sleep` lowers to TanStack sleep primitives, and hosting is
 provided by `@firegrid/tanstack-workflow-s2`. `waitForSignal` lowers to
 TanStack `ctx.waitForEvent`.
 
 Transport-specific serving belongs in a separate binding package or process
-entrypoint. The core package only exposes descriptors, typed clients, and
-runtime bindings such as `createTanStackRuntimeBinding`.
+entrypoint. The core package only exposes descriptors, descriptor-only
+interfaces, typed clients, and runtime bindings such as
+`createTanStackRuntimeBinding`.
 
 Composition helpers such as `all` and `race` are Effect aliases. Firegrid does
 not introduce a separate Operation/Future scheduler.

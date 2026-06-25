@@ -33,6 +33,10 @@ export interface S2ObjectRuntimeBindingConfig extends S2ObjectStateBackendConfig
   readonly objectOwnerLeaseMs?: number
 }
 
+export interface S2FluentDefinitionBindingOptions {
+  readonly invocationBinding?: FluentDefinitionBindingOptions["invocationBinding"]
+}
+
 type AcceptedEvent = {
   readonly _tag: "Accepted"
   readonly callId: string
@@ -74,8 +78,10 @@ interface InvocationProjection {
 }
 
 export const s2FluentDefinitionBindingOptions = (
-  config: S2ObjectStateBackendConfig
+  config: S2ObjectStateBackendConfig,
+  options: S2FluentDefinitionBindingOptions = {}
 ): FluentDefinitionBindingOptions => ({
+  ...(options.invocationBinding === undefined ? {} : { invocationBinding: options.invocationBinding }),
   stateBackendFor: ({ definition, input }) => {
     if (definition._kind !== "object" || input.key === undefined) return undefined
     const owner = s2ObjectStateOwnerFrom(input.stateContext)

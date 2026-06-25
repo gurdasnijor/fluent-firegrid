@@ -115,12 +115,14 @@ const config = {
   s2Endpoint
 }
 
+let binding: ReturnType<typeof createS2ObjectRuntimeBinding> | undefined
+
 const host = createS2WorkflowRuntimeHost({
   ...config,
-  workflows: bindFluentDefinitions([counter], s2FluentDefinitionBindingOptions(config))
+  workflows: bindFluentDefinitions([counter], s2FluentDefinitionBindingOptions(config, { invocationBinding: () => binding }))
 })
 
-const binding = createS2ObjectRuntimeBinding(host, {
+binding = createS2ObjectRuntimeBinding(host, {
   ...config,
   now: () => logicalNow,
   objectOwnerLeaseMs: 1_000

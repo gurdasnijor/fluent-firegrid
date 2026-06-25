@@ -2,6 +2,7 @@ export {
   createS2ObjectRuntimeBinding,
   objectInvocationStreamName,
   s2FluentDefinitionBindingOptions,
+  type S2FluentDefinitionBindingOptions,
   type S2ObjectRuntimeBindingConfig
 } from "./S2ObjectRuntimeBinding.ts"
 export {
