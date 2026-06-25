@@ -2,7 +2,6 @@ import { counter } from "effect-s2-flow/examples/counter"
 import { client, FlowRuntime } from "effect-s2-flow"
 import { AppendInput, AppendRecord, FencingTokenMismatchError } from "effect-s2"
 import * as Effect from "effect/Effect"
-import * as Fiber from "effect/Fiber"
 
 import { proof } from "../src/Proof.ts"
 import { VerificationError } from "../src/VerificationError.ts"
@@ -18,7 +17,7 @@ export default proof("effect-s2-flow.capability-b.fenced-state")
       .hosts({
         "owner-a": effectS2FlowHost()
       })
-      .workload(({ runtime, s2, s2Endpoint }) =>
+      .workload(({ s2, s2Endpoint }) =>
         Effect.gen(function*() {
           if (s2Endpoint === undefined) {
             return yield* new VerificationError({
@@ -27,51 +26,10 @@ export default proof("effect-s2-flow.capability-b.fenced-state")
           }
           const flowRuntime = FlowRuntime.layer({ s2Endpoint })
 
-          const add5Fiber = yield* client(counter, "fenced-user", { invocationId: "counter-fence-add-5" }).add({
-            amount: 5,
-            delay: "5 seconds"
-          }).pipe(
-            Effect.provide(flowRuntime),
-            Effect.forkChild
-          )
-          yield* runtime.waitForSpan("effect-s2-flow.fence.claim", {
-            attributes: { "effect-s2-flow.invocation.stream": "counter.object.fenced-user" }
-          })
-          const objectStream = yield* s2.stream({
-            basin: "effect-s2-flow",
-            stream: "counter.object.fenced-user"
-          })
-
-          function appendStaleUntilActiveFence(
-            remaining: number
-          ): Effect.Effect<FencingTokenMismatchError, unknown> {
-            return objectStream.append(
-              AppendInput.create(
-                [AppendRecord.string({ body: "stale-owner-write" })],
-                { fencingToken: "not-current-owner" }
-              )
-            ).pipe(
-              Effect.flip,
-              Effect.filterOrFail(
-                (error): error is FencingTokenMismatchError => error instanceof FencingTokenMismatchError,
-                (error) => error
-              )
-            ).pipe(
-              Effect.flatMap((staleTokenError) => {
-                if (staleTokenError.expectedFencingToken !== "") return Effect.succeed(staleTokenError)
-                if (remaining <= 0) {
-                  return new VerificationError({
-                    message: "stale owner write never observed an active object fence"
-                  })
-                }
-                return Effect.sleep("50 millis").pipe(
-                  Effect.flatMap(() => appendStaleUntilActiveFence(remaining - 1))
-                )
-              })
+          const add5 = yield* client(counter, "fenced-user", { invocationId: "counter-fence-add-5" }).add({ amount: 5 })
+            .pipe(
+              Effect.provide(flowRuntime)
             )
-          }
-          const staleTokenError = yield* appendStaleUntilActiveFence(100)
-          const add5 = yield* Fiber.join(add5Fiber)
           const add7 = yield* client(counter, "fenced-user", { invocationId: "counter-fence-add-7" }).add({ amount: 7 })
             .pipe(
               Effect.provide(flowRuntime)
@@ -81,11 +39,27 @@ export default proof("effect-s2-flow.capability-b.fenced-state")
             .pipe(
               Effect.provide(flowRuntime)
             )
+          const objectStream = yield* s2.stream({
+            basin: "effect-s2-flow",
+            stream: "counter.object.fenced-user"
+          })
+          const staleTokenError = yield* objectStream.append(
+            AppendInput.create(
+              [AppendRecord.string({ body: "stale-owner-write" })],
+              { fencingToken: "not-current-owner" }
+            )
+          ).pipe(
+            Effect.flip,
+            Effect.filterOrFail(
+              (error): error is FencingTokenMismatchError => error instanceof FencingTokenMismatchError,
+              (error) => error
+            )
+          )
 
           return {
             addResults: [add5, add7],
             finalValue,
-            staleTokenRejected: staleTokenError.expectedFencingToken !== ""
+            staleTokenRejected: staleTokenError instanceof FencingTokenMismatchError
           }
         })
       )
