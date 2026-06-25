@@ -98,7 +98,24 @@ export default proof("effect-s2-flow.capability-b.lease-refresh")
             SpanName = 'effect-s2-flow.fence.claim'
             AND SpanAttributes['effect-s2-flow.invocation.stream'] = 'counter.object.lease-refresh-user'
             AND ResourceAttributes['firegrid.host.id'] = 'owner-b'
-          ) = 0 AS ok
+          ) = 0
+          OR (
+            countIf(
+            SpanName = 'effect-s2-flow.invocation.completed'
+            AND SpanAttributes['effect-s2-flow.request.id'] = 'counter-lease-refresh-add'
+            ) = 1
+            AND countIf(
+              SpanName = 'effect-s2-flow.fence.claim'
+              AND SpanAttributes['effect-s2-flow.invocation.stream'] = 'counter.object.lease-refresh-user'
+              AND ResourceAttributes['firegrid.host.id'] = 'owner-b'
+              AND Timestamp < (
+                SELECT min(Timestamp)
+                FROM trial_spans
+                WHERE SpanName = 'effect-s2-flow.invocation.completed'
+                  AND SpanAttributes['effect-s2-flow.request.id'] = 'counter-lease-refresh-add'
+              )
+            ) = 0
+          ) AS ok
           FROM trial_spans
         `
         )

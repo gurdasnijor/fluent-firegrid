@@ -16,7 +16,7 @@ export default proof("effect-s2-flow.capability-c.durable-sleep")
       .hosts({ worker: effectS2FlowHost() })
       .workload((context) =>
         Effect.gen(function*() {
-          const { hosts, s2Endpoint } = context
+          const { hosts, runtime, s2Endpoint } = context
           if (s2Endpoint === undefined) {
             return yield* new VerificationError({
               message: "Capability C durable-sleep proof requires s2Lite"
@@ -36,9 +36,18 @@ export default proof("effect-s2-flow.capability-c.durable-sleep")
           })
 
           yield* hosts.restart("worker")
-          return yield* attach(handle).pipe(
+          const result = yield* attach(handle).pipe(
             Effect.provide(FlowRuntime.layer({ s2Endpoint }))
           )
+          yield* runtime.waitForSpan("effect-s2-flow.timer.fired", {
+            attempts: 120,
+            attributes: {
+              "effect-s2-flow.request.id": "capability-c-durable-sleep",
+              "effect-s2-flow.timer.name": "nap"
+            },
+            interval: "50 millis"
+          })
+          return result
         })
       )
       .verify(({ expect, traceSql }) => [
