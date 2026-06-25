@@ -9,6 +9,7 @@ import effectS2FlowCapabilityBLeaseRefreshProof from "./effect-s2-flow-capabilit
 import effectS2FlowCapabilityBOwnerContentionProof from "./effect-s2-flow-capability-b-contention.ts"
 import effectS2FlowCapabilityBFenceProof from "./effect-s2-flow-capability-b-fence.ts"
 import effectS2FlowCapabilityBStateProof from "./effect-s2-flow-capability-b-state.ts"
+import effectS2FlowCapabilityCDurableSleepProof from "./effect-s2-flow-capability-c-sleep.ts"
 import { effectS2SubstrateProofs } from "./effect-s2-substrate-proofs.ts"
 
 const proofs = [
@@ -20,7 +21,8 @@ const proofs = [
   effectS2FlowCapabilityBFenceProof,
   effectS2FlowCapabilityBOwnerContentionProof,
   effectS2FlowCapabilityBLeaseRefreshProof,
-  effectS2FlowCapabilityBLeaseExpiryProof
+  effectS2FlowCapabilityBLeaseExpiryProof,
+  effectS2FlowCapabilityCDurableSleepProof
 ] as const
 
 NodeRuntime.runMain(runCli(proofs))

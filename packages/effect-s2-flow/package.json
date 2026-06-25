@@ -23,6 +23,10 @@
     "./examples/counter": {
       "types": "./src/examples/Counter.ts",
       "default": "./src/examples/Counter.ts"
+    },
+    "./examples/sleeper": {
+      "types": "./src/examples/Sleeper.ts",
+      "default": "./src/examples/Sleeper.ts"
     }
   },
   "files": ["src", "README.md"],
