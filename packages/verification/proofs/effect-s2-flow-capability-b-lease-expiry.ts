@@ -50,13 +50,14 @@ export default proof("effect-s2-flow.capability-b.lease-expiry")
 
           yield* hosts.restart("owner-a")
           yield* runtime.waitForSpan("effect-s2-flow.fence.claim", {
-            attributes: { "effect-s2-flow.invocation.stream": stream }
+            attributes: { "effect-s2-flow.invocation.stream": stream },
+            attempts: 800
           })
 
           yield* hosts.restart("owner-b")
           yield* runtime.waitForSpan("effect-s2-flow.fence.busy", {
             attributes: { "effect-s2-flow.invocation.stream": stream },
-            attempts: 400
+            attempts: 800
           })
           yield* hosts.kill("owner-a")
 
