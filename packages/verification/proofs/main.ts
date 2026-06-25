@@ -1,4 +1,5 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import * as Runtime from "effect/Runtime"
 
 import { runCli } from "../src/CliApp.ts"
 import effectS2CapabilityAProof from "./effect-s2-capability-a.ts"
@@ -25,4 +26,10 @@ const proofs = [
   effectS2FlowCapabilityCDurableSleepProof
 ] as const
 
-NodeRuntime.runMain(runCli(proofs))
+NodeRuntime.runMain(runCli(proofs), {
+  teardown: (exit, onExit) =>
+    Runtime.defaultTeardown(exit, (code) => {
+      onExit(code)
+      process.exit(code)
+    })
+})

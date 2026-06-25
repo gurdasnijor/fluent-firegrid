@@ -47,6 +47,14 @@ export default proof("effect-s2-flow.capability-c.durable-sleep")
             },
             interval: "50 millis"
           })
+          yield* runtime.waitForSpan("effect-s2-flow.journal.append.ack", {
+            attempts: 120,
+            attributes: {
+              "effect-s2-flow.record.type": "StepCompleted",
+              "effect-s2-flow.step.name": "after-nap"
+            },
+            interval: "50 millis"
+          })
           return result
         })
       )
