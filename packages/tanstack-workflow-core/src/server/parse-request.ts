@@ -1,6 +1,5 @@
 // @ts-nocheck -- Vendored TanStack source targets a looser optional-property TypeScript policy.
-/* oxlint-disable effect/restricted-syntax -- Vendored TanStack implementation source keeps upstream imperative control flow. */
-import type { ApprovalResult, SignalDelivery } from '../types'
+import type { ApprovalResult, SignalDelivery } from "../types"
 
 export interface WorkflowRequestParams {
   approval?: ApprovalResult
@@ -39,20 +38,20 @@ interface RawBody {
  * ```
  */
 export async function parseWorkflowRequest(
-  request: Request,
+  request: Request
 ): Promise<WorkflowRequestParams> {
   let raw: unknown
   try {
     raw = await request.json()
   } catch (err) {
     throw new WorkflowRequestParseError(
-      err instanceof Error ? err.message : 'Invalid JSON body',
-      err,
+      err instanceof Error ? err.message : "Invalid JSON body",
+      err
     )
   }
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     throw new WorkflowRequestParseError(
-      'Workflow request body must be a JSON object.',
+      "Workflow request body must be a JSON object."
     )
   }
   const body = raw as RawBody
@@ -67,7 +66,7 @@ export async function parseWorkflowRequest(
     signalDelivery: body.signal,
     input: body.input,
     runId: body.runId,
-    abort: body.abort,
+    abort: body.abort
   }
 }
 
@@ -76,10 +75,10 @@ export async function parseWorkflowRequest(
  * is not a JSON object. Route handlers should catch and return a 400.
  */
 export class WorkflowRequestParseError extends Error {
-  override readonly name = 'WorkflowRequestParseError'
+  override readonly name = "WorkflowRequestParseError"
   constructor(
     message: string,
-    public override readonly cause?: unknown,
+    public override readonly cause?: unknown
   ) {
     super(message)
   }

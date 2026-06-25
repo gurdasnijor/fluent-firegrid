@@ -1,11 +1,8 @@
 // @ts-nocheck -- Vendored TanStack source targets a looser optional-property TypeScript policy.
 /* oxlint-disable effect/restricted-syntax -- Vendored TanStack implementation source keeps upstream imperative control flow. */
-import { runWorkflow } from '@tanstack/workflow-core'
-import { createRunStoreAdapter } from './run-store-adapter'
-import type {
-  AnyWorkflowDefinition,
-  WorkflowEvent,
-} from '@tanstack/workflow-core'
+import { runWorkflow } from "@tanstack/workflow-core"
+import { createRunStoreAdapter } from "./run-store-adapter"
+import type { AnyWorkflowDefinition, WorkflowEvent } from "@tanstack/workflow-core"
 import type {
   DeliverApprovalResult,
   DeliverSignalResult,
@@ -19,21 +16,21 @@ import type {
   WorkflowRuntimeRunResultKind,
   WorkflowRuntimeStartRunArgs,
   WorkflowRuntimeSweepArgs,
-  WorkflowRuntimeSweepResult,
-} from './types'
+  WorkflowRuntimeSweepResult
+} from "./types"
 
 const DEFAULT_LEASE_MS = 30_000
 const DEFAULT_SWEEP_LIMIT = 25
 
 export function createRuntimeDriver<
-  TWorkflows extends Record<string, WorkflowRegistration>,
+  TWorkflows extends Record<string, WorkflowRegistration>
 >(config: WorkflowRuntimeConfig<TWorkflows>) {
   return {
     startRun(args: WorkflowRuntimeStartRunArgs) {
       return startRun(config, args)
     },
     deliverSignal<TPayload = unknown>(
-      args: WorkflowRuntimeDeliverSignalArgs<TPayload>,
+      args: WorkflowRuntimeDeliverSignalArgs<TPayload>
     ) {
       return deliverSignal(config, args)
     },
@@ -42,15 +39,15 @@ export function createRuntimeDriver<
     },
     sweep(args: WorkflowRuntimeSweepArgs = {}) {
       return sweep(config, args)
-    },
+    }
   }
 }
 
 async function startRun<
-  TWorkflows extends Record<string, WorkflowRegistration>,
+  TWorkflows extends Record<string, WorkflowRegistration>
 >(
   config: WorkflowRuntimeConfig<TWorkflows>,
-  args: WorkflowRuntimeStartRunArgs,
+  args: WorkflowRuntimeStartRunArgs
 ): Promise<WorkflowRuntimeRunResult> {
   const now = args.now ?? Date.now()
   const workflow = await loadWorkflow(config, args.workflowId)
@@ -60,7 +57,7 @@ async function startRun<
     workflowId: args.workflowId,
     workflowVersion,
     input: args.input,
-    now,
+    now
   })
 
   return driveClaimedRun(config, {
@@ -69,21 +66,21 @@ async function startRun<
     runId: args.runId,
     input: args.input,
     now,
-    resume: created.kind === 'existing',
+    resume: created.kind === "existing",
     leaseOwner: args.leaseOwner,
     leaseMs: args.leaseMs,
     threadId: args.threadId,
     includeEvents: args.includeEvents,
-    maxEvents: args.maxEvents,
+    maxEvents: args.maxEvents
   })
 }
 
 async function deliverSignal<
   TWorkflows extends Record<string, WorkflowRegistration>,
-  TPayload,
+  TPayload
 >(
   config: WorkflowRuntimeConfig<TWorkflows>,
-  args: WorkflowRuntimeDeliverSignalArgs<TPayload>,
+  args: WorkflowRuntimeDeliverSignalArgs<TPayload>
 ): Promise<WorkflowRuntimeRunResult> {
   const now = args.now ?? Date.now()
   const delivery = {
@@ -91,14 +88,14 @@ async function deliverSignal<
     stepId: args.stepId,
     name: args.name,
     payload: args.payload,
-    meta: args.meta,
+    meta: args.meta
   }
   const delivered = await config.store.deliverSignal({
     runId: args.runId,
     delivery,
-    now,
+    now
   })
-  if (delivered.kind !== 'delivered') {
+  if (delivered.kind !== "delivered") {
     return resultFromSignalDelivery(args.runId, delivered)
   }
 
@@ -113,23 +110,23 @@ async function deliverSignal<
     leaseMs: args.leaseMs,
     threadId: args.threadId,
     includeEvents: args.includeEvents,
-    maxEvents: args.maxEvents,
+    maxEvents: args.maxEvents
   })
 }
 
 async function deliverApproval<
-  TWorkflows extends Record<string, WorkflowRegistration>,
+  TWorkflows extends Record<string, WorkflowRegistration>
 >(
   config: WorkflowRuntimeConfig<TWorkflows>,
-  args: WorkflowRuntimeDeliverApprovalArgs,
+  args: WorkflowRuntimeDeliverApprovalArgs
 ): Promise<WorkflowRuntimeRunResult> {
   const now = args.now ?? Date.now()
   const delivered = await config.store.deliverApproval({
     runId: args.runId,
     approval: args.approval,
-    now,
+    now
   })
-  if (delivered.kind !== 'delivered') {
+  if (delivered.kind !== "delivered") {
     return resultFromApprovalDelivery(args.runId, delivered)
   }
 
@@ -144,25 +141,25 @@ async function deliverApproval<
     leaseMs: args.leaseMs,
     threadId: args.threadId,
     includeEvents: args.includeEvents,
-    maxEvents: args.maxEvents,
+    maxEvents: args.maxEvents
   })
 }
 
 async function sweep<TWorkflows extends Record<string, WorkflowRegistration>>(
   config: WorkflowRuntimeConfig<TWorkflows>,
-  args: WorkflowRuntimeSweepArgs,
+  args: WorkflowRuntimeSweepArgs
 ): Promise<WorkflowRuntimeSweepResult> {
   const now = args.now ?? Date.now()
   const startedAt = Date.now()
   const maxScheduledRuns = normalizeSweepLimit(
     args.maxScheduledRuns ?? args.limit,
     DEFAULT_SWEEP_LIMIT,
-    'maxScheduledRuns',
+    "maxScheduledRuns"
   )
   const maxTimers = normalizeSweepLimit(
     args.maxTimers ?? args.limit,
     DEFAULT_SWEEP_LIMIT,
-    'maxTimers',
+    "maxTimers"
   )
   const leaseOwner = args.leaseOwner ?? `sweep:${now}`
   const leaseMs = args.leaseMs ?? config.defaultLeaseMs ?? DEFAULT_LEASE_MS
@@ -180,7 +177,7 @@ async function sweep<TWorkflows extends Record<string, WorkflowRegistration>>(
       now,
       limit: 1,
       leaseOwner,
-      leaseMs,
+      leaseMs
     })
     const bucket = buckets[0]
     if (!bucket) break
@@ -193,14 +190,14 @@ async function sweep<TWorkflows extends Record<string, WorkflowRegistration>>(
       leaseOwner,
       leaseMs,
       includeEvents: args.includeEvents,
-      maxEvents: args.maxEvents,
+      maxEvents: args.maxEvents
     })
-    if (result.kind !== 'not-claimable' && result.kind !== 'not-found') {
+    if (result.kind !== "not-claimable" && result.kind !== "not-found") {
       await config.store.markScheduleBucketStarted({
         scheduleId: bucket.scheduleId,
         bucketId: bucket.bucketId,
         runId: bucket.runId,
-        now,
+        now
       })
     }
     scheduled.push(result)
@@ -216,7 +213,7 @@ async function sweep<TWorkflows extends Record<string, WorkflowRegistration>>(
       now,
       limit: 1,
       leaseOwner,
-      leaseMs,
+      leaseMs
     })
     const timer = dueTimers[0]
     if (!timer) break
@@ -228,8 +225,8 @@ async function sweep<TWorkflows extends Record<string, WorkflowRegistration>>(
         leaseOwner,
         leaseMs,
         includeEvents: args.includeEvents,
-        maxEvents: args.maxEvents,
-      }),
+        maxEvents: args.maxEvents
+      })
     )
   }
 
@@ -238,15 +235,14 @@ async function sweep<TWorkflows extends Record<string, WorkflowRegistration>>(
     timers,
     summary: summarizeSweep(scheduled, timers),
     deadlineReached,
-    remainingMayExist:
-      deadlineReached ||
+    remainingMayExist: deadlineReached ||
       scheduled.length >= maxScheduledRuns ||
-      timers.length >= maxTimers,
+      timers.length >= maxTimers
   }
 }
 
 async function deliverTimer<
-  TWorkflows extends Record<string, WorkflowRegistration>,
+  TWorkflows extends Record<string, WorkflowRegistration>
 >(
   config: WorkflowRuntimeConfig<TWorkflows>,
   args: {
@@ -256,23 +252,23 @@ async function deliverTimer<
     leaseMs: number
     includeEvents?: boolean
     maxEvents?: number
-  },
+  }
 ) {
   return deliverSignal(config, {
     runId: args.timer.runId,
     signalId: args.timer.signalId,
-    name: '__timer',
+    name: "__timer",
     payload: undefined,
     now: args.now,
     leaseOwner: args.leaseOwner,
     leaseMs: args.leaseMs,
     includeEvents: args.includeEvents,
-    maxEvents: args.maxEvents,
+    maxEvents: args.maxEvents
   })
 }
 
 async function driveClaimedRun<
-  TWorkflows extends Record<string, WorkflowRegistration>,
+  TWorkflows extends Record<string, WorkflowRegistration>
 >(
   config: WorkflowRuntimeConfig<TWorkflows>,
   args: {
@@ -280,8 +276,8 @@ async function driveClaimedRun<
     workflowId: string
     runId: string
     input?: unknown
-    signalDelivery?: Parameters<typeof runWorkflow>[0]['signalDelivery']
-    approval?: Parameters<typeof runWorkflow>[0]['approval']
+    signalDelivery?: Parameters<typeof runWorkflow>[0]["signalDelivery"]
+    approval?: Parameters<typeof runWorkflow>[0]["approval"]
     resume?: boolean
     now: number
     leaseOwner?: string
@@ -289,7 +285,7 @@ async function driveClaimedRun<
     threadId?: string
     includeEvents?: boolean
     maxEvents?: number
-  },
+  }
 ): Promise<WorkflowRuntimeRunResult> {
   const leaseOwner = args.leaseOwner ?? `runtime:${args.runId}`
   const leaseMs = args.leaseMs ?? config.defaultLeaseMs ?? DEFAULT_LEASE_MS
@@ -297,26 +293,26 @@ async function driveClaimedRun<
     runId: args.runId,
     leaseOwner,
     leaseMs,
-    now: args.now,
+    now: args.now
   })
 
-  if (claim.kind === 'not-found') {
+  if (claim.kind === "not-found") {
     return {
-      kind: 'not-found',
+      kind: "not-found",
       runId: args.runId,
       workflowId: args.workflowId,
       eventCount: 0,
-      events: [],
+      events: []
     }
   }
-  if (claim.kind === 'not-claimable') {
+  if (claim.kind === "not-claimable") {
     return {
-      kind: 'not-claimable',
+      kind: "not-claimable",
       runId: args.runId,
       workflowId: args.workflowId,
       run: claim.run,
       eventCount: 0,
-      events: [],
+      events: []
     }
   }
 
@@ -331,12 +327,12 @@ async function driveClaimedRun<
       resumeInput: args.resume ? mergeResumeStateContext(claim.run.input, args.input) : undefined,
       signalDelivery: args.signalDelivery,
       approval: args.approval,
-      threadId: args.threadId,
+      threadId: args.threadId
     }),
     {
       includeEvents: args.includeEvents ?? true,
-      maxEvents: args.maxEvents,
-    },
+      maxEvents: args.maxEvents
+    }
   )
 
   await syncTimerFromRunState(config, args.runId, args.workflowId, args.now)
@@ -350,21 +346,21 @@ async function driveClaimedRun<
     run,
     events: collected.events,
     eventCount: collected.eventCount,
-    eventsTruncated: collected.eventsTruncated || undefined,
+    eventsTruncated: collected.eventsTruncated || undefined
   }
 }
 
 async function syncTimerFromRunState<
-  TWorkflows extends Record<string, WorkflowRegistration>,
+  TWorkflows extends Record<string, WorkflowRegistration>
 >(
   config: WorkflowRuntimeConfig<TWorkflows>,
   runId: string,
   workflowId: string,
-  now: number,
+  now: number
 ) {
   const state = await config.store.loadRunState(runId)
   const deadline = state?.waitingFor?.deadline
-  if (state?.waitingFor?.signalName !== '__timer' || deadline === undefined) {
+  if (state?.waitingFor?.signalName !== "__timer" || deadline === undefined) {
     return
   }
 
@@ -374,15 +370,15 @@ async function syncTimerFromRunState<
     workflowVersion: state.workflowVersion,
     wakeAt: deadline,
     signalId: `timer:${runId}:${deadline}`,
-    now,
+    now
   })
 }
 
 async function loadWorkflow<
-  TWorkflows extends Record<string, WorkflowRegistration>,
+  TWorkflows extends Record<string, WorkflowRegistration>
 >(
   config: WorkflowRuntimeConfig<TWorkflows>,
-  workflowId: string,
+  workflowId: string
 ): Promise<AnyWorkflowDefinition> {
   const registration = config.workflows[workflowId]
   if (!registration) {
@@ -391,9 +387,11 @@ async function loadWorkflow<
 
   const workflow = normalizeWorkflowLoaderResult(await registration.load())
   const previousVersions = []
-  for (const loadPrevious of Object.values(
-    registration.previousVersions ?? {},
-  )) {
+  for (
+    const loadPrevious of Object.values(
+      registration.previousVersions ?? {}
+    )
+  ) {
     previousVersions.push(normalizeWorkflowLoaderResult(await loadPrevious()))
   }
 
@@ -403,8 +401,8 @@ async function loadWorkflow<
       version: registration.version ?? workflow.version,
       previousVersions: [
         ...(workflow.previousVersions ?? []),
-        ...previousVersions,
-      ],
+        ...previousVersions
+      ]
     }
   }
 
@@ -412,73 +410,73 @@ async function loadWorkflow<
 }
 
 function normalizeWorkflowLoaderResult(
-  result: Awaited<ReturnType<WorkflowRegistration['load']>>,
+  result: Awaited<ReturnType<WorkflowRegistration["load"]>>
 ): AnyWorkflowDefinition {
-  if ('__kind' in result) return result
-  if ('default' in result) return result.default
+  if ("__kind" in result) return result
+  if ("default" in result) return result.default
   return result.workflow
 }
 
 function resultFromSignalDelivery(
   runId: string,
-  result: Exclude<DeliverSignalResult, { kind: 'delivered' }>,
+  result: Exclude<DeliverSignalResult, { kind: "delivered" }>
 ): WorkflowRuntimeRunResult {
   return {
     kind: result.kind,
     runId,
-    run: 'run' in result ? result.run : undefined,
-    workflowId: 'run' in result ? result.run.workflowId : undefined,
+    run: "run" in result ? result.run : undefined,
+    workflowId: "run" in result ? result.run.workflowId : undefined,
     events: [],
-    eventCount: 0,
+    eventCount: 0
   }
 }
 
 function resultFromApprovalDelivery(
   runId: string,
-  result: Exclude<DeliverApprovalResult, { kind: 'delivered' }>,
+  result: Exclude<DeliverApprovalResult, { kind: "delivered" }>
 ): WorkflowRuntimeRunResult {
   return {
     kind: result.kind,
     runId,
-    run: 'run' in result ? result.run : undefined,
-    workflowId: 'run' in result ? result.run.workflowId : undefined,
+    run: "run" in result ? result.run : undefined,
+    workflowId: "run" in result ? result.run.workflowId : undefined,
     events: [],
-    eventCount: 0,
+    eventCount: 0
   }
 }
 
 function classifyRun(
   run: WorkflowExecution | undefined,
-  eventCount: number,
-): WorkflowRuntimeRunResult['kind'] {
-  if (run?.status === 'finished') return 'completed'
-  if (run?.status === 'paused') return 'paused'
-  if (run?.status === 'errored' || run?.status === 'aborted') return 'errored'
-  if (run?.status === 'running' || run?.status === 'queued') return 'running'
-  return eventCount > 0 ? 'running' : 'not-found'
+  eventCount: number
+): WorkflowRuntimeRunResult["kind"] {
+  if (run?.status === "finished") return "completed"
+  if (run?.status === "paused") return "paused"
+  if (run?.status === "errored" || run?.status === "aborted") return "errored"
+  if (run?.status === "running" || run?.status === "queued") return "running"
+  return eventCount > 0 ? "running" : "not-found"
 }
 
 function mergeResumeStateContext(durableInput: unknown, transientInput: unknown) {
   if (
-    typeof durableInput !== 'object' ||
+    typeof durableInput !== "object" ||
     durableInput === null ||
-    typeof transientInput !== 'object' ||
+    typeof transientInput !== "object" ||
     transientInput === null ||
-    !('stateContext' in transientInput)
+    !("stateContext" in transientInput)
   ) {
     return durableInput
   }
   return {
     ...durableInput,
     stateContext: (transientInput as { readonly stateContext?: unknown })
-      .stateContext,
+      .stateContext
   }
 }
 
 function normalizeSweepLimit(
   value: number | undefined,
   fallback: number,
-  label: string,
+  label: string
 ) {
   const limit = value ?? fallback
   if (!Number.isInteger(limit) || limit < 0) {
@@ -489,21 +487,20 @@ function normalizeSweepLimit(
 
 function isPastSweepDeadline(
   startedAt: number,
-  maxDurationMs: number | undefined,
+  maxDurationMs: number | undefined
 ) {
   return maxDurationMs !== undefined && Date.now() - startedAt >= maxDurationMs
 }
 
 function summarizeSweep(
   scheduled: ReadonlyArray<WorkflowRuntimeRunResult>,
-  timers: ReadonlyArray<WorkflowRuntimeRunResult>,
-): WorkflowRuntimeSweepResult['summary'] {
+  timers: ReadonlyArray<WorkflowRuntimeRunResult>
+): WorkflowRuntimeSweepResult["summary"] {
   return {
     scheduled: countRunKinds(scheduled),
     timers: countRunKinds(timers),
     eventCount: sumEventCounts(scheduled) + sumEventCounts(timers),
-    returnedEventCount:
-      sumReturnedEventCounts(scheduled) + sumReturnedEventCounts(timers),
+    returnedEventCount: sumReturnedEventCounts(scheduled) + sumReturnedEventCounts(timers)
   }
 }
 
@@ -528,14 +525,14 @@ async function collectWorkflowEvents(
   options: {
     includeEvents: boolean
     maxEvents?: number
-  },
+  }
 ) {
   if (
     options.maxEvents !== undefined &&
     (!Number.isInteger(options.maxEvents) || options.maxEvents < 0)
   ) {
     throw new Error(
-      'Workflow event collection maxEvents must be a non-negative integer.',
+      "Workflow event collection maxEvents must be a non-negative integer."
     )
   }
 
@@ -556,6 +553,6 @@ async function collectWorkflowEvents(
   return {
     events,
     eventCount,
-    eventsTruncated,
+    eventsTruncated
   }
 }

@@ -7,8 +7,8 @@ import type {
   RunStore,
   SerializedError,
   SignalDelivery,
-  WorkflowEvent,
-} from '@tanstack/workflow-core'
+  WorkflowEvent
+} from "@tanstack/workflow-core"
 
 export type WorkflowId = string
 export type WorkflowVersion = string
@@ -17,7 +17,7 @@ export type ScheduleId = string
 export type ScheduleBucketId = string
 export type LeaseOwner = string
 
-export type WorkflowExecutionStatus = RunStatus | 'queued'
+export type WorkflowExecutionStatus = RunStatus | "queued"
 
 export interface WorkflowLease {
   owner: LeaseOwner
@@ -32,9 +32,9 @@ export interface WorkflowExecution {
   input: unknown
   output?: unknown
   error?: SerializedError
-  awaiting?: RunState['awaiting']
-  waitingFor?: RunState['waitingFor']
-  pendingApproval?: RunState['pendingApproval']
+  awaiting?: RunState["awaiting"]
+  waitingFor?: RunState["waitingFor"]
+  pendingApproval?: RunState["pendingApproval"]
   wakeAt?: number
   lease?: WorkflowLease
   createdAt: number
@@ -44,7 +44,7 @@ export interface WorkflowExecution {
 export interface StoredWorkflowEvent {
   runId: RunId
   eventIndex: number
-  eventType: WorkflowEvent['type']
+  eventType: WorkflowEvent["type"]
   stepId?: string
   event: WorkflowEvent
   createdAt: number
@@ -64,8 +64,8 @@ export interface CreateRunArgs {
 }
 
 export type CreateRunResult =
-  | { kind: 'created'; run: WorkflowExecution }
-  | { kind: 'existing'; run: WorkflowExecution }
+  | { kind: "created"; run: WorkflowExecution }
+  | { kind: "existing"; run: WorkflowExecution }
 
 export interface ReadEventsArgs {
   runId: RunId
@@ -90,9 +90,9 @@ export interface ClaimRunArgs {
 }
 
 export type ClaimRunResult =
-  | { kind: 'claimed'; run: WorkflowExecution }
-  | { kind: 'not-found' }
-  | { kind: 'not-claimable'; run: WorkflowExecution }
+  | { kind: "claimed"; run: WorkflowExecution }
+  | { kind: "not-found" }
+  | { kind: "not-claimable"; run: WorkflowExecution }
 
 export interface HeartbeatRunLeaseArgs {
   runId: RunId
@@ -108,9 +108,9 @@ export interface ReleaseRunLeaseArgs {
 
 export interface MarkRunPausedArgs {
   runId: RunId
-  awaiting?: RunState['awaiting']
-  waitingFor?: RunState['waitingFor']
-  pendingApproval?: RunState['pendingApproval']
+  awaiting?: RunState["awaiting"]
+  waitingFor?: RunState["waitingFor"]
+  pendingApproval?: RunState["pendingApproval"]
   wakeAt?: number
   now: number
 }
@@ -159,10 +159,10 @@ export interface DeliverSignalArgs<TPayload = unknown> {
 }
 
 export type DeliverSignalResult =
-  | { kind: 'delivered'; run: WorkflowExecution }
-  | { kind: 'duplicate'; run: WorkflowExecution }
-  | { kind: 'not-waiting'; run: WorkflowExecution }
-  | { kind: 'not-found' }
+  | { kind: "delivered"; run: WorkflowExecution }
+  | { kind: "duplicate"; run: WorkflowExecution }
+  | { kind: "not-waiting"; run: WorkflowExecution }
+  | { kind: "not-found" }
 
 export interface DeliverApprovalArgs {
   runId: RunId
@@ -171,29 +171,29 @@ export interface DeliverApprovalArgs {
 }
 
 export type DeliverApprovalResult =
-  | { kind: 'delivered'; run: WorkflowExecution }
-  | { kind: 'duplicate'; run: WorkflowExecution }
-  | { kind: 'not-waiting'; run: WorkflowExecution }
-  | { kind: 'not-found' }
+  | { kind: "delivered"; run: WorkflowExecution }
+  | { kind: "duplicate"; run: WorkflowExecution }
+  | { kind: "not-waiting"; run: WorkflowExecution }
+  | { kind: "not-found" }
 
 export type WorkflowOverlapPolicy =
-  | 'skip'
-  | 'allow'
-  | 'buffer-one'
-  | 'cancel-previous'
-  | 'terminate-previous'
+  | "skip"
+  | "allow"
+  | "buffer-one"
+  | "cancel-previous"
+  | "terminate-previous"
 
 export type WorkflowScheduleSpec =
   | {
-      kind: 'cron'
-      expression: string
-      timezone?: string
-    }
+    kind: "cron"
+    expression: string
+    timezone?: string
+  }
   | {
-      kind: 'interval'
-      everyMs: number
-      timezone?: string
-    }
+    kind: "interval"
+    everyMs: number
+    timezone?: string
+  }
 
 export interface WorkflowScheduleDefinition {
   id?: ScheduleId
@@ -264,9 +264,9 @@ export interface RunSummary {
   workflowId: WorkflowId
   workflowVersion?: WorkflowVersion
   status: WorkflowExecutionStatus
-  awaiting?: RunState['awaiting']
-  waitingFor?: RunState['waitingFor']
-  pendingApproval?: RunState['pendingApproval']
+  awaiting?: RunState["awaiting"]
+  waitingFor?: RunState["waitingFor"]
+  pendingApproval?: RunState["pendingApproval"]
   wakeAt?: number
   createdAt: number
   updatedAt: number
@@ -287,12 +287,12 @@ export interface WorkflowRunStoreAdapterStore {
   deleteRun: (runId: RunId, reason: DeleteReason) => Promise<void>
   appendEvents: (args: AppendEventsArgs) => Promise<AppendEventsResult>
   readEvents: (
-    args: ReadEventsArgs,
+    args: ReadEventsArgs
   ) => Promise<ReadonlyArray<StoredWorkflowEvent>>
   subscribeEvents?: (
     runId: RunId,
     fromIndex: number,
-    onEvent: (event: WorkflowEvent, index: number) => void,
+    onEvent: (event: WorkflowEvent, index: number) => void
   ) => () => void
 }
 
@@ -312,19 +312,19 @@ export interface WorkflowExecutionStore extends WorkflowRunStoreAdapterStore {
 
   scheduleTimer: (args: ScheduleTimerArgs) => Promise<void>
   claimDueTimers: (
-    args: ClaimDueTimersArgs,
+    args: ClaimDueTimersArgs
   ) => Promise<ReadonlyArray<TimerWakeup>>
   deliverSignal: <TPayload = unknown>(
-    args: DeliverSignalArgs<TPayload>,
+    args: DeliverSignalArgs<TPayload>
   ) => Promise<DeliverSignalResult>
   deliverApproval: (args: DeliverApprovalArgs) => Promise<DeliverApprovalResult>
 
   upsertSchedule: (args: UpsertScheduleArgs) => Promise<void>
   claimDueScheduleBuckets: (
-    args: ClaimDueScheduleBucketsArgs,
+    args: ClaimDueScheduleBucketsArgs
   ) => Promise<ReadonlyArray<ScheduleBucket>>
   markScheduleBucketStarted: (
-    args: MarkScheduleBucketStartedArgs,
+    args: MarkScheduleBucketStartedArgs
   ) => Promise<void>
 
   claimStaleRuns: (args: ClaimStaleRunsArgs) => Promise<ReadonlyArray<RunClaim>>
@@ -333,15 +333,15 @@ export interface WorkflowExecutionStore extends WorkflowRunStoreAdapterStore {
 }
 
 export type WorkflowLoaderResult<
-  TWorkflow extends AnyWorkflowDefinition = AnyWorkflowDefinition,
+  TWorkflow extends AnyWorkflowDefinition = AnyWorkflowDefinition
 > = TWorkflow | { default: TWorkflow } | { workflow: TWorkflow }
 
 export type WorkflowLoader<
-  TWorkflow extends AnyWorkflowDefinition = AnyWorkflowDefinition,
+  TWorkflow extends AnyWorkflowDefinition = AnyWorkflowDefinition
 > = () => Promise<WorkflowLoaderResult<TWorkflow>>
 
 export interface WorkflowRegistration<
-  TWorkflow extends AnyWorkflowDefinition = AnyWorkflowDefinition,
+  TWorkflow extends AnyWorkflowDefinition = AnyWorkflowDefinition
 > {
   load: WorkflowLoader<TWorkflow>
   version?: WorkflowVersion
@@ -352,7 +352,7 @@ export interface WorkflowRegistration<
 export type WorkflowRegistrationMap = Record<string, WorkflowRegistration>
 
 export interface WorkflowRuntimeConfig<
-  TWorkflows extends WorkflowRegistrationMap = WorkflowRegistrationMap,
+  TWorkflows extends WorkflowRegistrationMap = WorkflowRegistrationMap
 > {
   workflows: TWorkflows
   store: WorkflowExecutionStore
@@ -360,20 +360,20 @@ export interface WorkflowRuntimeConfig<
 }
 
 export interface WorkflowRuntimeDefinition<
-  TWorkflows extends WorkflowRegistrationMap = WorkflowRegistrationMap,
+  TWorkflows extends WorkflowRegistrationMap = WorkflowRegistrationMap
 > extends WorkflowRuntimeConfig<TWorkflows> {
-  __kind: 'workflow-runtime'
+  __kind: "workflow-runtime"
   startRun: (
-    args: WorkflowRuntimeStartRunArgs,
+    args: WorkflowRuntimeStartRunArgs
   ) => Promise<WorkflowRuntimeRunResult>
   deliverSignal: <TPayload = unknown>(
-    args: WorkflowRuntimeDeliverSignalArgs<TPayload>,
+    args: WorkflowRuntimeDeliverSignalArgs<TPayload>
   ) => Promise<WorkflowRuntimeRunResult>
   deliverApproval: (
-    args: WorkflowRuntimeDeliverApprovalArgs,
+    args: WorkflowRuntimeDeliverApprovalArgs
   ) => Promise<WorkflowRuntimeRunResult>
   sweep: (
-    args?: WorkflowRuntimeSweepArgs,
+    args?: WorkflowRuntimeSweepArgs
   ) => Promise<WorkflowRuntimeSweepResult>
 }
 
@@ -416,14 +416,14 @@ export interface WorkflowRuntimeDeliverApprovalArgs {
 }
 
 export type WorkflowRuntimeRunResultKind =
-  | 'completed'
-  | 'paused'
-  | 'errored'
-  | 'running'
-  | 'not-found'
-  | 'not-claimable'
-  | 'not-waiting'
-  | 'duplicate'
+  | "completed"
+  | "paused"
+  | "errored"
+  | "running"
+  | "not-found"
+  | "not-claimable"
+  | "not-waiting"
+  | "duplicate"
 
 export interface WorkflowRuntimeRunResult {
   kind: WorkflowRuntimeRunResultKind

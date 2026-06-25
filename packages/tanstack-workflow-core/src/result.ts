@@ -1,5 +1,4 @@
 // @ts-nocheck -- Vendored TanStack source targets a looser optional-property TypeScript policy.
-/* oxlint-disable effect/restricted-syntax -- Vendored TanStack implementation source keeps upstream imperative control flow. */
 /**
  * Tagged result helpers for workflows that return discriminated success/failure
  * unions. Avoids `as const` casts at every return site.
@@ -9,13 +8,13 @@
  */
 
 export function succeed<T extends Record<string, unknown>>(
-  data: T,
+  data: T
 ): { ok: true } & T {
   return { ok: true, ...data }
 }
 
 export function fail<TReason extends string>(
-  reason: TReason,
+  reason: TReason
 ): { ok: false; reason: TReason } {
   return { ok: false, reason }
 }

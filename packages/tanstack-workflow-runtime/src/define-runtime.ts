@@ -1,48 +1,47 @@
 // @ts-nocheck -- Vendored TanStack source targets a looser optional-property TypeScript policy.
-/* oxlint-disable effect/restricted-syntax -- Vendored TanStack implementation source keeps upstream imperative control flow. */
-import { createRuntimeDriver } from './runtime-driver'
+import { createRuntimeDriver } from "./runtime-driver"
 import type {
   WorkflowRegistrationMap,
   WorkflowRuntimeConfig,
   WorkflowRuntimeDefinition,
-  WorkflowScheduleSpec,
-} from './types'
+  WorkflowScheduleSpec
+} from "./types"
 
 export function defineWorkflowRuntime<
-  const TWorkflows extends WorkflowRegistrationMap,
+  const TWorkflows extends WorkflowRegistrationMap
 >(
-  config: WorkflowRuntimeConfig<TWorkflows>,
+  config: WorkflowRuntimeConfig<TWorkflows>
 ): WorkflowRuntimeDefinition<TWorkflows> {
   const driver = createRuntimeDriver(config)
   return {
-    __kind: 'workflow-runtime',
+    __kind: "workflow-runtime",
     ...config,
-    ...driver,
+    ...driver
   }
 }
 
 export function cron(
   expression: string,
-  options: { timezone?: string } = {},
+  options: { timezone?: string } = {}
 ): WorkflowScheduleSpec {
   return {
-    kind: 'cron',
+    kind: "cron",
     expression,
-    timezone: options.timezone,
+    timezone: options.timezone
   }
 }
 
 export const every = {
   milliseconds(everyMs: number): WorkflowScheduleSpec {
-    return { kind: 'interval', everyMs }
+    return { kind: "interval", everyMs }
   },
   seconds(seconds: number): WorkflowScheduleSpec {
-    return { kind: 'interval', everyMs: seconds * 1000 }
+    return { kind: "interval", everyMs: seconds * 1000 }
   },
   minutes(minutes: number): WorkflowScheduleSpec {
-    return { kind: 'interval', everyMs: minutes * 60 * 1000 }
+    return { kind: "interval", everyMs: minutes * 60 * 1000 }
   },
   hours(hours: number): WorkflowScheduleSpec {
-    return { kind: 'interval', everyMs: hours * 60 * 60 * 1000 }
-  },
+    return { kind: "interval", everyMs: hours * 60 * 60 * 1000 }
+  }
 }

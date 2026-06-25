@@ -119,7 +119,10 @@ let binding: ReturnType<typeof createS2ObjectRuntimeBinding> | undefined
 
 const host = createS2WorkflowRuntimeHost({
   ...config,
-  workflows: bindFluentDefinitions([counter], s2FluentDefinitionBindingOptions(config, { invocationBinding: () => binding }))
+  workflows: bindFluentDefinitions(
+    [counter],
+    s2FluentDefinitionBindingOptions(config, { invocationBinding: () => binding })
+  )
 })
 
 binding = createS2ObjectRuntimeBinding(host, {

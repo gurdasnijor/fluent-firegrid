@@ -1,6 +1,5 @@
 // @ts-nocheck -- Vendored TanStack source targets a looser optional-property TypeScript policy.
-/* oxlint-disable effect/restricted-syntax -- Vendored TanStack implementation source keeps upstream imperative control flow. */
-import type { AnyWorkflowDefinition, RunStore } from '../types'
+import type { AnyWorkflowDefinition, RunStore } from "../types"
 
 /**
  * Pick the workflow version that a persisted run was started under.
@@ -30,7 +29,7 @@ import type { AnyWorkflowDefinition, RunStore } from '../types'
 export async function selectWorkflowVersion<T extends AnyWorkflowDefinition>(
   versions: ReadonlyArray<T>,
   runId: string,
-  runStore: RunStore,
+  runStore: RunStore
 ): Promise<T | undefined> {
   const runState = await runStore.getRunState(runId)
   if (!runState) return undefined
@@ -41,15 +40,14 @@ export async function selectWorkflowVersion<T extends AnyWorkflowDefinition>(
     // the unversioned default for a versioned run would route a v1
     // run into v-undefined code, which is a determinism violation.
     return versions.find(
-      (v) =>
-        v.id === runState.workflowId && v.version === runState.workflowVersion,
+      (v) => v.id === runState.workflowId && v.version === runState.workflowVersion
     )
   }
 
   // Legacy fallback: pre-versioning runs have no workflowVersion;
   // match by id + no version declared.
   return versions.find(
-    (v) => v.id === runState.workflowId && v.version === undefined,
+    (v) => v.id === runState.workflowId && v.version === undefined
   )
 }
 
@@ -77,18 +75,18 @@ export interface WorkflowRegistry<T extends AnyWorkflowDefinition> {
 }
 
 export function createWorkflowRegistry<T extends AnyWorkflowDefinition>(
-  options: { default?: T } = {},
+  options: { default?: T } = {}
 ): WorkflowRegistry<T> {
   const entries: Array<T> = []
 
   return {
     add(workflow) {
       const dupe = entries.find(
-        (e) => e.id === workflow.id && e.version === workflow.version,
+        (e) => e.id === workflow.id && e.version === workflow.version
       )
       if (dupe) {
         throw new Error(
-          `Workflow "${workflow.id}" version "${workflow.version ?? '(none)'}" is already registered.`,
+          `Workflow "${workflow.id}" version "${workflow.version ?? "(none)"}" is already registered.`
         )
       }
       entries.push(workflow)
@@ -102,6 +100,6 @@ export function createWorkflowRegistry<T extends AnyWorkflowDefinition>(
     },
     all() {
       return entries
-    },
+    }
   }
 }

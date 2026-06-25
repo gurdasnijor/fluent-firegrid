@@ -4,23 +4,23 @@ import { defineWorkflowRuntime, inMemoryWorkflowExecutionStore } from "@tanstack
 
 import {
   bindFluentDefinitions,
+  type CallRequest,
   client,
   createTanStackRuntimeBinding,
-  iface,
-  implement,
-  run,
-  schemas,
-  sendClient,
-  service,
-  serviceClient,
-  type CallRequest,
-  type FluentFiregridError,
   FluentDurableContext,
   type FluentDurableContextService,
+  type FluentFiregridError,
+  iface,
+  implement,
   type InvocationBinding,
+  run,
   type RunAction,
+  schemas,
+  sendClient,
   type SendReference,
   type SendRequest,
+  service,
+  serviceClient,
   workflowIdForHandler
 } from "../src/index.ts"
 
@@ -143,18 +143,20 @@ describe("fluent-firegrid public surface", () => {
         }),
       send: <Output>() => Effect.succeed({ invocationId: "not-used" } satisfies SendReference<Output>)
     }
-    const context = FluentDurableContext.of({
-      binding,
-      sleep: () => Effect.void,
-      sleepUntil: () => Effect.void,
-      step: <A>(_name: string, action: RunAction<A>) => {
-        const value = action({ attempt: 1, id: "step", signal: new AbortController().signal })
-        return (Effect.isEffect(value)
-          ? value
-          : Effect.promise(() => Promise.resolve(value))) as Effect.Effect<A, never>
-      },
-      waitForSignal: () => Effect.die("not used")
-    } satisfies FluentDurableContextService)
+    const context = FluentDurableContext.of(
+      {
+        binding,
+        sleep: () => Effect.void,
+        sleepUntil: () => Effect.void,
+        step: <A>(_name: string, action: RunAction<A>) => {
+          const value = action({ attempt: 1, id: "step", signal: new AbortController().signal })
+          return (Effect.isEffect(value)
+            ? value
+            : Effect.promise(() => Promise.resolve(value))) as Effect.Effect<A, never>
+        },
+        waitForSignal: () => Effect.die("not used")
+      } satisfies FluentDurableContextService
+    )
 
     const result = await Effect.runPromise(
       serviceClient(incident).triage("INC-4").pipe(Effect.provideService(FluentDurableContext, context))

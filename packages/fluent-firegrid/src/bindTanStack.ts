@@ -22,7 +22,9 @@ export interface FluentDefinitionBindingContext {
 }
 
 export interface FluentDefinitionBindingOptions {
-  readonly invocationBinding?: InvocationBinding<FluentFiregridError> | (() => InvocationBinding<FluentFiregridError> | undefined)
+  readonly invocationBinding?:
+    | InvocationBinding<FluentFiregridError>
+    | (() => InvocationBinding<FluentFiregridError> | undefined)
   readonly stateBackendFor?: (context: FluentDefinitionBindingContext) => ObjectStateBackend | undefined
 }
 

@@ -132,8 +132,7 @@ export namespace ChangeMessage {
 
   export const isControl = (message: Message): message is ControlMessage => "control" in message.headers
 
-  export const isReadJournaled = (message: Message): message is ReadJournaledMessage =>
-    "read" in message.headers
+  export const isReadJournaled = (message: Message): message is ReadJournaledMessage => "read" in message.headers
 
   const Json = Schema.UnknownFromJsonString
 

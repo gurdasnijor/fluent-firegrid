@@ -79,7 +79,7 @@ export const createS2ObjectStateBackend = (
           ? cause
           : new FluentFiregridError({ cause, message: `S2 object state operation failed for ${streamName}` })
       )
-  )
+    )
 
   return {
     get: (table, key, options) =>
@@ -159,15 +159,16 @@ const readInvocationProjection = (
       start: { from: { seqNum: 0 } },
       stop: { limits: { count: tail.tail.seqNum } }
     }).pipe(Stream.runCollect)
-    Array.from(records, (record) => JSON.parse(record.body) as {
-      readonly _tag?: string
-      readonly callId?: string
-      readonly ownerId?: string
-    }).forEach((event) => {
-      if (event._tag === "Started" && event.callId !== undefined && event.ownerId !== undefined) {
-        started.set(event.callId, { ownerId: event.ownerId })
-      }
-    })
+    Array.from(records, (record) =>
+      JSON.parse(record.body) as {
+        readonly _tag?: string
+        readonly callId?: string
+        readonly ownerId?: string
+      }).forEach((event) => {
+        if (event._tag === "Started" && event.callId !== undefined && event.ownerId !== undefined) {
+          started.set(event.callId, { ownerId: event.ownerId })
+        }
+      })
     return { started }
   })
 
@@ -207,7 +208,8 @@ const readProjection = (
               if (ChangeMessage.isChange(message) && message.headers.txid !== undefined) {
                 appliedTxids.add(message.headers.txid)
               }
-            }))
+            })
+          )
         ),
       { discard: true }
     )

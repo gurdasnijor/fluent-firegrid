@@ -50,16 +50,16 @@ export {
   type ObjectDefinition,
   type Operation,
   schemas,
+  serdes,
   service,
   type ServiceDefinition,
-  serdes,
   workflow,
   type WorkflowDefinition
 } from "./definitions.ts"
 export { FluentFiregridError } from "./error.ts"
 export {
-  implement,
   type DefinitionDescriptor,
+  implement,
   type ImplementHandlers,
   type ObjectDescriptor,
   type ServiceDescriptor,

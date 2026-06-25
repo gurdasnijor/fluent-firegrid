@@ -1,10 +1,10 @@
 /* oxlint-disable effect/restricted-syntax -- HTTP Request/Response handling is a runtime boundary that must run fluent Effects. */
 import {
-  FluentFiregridError,
   type AnyGeneratorHandler,
   type CallRequest,
   type Definition,
   type DefinitionKind,
+  FluentFiregridError,
   type HandlerDescriptor,
   type InvocationBinding,
   type SendRequest
@@ -37,7 +37,7 @@ interface RouteTarget {
 
 export const createFluentHttpHandler = <Error = unknown>(
   options: FluentHttpHandlerOptions<Error>
-): ((request: Request) => Promise<Response>) => {
+): (request: Request) => Promise<Response> => {
   const registry = createRegistry(options.definitions)
   return async (request) => {
     if (request.method !== "POST") {
@@ -114,8 +114,7 @@ const createRegistry = (definitions: ReadonlyArray<AnyDefinition>): ReadonlyMap<
   return registry
 }
 
-const keyFor = (kind: DefinitionKind, name: string, handler: string): string =>
-  `${kind}:${name}:${handler}`
+const keyFor = (kind: DefinitionKind, name: string, handler: string): string => `${kind}:${name}:${handler}`
 
 const parseRoute = (url: URL): RouteMatch | undefined => {
   const parts = url.pathname.split("/").filter((part) => part.length > 0).map(decodeURIComponent)
@@ -187,8 +186,7 @@ const invoke = async <Error>(
   binding: InvocationBinding<Error>,
   mode: TransportMode,
   request: CallRequest
-): Promise<Result<unknown>> =>
-  runEffect(mode === "call" ? binding.call(request) : binding.send(request as SendRequest))
+): Promise<Result<unknown>> => runEffect(mode === "call" ? binding.call(request) : binding.send(request as SendRequest))
 
 const runEffect = async <A, Error>(
   effect: Effect.Effect<A, Error>

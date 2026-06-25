@@ -18,8 +18,8 @@ Virtual object state uses the old table/materialization authoring shape, not a
 string-slot API.
 
 This SDD is complete for the current layer. Future fluent API work should build
-above it; it should not add more proof-only object packages or reopen
-`effect-s2-flow` as the runtime.
+above it; it should not add more proof-only object packages or reopen a parallel
+durable-function runtime.
 
 The public authoring target is:
 

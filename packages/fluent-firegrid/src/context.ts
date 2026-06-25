@@ -26,7 +26,7 @@ export interface ObjectStateBackend {
   ) => Effect.Effect<void, FluentFiregridError>
 }
 
-export interface StateOperationIdentityInput {
+interface StateOperationIdentityInput {
   readonly kind: "get" | "set" | "delete"
   readonly table: string
   readonly key: string
@@ -90,8 +90,7 @@ export const fluentContextFromTanStack = (
     ...(options.binding === undefined ? {} : { binding: options.binding }),
     ...(options.key === undefined ? {} : { key: options.key }),
     ...(options.state === undefined ? {} : { state: options.state }),
-    stateOperationId: (input) =>
-      `${runId}:state:${nextStateOperation++}:${input.kind}:${input.table}:${input.key}`,
+    stateOperationId: (input) => `${runId}:state:${nextStateOperation++}:${input.kind}:${input.table}:${input.key}`,
     sleep: (ms, options) =>
       Effect.tryPromise({
         try: () => ctx.sleep(ms, options),

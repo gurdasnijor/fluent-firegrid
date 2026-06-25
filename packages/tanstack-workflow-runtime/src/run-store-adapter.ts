@@ -1,17 +1,9 @@
 // @ts-nocheck -- Vendored TanStack source targets a looser optional-property TypeScript policy.
-/* oxlint-disable effect/restricted-syntax -- Vendored TanStack implementation source keeps upstream imperative control flow. */
-import type {
-  DeleteReason,
-  RunState,
-  WorkflowEvent,
-} from '@tanstack/workflow-core'
-import type {
-  WorkflowRunStoreAdapter,
-  WorkflowRunStoreAdapterStore,
-} from './types'
+import type { DeleteReason, RunState, WorkflowEvent } from "@tanstack/workflow-core"
+import type { WorkflowRunStoreAdapter, WorkflowRunStoreAdapterStore } from "./types"
 
 export function createRunStoreAdapter(
-  store: WorkflowRunStoreAdapterStore,
+  store: WorkflowRunStoreAdapterStore
 ): WorkflowRunStoreAdapter {
   return {
     getRunState(runId) {
@@ -29,12 +21,12 @@ export function createRunStoreAdapter(
     async appendEvent(
       runId: string,
       expectedNextIndex: number,
-      event: WorkflowEvent,
+      event: WorkflowEvent
     ) {
       await store.appendEvents({
         runId,
         expectedNextIndex,
-        events: [event],
+        events: [event]
       })
     },
 
@@ -44,8 +36,7 @@ export function createRunStoreAdapter(
     },
 
     subscribe: store.subscribeEvents
-      ? (runId, fromIndex, onEvent) =>
-          store.subscribeEvents!(runId, fromIndex, onEvent)
-      : undefined,
+      ? (runId, fromIndex, onEvent) => store.subscribeEvents!(runId, fromIndex, onEvent)
+      : undefined
   }
 }

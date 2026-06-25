@@ -1,7 +1,7 @@
 // @ts-nocheck -- Vendored TanStack source targets a looser optional-property TypeScript policy.
 /* oxlint-disable effect/restricted-syntax -- Vendored TanStack implementation source keeps upstream imperative control flow. */
-import { LogConflictError } from '../types'
-import type { RunState, RunStore, WorkflowEvent } from '../types'
+import { LogConflictError } from "../types"
+import type { RunState, RunStore, WorkflowEvent } from "../types"
 
 export interface InMemoryRunStoreOptions {
   /** TTL in milliseconds for finished/errored/aborted runs. Paused
@@ -17,7 +17,7 @@ export type InMemoryRunStore = RunStore
  * prototypes and the test suite.
  */
 export function inMemoryRunStore(
-  options: InMemoryRunStoreOptions = {},
+  options: InMemoryRunStoreOptions = {}
 ): InMemoryRunStore {
   const ttl = options.ttl ?? 60 * 60 * 1000
   const runs = new Map<string, RunState>()
@@ -33,7 +33,7 @@ export function inMemoryRunStore(
     if (existing) clearTimeout(existing)
     // Paused runs are intentional persistence — engine cleans them up
     // when they finish/error/abort via `deleteRun`.
-    if (state?.status === 'paused') return
+    if (state?.status === "paused") return
     const handle = setTimeout(() => {
       runs.delete(runId)
       logs.delete(runId)
@@ -69,8 +69,8 @@ export function inMemoryRunStore(
           new LogConflictError(
             runId,
             expectedNextIndex,
-            log[expectedNextIndex],
-          ),
+            log[expectedNextIndex]
+          )
         )
       }
       log.push(event)
@@ -114,6 +114,6 @@ export function inMemoryRunStore(
         set.delete(onEvent)
         if (set.size === 0) subscribers.delete(runId)
       }
-    },
+    }
   }
 }

@@ -43,10 +43,10 @@ const waitForStateValue = (
       ),
       Effect.flatMap((value) => {
         const current = Option.isSome(value)
-          && typeof value.value === "object"
-          && value.value !== null
-          && "value" in value.value
-          && typeof value.value.value === "number"
+            && typeof value.value === "object"
+            && value.value !== null
+            && "value" in value.value
+            && typeof value.value.value === "number"
           ? value.value.value
           : undefined
         if (current === expected) return Effect.succeed(current)

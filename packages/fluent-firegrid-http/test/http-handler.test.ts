@@ -1,14 +1,14 @@
 import {
+  type CallRequest,
   iface,
   implement,
+  type InvocationBinding,
   object,
   run,
   schemas,
-  service,
-  type CallRequest,
-  type InvocationBinding,
   type SendReference,
-  type SendRequest
+  type SendRequest,
+  service
 } from "@firegrid/fluent-firegrid"
 import { createFluentHttpHandler } from "@firegrid/fluent-firegrid-http"
 import * as Effect from "effect/Effect"
@@ -93,7 +93,9 @@ describe("createFluentHttpHandler", () => {
     }
     const handler = createFluentHttpHandler({ binding, definitions: [emails] })
 
-    const response = await handler(request("/send/workflow/emails/send", { id: "email-1" }, { "x-firegrid-run-id": "run-2" }))
+    const response = await handler(
+      request("/send/workflow/emails/send", { id: "email-1" }, { "x-firegrid-run-id": "run-2" })
+    )
 
     expect(response.status).toBe(202)
     expect(await json(response)).toEqual({ invocationId: "email-1" })

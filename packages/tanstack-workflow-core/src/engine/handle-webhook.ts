@@ -1,12 +1,7 @@
 // @ts-nocheck -- Vendored TanStack source targets a looser optional-property TypeScript policy.
 /* oxlint-disable effect/restricted-syntax -- Vendored TanStack implementation source keeps upstream imperative control flow. */
-import { runWorkflow } from './run-workflow'
-import type {
-  AnyWorkflowDefinition,
-  RunStore,
-  SignalDelivery,
-  WorkflowEvent,
-} from '../types'
+import { runWorkflow } from "./run-workflow"
+import type { AnyWorkflowDefinition, RunStore, SignalDelivery, WorkflowEvent } from "../types"
 
 export interface WebhookPayload {
   runId: string
@@ -44,7 +39,7 @@ export interface HandleWebhookOptions {
  * streams server wants confirmation of the new state.
  */
 export async function handleWorkflowWebhook(
-  options: HandleWebhookOptions,
+  options: HandleWebhookOptions
 ): Promise<ReadonlyArray<WorkflowEvent>> {
   const { workflow, runStore, payload, publish } = options
 
@@ -57,12 +52,12 @@ export async function handleWorkflowWebhook(
     signalDelivery: payload.signalDelivery,
     approval: payload.approval
       ? {
-          approvalId: payload.approval.approvalId,
-          approved: payload.approval.approved,
-          feedback: payload.approval.feedback,
-        }
+        approvalId: payload.approval.approvalId,
+        approved: payload.approval.approved,
+        feedback: payload.approval.feedback
+      }
       : undefined,
-    publish,
+    publish
   })
   for await (const event of iter) events.push(event)
 

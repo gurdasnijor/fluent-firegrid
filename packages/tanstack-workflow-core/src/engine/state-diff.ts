@@ -10,9 +10,9 @@
  */
 
 export type Operation =
-  | { op: 'replace'; path: string; value: unknown }
-  | { op: 'add'; path: string; value: unknown }
-  | { op: 'remove'; path: string }
+  | { op: "replace"; path: string; value: unknown }
+  | { op: "add"; path: string; value: unknown }
+  | { op: "remove"; path: string }
 
 /**
  * Snapshot a state object for later diffing.
@@ -29,7 +29,7 @@ export function snapshotState<T>(state: T): T {
  * observability).
  */
 export function diffState<T>(prev: T, next: T): Array<Operation> {
-  return diff(prev, next, '')
+  return diff(prev, next, "")
 }
 
 function diff(prev: unknown, next: unknown, path: string): Array<Operation> {
@@ -40,13 +40,13 @@ function diff(prev: unknown, next: unknown, path: string): Array<Operation> {
 
   // One is a primitive (or null), or types disagree — replace whole node.
   if (!prevIsObj || !nextIsObj || Array.isArray(prev) !== Array.isArray(next)) {
-    return [{ op: 'replace', path: path || '', value: normalizeValue(next) }]
+    return [{ op: "replace", path: path || "", value: normalizeValue(next) }]
   }
 
   if (Array.isArray(prev) && Array.isArray(next)) {
     // Length mismatch → replace the array. Same length → diff element-wise.
     if (prev.length !== next.length) {
-      return [{ op: 'replace', path: path || '', value: normalizeValue(next) }]
+      return [{ op: "replace", path: path || "", value: normalizeValue(next) }]
     }
     const ops: Array<Operation> = []
     for (let i = 0; i < prev.length; i++) {
@@ -70,12 +70,12 @@ function diff(prev: unknown, next: unknown, path: string): Array<Operation> {
       ops.push(...diff(prevObj[key], nextObj[key], subPath))
     } else if (nextHas) {
       ops.push({
-        op: 'add',
+        op: "add",
         path: subPath,
-        value: normalizeValue(nextObj[key]),
+        value: normalizeValue(nextObj[key])
       })
     } else {
-      ops.push({ op: 'remove', path: subPath })
+      ops.push({ op: "remove", path: subPath })
     }
   }
 
@@ -104,12 +104,12 @@ function normalizeValue(value: unknown): unknown {
 }
 
 function isObject(value: unknown): value is object {
-  return value !== null && typeof value === 'object'
+  return value !== null && typeof value === "object"
 }
 
 /**
  * Escape `/` and `~` per RFC 6901 (JSON Pointer).
  */
 function escapeJsonPointer(segment: string): string {
-  return segment.replace(/~/g, '~0').replace(/\//g, '~1')
+  return segment.replace(/~/g, "~0").replace(/\//g, "~1")
 }

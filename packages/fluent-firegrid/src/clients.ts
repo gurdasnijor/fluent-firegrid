@@ -208,11 +208,47 @@ export function serviceClient(
   key?: string
 ) {
   return second === undefined
-    ? bindAmbientContext("call")(first as BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>)
-    : client(first as InvocationBinding, second as BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>, key)
+    ? bindAmbientContext("call")(
+      first as BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>
+    )
+    : client(
+      first as InvocationBinding,
+      second as BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>,
+      key
+    )
 }
 
-export const workflowClient = serviceClient
+export function workflowClient<
+  const Name extends string,
+  const Kind extends DefinitionKind,
+  const Handlers extends Record<string, AnyGeneratorHandler>,
+  Error = unknown,
+  Requirements = never
+>(
+  binding: InvocationBinding<Error, Requirements>,
+  definition: BindableDefinition<Name, Kind, Handlers>,
+  key?: string
+): Client<Handlers, Error, Requirements>
+export function workflowClient<
+  const Name extends string,
+  const Kind extends DefinitionKind,
+  const Handlers extends Record<string, AnyGeneratorHandler>
+>(
+  definition: BindableDefinition<Name, Kind, Handlers>
+): Client<Handlers, FluentFiregridError, FluentDurableContext>
+export function workflowClient(
+  first: unknown,
+  second?: unknown,
+  key?: string
+) {
+  return second === undefined
+    ? serviceClient(first as BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>)
+    : serviceClient(
+      first as InvocationBinding,
+      second as BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>,
+      key
+    )
+}
 
 export function sendServiceClient<
   const Name extends string,
@@ -238,11 +274,47 @@ export function sendServiceClient(
   key?: string
 ) {
   return second === undefined
-    ? bindAmbientContext("send")(first as BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>)
-    : sendClient(first as InvocationBinding, second as BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>, key)
+    ? bindAmbientContext("send")(
+      first as BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>
+    )
+    : sendClient(
+      first as InvocationBinding,
+      second as BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>,
+      key
+    )
 }
 
-export const sendWorkflowClient = sendServiceClient
+export function sendWorkflowClient<
+  const Name extends string,
+  const Kind extends DefinitionKind,
+  const Handlers extends Record<string, AnyGeneratorHandler>,
+  Error = unknown,
+  Requirements = never
+>(
+  binding: InvocationBinding<Error, Requirements>,
+  definition: BindableDefinition<Name, Kind, Handlers>,
+  key?: string
+): SendClient<Handlers, Error, Requirements>
+export function sendWorkflowClient<
+  const Name extends string,
+  const Kind extends DefinitionKind,
+  const Handlers extends Record<string, AnyGeneratorHandler>
+>(
+  definition: BindableDefinition<Name, Kind, Handlers>
+): SendClient<Handlers, FluentFiregridError, FluentDurableContext>
+export function sendWorkflowClient(
+  first: unknown,
+  second?: unknown,
+  key?: string
+) {
+  return second === undefined
+    ? sendServiceClient(first as BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>)
+    : sendServiceClient(
+      first as InvocationBinding,
+      second as BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>,
+      key
+    )
+}
 
 export function objectClient<
   const Name extends string,
@@ -265,9 +337,16 @@ export function objectClient(
 ) {
   return second === undefined
     ? (key: string) =>
-      bindAmbientContext("call")(first as BindableDefinition<string, "object", Record<string, AnyGeneratorHandler>>, key)
+      bindAmbientContext("call")(
+        first as BindableDefinition<string, "object", Record<string, AnyGeneratorHandler>>,
+        key
+      )
     : (key: string) =>
-      client(first as InvocationBinding, second as BindableDefinition<string, "object", Record<string, AnyGeneratorHandler>>, key)
+      client(
+        first as InvocationBinding,
+        second as BindableDefinition<string, "object", Record<string, AnyGeneratorHandler>>,
+        key
+      )
 }
 
 export function sendObjectClient<
@@ -291,7 +370,14 @@ export function sendObjectClient(
 ) {
   return second === undefined
     ? (key: string) =>
-      bindAmbientContext("send")(first as BindableDefinition<string, "object", Record<string, AnyGeneratorHandler>>, key)
+      bindAmbientContext("send")(
+        first as BindableDefinition<string, "object", Record<string, AnyGeneratorHandler>>,
+        key
+      )
     : (key: string) =>
-      sendClient(first as InvocationBinding, second as BindableDefinition<string, "object", Record<string, AnyGeneratorHandler>>, key)
+      sendClient(
+        first as InvocationBinding,
+        second as BindableDefinition<string, "object", Record<string, AnyGeneratorHandler>>,
+        key
+      )
 }

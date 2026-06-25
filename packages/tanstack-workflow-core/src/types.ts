@@ -1,14 +1,13 @@
-import type { StandardSchemaV1 } from '@standard-schema/spec'
-import * as Data from 'effect/Data'
-import type { Operation } from './engine/state-diff'
+import type { StandardSchemaV1 } from "@standard-schema/spec"
+import * as Data from "effect/Data"
+import type { Operation } from "./engine/state-diff"
 
 // ============================================================
 // Standard Schema helpers
 // ============================================================
 
 export type SchemaInput = StandardSchemaV1
-export type InferSchema<T> =
-  T extends StandardSchemaV1<infer _, infer Out> ? Out : never
+export type InferSchema<T> = T extends StandardSchemaV1<infer _, infer Out> ? Out : never
 
 // ============================================================
 // Serialized error (wire-safe Error)
@@ -71,128 +70,128 @@ export interface DurableOperationOptions {
 export type WorkflowEvent =
   // ── Run lifecycle ─────────────────────────────────────────────
   | {
-      type: 'RUN_STARTED'
-      ts: number
-      runId: string
-      threadId?: string
-      audience?: string
-    }
+    type: "RUN_STARTED"
+    ts: number
+    runId: string
+    threadId?: string
+    audience?: string
+  }
   | {
-      type: 'RUN_FINISHED'
-      ts: number
-      runId: string
-      output: unknown
-      audience?: string
-    }
+    type: "RUN_FINISHED"
+    ts: number
+    runId: string
+    output: unknown
+    audience?: string
+  }
   | {
-      type: 'RUN_ERRORED'
-      ts: number
-      runId: string
-      error: SerializedError
-      code: string
-      audience?: string
-    }
+    type: "RUN_ERRORED"
+    ts: number
+    runId: string
+    error: SerializedError
+    code: string
+    audience?: string
+  }
   // ── Step (durable side-effect via ctx.step) ────────────────────
   | {
-      type: 'STEP_STARTED'
-      ts: number
-      stepId: string
-      meta?: WorkflowMetadata
-      audience?: string
-    }
+    type: "STEP_STARTED"
+    ts: number
+    stepId: string
+    meta?: WorkflowMetadata
+    audience?: string
+  }
   | {
-      type: 'STEP_FINISHED'
-      ts: number
-      stepId: string
-      result: unknown
-      attempts?: ReadonlyArray<StepAttempt>
-      meta?: WorkflowMetadata
-      audience?: string
-    }
+    type: "STEP_FINISHED"
+    ts: number
+    stepId: string
+    result: unknown
+    attempts?: ReadonlyArray<StepAttempt>
+    meta?: WorkflowMetadata
+    audience?: string
+  }
   | {
-      type: 'STEP_FAILED'
-      ts: number
-      stepId: string
-      error: SerializedError
-      attempts?: ReadonlyArray<StepAttempt>
-      meta?: WorkflowMetadata
-      audience?: string
-    }
+    type: "STEP_FAILED"
+    ts: number
+    stepId: string
+    error: SerializedError
+    attempts?: ReadonlyArray<StepAttempt>
+    meta?: WorkflowMetadata
+    audience?: string
+  }
   // ── Signal (ctx.waitForEvent, ctx.sleep) ──────────────────────
   | {
-      type: 'SIGNAL_AWAITED'
-      ts: number
-      stepId: string
-      name: string
-      deadline?: number
-      meta?: Record<string, unknown>
-      audience?: string
-    }
+    type: "SIGNAL_AWAITED"
+    ts: number
+    stepId: string
+    name: string
+    deadline?: number
+    meta?: Record<string, unknown>
+    audience?: string
+  }
   | {
-      type: 'SIGNAL_RESOLVED'
-      ts: number
-      stepId: string
-      name: string
-      /** Host-supplied idempotency token. Same `signalId` at the
-       *  same `stepId` is a no-op (idempotent retry); different
-       *  `signalId` is a lost race. */
-      signalId?: string
-      payload: unknown
-      meta?: WorkflowMetadata
-      audience?: string
-    }
+    type: "SIGNAL_RESOLVED"
+    ts: number
+    stepId: string
+    name: string
+    /** Host-supplied idempotency token. Same `signalId` at the
+     *  same `stepId` is a no-op (idempotent retry); different
+     *  `signalId` is a lost race. */
+    signalId?: string
+    payload: unknown
+    meta?: WorkflowMetadata
+    audience?: string
+  }
   // ── Approval (ctx.approve) ────────────────────────────────────
   | {
-      type: 'APPROVAL_REQUESTED'
-      ts: number
-      stepId: string
-      approvalId: string
-      title: string
-      description?: string
-      meta?: WorkflowMetadata
-      audience?: string
-    }
+    type: "APPROVAL_REQUESTED"
+    ts: number
+    stepId: string
+    approvalId: string
+    title: string
+    description?: string
+    meta?: WorkflowMetadata
+    audience?: string
+  }
   | {
-      type: 'APPROVAL_RESOLVED'
-      ts: number
-      stepId: string
-      approvalId: string
-      approved: boolean
-      feedback?: string
-      meta?: WorkflowMetadata
-      audience?: string
-    }
+    type: "APPROVAL_RESOLVED"
+    ts: number
+    stepId: string
+    approvalId: string
+    approved: boolean
+    feedback?: string
+    meta?: WorkflowMetadata
+    audience?: string
+  }
   // ── Deterministic recording (ctx.now, ctx.uuid) ────────────────
   | {
-      type: 'NOW_RECORDED'
-      ts: number
-      stepId: string
-      value: number
-      meta?: WorkflowMetadata
-      audience?: string
-    }
+    type: "NOW_RECORDED"
+    ts: number
+    stepId: string
+    value: number
+    meta?: WorkflowMetadata
+    audience?: string
+  }
   | {
-      type: 'UUID_RECORDED'
-      ts: number
-      stepId: string
-      value: string
-      meta?: WorkflowMetadata
-      audience?: string
-    }
+    type: "UUID_RECORDED"
+    ts: number
+    stepId: string
+    value: string
+    meta?: WorkflowMetadata
+    audience?: string
+  }
   // ── State + custom ────────────────────────────────────────────
   | {
-      type: 'STATE_DELTA'
-      ts: number
-      delta: ReadonlyArray<Operation>
-      audience?: string
-    }
+    type: "STATE_DELTA"
+    ts: number
+    delta: ReadonlyArray<Operation>
+    audience?: string
+  }
   | {
-      type: 'CUSTOM'
-      ts: number
-      name: string
-      value: Record<string, unknown>
-      audience?: string
-    }
+    type: "CUSTOM"
+    ts: number
+    name: string
+    value: Record<string, unknown>
+    audience?: string
+  }
 
 /** Kinds that replay treats as completion checkpoints (engine reads
  *  these from the log to short-circuit primitives). All others are
@@ -201,14 +200,14 @@ export type CheckpointEvent = Extract<
   WorkflowEvent,
   {
     type:
-      | 'STEP_FINISHED'
-      | 'STEP_FAILED'
-      | 'SIGNAL_RESOLVED'
-      | 'APPROVAL_RESOLVED'
-      | 'NOW_RECORDED'
-      | 'UUID_RECORDED'
-      | 'RUN_FINISHED'
-      | 'RUN_ERRORED'
+      | "STEP_FINISHED"
+      | "STEP_FAILED"
+      | "SIGNAL_RESOLVED"
+      | "APPROVAL_RESOLVED"
+      | "NOW_RECORDED"
+      | "UUID_RECORDED"
+      | "RUN_FINISHED"
+      | "RUN_ERRORED"
   }
 >
 
@@ -237,7 +236,7 @@ export interface StepRetryOptions {
   /** Maximum total attempts including the first try. Must be >= 1. */
   maxAttempts: number
   /** Backoff between attempts. Default: 'exponential'. */
-  backoff?: 'exponential' | 'fixed' | ((attempt: number) => number)
+  backoff?: "exponential" | "fixed" | ((attempt: number) => number)
   /** Base delay in ms for built-in backoff strategies. Default: 500. */
   baseMs?: number
   /** Predicate to decide whether a given error should be retried.
@@ -265,7 +264,7 @@ export interface StepAttempt {
 // ============================================================
 
 export interface WaitForEventOptions<
-  TPayload = unknown,
+  TPayload = unknown
 > extends DurableOperationOptions {
   /** UTC ms wake deadline. Surfaced on `RunState.waitingFor.deadline`
    *  so hosts can build time-indexed worker jobs. */
@@ -310,13 +309,13 @@ export interface BaseCtx<TInput, TState> {
   step: <T>(
     id: string,
     fn: (stepCtx: StepContext) => T | Promise<T>,
-    options?: StepOptions,
+    options?: StepOptions
   ) => Promise<T>
   sleep: (ms: number, options?: SleepOptions) => Promise<void>
   sleepUntil: (timestamp: number, options?: SleepOptions) => Promise<void>
   waitForEvent: <TPayload = unknown>(
     name: string,
-    options?: WaitForEventOptions<TPayload>,
+    options?: WaitForEventOptions<TPayload>
   ) => Promise<TPayload>
   approve: (options: ApproveOptions) => Promise<ApprovalResult>
   now: (options?: DeterministicValueOptions) => Promise<number>
@@ -330,28 +329,29 @@ export interface BaseCtx<TInput, TState> {
 
 /** Reserved field names that middleware may not override. */
 export type ReservedCtxFields =
-  | 'runId'
-  | 'input'
-  | 'state'
-  | 'signal'
-  | 'step'
-  | 'sleep'
-  | 'sleepUntil'
-  | 'waitForEvent'
-  | 'approve'
-  | 'now'
-  | 'uuid'
-  | 'emit'
+  | "runId"
+  | "input"
+  | "state"
+  | "signal"
+  | "step"
+  | "sleep"
+  | "sleepUntil"
+  | "waitForEvent"
+  | "approve"
+  | "now"
+  | "uuid"
+  | "emit"
 
 /** Compile-time guard for middleware extensions. Resolves to `TExt`
  *  when no reserved ctx field is shadowed; otherwise resolves to a
  *  readable string literal error. */
-export type AssertNonReservedExtension<TExt> = keyof TExt &
-  ReservedCtxFields extends never
-  ? TExt
-  : `Middleware extension may not shadow reserved ctx field: ${keyof TExt &
-      ReservedCtxFields &
-      string}`
+export type AssertNonReservedExtension<TExt> =
+  & keyof TExt
+  & ReservedCtxFields extends never ? TExt
+  : `Middleware extension may not shadow reserved ctx field: ${
+    & keyof TExt
+    & ReservedCtxFields
+    & string}`
 
 /** Full ctx type passed to a handler, including middleware-added
  *  fields. `TExtensions` defaults to `unknown` so the empty-middleware
@@ -360,7 +360,7 @@ export type AssertNonReservedExtension<TExt> = keyof TExt &
 export type Ctx<
   TInput = unknown,
   TState = Record<string, unknown>,
-  TExtensions = unknown,
+  TExtensions = unknown
 > = BaseCtx<TInput, TState> & TExtensions
 
 /**
@@ -403,7 +403,7 @@ export type MiddlewareServerFn<TCtxIn, TExtension> = (args: {
 }) => Promise<unknown>
 
 export interface Middleware<TCtxIn = unknown, TExtension = unknown> {
-  __kind: 'middleware'
+  __kind: "middleware"
   server: MiddlewareServerFn<TCtxIn, TExtension>
 }
 
@@ -416,9 +416,9 @@ export type AnyMiddleware = Middleware<any, any>
 export interface WorkflowDefinition<
   TInput = unknown,
   TOutput = unknown,
-  TState = Record<string, unknown>,
+  TState = Record<string, unknown>
 > {
-  __kind: 'workflow'
+  __kind: "workflow"
   id: string
   description?: string
   /** Caller-supplied version identifier. Used with `previousVersions`
@@ -444,20 +444,14 @@ export type AnyWorkflowDefinition = WorkflowDefinition<any, any, any>
 // workflow for consumers (clients, tests, downstream types).
 // ============================================================
 
-export type WorkflowInput<TDefinition> =
-  TDefinition extends WorkflowDefinition<infer TInput, any, any>
-    ? TInput
-    : never
+export type WorkflowInput<TDefinition> = TDefinition extends WorkflowDefinition<infer TInput, any, any> ? TInput
+  : never
 
-export type WorkflowOutput<TDefinition> =
-  TDefinition extends WorkflowDefinition<any, infer TOutput, any>
-    ? TOutput
-    : never
+export type WorkflowOutput<TDefinition> = TDefinition extends WorkflowDefinition<any, infer TOutput, any> ? TOutput
+  : never
 
-export type WorkflowState<TDefinition> =
-  TDefinition extends WorkflowDefinition<any, any, infer TState>
-    ? TState
-    : never
+export type WorkflowState<TDefinition> = TDefinition extends WorkflowDefinition<any, any, infer TState> ? TState
+  : never
 
 // ============================================================
 // Signal delivery (used by resume calls)
@@ -482,28 +476,28 @@ export interface SignalDelivery<TPayload = unknown> {
 // ============================================================
 
 export type RunStatus =
-  | 'running'
-  | 'paused'
-  | 'finished'
-  | 'errored'
-  | 'aborted'
+  | "running"
+  | "paused"
+  | "finished"
+  | "errored"
+  | "aborted"
 
 export type RunAwaitable =
   | {
-      type: 'signal'
-      stepId?: string
-      signalName: string
-      deadline?: number
-      meta?: WorkflowMetadata
-    }
+    type: "signal"
+    stepId?: string
+    signalName: string
+    deadline?: number
+    meta?: WorkflowMetadata
+  }
   | {
-      type: 'approval'
-      stepId?: string
-      approvalId: string
-      title: string
-      description?: string
-      meta?: WorkflowMetadata
-    }
+    type: "approval"
+    stepId?: string
+    approvalId: string
+    title: string
+    description?: string
+    meta?: WorkflowMetadata
+  }
 
 /**
  * Persisted run metadata. State is intentionally NOT stored here —
@@ -547,7 +541,7 @@ export interface RunState<TInput = unknown, TOutput = unknown> {
 // RunStore — backing storage (state + append-only log + CAS)
 // ============================================================
 
-export type DeleteReason = 'finished' | 'errored' | 'aborted'
+export type DeleteReason = "finished" | "errored" | "aborted"
 
 /**
  * Pluggable backing store for workflow runs.
@@ -583,7 +577,7 @@ export interface RunStore {
   appendEvent: (
     runId: string,
     expectedNextIndex: number,
-    event: WorkflowEvent,
+    event: WorkflowEvent
   ) => Promise<void>
   /** Read every event for `runId`, ordered by append position. */
   getEvents: (runId: string) => Promise<ReadonlyArray<WorkflowEvent>>
@@ -595,7 +589,7 @@ export interface RunStore {
   subscribe?: (
     runId: string,
     fromIndex: number,
-    onEvent: (event: WorkflowEvent, index: number) => void,
+    onEvent: (event: WorkflowEvent, index: number) => void
   ) => () => void
 }
 
@@ -609,7 +603,7 @@ export interface RunStore {
  * and decides whether to treat as idempotent (same signalId) or as
  * a lost race (different signalId).
  */
-export class LogConflictError extends Data.TaggedError('LogConflictError')<{
+export class LogConflictError extends Data.TaggedError("LogConflictError")<{
   readonly attemptedIndex: number
   readonly existing?: WorkflowEvent
   readonly message: string
@@ -619,16 +613,15 @@ export class LogConflictError extends Data.TaggedError('LogConflictError')<{
     super({
       attemptedIndex,
       ...(existing === undefined ? {} : { existing }),
-      message:
-        `Log conflict for run ${runId} at index ${attemptedIndex}: another writer has already committed.`,
-      runId,
+      message: `Log conflict for run ${runId} at index ${attemptedIndex}: another writer has already committed.`,
+      runId
     })
   }
 }
 
 /** Thrown when a `ctx.step()` with `{ timeout }` exceeds its
  *  wall-clock budget on a given attempt. */
-export class StepTimeoutError extends Data.TaggedError('StepTimeoutError')<{
+export class StepTimeoutError extends Data.TaggedError("StepTimeoutError")<{
   readonly message: string
   readonly stepId: string
   readonly timeoutMs: number
@@ -637,7 +630,7 @@ export class StepTimeoutError extends Data.TaggedError('StepTimeoutError')<{
     super({
       message: `Step "${stepId}" exceeded ${timeoutMs}ms timeout.`,
       stepId,
-      timeoutMs,
+      timeoutMs
     })
   }
 }
@@ -646,8 +639,8 @@ export class StepTimeoutError extends Data.TaggedError('StepTimeoutError')<{
  *  handler stack. The engine catches it and marks the run as
  *  paused. User code should not catch this. */
 export class WorkflowPaused extends Error {
-  override readonly name = 'WorkflowPaused'
+  override readonly name = "WorkflowPaused"
   constructor() {
-    super('Workflow paused — this error is for engine use only.')
+    super("Workflow paused — this error is for engine use only.")
   }
 }

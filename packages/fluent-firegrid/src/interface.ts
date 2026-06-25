@@ -65,8 +65,7 @@ const makeDescriptorFor = <const Kind extends DefinitionKind>(kind: Kind) =>
 >(
   name: Name,
   handlers: Handlers
-): DefinitionDescriptor<Name, Kind, Handlers> =>
-  definitionDescriptor(kind, name, handlers)
+): DefinitionDescriptor<Name, Kind, Handlers> => definitionDescriptor(kind, name, handlers)
 
 export const service = makeDescriptorFor("service")
 export const object = makeDescriptorFor("object")

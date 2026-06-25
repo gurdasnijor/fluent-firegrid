@@ -1,10 +1,5 @@
 // @ts-nocheck -- Vendored TanStack source targets a looser optional-property TypeScript policy.
-/* oxlint-disable effect/restricted-syntax -- Vendored TanStack implementation source keeps upstream imperative control flow. */
-import type {
-  AssertNonReservedExtension,
-  Middleware,
-  MiddlewareServerFn,
-} from '../types'
+import type { AssertNonReservedExtension, Middleware, MiddlewareServerFn } from "../types"
 
 export interface CreateMiddlewareBuilder<TCtxIn> {
   /**
@@ -20,7 +15,7 @@ export interface CreateMiddlewareBuilder<TCtxIn> {
    *     })
    */
   server: <TExtension>(
-    fn: MiddlewareServerFn<TCtxIn, AssertNonReservedExtension<TExtension>>,
+    fn: MiddlewareServerFn<TCtxIn, AssertNonReservedExtension<TExtension>>
   ) => Middleware<TCtxIn, AssertNonReservedExtension<TExtension>>
 }
 
@@ -46,14 +41,14 @@ export interface CreateMiddlewareBuilder<TCtxIn> {
  *     })
  */
 export function createMiddleware<
-  TCtxIn = unknown,
+  TCtxIn = unknown
 >(): CreateMiddlewareBuilder<TCtxIn> {
   return {
     server(fn) {
       return {
-        __kind: 'middleware',
-        server: fn,
+        __kind: "middleware",
+        server: fn
       }
-    },
+    }
   }
 }

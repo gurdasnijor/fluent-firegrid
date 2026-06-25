@@ -83,8 +83,7 @@ const descriptor = <Input = void, Output = void>(
   ...(options?.output === undefined ? {} : { output: options.output })
 })
 
-export const json = <Input = void, Output = void>(): HandlerDescriptor<Input, Output> =>
-  descriptor<Input, Output>()
+export const json = <Input = void, Output = void>(): HandlerDescriptor<Input, Output> => descriptor<Input, Output>()
 
 export const schemas = <Input = void, Output = void>(
   options: HandlerDescriptorOptions<Input, Output>

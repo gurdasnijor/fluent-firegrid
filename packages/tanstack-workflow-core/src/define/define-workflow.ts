@@ -1,5 +1,4 @@
 // @ts-nocheck -- Vendored TanStack source targets a looser optional-property TypeScript policy.
-/* oxlint-disable effect/restricted-syntax -- Vendored TanStack implementation source keeps upstream imperative control flow. */
 import type {
   AnyMiddleware,
   AnyWorkflowDefinition,
@@ -8,8 +7,8 @@ import type {
   Middleware,
   SchemaInput,
   StepRetryOptions,
-  WorkflowDefinition,
-} from '../types'
+  WorkflowDefinition
+} from "../types"
 
 // ============================================================
 // Type-level extension accumulation
@@ -21,8 +20,7 @@ import type {
  */
 type UnionToIntersection<TUnion> = (
   TUnion extends unknown ? (k: TUnion) => void : never
-) extends (k: infer TIntersection) => void
-  ? TIntersection
+) extends (k: infer TIntersection) => void ? TIntersection
   : never
 
 /**
@@ -31,10 +29,9 @@ type UnionToIntersection<TUnion> = (
  * inference at the `.middleware([...])` call site.
  */
 export type AccumulateExtensions<
-  TMiddlewares extends ReadonlyArray<AnyMiddleware>,
+  TMiddlewares extends ReadonlyArray<AnyMiddleware>
 > = UnionToIntersection<
-  TMiddlewares[number] extends Middleware<any, infer TExtension>
-    ? TExtension
+  TMiddlewares[number] extends Middleware<any, infer TExtension> ? TExtension
     : never
 >
 
@@ -45,7 +42,7 @@ export type AccumulateExtensions<
 export interface CreateWorkflowConfig<
   TInputSchema extends SchemaInput | undefined,
   TOutputSchema extends SchemaInput | undefined,
-  TStateSchema extends SchemaInput | undefined,
+  TStateSchema extends SchemaInput | undefined
 > {
   id: string
   description?: string
@@ -56,11 +53,9 @@ export interface CreateWorkflowConfig<
   output?: TOutputSchema
   state?: TStateSchema
   initialize?: (args: {
-    input: TInputSchema extends SchemaInput
-      ? InferSchema<TInputSchema>
+    input: TInputSchema extends SchemaInput ? InferSchema<TInputSchema>
       : unknown
-  }) => TStateSchema extends SchemaInput
-    ? Partial<InferSchema<TStateSchema>>
+  }) => TStateSchema extends SchemaInput ? Partial<InferSchema<TStateSchema>>
     : Record<string, unknown>
   /** Default retry policy applied to every `ctx.step()` call that
    *  doesn't carry its own `{ retry }` option. */
@@ -71,30 +66,27 @@ export interface CreateWorkflowConfig<
 // Builder types — chain-style accumulation
 // ============================================================
 
-type InferInput<T extends SchemaInput | undefined> = T extends SchemaInput
-  ? InferSchema<T>
+type InferInput<T extends SchemaInput | undefined> = T extends SchemaInput ? InferSchema<T>
   : unknown
 
-type InferState<T extends SchemaInput | undefined> = T extends SchemaInput
-  ? InferSchema<T>
+type InferState<T extends SchemaInput | undefined> = T extends SchemaInput ? InferSchema<T>
   : Record<string, unknown>
 
-type InferOutput<T extends SchemaInput | undefined> = T extends SchemaInput
-  ? InferSchema<T>
+type InferOutput<T extends SchemaInput | undefined> = T extends SchemaInput ? InferSchema<T>
   : unknown
 
 export interface WorkflowBuilder<
   TInputSchema extends SchemaInput | undefined,
   TOutputSchema extends SchemaInput | undefined,
   TStateSchema extends SchemaInput | undefined,
-  TCtxExt = unknown,
+  TCtxExt = unknown
 > {
   /**
    * Register middlewares that extend the ctx for the handler. Each
    * middleware's added fields are intersected into the ctx type.
    */
   middleware: <const TMiddlewares extends ReadonlyArray<AnyMiddleware>>(
-    middlewares: TMiddlewares,
+    middlewares: TMiddlewares
   ) => WorkflowBuilder<
     TInputSchema,
     TOutputSchema,
@@ -108,7 +100,7 @@ export interface WorkflowBuilder<
    * route to that version's handler.
    */
   previousVersions: (
-    versions: ReadonlyArray<AnyWorkflowDefinition>,
+    versions: ReadonlyArray<AnyWorkflowDefinition>
   ) => WorkflowBuilder<TInputSchema, TOutputSchema, TStateSchema, TCtxExt>
 
   /**
@@ -125,8 +117,8 @@ export interface WorkflowBuilder<
    */
   handler: <TActualOutput extends InferOutput<TOutputSchema>>(
     fn: (
-      ctx: Ctx<InferInput<TInputSchema>, InferState<TStateSchema>, TCtxExt>,
-    ) => Promise<TActualOutput>,
+      ctx: Ctx<InferInput<TInputSchema>, InferState<TStateSchema>, TCtxExt>
+    ) => Promise<TActualOutput>
   ) => WorkflowDefinition<
     InferInput<TInputSchema>,
     TActualOutput,
@@ -145,13 +137,13 @@ interface InternalState {
 }
 
 function buildBuilder(
-  state: InternalState,
+  state: InternalState
 ): WorkflowBuilder<any, any, any, any> {
   return {
     middleware(middlewares) {
       return buildBuilder({
         ...state,
-        middlewares: [...state.middlewares, ...middlewares],
+        middlewares: [...state.middlewares, ...middlewares]
       })
     },
     previousVersions(versions) {
@@ -159,7 +151,7 @@ function buildBuilder(
     },
     handler(fn) {
       const def: AnyWorkflowDefinition = {
-        __kind: 'workflow',
+        __kind: "workflow",
         id: state.config.id,
         description: state.config.description,
         version: state.config.version,
@@ -170,10 +162,10 @@ function buildBuilder(
         initialize: state.config.initialize,
         defaultStepRetry: state.config.defaultStepRetry,
         middlewares: state.middlewares,
-        handler: fn,
+        handler: fn
       }
       return def
-    },
+    }
   }
 }
 
@@ -200,9 +192,9 @@ function buildBuilder(
 export function createWorkflow<
   TInputSchema extends SchemaInput | undefined = undefined,
   TOutputSchema extends SchemaInput | undefined = undefined,
-  TStateSchema extends SchemaInput | undefined = undefined,
+  TStateSchema extends SchemaInput | undefined = undefined
 >(
-  config: CreateWorkflowConfig<TInputSchema, TOutputSchema, TStateSchema>,
+  config: CreateWorkflowConfig<TInputSchema, TOutputSchema, TStateSchema>
 ): WorkflowBuilder<TInputSchema, TOutputSchema, TStateSchema> {
   return buildBuilder({ config, middlewares: [], previous: [] })
 }

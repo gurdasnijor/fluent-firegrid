@@ -5,8 +5,8 @@ import type {
   WorkflowRegistrationMap,
   WorkflowRuntimeDefinition,
   WorkflowScheduleDefinition,
-  WorkflowScheduleSpec,
-} from './types'
+  WorkflowScheduleSpec
+} from "./types"
 
 const DEFAULT_CRON_LOOKBACK_MS = 32 * 24 * 60 * 60 * 1000
 
@@ -17,37 +17,37 @@ export interface MaterializeWorkflowSchedulesOptions {
 
 export type MaterializedWorkflowSchedule =
   | {
-      kind: 'materialized'
-      workflowId: string
-      scheduleId: ScheduleId
-      fireAt: number
-      schedule: WorkflowScheduleSpec
-    }
+    kind: "materialized"
+    workflowId: string
+    scheduleId: ScheduleId
+    fireAt: number
+    schedule: WorkflowScheduleSpec
+  }
   | {
-      kind: 'disabled'
-      workflowId: string
-      scheduleId: ScheduleId
-      schedule: WorkflowScheduleSpec
-    }
+    kind: "disabled"
+    workflowId: string
+    scheduleId: ScheduleId
+    schedule: WorkflowScheduleSpec
+  }
   | {
-      kind: 'not-due'
-      workflowId: string
-      scheduleId: ScheduleId
-      schedule: WorkflowScheduleSpec
-    }
+    kind: "not-due"
+    workflowId: string
+    scheduleId: ScheduleId
+    schedule: WorkflowScheduleSpec
+  }
 
 export async function materializeWorkflowSchedules<
-  TWorkflows extends WorkflowRegistrationMap,
+  TWorkflows extends WorkflowRegistrationMap
 >(
   runtime: WorkflowRuntimeDefinition<TWorkflows>,
-  options: MaterializeWorkflowSchedulesOptions = {},
+  options: MaterializeWorkflowSchedulesOptions = {}
 ): Promise<Array<MaterializedWorkflowSchedule>> {
   const now = options.now ?? Date.now()
   const cronLookbackMs = options.cronLookbackMs ?? DEFAULT_CRON_LOOKBACK_MS
   const materialized: Array<MaterializedWorkflowSchedule> = []
 
   if (!Number.isFinite(cronLookbackMs) || cronLookbackMs < 0) {
-    throw new Error('Workflow cron lookback must be a non-negative number.')
+    throw new Error("Workflow cron lookback must be a non-negative number.")
   }
 
   for (const [workflowId, registration] of Object.entries(runtime.workflows)) {
@@ -62,17 +62,17 @@ export async function materializeWorkflowSchedules<
           workflowId,
           workflowVersion: registration.version,
           schedule: definition.schedule,
-          overlapPolicy: definition.overlapPolicy ?? 'skip',
+          overlapPolicy: definition.overlapPolicy ?? "skip",
           input: undefined,
           nextFireAt: undefined,
           enabled: false,
-          now,
+          now
         })
         materialized.push({
-          kind: 'disabled',
+          kind: "disabled",
           workflowId,
           scheduleId,
-          schedule: definition.schedule,
+          schedule: definition.schedule
         })
         continue
       }
@@ -80,10 +80,10 @@ export async function materializeWorkflowSchedules<
       const fireAt = getDueFireAt(definition.schedule, now, cronLookbackMs)
       if (fireAt === undefined) {
         materialized.push({
-          kind: 'not-due',
+          kind: "not-due",
           workflowId,
           scheduleId,
-          schedule: definition.schedule,
+          schedule: definition.schedule
         })
         continue
       }
@@ -93,18 +93,18 @@ export async function materializeWorkflowSchedules<
         workflowId,
         workflowVersion: registration.version,
         schedule: definition.schedule,
-        overlapPolicy: definition.overlapPolicy ?? 'skip',
+        overlapPolicy: definition.overlapPolicy ?? "skip",
         input: await resolveScheduleInput(definition.input),
         nextFireAt: fireAt,
         enabled: true,
-        now,
+        now
       })
       materialized.push({
-        kind: 'materialized',
+        kind: "materialized",
         workflowId,
         scheduleId,
         fireAt,
-        schedule: definition.schedule,
+        schedule: definition.schedule
       })
     }
   }
@@ -115,26 +115,26 @@ export async function materializeWorkflowSchedules<
 function getScheduleId(
   workflowId: string,
   definition: WorkflowScheduleDefinition,
-  index: number,
+  index: number
 ): ScheduleId {
   return definition.id ?? `${workflowId}:${index}`
 }
 
 async function resolveScheduleInput(
-  input: WorkflowScheduleDefinition['input'],
+  input: WorkflowScheduleDefinition["input"]
 ) {
-  return typeof input === 'function' ? await input() : input
+  return typeof input === "function" ? await input() : input
 }
 
 function getDueFireAt(
   schedule: WorkflowScheduleSpec,
   now: number,
-  cronLookbackMs: number,
+  cronLookbackMs: number
 ) {
-  if (schedule.kind === 'interval') {
+  if (schedule.kind === "interval") {
     if (!Number.isFinite(schedule.everyMs) || schedule.everyMs <= 0) {
       throw new Error(
-        'Interval workflow schedules must use a positive everyMs.',
+        "Interval workflow schedules must use a positive everyMs."
       )
     }
     return Math.floor(now / schedule.everyMs) * schedule.everyMs
@@ -144,13 +144,13 @@ function getDueFireAt(
 }
 
 function getPreviousCronFireAt(
-  schedule: Extract<WorkflowScheduleSpec, { kind: 'cron' }>,
+  schedule: Extract<WorkflowScheduleSpec, { kind: "cron" }>,
   now: number,
-  lookbackMs: number,
+  lookbackMs: number
 ) {
-  if (schedule.timezone && schedule.timezone !== 'UTC') {
+  if (schedule.timezone && schedule.timezone !== "UTC") {
     throw new Error(
-      `Workflow cron schedules are materialized in UTC. Received timezone "${schedule.timezone}".`,
+      `Workflow cron schedules are materialized in UTC. Received timezone "${schedule.timezone}".`
     )
   }
 
@@ -182,7 +182,7 @@ function parseCronExpression(expression: string): ParsedCronExpression {
   const fields = expression.trim().split(/\s+/)
   if (fields.length !== 5) {
     throw new Error(
-      `Workflow cron schedules must use five fields. Received "${expression}".`,
+      `Workflow cron schedules must use five fields. Received "${expression}".`
     )
   }
 
@@ -191,7 +191,7 @@ function parseCronExpression(expression: string): ParsedCronExpression {
     hour: parseCronField(fields[1]!, 0, 23),
     dayOfMonth: parseCronField(fields[2]!, 1, 31),
     month: parseCronField(fields[3]!, 1, 12),
-    dayOfWeek: parseCronField(fields[4]!, 0, 7, normalizeDayOfWeek),
+    dayOfWeek: parseCronField(fields[4]!, 0, 7, normalizeDayOfWeek)
   }
 }
 
@@ -199,13 +199,13 @@ function parseCronField(
   field: string,
   min: number,
   max: number,
-  normalize: (value: number) => number = (value) => value,
+  normalize: (value: number) => number = (value) => value
 ): ParsedCronField {
   const values = new Set<number>()
-  const parts = field.split(',')
+  const parts = field.split(",")
 
   for (const part of parts) {
-    const [rangePart, stepPart] = part.split('/')
+    const [rangePart, stepPart] = part.split("/")
     const step = stepPart === undefined ? 1 : Number(stepPart)
     if (!Number.isInteger(step) || step <= 0) {
       throw new Error(`Invalid cron step "${part}".`)
@@ -218,15 +218,15 @@ function parseCronField(
   }
 
   return {
-    wildcard: field === '*',
-    values,
+    wildcard: field === "*",
+    values
   }
 }
 
 function parseCronRange(range: string, min: number, max: number) {
-  if (range === '*') return { start: min, end: max }
+  if (range === "*") return { start: min, end: max }
 
-  const bounds = range.split('-')
+  const bounds = range.split("-")
   if (bounds.length === 1) {
     const value = parseCronNumber(bounds[0]!, min, max)
     return { start: value, end: value }
@@ -256,10 +256,9 @@ function normalizeDayOfWeek(value: number) {
 function matchesCron(cron: ParsedCronExpression, date: Date) {
   const dayOfMonthMatches = cron.dayOfMonth.values.has(date.getUTCDate())
   const dayOfWeekMatches = cron.dayOfWeek.values.has(date.getUTCDay())
-  const dayMatches =
-    !cron.dayOfMonth.wildcard && !cron.dayOfWeek.wildcard
-      ? dayOfMonthMatches || dayOfWeekMatches
-      : dayOfMonthMatches && dayOfWeekMatches
+  const dayMatches = !cron.dayOfMonth.wildcard && !cron.dayOfWeek.wildcard
+    ? dayOfMonthMatches || dayOfWeekMatches
+    : dayOfMonthMatches && dayOfWeekMatches
 
   return (
     cron.minute.values.has(date.getUTCMinutes()) &&

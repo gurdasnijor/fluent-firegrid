@@ -45,19 +45,6 @@ export default defineConfig({
       }),
       defineProject({
         test: {
-          name: "effect-s2-flow",
-          include: ["packages/effect-s2-flow/test/**/*.test.ts"],
-          exclude: ["**/node_modules/**"],
-          passWithNoTests: true
-        },
-        resolve: {
-          alias: {
-            "effect-s2-flow": path.resolve(__dirname, "./packages/effect-s2-flow/src/index.ts")
-          }
-        }
-      }),
-      defineProject({
-        test: {
           name: "fluent-firegrid",
           include: ["packages/fluent-firegrid/test/**/*.test.ts"],
           exclude: ["**/node_modules/**"],

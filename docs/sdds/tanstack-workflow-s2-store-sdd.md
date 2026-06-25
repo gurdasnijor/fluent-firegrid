@@ -50,7 +50,6 @@ The current npm packages are early (`@tanstack/workflow-runtime` `0.0.x`), so im
 
 ## Non-Negotiable Boundaries
 
-- Do not expand `effect-s2-flow` as the workflow API.
 - Do not create a parallel durable-function API.
 - Do not implement `service(...)`, `object(...)`, `workflow(...)`, generated clients, or virtual-object `state(...)` inside the TanStack/S2 store package. Those are fluent-layer concerns.
 - Do not add proof-only runtime APIs.

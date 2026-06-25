@@ -1,12 +1,7 @@
 // @ts-nocheck -- Vendored TanStack source targets a looser optional-property TypeScript policy.
 /* oxlint-disable effect/restricted-syntax -- Vendored TanStack implementation source keeps upstream imperative control flow. */
-/* eslint-disable @typescript-eslint/require-await -- In-memory implementation satisfies async storage contracts synchronously. */
-import { LogConflictError } from '@tanstack/workflow-core'
-import type {
-  DeleteReason,
-  RunState,
-  WorkflowEvent,
-} from '@tanstack/workflow-core'
+import { LogConflictError } from "@tanstack/workflow-core"
+import type { DeleteReason, RunState, WorkflowEvent } from "@tanstack/workflow-core"
 import type {
   AppendEventsArgs,
   AppendEventsResult,
@@ -46,8 +41,8 @@ import type {
   WorkflowExecution,
   WorkflowExecutionStore,
   WorkflowLease,
-  WorkflowRunStoreAdapterStore,
-} from './types'
+  WorkflowRunStoreAdapterStore
+} from "./types"
 
 interface TimerRecord extends TimerWakeup {
   lease?: WorkflowLease
@@ -59,17 +54,18 @@ interface ScheduleRecord {
   workflowVersion?: string
   nextFireAt?: number
   input: unknown
-  overlapPolicy: ScheduleBucket['overlapPolicy']
+  overlapPolicy: ScheduleBucket["overlapPolicy"]
   enabled: boolean
 }
 
 interface ScheduleBucketRecord extends ScheduleBucket {
-  status: 'claimed' | 'started'
+  status: "claimed" | "started"
   lease?: WorkflowLease
 }
 
-export type InMemoryWorkflowExecutionStore = WorkflowExecutionStore &
-  WorkflowRunStoreAdapterStore
+export type InMemoryWorkflowExecutionStore =
+  & WorkflowExecutionStore
+  & WorkflowRunStoreAdapterStore
 
 export function inMemoryWorkflowExecutionStore(): InMemoryWorkflowExecutionStore {
   const runs = new Map<RunId, WorkflowExecution>()
@@ -95,7 +91,7 @@ export function inMemoryWorkflowExecutionStore(): InMemoryWorkflowExecutionStore
 
   function updateRun(
     runId: RunId,
-    updater: (run: WorkflowExecution) => WorkflowExecution,
+    updater: (run: WorkflowExecution) => WorkflowExecution
   ) {
     const existing = runs.get(runId)
     if (!existing) return undefined
@@ -107,19 +103,19 @@ export function inMemoryWorkflowExecutionStore(): InMemoryWorkflowExecutionStore
   return {
     async createRun(args: CreateRunArgs): Promise<CreateRunResult> {
       const existing = getRun(args.runId)
-      if (existing) return { kind: 'existing', run: existing }
+      if (existing) return { kind: "existing", run: existing }
 
       const run: WorkflowExecution = {
         runId: args.runId,
         workflowId: args.workflowId,
         workflowVersion: args.workflowVersion,
-        status: 'queued',
+        status: "queued",
         input: args.input,
         createdAt: args.now,
-        updatedAt: args.now,
+        updatedAt: args.now
       }
       setRun(run)
-      return { kind: 'created', run: cloneRun(run) }
+      return { kind: "created", run: cloneRun(run) }
     },
 
     async loadRun(runId: RunId) {
@@ -131,7 +127,7 @@ export function inMemoryWorkflowExecutionStore(): InMemoryWorkflowExecutionStore
       if (!run) return undefined
       return {
         run,
-        events: cloneStoredEvents(logs.get(runId) ?? []),
+        events: cloneStoredEvents(logs.get(runId) ?? [])
       }
     },
 
@@ -165,7 +161,7 @@ export function inMemoryWorkflowExecutionStore(): InMemoryWorkflowExecutionStore
         throw new LogConflictError(
           args.runId,
           args.expectedNextIndex,
-          log[args.expectedNextIndex]?.event,
+          log[args.expectedNextIndex]?.event
         )
       }
 
@@ -206,21 +202,21 @@ export function inMemoryWorkflowExecutionStore(): InMemoryWorkflowExecutionStore
 
     async claimRun(args: ClaimRunArgs): Promise<ClaimRunResult> {
       const existing = getRun(args.runId)
-      if (!existing) return { kind: 'not-found' }
+      if (!existing) return { kind: "not-found" }
       if (isTerminal(existing.status)) {
-        return { kind: 'not-claimable', run: existing }
+        return { kind: "not-claimable", run: existing }
       }
       if (!canClaim(existing.lease, args.leaseOwner, args.now)) {
-        return { kind: 'not-claimable', run: existing }
+        return { kind: "not-claimable", run: existing }
       }
 
       const claimed = updateRun(args.runId, (run) => ({
         ...run,
-        status: 'running',
+        status: "running",
         lease: lease(args.leaseOwner, args.leaseMs, args.now),
-        updatedAt: args.now,
+        updatedAt: args.now
       }))
-      return { kind: 'claimed', run: claimed! }
+      return { kind: "claimed", run: claimed! }
     },
 
     async heartbeatRunLease(args: HeartbeatRunLeaseArgs) {
@@ -229,7 +225,7 @@ export function inMemoryWorkflowExecutionStore(): InMemoryWorkflowExecutionStore
         return {
           ...run,
           lease: lease(args.leaseOwner, args.leaseMs, args.now),
-          updatedAt: args.now,
+          updatedAt: args.now
         }
       })
     },
@@ -239,7 +235,7 @@ export function inMemoryWorkflowExecutionStore(): InMemoryWorkflowExecutionStore
         if (run.lease?.owner !== args.leaseOwner) return run
         return {
           ...run,
-          lease: undefined,
+          lease: undefined
         }
       })
     },
@@ -247,27 +243,27 @@ export function inMemoryWorkflowExecutionStore(): InMemoryWorkflowExecutionStore
     async markRunPaused(args: MarkRunPausedArgs) {
       updateRun(args.runId, (run) => ({
         ...run,
-        status: 'paused',
+        status: "paused",
         awaiting: args.awaiting,
         waitingFor: args.waitingFor,
         pendingApproval: args.pendingApproval,
         wakeAt: args.wakeAt,
         lease: undefined,
-        updatedAt: args.now,
+        updatedAt: args.now
       }))
     },
 
     async markRunFinished(args: MarkRunFinishedArgs) {
       updateRun(args.runId, (run) => ({
         ...run,
-        status: 'finished',
+        status: "finished",
         output: args.output,
         awaiting: undefined,
         waitingFor: undefined,
         pendingApproval: undefined,
         wakeAt: undefined,
         lease: undefined,
-        updatedAt: args.now,
+        updatedAt: args.now
       }))
     },
 
@@ -275,14 +271,14 @@ export function inMemoryWorkflowExecutionStore(): InMemoryWorkflowExecutionStore
       void args.code
       updateRun(args.runId, (run) => ({
         ...run,
-        status: 'errored',
+        status: "errored",
         error: args.error,
         awaiting: undefined,
         waitingFor: undefined,
         pendingApproval: undefined,
         wakeAt: undefined,
         lease: undefined,
-        updatedAt: args.now,
+        updatedAt: args.now
       }))
     },
 
@@ -292,12 +288,12 @@ export function inMemoryWorkflowExecutionStore(): InMemoryWorkflowExecutionStore
         workflowId: args.workflowId,
         workflowVersion: args.workflowVersion,
         wakeAt: args.wakeAt,
-        signalId: args.signalId,
+        signalId: args.signalId
       })
       updateRun(args.runId, (run) => ({
         ...run,
         wakeAt: args.wakeAt,
-        updatedAt: args.now,
+        updatedAt: args.now
       }))
     },
 
@@ -310,7 +306,7 @@ export function inMemoryWorkflowExecutionStore(): InMemoryWorkflowExecutionStore
 
         timers.set(key, {
           ...timer,
-          lease: lease(args.leaseOwner, args.leaseMs, args.now),
+          lease: lease(args.leaseOwner, args.leaseMs, args.now)
         })
         due.push(cloneTimerWakeup(timer))
       }
@@ -318,54 +314,54 @@ export function inMemoryWorkflowExecutionStore(): InMemoryWorkflowExecutionStore
     },
 
     async deliverSignal<TPayload>(
-      args: DeliverSignalArgs<TPayload>,
+      args: DeliverSignalArgs<TPayload>
     ): Promise<DeliverSignalResult> {
       const run = getRun(args.runId)
-      if (!run) return { kind: 'not-found' }
+      if (!run) return { kind: "not-found" }
 
       const key = signalKey(args.runId, args.delivery.signalId)
-      if (signalDeliveries.has(key)) return { kind: 'duplicate', run }
+      if (signalDeliveries.has(key)) return { kind: "duplicate", run }
       if (!isRunWaitingForSignal(run, args.delivery)) {
-        return { kind: 'not-waiting', run }
+        return { kind: "not-waiting", run }
       }
 
       signalDeliveries.set(key, true)
       timers.delete(timerKey(args.runId, args.delivery.signalId))
       const updated = updateRun(args.runId, (current) => ({
         ...current,
-        status: 'queued',
+        status: "queued",
         awaiting: undefined,
         waitingFor: undefined,
         pendingApproval: undefined,
         wakeAt: undefined,
-        updatedAt: args.now,
+        updatedAt: args.now
       }))
-      return { kind: 'delivered', run: updated! }
+      return { kind: "delivered", run: updated! }
     },
 
     async deliverApproval(
-      args: DeliverApprovalArgs,
+      args: DeliverApprovalArgs
     ): Promise<DeliverApprovalResult> {
       const run = getRun(args.runId)
-      if (!run) return { kind: 'not-found' }
+      if (!run) return { kind: "not-found" }
 
       const key = signalKey(args.runId, `approval:${args.approval.approvalId}`)
-      if (signalDeliveries.has(key)) return { kind: 'duplicate', run }
+      if (signalDeliveries.has(key)) return { kind: "duplicate", run }
       if (!isRunWaitingForApproval(run, args.approval)) {
-        return { kind: 'not-waiting', run }
+        return { kind: "not-waiting", run }
       }
 
       signalDeliveries.set(key, true)
       const updated = updateRun(args.runId, (current) => ({
         ...current,
-        status: 'queued',
+        status: "queued",
         awaiting: undefined,
         waitingFor: undefined,
         pendingApproval: undefined,
         wakeAt: undefined,
-        updatedAt: args.now,
+        updatedAt: args.now
       }))
-      return { kind: 'delivered', run: updated! }
+      return { kind: "delivered", run: updated! }
     },
 
     async upsertSchedule(args: UpsertScheduleArgs) {
@@ -376,7 +372,7 @@ export function inMemoryWorkflowExecutionStore(): InMemoryWorkflowExecutionStore
         nextFireAt: args.nextFireAt,
         input: args.input,
         overlapPolicy: args.overlapPolicy,
-        enabled: args.enabled,
+        enabled: args.enabled
       })
     },
 
@@ -390,7 +386,7 @@ export function inMemoryWorkflowExecutionStore(): InMemoryWorkflowExecutionStore
         const bucketId = `${schedule.nextFireAt}` satisfies ScheduleBucketId
         const key = scheduleBucketKey(schedule.scheduleId, bucketId)
         const existing = scheduleBuckets.get(key)
-        if (existing?.status === 'started') continue
+        if (existing?.status === "started") continue
         if (existing && !canClaim(existing.lease, args.leaseOwner, args.now)) {
           continue
         }
@@ -404,8 +400,8 @@ export function inMemoryWorkflowExecutionStore(): InMemoryWorkflowExecutionStore
           fireAt: schedule.nextFireAt,
           input: schedule.input,
           overlapPolicy: schedule.overlapPolicy,
-          status: 'claimed',
-          lease: lease(args.leaseOwner, args.leaseMs, args.now),
+          status: "claimed",
+          lease: lease(args.leaseOwner, args.leaseMs, args.now)
         }
         scheduleBuckets.set(key, bucket)
         due.push(cloneScheduleBucket(bucket))
@@ -420,7 +416,7 @@ export function inMemoryWorkflowExecutionStore(): InMemoryWorkflowExecutionStore
       scheduleBuckets.set(key, {
         ...bucket,
         runId: args.runId,
-        status: 'started',
+        status: "started"
       })
     },
 
@@ -428,14 +424,14 @@ export function inMemoryWorkflowExecutionStore(): InMemoryWorkflowExecutionStore
       const claims: Array<RunClaim> = []
       for (const run of runs.values()) {
         if (claims.length >= args.limit) break
-        if (run.status !== 'running') continue
+        if (run.status !== "running") continue
         if (!run.lease || run.lease.expiresAt > args.now) continue
 
         const nextLease = lease(args.leaseOwner, args.leaseMs, args.now)
         const claimed = updateRun(run.runId, (current) => ({
           ...current,
           lease: nextLease,
-          updatedAt: args.now,
+          updatedAt: args.now
         }))
         if (claimed) claims.push({ run: claimed, lease: cloneLease(nextLease) })
       }
@@ -458,15 +454,15 @@ export function inMemoryWorkflowExecutionStore(): InMemoryWorkflowExecutionStore
       if (!run) return undefined
       return {
         run,
-        events: cloneStoredEvents(logs.get(runId) ?? []),
+        events: cloneStoredEvents(logs.get(runId) ?? [])
       }
-    },
+    }
   }
 }
 
 function executionFromRunState(
   state: RunState,
-  leaseValue?: WorkflowLease,
+  leaseValue?: WorkflowLease
 ): WorkflowExecution {
   return {
     runId: state.runId,
@@ -479,20 +475,19 @@ function executionFromRunState(
     awaiting: state.awaiting,
     waitingFor: state.waitingFor,
     pendingApproval: state.pendingApproval,
-    wakeAt:
-      state.waitingFor?.signalName === '__timer'
-        ? state.waitingFor.deadline
-        : undefined,
+    wakeAt: state.waitingFor?.signalName === "__timer"
+      ? state.waitingFor.deadline
+      : undefined,
     lease: leaseValue ? cloneLease(leaseValue) : undefined,
     createdAt: state.createdAt,
-    updatedAt: state.updatedAt,
+    updatedAt: state.updatedAt
   }
 }
 
 function storeEvent(
   runId: RunId,
   eventIndex: number,
-  event: WorkflowEvent,
+  event: WorkflowEvent
 ): StoredWorkflowEvent {
   return {
     runId,
@@ -500,12 +495,12 @@ function storeEvent(
     eventType: event.type,
     stepId: getStepId(event),
     event,
-    createdAt: event.ts,
+    createdAt: event.ts
   }
 }
 
 function getStepId(event: WorkflowEvent) {
-  return 'stepId' in event ? event.stepId : undefined
+  return "stepId" in event ? event.stepId : undefined
 }
 
 function lease(owner: LeaseOwner, leaseMs: number, now: number): WorkflowLease {
@@ -515,40 +510,40 @@ function lease(owner: LeaseOwner, leaseMs: number, now: number): WorkflowLease {
 function canClaim(
   existing: WorkflowLease | undefined,
   owner: LeaseOwner,
-  now: number,
+  now: number
 ) {
   return !existing || existing.owner === owner || existing.expiresAt <= now
 }
 
-function isTerminal(status: WorkflowExecution['status']) {
-  return status === 'finished' || status === 'errored' || status === 'aborted'
+function isTerminal(status: WorkflowExecution["status"]) {
+  return status === "finished" || status === "errored" || status === "aborted"
 }
 
 function isRunWaitingForSignal(
   run: WorkflowExecution,
-  delivery: DeliverSignalArgs['delivery'],
+  delivery: DeliverSignalArgs["delivery"]
 ) {
   return (
     signalAwaitableMatches(run.waitingFor, delivery) ||
     run.awaiting?.some(
-      (awaitable) =>
-        awaitable.type === 'signal' &&
-        signalAwaitableMatches(awaitable, delivery),
-    ) === true
+        (awaitable) =>
+          awaitable.type === "signal" &&
+          signalAwaitableMatches(awaitable, delivery)
+      ) === true
   )
 }
 
 function signalAwaitableMatches(
   awaitable:
-    | NonNullable<WorkflowExecution['waitingFor']>
+    | NonNullable<WorkflowExecution["waitingFor"]>
     | Extract<
-        NonNullable<WorkflowExecution['awaiting']>[number],
-        {
-          type: 'signal'
-        }
-      >
+      NonNullable<WorkflowExecution["awaiting"]>[number],
+      {
+        type: "signal"
+      }
+    >
     | undefined,
-  delivery: DeliverSignalArgs['delivery'],
+  delivery: DeliverSignalArgs["delivery"]
 ) {
   return (
     awaitable?.signalName === delivery.name &&
@@ -560,15 +555,15 @@ function signalAwaitableMatches(
 
 function isRunWaitingForApproval(
   run: WorkflowExecution,
-  approval: DeliverApprovalArgs['approval'],
+  approval: DeliverApprovalArgs["approval"]
 ) {
   return (
     run.pendingApproval?.approvalId === approval.approvalId ||
     run.awaiting?.some(
-      (awaitable) =>
-        awaitable.type === 'approval' &&
-        awaitable.approvalId === approval.approvalId,
-    ) === true
+        (awaitable) =>
+          awaitable.type === "approval" &&
+          awaitable.approvalId === approval.approvalId
+      ) === true
   )
 }
 
@@ -588,7 +583,7 @@ function publish(
   subscribers: Map<RunId, Set<(event: WorkflowEvent, index: number) => void>>,
   runId: RunId,
   event: WorkflowEvent,
-  index: number,
+  index: number
 ) {
   const runSubscribers = subscribers.get(runId)
   if (!runSubscribers) return
@@ -612,7 +607,7 @@ function toRunSummary(run: WorkflowExecution): RunSummary {
     pendingApproval: run.pendingApproval,
     wakeAt: run.wakeAt,
     createdAt: run.createdAt,
-    updatedAt: run.updatedAt,
+    updatedAt: run.updatedAt
   }
 }
 
@@ -626,7 +621,7 @@ function cloneRun(run: WorkflowExecution): WorkflowExecution {
     pendingApproval: run.pendingApproval
       ? { ...run.pendingApproval, meta: cloneRecord(run.pendingApproval.meta) }
       : undefined,
-    lease: run.lease ? cloneLease(run.lease) : undefined,
+    lease: run.lease ? cloneLease(run.lease) : undefined
   }
 }
 
@@ -639,15 +634,15 @@ function cloneRunState(state: RunState): RunState {
       : undefined,
     pendingApproval: state.pendingApproval
       ? {
-          ...state.pendingApproval,
-          meta: cloneRecord(state.pendingApproval.meta),
-        }
-      : undefined,
+        ...state.pendingApproval,
+        meta: cloneRecord(state.pendingApproval.meta)
+      }
+      : undefined
   }
 }
 
 function cloneStoredEvents(
-  events: ReadonlyArray<StoredWorkflowEvent>,
+  events: ReadonlyArray<StoredWorkflowEvent>
 ): Array<StoredWorkflowEvent> {
   return events.map((event) => ({ ...event }))
 }
@@ -668,9 +663,9 @@ function cloneRecord(value: Record<string, unknown> | undefined) {
   return value ? { ...value } : value
 }
 
-function cloneAwaiting(value: RunState['awaiting']) {
+function cloneAwaiting(value: RunState["awaiting"]) {
   return value?.map((awaitable) => ({
     ...awaitable,
-    meta: cloneRecord(awaitable.meta),
+    meta: cloneRecord(awaitable.meta)
   }))
 }
