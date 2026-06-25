@@ -527,6 +527,19 @@ yield* workflowClient(reviewWorkflow, "review-123").submitDecision({
 })
 ```
 
+Implementation status as of June 25, 2026:
+
+- `awakeable<T>()` returns an encoded token plus Effect-native `await`,
+  `promise`, and `effect` handles over the durable TanStack signal substrate;
+- `resolveAwakeable` and `rejectAwakeable` deliver resolved/rejected payloads
+  through explicit or ambient external-signal bindings;
+- `createTanStackExternalSignalBinding` adapts a runtime host's
+  `deliverSignal` method for callback handlers and transport bindings;
+- rejected awakeables fail with the typed `AwakeableRejected` error;
+- remaining gaps are HTTP resolve/reject routes, workflow-scoped named event
+  ergonomics, and product examples that show how external systems receive and
+  complete tokens.
+
 ### Durable Webhook Example
 
 The webhook product shape should be a normal service handler, plus idempotency

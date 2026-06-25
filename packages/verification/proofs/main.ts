@@ -3,6 +3,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
 import { runCli } from "../src/CliApp.ts"
 import effectS2CapabilityAProof from "./effect-s2-capability-a.ts"
 import { effectS2SubstrateProofs } from "./effect-s2-substrate-proofs.ts"
+import fluentFiregridS2AwakeableProof from "./fluent-firegrid-s2-awakeable.ts"
 import fluentFiregridS2ObjectCrossHostProof from "./fluent-firegrid-s2-object-cross-host.ts"
 import fluentFiregridS2ObjectHandlesProof from "./fluent-firegrid-s2-object-handles.ts"
 import fluentFiregridS2ObjectLiveFencingProof from "./fluent-firegrid-s2-object-live-fencing.ts"
@@ -25,6 +26,7 @@ import tanstackWorkflowS2TimersSignalsProof from "./tanstack-workflow-s2-timers-
 const proofs = [
   effectS2CapabilityAProof,
   ...effectS2SubstrateProofs,
+  fluentFiregridS2AwakeableProof,
   fluentFiregridS2ObjectCrossHostProof,
   fluentFiregridS2ObjectHandlesProof,
   fluentFiregridS2ObjectLiveFencingProof,

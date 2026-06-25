@@ -1,5 +1,6 @@
 export {
   bindFluentDefinitions,
+  createTanStackExternalSignalBinding,
   createTanStackRuntimeBinding,
   type FluentDefinitionBindingContext,
   type FluentDefinitionBindingOptions,
@@ -42,6 +43,9 @@ export {
 } from "./clients.ts"
 export { all, race, raceAll } from "./combinators.ts"
 export {
+  type ExternalSignalBinding,
+  type ExternalSignalDelivery,
+  type ExternalSignalDeliveryRequest,
   fluentContextFromTanStack,
   FluentDurableContext,
   type FluentDurableContextService,
@@ -73,6 +77,17 @@ export {
   type WorkflowDefinition
 } from "./definitions.ts"
 export { FluentFiregridError } from "./error.ts"
+export {
+  type Awakeable,
+  awakeable,
+  type AwakeableOptions,
+  AwakeableRejected,
+  type AwakeableRejectOptions,
+  type AwakeableResolveOptions,
+  decodeAwakeableToken,
+  rejectAwakeable,
+  resolveAwakeable
+} from "./externalEvents.ts"
 export {
   type DefinitionDescriptor,
   implement,

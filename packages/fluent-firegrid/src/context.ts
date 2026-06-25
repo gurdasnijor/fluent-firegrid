@@ -22,6 +22,32 @@ export interface StateWaitBackendOptions {
   readonly waitId?: string
 }
 
+export interface SignalOperationIdentityInput {
+  readonly kind: "awakeable" | "workflowEvent"
+  readonly name: string
+}
+
+export interface ExternalSignalDeliveryRequest<Payload = unknown> {
+  readonly runId: string
+  readonly signalId: string
+  readonly stepId?: string
+  readonly name: string
+  readonly payload: Payload
+  readonly metadata?: Readonly<Record<string, unknown>>
+}
+
+export interface ExternalSignalDelivery {
+  readonly kind: string
+  readonly runId: string
+  readonly workflowId?: string
+}
+
+export interface ExternalSignalBinding<Error = unknown, Requirements = never> {
+  readonly deliverSignal: <Payload = unknown>(
+    request: ExternalSignalDeliveryRequest<Payload>
+  ) => Effect.Effect<ExternalSignalDelivery, Error, Requirements>
+}
+
 export interface ObjectStateBackend {
   readonly get: (
     table: string,
@@ -65,8 +91,11 @@ export type RunAction<A> = (
 
 export interface FluentDurableContextService {
   readonly binding?: InvocationBinding<FluentFiregridError>
+  readonly externalSignals?: ExternalSignalBinding<FluentFiregridError>
   readonly key?: string
+  readonly runId?: string
   readonly state?: ObjectStateBackend
+  readonly signalOperationId?: (input: SignalOperationIdentityInput) => string
   readonly stateOperationId?: (input: StateOperationIdentityInput) => string
   readonly step: <A>(
     name: string,
@@ -103,17 +132,22 @@ export const fluentContextFromTanStack = (
   ctx: TanStackWorkflowContext,
   options: {
     readonly binding?: InvocationBinding<FluentFiregridError>
+    readonly externalSignals?: ExternalSignalBinding<FluentFiregridError>
     readonly key?: string
     readonly state?: ObjectStateBackend
   } = {}
 ): FluentDurableContextService => {
+  let nextSignalOperation = 0
   let nextStateOperation = 0
   const runId = ctx.runId ?? "unknown-run"
   const now = ctx.now
   return {
     ...(options.binding === undefined ? {} : { binding: options.binding }),
+    ...(options.externalSignals === undefined ? {} : { externalSignals: options.externalSignals }),
     ...(options.key === undefined ? {} : { key: options.key }),
+    runId,
     ...(options.state === undefined ? {} : { state: options.state }),
+    signalOperationId: (input) => `${runId}:signal:${nextSignalOperation++}:${input.kind}:${input.name}`,
     stateOperationId: (input) => `${runId}:state:${nextStateOperation++}:${input.kind}:${input.table}:${input.key}`,
     ...(now === undefined
       ? {}

@@ -7,6 +7,7 @@ import {
   bindFluentDefinitions,
   type CallRequest,
   client,
+  createTanStackExternalSignalBinding,
   createTanStackRuntimeBinding,
   FluentDurableContext,
   type FluentDurableContextService,
@@ -269,6 +270,56 @@ describe("fluent-firegrid public surface", () => {
       name: "incident",
       runId: "manual-run"
     })
+  })
+
+  it("adapts runtime deliverSignal for external event helpers", async () => {
+    const deliveries = new Array<unknown>()
+    const binding = createTanStackExternalSignalBinding({
+      runtime: {
+        deliverSignal: async (request) => {
+          deliveries.push(request)
+          return {
+            eventCount: 1,
+            events: [],
+            kind: "completed",
+            runId: request.runId,
+            workflowId: "service:reviews:complete"
+          }
+        },
+        startRun: async () => ({
+          eventCount: 0,
+          events: [],
+          kind: "completed",
+          runId: "unused"
+        })
+      }
+    }, { now: () => 1_234 })
+
+    await expect(
+      Effect.runPromise(
+        binding.deliverSignal({
+          name: "review",
+          payload: { ok: true },
+          runId: "run-1",
+          signalId: "signal-1",
+          stepId: "step-1"
+        })
+      )
+    ).resolves.toEqual({
+      kind: "completed",
+      runId: "run-1",
+      workflowId: "service:reviews:complete"
+    })
+    expect(deliveries).toEqual([
+      {
+        name: "review",
+        now: 1_234,
+        payload: { ok: true },
+        runId: "run-1",
+        signalId: "signal-1",
+        stepId: "step-1"
+      }
+    ])
   })
 
   it("resolves ambient handler clients from FluentDurableContext", async () => {

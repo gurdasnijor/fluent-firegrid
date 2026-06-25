@@ -5,7 +5,12 @@ import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 
 import type { CallRequest, InvocationBinding, SendReference } from "./clients.ts"
-import { fluentContextFromTanStack, FluentDurableContext, type ObjectStateBackend } from "./context.ts"
+import {
+  type ExternalSignalBinding,
+  fluentContextFromTanStack,
+  FluentDurableContext,
+  type ObjectStateBackend
+} from "./context.ts"
 import type { AnyGeneratorHandler, Definition, DefinitionKind, HandlerDescriptor } from "./definitions.ts"
 import { FluentFiregridError } from "./error.ts"
 
@@ -22,6 +27,9 @@ export interface FluentDefinitionBindingContext {
 }
 
 export interface FluentDefinitionBindingOptions {
+  readonly externalSignals?:
+    | ExternalSignalBinding<FluentFiregridError>
+    | (() => ExternalSignalBinding<FluentFiregridError> | undefined)
   readonly invocationBinding?:
     | InvocationBinding<FluentFiregridError>
     | (() => InvocationBinding<FluentFiregridError> | undefined)
@@ -48,6 +56,7 @@ export const bindFluentDefinitions = (
           const input = ctx.input as FluentWorkflowInput
           const state = options.stateBackendFor?.({ definition, handlerName, input })
           const descriptor = definition._handlers[handlerName]
+          const externalSignals = externalSignalsFrom(options)
           const binding = invocationBindingFrom(options)
           const effect = Effect.gen(function*() {
             const handlerInput = yield* decodeHandlerInput(definition, handlerName, descriptor, input.input)
@@ -58,6 +67,7 @@ export const bindFluentDefinitions = (
               FluentDurableContext,
               fluentContextFromTanStack(ctx, {
                 ...(binding === undefined ? {} : { binding }),
+                ...(externalSignals === undefined ? {} : { externalSignals }),
                 ...(input.key === undefined ? {} : { key: input.key }),
                 ...(state === undefined ? {} : { state })
               })
@@ -81,6 +91,13 @@ const invocationBindingFrom = (
   typeof options.invocationBinding === "function"
     ? options.invocationBinding()
     : options.invocationBinding
+
+const externalSignalsFrom = (
+  options: FluentDefinitionBindingOptions
+): ExternalSignalBinding<FluentFiregridError> | undefined =>
+  typeof options.externalSignals === "function"
+    ? options.externalSignals()
+    : options.externalSignals
 
 const decodeHandlerInput = (
   definition: { readonly name: string },
@@ -136,6 +153,37 @@ export interface FluentRuntimeHost {
       readonly leaseOwner?: string
       readonly now?: number
     }) => Promise<WorkflowRuntimeRunResult>
+  }
+}
+
+export const createTanStackExternalSignalBinding = (
+  host: FluentRuntimeHost,
+  options: { readonly now?: () => number } = {}
+): ExternalSignalBinding<FluentFiregridError> => {
+  const now = options.now ?? Date.now
+  return {
+    deliverSignal: (request) =>
+      host.runtime.deliverSignal === undefined
+        ? Effect.fail(new FluentFiregridError({ message: "external signal delivery requires runtime.deliverSignal" }))
+        : Effect.tryPromise({
+          try: () =>
+            host.runtime.deliverSignal!({
+              name: request.name,
+              ...(request.metadata === undefined ? {} : { meta: request.metadata }),
+              now: now(),
+              payload: request.payload,
+              runId: request.runId,
+              signalId: request.signalId,
+              ...(request.stepId === undefined ? {} : { stepId: request.stepId })
+            }),
+          catch: (cause) => new FluentFiregridError({ cause, message: "external signal delivery failed" })
+        }).pipe(
+          Effect.map((result) => ({
+            kind: result.kind,
+            runId: result.runId,
+            ...(result.workflowId === undefined ? {} : { workflowId: result.workflowId })
+          }))
+        )
   }
 }
 
