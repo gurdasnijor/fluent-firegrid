@@ -13,6 +13,11 @@ These are the active design documents for this repository.
 - [`fluent-firegrid-state-materialization-sdd.md`](./fluent-firegrid-state-materialization-sdd.md) —
   virtual object state and table/materialization semantics.
 
+## Support Package Docs
+
+- [`../../packages/verification/README.md`](../../packages/verification/README.md) —
+  trace-native proof harness and current proof registry.
+
 ## Policy
 
 SDDs in this directory should describe production surfaces that exist in

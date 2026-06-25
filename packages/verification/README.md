@@ -246,8 +246,9 @@ inside the trial scope, injects:
 the process. `faults` remains as a compatibility alias for the older method
 names.
 
-This is the minimum process substrate needed before higher-level durable replay
-proofs can be meaningful.
+This process substrate is what makes the crash/restart and stale-owner proofs
+meaningful: they kill real host processes and verify recovery from persisted S2
+evidence instead of calling proof-local callbacks.
 
 ## Running Proofs
 
@@ -282,8 +283,15 @@ summary in the thrown `VerificationError`.
   `hosts.killAfterSpan`.
 - `traceSql`, `traceOperation`, and workload-result verifiers.
 - The proof CLI under `proofs/main.ts`.
-- `proofs/effect-s2-capability-a.ts`, a live substrate proof for
-  `packages/effect-s2`.
+- Live substrate proofs for `effect-s2`: capability A, conditional append,
+  read session, fencing, check-tail, stream listing, stream config, basin
+  isolation, compact, and trim.
+- TanStack/S2 store and runtime proofs: event-log CAS, run lifecycle, leases,
+  timers/signals, host tick, host crash/restart, runtime execution, approvals,
+  timer sweep, and schedule sweep.
+- Fluent object proofs over the S2 object-owner backend: durable object state,
+  object handles, cross-host attach/output, stale owner fencing, live owner
+  fencing, replayed state, and serialization boundaries.
 
 ## Not Yet Claimed
 
@@ -294,9 +302,7 @@ This package is not yet a full linearizability checker. The evidence model is
 designed so a Porcupine-style checker can consume operation-boundary spans, but
 that adapter is not implemented.
 
-This package is not yet the full durable replay proof. The current
-`effect-s2` proof validates the atomic append and stale replay rejection
-primitive that durable replay depends on. The next load-bearing proof is the
-composed host crash: crash a real host after the journal append, restart it, and
-prove from trace evidence that the journal is folded and the side effect is not
-duplicated.
+The proof registry is intentionally tied to production packages. New proofs
+should enter through `proofs/main.ts`, drive current package APIs, and assert
+from workload results plus OTel/chDB evidence. Do not add standalone proof
+packages or proof-local runtime substitutes.
