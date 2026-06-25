@@ -15,6 +15,7 @@ import { FluentFiregridError } from "./error.ts"
 import type { StatePredicate } from "./statePredicate.ts"
 
 export interface StateWaitBackendOptions {
+  readonly environmentVersion?: string
   readonly name: string
   readonly signalName: string
   readonly timeoutAt?: number

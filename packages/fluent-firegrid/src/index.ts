@@ -105,11 +105,22 @@ export {
 import * as iface from "./interface.ts"
 export { iface }
 export { objectKey, run, type RunOptions, sleep, sleepUntil, waitForSignal } from "./run.ts"
-export { cel, evaluateStatePredicate, state, validateStatePredicate } from "./state.ts"
+export {
+  cel,
+  evaluateStatePredicate,
+  state,
+  statePredicateEnvironment,
+  validateStatePredicate,
+  validateStatePredicateForEnvironment,
+  validateStatePredicateForTable
+} from "./state.ts"
 export type {
   CelStatePredicate,
   StateBinding,
   StatePredicate,
   StatePredicateContext,
+  StatePredicateEnvironment,
+  StatePredicateField,
+  StatePredicateFieldType,
   StateWaitOptions
 } from "./state.ts"

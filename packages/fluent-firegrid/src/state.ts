@@ -13,7 +13,7 @@ export {
   type StatePredicateContext,
   validateStatePredicate
 } from "./statePredicate.ts"
-import type { StatePredicate } from "./statePredicate.ts"
+import { validateStatePredicate, type StatePredicate } from "./statePredicate.ts"
 
 const PrimaryKeyAnnotation = "@firegrid/fluent-firegrid/primaryKey"
 const readPrimaryKey = SchemaAST.resolveAt<boolean>(PrimaryKeyAnnotation)
@@ -217,6 +217,25 @@ export interface StateWaitOptions {
   readonly when: StatePredicate
 }
 
+export type StatePredicateFieldType = "boolean" | "number" | "string" | "unknown"
+
+export interface StatePredicateField {
+  readonly name: string
+  readonly type: StatePredicateFieldType
+}
+
+export interface StatePredicateEnvironment {
+  readonly change: {
+    readonly key: StatePredicateField
+    readonly operation: StatePredicateField
+    readonly table: StatePredicateField
+  }
+  readonly environmentVersion: string
+  readonly old: Readonly<Record<string, StatePredicateField>>
+  readonly row: Readonly<Record<string, StatePredicateField>>
+  readonly table: string
+}
+
 const stateWaitSignalName = (table: string, key: string, name: string): string =>
   `__firegrid_state_wait:${table}:${key}:${name}`
 
@@ -229,6 +248,104 @@ const isStateWaitTimedOutPayload = (value: unknown): value is StateWaitTimedOutP
   typeof value === "object"
   && value !== null
   && (value as { readonly _tag?: unknown })._tag === "StateWaitTimedOut"
+
+const primitiveFieldType = (ast: SchemaAST.AST): StatePredicateFieldType => {
+  const typeAst = SchemaAST.toType(ast)
+  if (SchemaAST.isString(typeAst)) return "string"
+  if (SchemaAST.isNumber(typeAst)) return "number"
+  if (SchemaAST.isBoolean(typeAst)) return "boolean"
+  if (SchemaAST.isLiteral(typeAst)) {
+    const literalType = typeof typeAst.literal
+    if (literalType === "string" || literalType === "number" || literalType === "boolean") {
+      return literalType
+    }
+  }
+  if (SchemaAST.isUnion(typeAst)) {
+    const fieldTypes = new Set(typeAst.types.map(primitiveFieldType).filter((fieldType) => fieldType !== "unknown"))
+    return fieldTypes.size === 1 ? Array.from(fieldTypes)[0]! : "unknown"
+  }
+  return "unknown"
+}
+
+const predicateFieldsFor = (table: AnyTable): Readonly<Record<string, StatePredicateField>> => {
+  const fields: Array<readonly [string, StatePredicateField]> = Object.entries(table.schema.fields)
+    .map(([name, field]) => [
+      name,
+      {
+        name,
+        type: primitiveFieldType(field.ast)
+      } satisfies StatePredicateField
+    ])
+  return Object.fromEntries(fields.sort(([left], [right]) => left.localeCompare(right)))
+}
+
+const predicateEnvironmentVersion = (
+  table: string,
+  fields: Readonly<Record<string, StatePredicateField>>
+): string =>
+  `table:${table}:${Object.values(fields).map((field) => `${field.name}:${field.type}`).join(",")}`
+
+export const statePredicateEnvironment = (table: AnyTable): StatePredicateEnvironment => {
+  const fields = predicateFieldsFor(table)
+  return {
+    change: {
+      key: { name: "key", type: "string" },
+      operation: { name: "operation", type: "string" },
+      table: { name: "table", type: "string" }
+    },
+    environmentVersion: predicateEnvironmentVersion(table.tableName, fields),
+    old: fields,
+    row: fields,
+    table: table.tableName
+  }
+}
+
+const stripCelStringLiterals = (expression: string): string =>
+  expression.replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, "")
+
+const referencedStateFields = (
+  expression: string
+): ReadonlyArray<{ readonly scope: "old" | "row"; readonly field: string }> => {
+  const references = new Array<{ readonly scope: "old" | "row"; readonly field: string }>()
+  const stripped = stripCelStringLiterals(expression)
+  const pattern = /\b(row|old)\.([A-Za-z_][A-Za-z0-9_]*)/g
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(stripped)) !== null) {
+    references.push({ field: match[2]!, scope: match[1] as "old" | "row" })
+  }
+  return references
+}
+
+export const validateStatePredicateForEnvironment: (
+  predicate: StatePredicate,
+  environment: StatePredicateEnvironment
+) => Effect.Effect<void, FluentFiregridError> = Effect.fn("validateStatePredicateForEnvironment")(function*(
+  predicate,
+  environment
+) {
+  yield* validateStatePredicate(predicate)
+  const unknownReferences = referencedStateFields(predicate.expression).filter(
+    ({ field, scope }) => environment[scope][field] === undefined
+  )
+  if (unknownReferences.length > 0) {
+    const formatted = unknownReferences.map(({ field, scope }) => `${scope}.${field}`).join(", ")
+    return yield* Effect.fail(
+      new FluentFiregridError({
+        message: `invalid state wait predicate for table ${environment.table}: unknown field reference ${formatted}`
+      })
+    )
+  }
+})
+
+export const validateStatePredicateForTable: (
+  table: AnyTable,
+  predicate: StatePredicate
+) => Effect.Effect<void, FluentFiregridError> = Effect.fn("validateStatePredicateForTable")(function*(
+  table,
+  predicate
+) {
+  yield* validateStatePredicateForEnvironment(predicate, statePredicateEnvironment(table))
+})
 
 const encodeRowFor = <Tbl extends AnyTable>(
   table: Tbl,
@@ -315,12 +432,15 @@ export const state = <Tbl extends AnyTable>(table: Tbl): StateBinding<RowOf<Tbl>
             new FluentFiregridError({ message: "state.waitFor is not supported by this state backend" })
           )
         }
+        const predicateEnvironment = statePredicateEnvironment(table)
+        yield* validateStatePredicateForEnvironment(options.when, predicateEnvironment)
         const waitId = ctx.stateOperationId?.({ key, kind: "waitFor", table: table.tableName })
         const signalName = stateWaitSignalName(table.tableName, key, options.name)
         const timeoutAt = options.timeoutMs === undefined || ctx.now === undefined
           ? undefined
           : (yield* ctx.now(waitId === undefined ? undefined : { id: `${waitId}:timeoutAt` })) + options.timeoutMs
         const registered = yield* backend.waitFor(table.tableName, key, options.when, {
+          environmentVersion: predicateEnvironment.environmentVersion,
           name: options.name,
           signalName,
           ...(timeoutAt === undefined ? {} : { timeoutAt }),

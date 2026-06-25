@@ -10,6 +10,7 @@ import {
   MaterializedState,
   primaryKey,
   state,
+  statePredicateEnvironment,
   Table
 } from "../src/state.ts"
 
@@ -85,6 +86,26 @@ describe("ChangeMessage projection", () => {
 })
 
 describe("state wait predicates", () => {
+  it("derives a serializable predicate environment from the table schema", () => {
+    expect(statePredicateEnvironment(Item)).toEqual({
+      change: {
+        key: { name: "key", type: "string" },
+        operation: { name: "operation", type: "string" },
+        table: { name: "table", type: "string" }
+      },
+      environmentVersion: "table:items:id:string,value:number",
+      old: {
+        id: { name: "id", type: "string" },
+        value: { name: "value", type: "number" }
+      },
+      row: {
+        id: { name: "id", type: "string" },
+        value: { name: "value", type: "number" }
+      },
+      table: "items"
+    })
+  })
+
   it("evaluates serializable CEL predicates against the row context", async () => {
     const result = await Effect.runPromise(
       evaluateStatePredicate(cel("row.value >= 3 && row.id == 'a'"), {
@@ -160,6 +181,7 @@ describe("state(Table)", () => {
       | {
         readonly key: string
         readonly name: string
+        readonly environmentVersion?: string
         readonly signalName: string
         readonly table: string
         readonly timeoutAt?: number
@@ -176,6 +198,7 @@ describe("state(Table)", () => {
       waitFor: (table, key, predicate, options) =>
         Effect.sync(() => {
           captured = {
+            ...(options.environmentVersion === undefined ? {} : { environmentVersion: options.environmentVersion }),
             expression: predicate.expression,
             key,
             name: options.name,
@@ -205,6 +228,7 @@ describe("state(Table)", () => {
 
     await expect(Effect.runPromise(program)).resolves.toEqual({ id: "a", value: 7 })
     expect(captured).toEqual({
+      environmentVersion: "table:items:id:string,value:number",
       expression: "row.value >= 7",
       key: "a",
       name: "value-ready",
@@ -214,6 +238,36 @@ describe("state(Table)", () => {
       timeoutMs: 1_000,
       waitId: "state-op:0:waitFor:items:a"
     })
+  })
+
+  it("rejects state waits that reference fields outside the table schema", async () => {
+    let backendCalled = false
+    const backend: ObjectStateBackend = {
+      get: () => Effect.succeed(Option.none()),
+      set: () => Effect.void,
+      delete: () => Effect.void,
+      waitFor: () =>
+        Effect.sync(() => {
+          backendCalled = true
+          return Option.none()
+        })
+    }
+
+    const program = state(Item).waitFor("a", {
+      name: "bad-reference",
+      when: cel("row.missing == 'ready'")
+    }).pipe(
+      Effect.provideService(
+        FluentDurableContext,
+        testContext(backend, ({ kind, table, key }) => `state-op:0:${kind}:${table}:${key}`)
+      )
+    )
+
+    await expect(Effect.runPromise(program)).rejects.toMatchObject({
+      _tag: "FluentFiregridError",
+      message: "invalid state wait predicate for table items: unknown field reference row.missing"
+    })
+    expect(backendCalled).toBeFalsy()
   })
 
   it("parks on the ambient signal when the backend registers a wait", async () => {

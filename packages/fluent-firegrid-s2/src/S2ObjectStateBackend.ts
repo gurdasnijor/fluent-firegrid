@@ -64,6 +64,7 @@ interface InvocationProjection {
 interface StateWaitRegisteredEvent {
   readonly _tag: "StateWaitRegistered"
   readonly callId: string
+  readonly environmentVersion?: string
   readonly key: string
   readonly name: string
   readonly predicate: StatePredicate
@@ -424,6 +425,7 @@ const waitForState = (
     yield* appendStateWaitRegistration(runtime, owner.invocationStreamName, {
       _tag: "StateWaitRegistered",
       callId: owner.callId,
+      ...(options.environmentVersion === undefined ? {} : { environmentVersion: options.environmentVersion }),
       key,
       name: options.name,
       predicate,

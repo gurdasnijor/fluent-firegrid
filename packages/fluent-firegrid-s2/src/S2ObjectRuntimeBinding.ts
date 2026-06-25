@@ -64,6 +64,7 @@ type ErroredEvent = { readonly _tag: "Errored"; readonly callId: string; readonl
 type StateWaitRegisteredEvent = {
   readonly _tag: "StateWaitRegistered"
   readonly callId: string
+  readonly environmentVersion?: string
   readonly key: string
   readonly name: string
   readonly signalName: string

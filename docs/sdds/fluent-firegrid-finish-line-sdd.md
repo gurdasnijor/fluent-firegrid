@@ -65,8 +65,7 @@ Firegrid has the runtime pieces:
 
 Remaining gaps:
 
-- canonical webhook guide and example;
-- documented retry/dedupe behavior for external senders.
+- provider-specific examples for common webhook senders.
 
 ### Service Communication
 
@@ -118,7 +117,8 @@ keeping the predicate portable and inspectable.
 
 ### External Events
 
-This is the largest product gap.
+This is now mostly an ergonomics and examples gap above the durable signal
+substrate.
 
 Implemented substrate:
 
@@ -128,14 +128,18 @@ Implemented substrate:
 
 Remaining gaps:
 
+- public signal delivery client helpers;
+- examples for human approval, webhook callback, and async external task-token
+  patterns;
+- duplicate resolve/reject behavior should be explicitly tested and documented.
+
+Implemented:
+
 - `awakeable<T>()`;
 - `resolveAwakeable` / `rejectAwakeable`;
 - HTTP resolve/reject endpoints for external systems;
-- workflow-scoped durable promises;
-- public signal delivery client helpers;
-- rejection/terminal-error semantics;
-- examples for human approval, webhook callback, and async external task-token
-  patterns.
+- workflow-scoped durable event helpers;
+- rejection/terminal-error semantics.
 
 ## Target API Shape
 
@@ -441,13 +445,16 @@ Implementation status as of June 25, 2026:
 - `cel("...")`, predicate validation/evaluation, and
   `state(Table).waitFor(key, { name, when, timeoutMs })` exist in
   `@firegrid/fluent-firegrid`;
+- the keyed wait path derives a serializable predicate environment from the
+  table schema, rejects unknown `row.*` / `old.*` field references at
+  registration time, and passes a stable `environmentVersion` into the backend
+  registration record;
 - the S2 object state backend evaluates keyed waits against the materialized row
   projection and appends `StateWaitRegistered` / `StateWaitReady` records;
 - the S2 object runtime skips pending state-wait calls, continues draining later
   same-key calls, resumes ready waits through the queue-owned signal path, and
   turns expired `timeoutAt` registrations into typed wait failures;
-- remaining gaps are schema-derived CEL environment generation, query/index
-  waits, and richer typed CEL builder ergonomics.
+- remaining gaps are query/index waits and richer typed CEL builder ergonomics.
 
 Query waits can come later, but must require an indexable declaration so the
 runtime does not scan all rows/waits:
