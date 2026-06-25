@@ -15,7 +15,7 @@ export const effectS2FlowHost = () =>
       `${tsxRoot}/dist/preflight.cjs`,
       "--import",
       pathToFileURL(`${tsxRoot}/dist/loader.mjs`).href,
-      `${repoRoot}/packages/effect-s2-flow/src/HostMain.ts`
+      `${repoRoot}/packages/verification/proofs/effect-s2-flow-proof-host.ts`
     ],
     cwd: repoRoot,
     stderr: "inherit"

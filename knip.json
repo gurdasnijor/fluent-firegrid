@@ -9,9 +9,6 @@
       ]
     },
     "packages/effect-s2-flow": {
-      "entry": [
-        "src/HostMain.ts!"
-      ],
       "project": [
         "src/**/*.ts!",
         "test/**/*.ts"
@@ -19,7 +16,8 @@
     },
     "packages/verification": {
       "entry": [
-        "proofs/main.ts!"
+        "proofs/main.ts!",
+        "proofs/effect-s2-flow-proof-host.ts!"
       ],
       "project": [
         "src/**/*.ts!",

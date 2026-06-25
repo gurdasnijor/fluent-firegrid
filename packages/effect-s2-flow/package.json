@@ -29,7 +29,6 @@
   "scripts": {
     "build": "tsc",
     "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
-    "host": "tsx src/HostMain.ts",
     "lint": "oxlint -f unix --config ../../.oxlintrc.json .",
     "test": "vitest run --root ../.. --project effect-s2-flow --passWithNoTests",
     "typecheck": "tsc --noEmit"
@@ -45,7 +44,6 @@
   "devDependencies": {
     "@effect/language-service": "^0.86.2",
     "@types/node": "^22.10.0",
-    "tsx": "^4.22.4",
     "typescript": "^5.7.0",
     "vitest": "^3.2.0"
   }
