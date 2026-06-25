@@ -1,18 +1,9 @@
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
 import * as NodeSdk from "@effect/opentelemetry/NodeSdk"
 import { RemoteChdbSpanExporter } from "@firegrid/observability"
 import { SimpleSpanProcessor } from "@opentelemetry/sdk-trace-base"
-import {
-  AppendInput,
-  AppendRecord,
-  basin,
-  basins,
-  layer as S2Layer,
-  type S2Error,
-  stream as s2Stream,
-  type StreamApi
-} from "effect-s2"
+import { AppendInput, type AppendRecord, type StreamApi } from "effect-s2"
 import * as Context from "effect/Context"
-import * as Data from "effect/Data"
 import type * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
@@ -22,17 +13,24 @@ import * as Ref from "effect/Ref"
 import * as Result from "effect/Result"
 import * as Stream from "effect/Stream"
 
-const defaultBasin = "effect-s2-flow"
-const invocationPrefix = (serviceName: string): string => `${serviceName}.invocation.`
-const invocationStream = (serviceName: string, invocationId: string): string =>
-  `${invocationPrefix(serviceName)}${invocationId}`
-const objectPrefix = (objectName: string): string => `${objectName}.object.`
-const objectStream = (objectName: string, key: string): string => `${objectPrefix(objectName)}${key}`
-
-export class FlowError extends Data.TaggedError("FlowError")<{
-  readonly message: string
-  readonly cause?: unknown
-}> {}
+import { FlowError } from "./FlowError.ts"
+import {
+  decodeRecord,
+  defaultBasin,
+  encodeRecord,
+  ensureBasin,
+  ensureInvocationJournalStream,
+  flowS2Error,
+  invocationPrefix,
+  invocationStream,
+  listInvocationJournalStreams,
+  objectPrefix,
+  objectStream,
+  readInvocationJournal,
+  recordTypeHeader,
+  stateHeaders,
+  stepHeaders
+} from "./InvocationJournal.ts"
 
 export interface FlowRuntimeConfig {
   readonly s2Endpoint: string
@@ -101,128 +99,6 @@ export const object = <Handlers extends ServiceHandlers>(
   definition: Omit<ObjectDefinition<Handlers>, "kind">
 ): ObjectDefinition<Handlers> => ({ ...definition, kind: "object" })
 
-const s2Layer = (endpoint: string) =>
-  S2Layer({
-    accessToken: "s2_access_token",
-    endpoints: {
-      account: endpoint,
-      basin: endpoint
-    },
-    retry: { maxAttempts: 1 }
-  })
-
-const flowS2Error = (message: string) => (cause: S2Error): FlowError => new FlowError({ message, cause })
-
-const withS2 = <A, E, R>(
-  effect: Effect.Effect<A, E, R>,
-  runtime: Required<FlowRuntimeConfig>
-) => effect.pipe(Effect.provide(s2Layer(runtime.s2Endpoint)))
-
-type FlowRecord =
-  | {
-    readonly _tag: "Invoke"
-    readonly requestId: string
-    readonly service: string
-    readonly method: string
-    readonly input: unknown
-  }
-  | {
-    readonly _tag: "StepCompleted"
-    readonly requestId: string
-    readonly stepName: string
-    readonly value: unknown
-  }
-  | {
-    readonly _tag: "StateChanged"
-    readonly stateName: string
-    readonly value: unknown
-  }
-  | {
-    readonly _tag: "CheckpointAdvanced"
-    readonly nextSeqNum: number
-  }
-  | {
-    readonly _tag: "Completed"
-    readonly requestId: string
-    readonly value: unknown
-  }
-  | {
-    readonly _tag: "Failed"
-    readonly requestId: string
-    readonly message: string
-  }
-
-const encodeRecord = (
-  record: FlowRecord,
-  headers: ReadonlyArray<readonly [string, string]>
-): AppendRecord =>
-  AppendRecord.string({
-    body: JSON.stringify(record),
-    headers
-  })
-
-const decodeRecord = (body: string): FlowRecord => JSON.parse(body) as FlowRecord
-
-const recordTypeHeader = (type: FlowRecord["_tag"]): ReadonlyArray<readonly [string, string]> => [
-  ["effect-s2-flow.record.type", type]
-]
-
-const stepHeaders = (type: FlowRecord["_tag"], stepName: string): ReadonlyArray<readonly [string, string]> => [
-  ...recordTypeHeader(type),
-  ["effect-s2-flow.step.name", stepName]
-]
-
-const stateHeaders = (stateName: string): ReadonlyArray<readonly [string, string]> => [
-  ...recordTypeHeader("StateChanged"),
-  ["effect-s2-flow.state.name", stateName]
-]
-
-const ensureInvocationStream = Effect.fn("effect-s2-flow.ensureInvocationStream")(function*(
-  runtime: Required<FlowRuntimeConfig>,
-  streamName: string
-) {
-  yield* withS2(
-    basins.ensure({ basin: runtime.basin }).pipe(
-      Effect.mapError(flowS2Error(`failed to ensure basin ${runtime.basin}`))
-    ),
-    runtime
-  )
-  yield* withS2(
-    basin(runtime.basin).pipe(
-      Effect.flatMap((basinApi) => basinApi.streams.ensure({ stream: streamName })),
-      Effect.mapError(flowS2Error(`failed to ensure invocation stream ${streamName}`))
-    ),
-    runtime
-  )
-  return yield* withS2(
-    s2Stream(runtime.basin, streamName).pipe(
-      Effect.mapError(flowS2Error(`failed to open invocation stream ${streamName}`))
-    ),
-    runtime
-  )
-})
-
-const collectCurrentRecords = Effect.fn("effect-s2-flow.collectCurrentRecords")(function*(streamApi: StreamApi) {
-  const tail = yield* streamApi.checkTail().pipe(
-    Effect.mapError(flowS2Error("failed to check invocation tail"))
-  )
-  if (tail.tail.seqNum === 0) {
-    return {
-      nextSeqNum: 0,
-      records: [] as ReadonlyArray<FlowRecord>
-    }
-  }
-  const records = yield* streamApi.readSession({
-    start: { from: { seqNum: 0 } },
-    stop: { limits: { count: tail.tail.seqNum } }
-  }).pipe(
-    Stream.runCollect,
-    Effect.mapError(flowS2Error("failed to read invocation journal")),
-    Effect.map((items) => Array.from(items, (record) => decodeRecord(record.body)))
-  )
-  return { nextSeqNum: tail.tail.seqNum, records }
-})
-
 export function client<Handlers extends ServiceHandlers>(
   definition: ServiceDefinition<Handlers>,
   options?: ClientOptions
@@ -263,7 +139,7 @@ const invoke = Effect.fn("effect-s2-flow.client.invoke")(function*(
   const streamName = definition.kind === "service"
     ? invocationStream(definition.name, requestId)
     : objectStream(definition.name, options.key!)
-  const streamApi = yield* ensureInvocationStream(runtime, streamName)
+  const streamApi = yield* ensureInvocationJournalStream(runtime, streamName)
 
   const invokeRecords = [
     encodeRecord({
@@ -440,8 +316,8 @@ const processInvocation = Effect.fn("effect-s2-flow.processInvocation")(function
   serviceDefinition: FlowDefinition<ServiceHandlers>,
   streamName: string
 ) {
-  const streamApi = yield* ensureInvocationStream(runtime, streamName)
-  const snapshot = yield* collectCurrentRecords(streamApi).pipe(
+  const streamApi = yield* ensureInvocationJournalStream(runtime, streamName)
+  const snapshot = yield* readInvocationJournal(streamApi).pipe(
     Effect.withSpan("effect-s2-flow.owner.rehydrate", {
       attributes: {
         "effect-s2-flow.invocation.stream": streamName,
@@ -530,29 +406,22 @@ const discoverInvocations = Effect.fn("effect-s2-flow.discoverInvocations")(func
   runtime: Required<FlowRuntimeConfig>,
   serviceDefinition: FlowDefinition<ServiceHandlers>
 ) {
-  const basinApi = yield* withS2(
-    basin(runtime.basin).pipe(
-      Effect.mapError(flowS2Error(`failed to open basin ${runtime.basin}`))
-    ),
-    runtime
-  )
   const prefix = serviceDefinition.kind === "service"
     ? invocationPrefix(serviceDefinition.name)
     : objectPrefix(serviceDefinition.name)
-  return yield* basinApi.streams.list({ prefix, limit: 1000 }).pipe(
-    Effect.map((response) => response.streams.map((stream) => stream.name)),
-    Effect.mapError(flowS2Error(`failed to list invocations for ${serviceDefinition.name}`))
+  return yield* listInvocationJournalStreams(runtime, prefix).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof FlowError ? cause : new FlowError({
+        message: `failed to list invocations for ${serviceDefinition.name}`,
+        cause
+      })
+    )
   )
 })
 
 export const serve = Effect.fn("effect-s2-flow.serve")(function*(options: ServeOptions) {
   const runtime = yield* FlowRuntime
-  yield* withS2(
-    basins.ensure({ basin: runtime.basin }).pipe(
-      Effect.mapError(flowS2Error(`failed to ensure basin ${runtime.basin}`))
-    ),
-    runtime
-  )
+  yield* ensureBasin(runtime)
   const active = yield* Ref.make<ReadonlySet<string>>(new Set())
   const pollInterval = options.pollInterval ?? "50 millis"
 
@@ -603,3 +472,12 @@ export const hostTraceLayerFromEnv = () => {
     spanProcessor: [new SimpleSpanProcessor(new RemoteChdbSpanExporter(endpoint))]
   }))
 }
+
+export const hostLayerFromEnv = () => Layer.mergeAll(flowRuntimeLayerFromEnv(), hostTraceLayerFromEnv())
+
+export const runHostMain = (options: ServeOptions): void =>
+  NodeRuntime.runMain(
+    serve(options).pipe(
+      Effect.provide(hostLayerFromEnv())
+    )
+  )

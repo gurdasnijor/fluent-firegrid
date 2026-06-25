@@ -12,13 +12,17 @@
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     },
-    "./capability-a-greeter": {
-      "types": "./src/CapabilityAGreeter.ts",
-      "default": "./src/CapabilityAGreeter.ts"
+    "./invocation-journal": {
+      "types": "./src/InvocationJournal.ts",
+      "default": "./src/InvocationJournal.ts"
     },
-    "./capability-b-counter": {
-      "types": "./src/CapabilityBCounter.ts",
-      "default": "./src/CapabilityBCounter.ts"
+    "./examples/greeter": {
+      "types": "./src/examples/Greeter.ts",
+      "default": "./src/examples/Greeter.ts"
+    },
+    "./examples/counter": {
+      "types": "./src/examples/Counter.ts",
+      "default": "./src/examples/Counter.ts"
     }
   },
   "files": ["src", "README.md"],

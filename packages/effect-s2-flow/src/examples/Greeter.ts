@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect"
 
-import { run, service } from "./runtime.ts"
+import { run, service } from "../runtime.ts"
 
 export const greeter = service({
   name: "greeter",

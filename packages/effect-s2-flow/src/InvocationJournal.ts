@@ -1,0 +1,183 @@
+import {
+  AppendRecord,
+  basin,
+  basins,
+  layer as S2Layer,
+  type S2Error,
+  stream as s2Stream,
+  type StreamApi
+} from "effect-s2"
+import * as Effect from "effect/Effect"
+import * as Stream from "effect/Stream"
+
+import { FlowError } from "./FlowError.ts"
+
+export const defaultBasin = "effect-s2-flow"
+
+export interface InvocationJournalRuntimeConfig {
+  readonly basin: string
+  readonly s2Endpoint: string
+}
+
+export type InvocationJournalRecord =
+  | {
+    readonly _tag: "Invoke"
+    readonly requestId: string
+    readonly service: string
+    readonly method: string
+    readonly input: unknown
+  }
+  | {
+    readonly _tag: "StepCompleted"
+    readonly requestId: string
+    readonly stepName: string
+    readonly value: unknown
+  }
+  | {
+    readonly _tag: "StateChanged"
+    readonly stateName: string
+    readonly value: unknown
+  }
+  | {
+    readonly _tag: "CheckpointAdvanced"
+    readonly nextSeqNum: number
+  }
+  | {
+    readonly _tag: "Completed"
+    readonly requestId: string
+    readonly value: unknown
+  }
+  | {
+    readonly _tag: "Failed"
+    readonly requestId: string
+    readonly message: string
+  }
+
+export interface InvocationJournal {
+  readonly nextSeqNum: number
+  readonly records: ReadonlyArray<InvocationJournalRecord>
+}
+
+export const invocationPrefix = (serviceName: string): string => `${serviceName}.invocation.`
+
+export const invocationStream = (serviceName: string, invocationId: string): string =>
+  `${invocationPrefix(serviceName)}${invocationId}`
+
+export const objectPrefix = (objectName: string): string => `${objectName}.object.`
+
+export const objectStream = (objectName: string, key: string): string => `${objectPrefix(objectName)}${key}`
+
+export const encodeRecord = (
+  record: InvocationJournalRecord,
+  headers: ReadonlyArray<readonly [string, string]>
+): AppendRecord =>
+  AppendRecord.string({
+    body: JSON.stringify(record),
+    headers
+  })
+
+export const decodeRecord = (body: string): InvocationJournalRecord => JSON.parse(body) as InvocationJournalRecord
+
+export const recordTypeHeader = (type: InvocationJournalRecord["_tag"]): ReadonlyArray<readonly [string, string]> => [
+  ["effect-s2-flow.record.type", type]
+]
+
+export const stepHeaders = (
+  type: InvocationJournalRecord["_tag"],
+  stepName: string
+): ReadonlyArray<readonly [string, string]> => [
+  ...recordTypeHeader(type),
+  ["effect-s2-flow.step.name", stepName]
+]
+
+export const stateHeaders = (stateName: string): ReadonlyArray<readonly [string, string]> => [
+  ...recordTypeHeader("StateChanged"),
+  ["effect-s2-flow.state.name", stateName]
+]
+
+export const s2Layer = (endpoint: string) =>
+  S2Layer({
+    accessToken: "s2_access_token",
+    endpoints: {
+      account: endpoint,
+      basin: endpoint
+    },
+    retry: { maxAttempts: 1 }
+  })
+
+export const flowS2Error = (message: string) => (cause: S2Error): FlowError => new FlowError({ message, cause })
+
+export const withS2 = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  runtime: InvocationJournalRuntimeConfig
+) => effect.pipe(Effect.provide(s2Layer(runtime.s2Endpoint)))
+
+export const ensureBasin = Effect.fn("effect-s2-flow.invocationJournal.ensureBasin")(function*(
+  runtime: InvocationJournalRuntimeConfig
+) {
+  return yield* withS2(
+    basins.ensure({ basin: runtime.basin }).pipe(
+      Effect.mapError(flowS2Error(`failed to ensure basin ${runtime.basin}`))
+    ),
+    runtime
+  )
+})
+
+export const ensureInvocationJournalStream = Effect.fn("effect-s2-flow.invocationJournal.ensureStream")(function*(
+  runtime: InvocationJournalRuntimeConfig,
+  streamName: string
+) {
+  yield* ensureBasin(runtime)
+  yield* withS2(
+    basin(runtime.basin).pipe(
+      Effect.flatMap((basinApi) => basinApi.streams.ensure({ stream: streamName })),
+      Effect.mapError(flowS2Error(`failed to ensure invocation stream ${streamName}`))
+    ),
+    runtime
+  )
+  return yield* withS2(
+    s2Stream(runtime.basin, streamName).pipe(
+      Effect.mapError(flowS2Error(`failed to open invocation stream ${streamName}`))
+    ),
+    runtime
+  )
+})
+
+export const readInvocationJournal = Effect.fn("effect-s2-flow.invocationJournal.read")(
+  function*(streamApi: StreamApi) {
+    const tail = yield* streamApi.checkTail().pipe(
+      Effect.mapError(flowS2Error("failed to check invocation tail"))
+    )
+    if (tail.tail.seqNum === 0) {
+      return {
+        nextSeqNum: 0,
+        records: [] as ReadonlyArray<InvocationJournalRecord>
+      }
+    }
+    const records = yield* streamApi.readSession({
+      start: { from: { seqNum: 0 } },
+      stop: { limits: { count: tail.tail.seqNum } }
+    }).pipe(
+      Stream.runCollect,
+      Effect.mapError(flowS2Error("failed to read invocation journal")),
+      Effect.map((items) => Array.from(items, (record) => decodeRecord(record.body)))
+    )
+    return { nextSeqNum: tail.tail.seqNum, records }
+  }
+)
+
+export const listInvocationJournalStreams = Effect.fn("effect-s2-flow.invocationJournal.listStreams")(function*(
+  runtime: InvocationJournalRuntimeConfig,
+  prefix: string
+) {
+  const basinApi = yield* withS2(
+    basin(runtime.basin).pipe(
+      Effect.mapError(flowS2Error(`failed to open basin ${runtime.basin}`))
+    ),
+    runtime
+  )
+  return yield* basinApi.streams.list({ prefix, limit: 1000 }).pipe(
+    Effect.map((response) => response.streams.map((stream) => stream.name)),
+    Effect.mapError(flowS2Error(`failed to list streams for ${prefix}`))
+  )
+})
