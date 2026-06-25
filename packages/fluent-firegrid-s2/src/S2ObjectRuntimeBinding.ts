@@ -346,7 +346,7 @@ const waitForCompletion = (
   callId: string
 ): Effect.Effect<CompletedEvent, unknown> =>
   Effect.gen(function*() {
-    for (let attempt = 0; attempt < 500; attempt += 1) {
+    for (let attempt = 0; attempt < 2_000; attempt += 1) {
       yield* drain(runtime, streamName, ownerId, now, ownerLeaseMs, host, request)
       const projection = yield* readProjection(runtime, streamName)
       const completed = projection.completed.get(callId)

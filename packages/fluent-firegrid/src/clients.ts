@@ -38,7 +38,16 @@ export interface InvocationBinding<Error = unknown, Requirements = never> {
   readonly send: <Output>(request: SendRequest) => Effect.Effect<SendReference<Output>, Error, Requirements>
 }
 
-export type Client<
+type ClientResult<
+  Mode extends ClientMode,
+  Handler extends AnyGeneratorHandler,
+  Error,
+  Requirements
+> = Mode extends "call" ? Effect.Effect<HandlerOutput<Handler>, Error, Requirements>
+  : Effect.Effect<SendReference<HandlerOutput<Handler>>, Error, Requirements>
+
+type ClientShape<
+  Mode extends ClientMode,
   Handlers extends Record<string, AnyGeneratorHandler>,
   Error = unknown,
   Requirements = never
@@ -46,19 +55,20 @@ export type Client<
   readonly [Key in keyof Handlers]: (
     input: HandlerInput<Handlers[Key]>,
     options?: { readonly runId?: string }
-  ) => Effect.Effect<HandlerOutput<Handlers[Key]>, Error, Requirements>
+  ) => ClientResult<Mode, Handlers[Key], Error, Requirements>
 }
+
+export type Client<
+  Handlers extends Record<string, AnyGeneratorHandler>,
+  Error = unknown,
+  Requirements = never
+> = ClientShape<"call", Handlers, Error, Requirements>
 
 export type SendClient<
   Handlers extends Record<string, AnyGeneratorHandler>,
   Error = unknown,
   Requirements = never
-> = {
-  readonly [Key in keyof Handlers]: (
-    input: HandlerInput<Handlers[Key]>,
-    options?: { readonly runId?: string }
-  ) => Effect.Effect<SendReference<HandlerOutput<Handlers[Key]>>, Error, Requirements>
-}
+> = ClientShape<"send", Handlers, Error, Requirements>
 
 export type ObjectClient<
   Handlers extends Record<string, AnyGeneratorHandler>,
@@ -81,6 +91,17 @@ type ClientFor<
   Requirements
 > = Mode extends "call" ? Client<Handlers, Error, Requirements> : SendClient<Handlers, Error, Requirements>
 
+type UntypedDefinition = BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>
+type UntypedObjectDefinition = BindableDefinition<string, "object", Record<string, AnyGeneratorHandler>>
+
+type ObjectClientFor<
+  Mode extends ClientMode,
+  Handlers extends Record<string, AnyGeneratorHandler>,
+  Error,
+  Requirements
+> = Mode extends "call" ? ObjectClient<Handlers, Error, Requirements>
+  : SendObjectClient<Handlers, Error, Requirements>
+
 type BindableDefinition<
   Name extends string,
   Kind extends DefinitionKind,
@@ -89,6 +110,49 @@ type BindableDefinition<
   readonly name: Name
   readonly _kind: Kind
   readonly _handlers: HandlerDescriptors<Handlers>
+}
+
+interface BindingClientFactory<Mode extends ClientMode> {
+  <
+    const Name extends string,
+    const Kind extends DefinitionKind,
+    const Handlers extends Record<string, AnyGeneratorHandler>,
+    Error = unknown,
+    Requirements = never
+  >(
+    binding: InvocationBinding<Error, Requirements>,
+    definition: BindableDefinition<Name, Kind, Handlers>,
+    key?: string
+  ): ClientFor<Mode, Handlers, Error, Requirements>
+}
+
+interface ContextualClientFactory<Mode extends ClientMode> extends BindingClientFactory<Mode> {
+  <
+    const Name extends string,
+    const Kind extends DefinitionKind,
+    const Handlers extends Record<string, AnyGeneratorHandler>
+  >(
+    definition: BindableDefinition<Name, Kind, Handlers>
+  ): ClientFor<Mode, Handlers, FluentFiregridError, FluentDurableContext>
+}
+
+interface ObjectContextualClientFactory<Mode extends ClientMode> {
+  <
+    const Name extends string,
+    const Handlers extends Record<string, AnyGeneratorHandler>,
+    Error = unknown,
+    Requirements = never
+  >(
+    binding: InvocationBinding<Error, Requirements>,
+    definition: BindableDefinition<Name, "object", Handlers>
+  ): ObjectClientFor<Mode, Handlers, Error, Requirements>
+
+  <
+    const Name extends string,
+    const Handlers extends Record<string, AnyGeneratorHandler>
+  >(
+    definition: BindableDefinition<Name, "object", Handlers>
+  ): ObjectClientFor<Mode, Handlers, FluentFiregridError, FluentDurableContext>
 }
 
 const methodNames = (descriptors: Record<string, HandlerDescriptor>): ReadonlyArray<string> => Object.keys(descriptors)
@@ -160,224 +224,59 @@ const bindAmbientContext = (mode: ClientMode) =>
     ])
   ) as ClientFor<typeof mode, Handlers, FluentFiregridError, FluentDurableContext>
 
-export const client = bindInvocationBinding("call") as <
-  const Name extends string,
-  const Kind extends DefinitionKind,
-  const Handlers extends Record<string, AnyGeneratorHandler>,
-  Error = unknown,
-  Requirements = never
->(
-  binding: InvocationBinding<Error, Requirements>,
-  definition: BindableDefinition<Name, Kind, Handlers>,
-  key?: string
-) => Client<Handlers, Error, Requirements>
+const contextualClient = (
+  mode: ClientMode,
+  first: unknown,
+  second: unknown | undefined,
+  key: string | undefined
+) =>
+  second === undefined
+    ? bindAmbientContext(mode)(first as UntypedDefinition, key)
+    : bindInvocationBinding(mode)(first as InvocationBinding, second as UntypedDefinition, key)
 
-export const sendClient = bindInvocationBinding("send") as <
-  const Name extends string,
-  const Kind extends DefinitionKind,
-  const Handlers extends Record<string, AnyGeneratorHandler>,
-  Error = unknown,
-  Requirements = never
->(
-  binding: InvocationBinding<Error, Requirements>,
-  definition: BindableDefinition<Name, Kind, Handlers>,
-  key?: string
-) => SendClient<Handlers, Error, Requirements>
+const keyedContextualClient = (
+  mode: ClientMode,
+  first: unknown,
+  second: unknown | undefined
+) =>
+  second === undefined
+    ? (key: string) => bindAmbientContext(mode)(first as UntypedObjectDefinition, key)
+    : (key: string) => bindInvocationBinding(mode)(first as InvocationBinding, second as UntypedObjectDefinition, key)
 
-export function serviceClient<
-  const Name extends string,
-  const Kind extends DefinitionKind,
-  const Handlers extends Record<string, AnyGeneratorHandler>,
-  Error = unknown,
-  Requirements = never
->(
-  binding: InvocationBinding<Error, Requirements>,
-  definition: BindableDefinition<Name, Kind, Handlers>,
-  key?: string
-): Client<Handlers, Error, Requirements>
-export function serviceClient<
-  const Name extends string,
-  const Kind extends DefinitionKind,
-  const Handlers extends Record<string, AnyGeneratorHandler>
->(
-  definition: BindableDefinition<Name, Kind, Handlers>
-): Client<Handlers, FluentFiregridError, FluentDurableContext>
-export function serviceClient(
+export const client = bindInvocationBinding("call") as BindingClientFactory<"call">
+
+export const sendClient = bindInvocationBinding("send") as BindingClientFactory<"send">
+
+export const serviceClient = ((
   first: unknown,
   second?: unknown,
   key?: string
-) {
-  return second === undefined
-    ? bindAmbientContext("call")(
-      first as BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>
-    )
-    : client(
-      first as InvocationBinding,
-      second as BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>,
-      key
-    )
-}
+) => contextualClient("call", first, second, key)) as ContextualClientFactory<"call">
 
-export function workflowClient<
-  const Name extends string,
-  const Kind extends DefinitionKind,
-  const Handlers extends Record<string, AnyGeneratorHandler>,
-  Error = unknown,
-  Requirements = never
->(
-  binding: InvocationBinding<Error, Requirements>,
-  definition: BindableDefinition<Name, Kind, Handlers>,
-  key?: string
-): Client<Handlers, Error, Requirements>
-export function workflowClient<
-  const Name extends string,
-  const Kind extends DefinitionKind,
-  const Handlers extends Record<string, AnyGeneratorHandler>
->(
-  definition: BindableDefinition<Name, Kind, Handlers>
-): Client<Handlers, FluentFiregridError, FluentDurableContext>
-export function workflowClient(
+export const workflowClient = ((
   first: unknown,
   second?: unknown,
   key?: string
-) {
-  return second === undefined
-    ? serviceClient(first as BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>)
-    : serviceClient(
-      first as InvocationBinding,
-      second as BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>,
-      key
-    )
-}
+) => contextualClient("call", first, second, key)) as ContextualClientFactory<"call">
 
-export function sendServiceClient<
-  const Name extends string,
-  const Kind extends DefinitionKind,
-  const Handlers extends Record<string, AnyGeneratorHandler>,
-  Error = unknown,
-  Requirements = never
->(
-  binding: InvocationBinding<Error, Requirements>,
-  definition: BindableDefinition<Name, Kind, Handlers>,
-  key?: string
-): SendClient<Handlers, Error, Requirements>
-export function sendServiceClient<
-  const Name extends string,
-  const Kind extends DefinitionKind,
-  const Handlers extends Record<string, AnyGeneratorHandler>
->(
-  definition: BindableDefinition<Name, Kind, Handlers>
-): SendClient<Handlers, FluentFiregridError, FluentDurableContext>
-export function sendServiceClient(
+export const sendServiceClient = ((
   first: unknown,
   second?: unknown,
   key?: string
-) {
-  return second === undefined
-    ? bindAmbientContext("send")(
-      first as BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>
-    )
-    : sendClient(
-      first as InvocationBinding,
-      second as BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>,
-      key
-    )
-}
+) => contextualClient("send", first, second, key)) as ContextualClientFactory<"send">
 
-export function sendWorkflowClient<
-  const Name extends string,
-  const Kind extends DefinitionKind,
-  const Handlers extends Record<string, AnyGeneratorHandler>,
-  Error = unknown,
-  Requirements = never
->(
-  binding: InvocationBinding<Error, Requirements>,
-  definition: BindableDefinition<Name, Kind, Handlers>,
-  key?: string
-): SendClient<Handlers, Error, Requirements>
-export function sendWorkflowClient<
-  const Name extends string,
-  const Kind extends DefinitionKind,
-  const Handlers extends Record<string, AnyGeneratorHandler>
->(
-  definition: BindableDefinition<Name, Kind, Handlers>
-): SendClient<Handlers, FluentFiregridError, FluentDurableContext>
-export function sendWorkflowClient(
+export const sendWorkflowClient = ((
   first: unknown,
   second?: unknown,
   key?: string
-) {
-  return second === undefined
-    ? sendServiceClient(first as BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>)
-    : sendServiceClient(
-      first as InvocationBinding,
-      second as BindableDefinition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>,
-      key
-    )
-}
+) => contextualClient("send", first, second, key)) as ContextualClientFactory<"send">
 
-export function objectClient<
-  const Name extends string,
-  const Handlers extends Record<string, AnyGeneratorHandler>,
-  Error = unknown,
-  Requirements = never
->(
-  binding: InvocationBinding<Error, Requirements>,
-  definition: BindableDefinition<Name, "object", Handlers>
-): ObjectClient<Handlers, Error, Requirements>
-export function objectClient<
-  const Name extends string,
-  const Handlers extends Record<string, AnyGeneratorHandler>
->(
-  definition: BindableDefinition<Name, "object", Handlers>
-): ObjectClient<Handlers, FluentFiregridError, FluentDurableContext>
-export function objectClient(
+export const objectClient = ((
   first: unknown,
   second?: unknown
-) {
-  return second === undefined
-    ? (key: string) =>
-      bindAmbientContext("call")(
-        first as BindableDefinition<string, "object", Record<string, AnyGeneratorHandler>>,
-        key
-      )
-    : (key: string) =>
-      client(
-        first as InvocationBinding,
-        second as BindableDefinition<string, "object", Record<string, AnyGeneratorHandler>>,
-        key
-      )
-}
+) => keyedContextualClient("call", first, second)) as ObjectContextualClientFactory<"call">
 
-export function sendObjectClient<
-  const Name extends string,
-  const Handlers extends Record<string, AnyGeneratorHandler>,
-  Error = unknown,
-  Requirements = never
->(
-  binding: InvocationBinding<Error, Requirements>,
-  definition: BindableDefinition<Name, "object", Handlers>
-): SendObjectClient<Handlers, Error, Requirements>
-export function sendObjectClient<
-  const Name extends string,
-  const Handlers extends Record<string, AnyGeneratorHandler>
->(
-  definition: BindableDefinition<Name, "object", Handlers>
-): SendObjectClient<Handlers, FluentFiregridError, FluentDurableContext>
-export function sendObjectClient(
+export const sendObjectClient = ((
   first: unknown,
   second?: unknown
-) {
-  return second === undefined
-    ? (key: string) =>
-      bindAmbientContext("send")(
-        first as BindableDefinition<string, "object", Record<string, AnyGeneratorHandler>>,
-        key
-      )
-    : (key: string) =>
-      sendClient(
-        first as InvocationBinding,
-        second as BindableDefinition<string, "object", Record<string, AnyGeneratorHandler>>,
-        key
-      )
-}
+) => keyedContextualClient("send", first, second)) as ObjectContextualClientFactory<"send">
