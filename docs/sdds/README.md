@@ -12,6 +12,9 @@ These are the active design documents for this repository.
   bindings.
 - [`fluent-firegrid-state-materialization-sdd.md`](./fluent-firegrid-state-materialization-sdd.md) —
   virtual object state and table/materialization semantics.
+- [`fluent-firegrid-finish-line-sdd.md`](./fluent-firegrid-finish-line-sdd.md) —
+  remaining Restate-like ergonomics and product-surface gaps above the proven
+  substrate.
 
 ## Support Package Docs
 
