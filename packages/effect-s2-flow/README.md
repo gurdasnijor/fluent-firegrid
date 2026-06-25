@@ -21,10 +21,11 @@ import { client, run, runHostMain, service } from "effect-s2-flow"
 export const greeter = service({
   name: "greeter",
   handlers: {
-    *process(input: { readonly name: string }) {
-      const greeting = yield* run("format", Effect.succeed(`Hello, ${input.name}`))
-      return { greeting }
-    }
+    process: (input: { readonly name: string }) =>
+      Effect.gen(function*() {
+        const greeting = yield* run("format", Effect.succeed(`Hello, ${input.name}`))
+        return { greeting }
+      })
   }
 })
 
