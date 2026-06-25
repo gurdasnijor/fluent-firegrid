@@ -392,6 +392,13 @@ const activeForeignFence = (token: string | undefined): boolean => {
   return parsed.hostId !== hostId() && parsed.deadlineMillis > Date.now()
 }
 
+const ownedFence = (token: string | undefined): token is string => {
+  if (token === undefined) return false
+  const parsed = parseFenceToken(token)
+  if (parsed === undefined) return token === hostFenceToken()
+  return parsed.hostId === hostId()
+}
+
 const claimObjectFence = Effect.fn("effect-s2-flow.claimObjectFence")(function*(
   streamApi: StreamApi,
   streamName: string
@@ -427,6 +434,29 @@ const claimObjectFence = Effect.fn("effect-s2-flow.claimObjectFence")(function*(
     nextSeqNum: ack.end.seqNum,
     token
   }
+})
+
+const releaseObjectFence = Effect.fn("effect-s2-flow.releaseObjectFence")(function*(
+  streamApi: StreamApi,
+  streamName: string,
+  matchSeqNum: number
+) {
+  const token = yield* readCurrentFenceToken(streamApi)
+  if (!ownedFence(token)) return false
+  yield* appendAtomic(
+    streamApi,
+    [AppendRecord.fence("")],
+    appendOptions(matchSeqNum, token),
+    `failed to release fence for ${streamName}`
+  ).pipe(
+    Effect.withSpan("effect-s2-flow.fence.release", {
+      attributes: {
+        "effect-s2-flow.fencing.token": token,
+        "effect-s2-flow.invocation.stream": streamName
+      }
+    })
+  )
+  return true
 })
 
 const refreshObjectFence = Effect.fn("effect-s2-flow.refreshObjectFence")(function*(
@@ -591,6 +621,9 @@ const processInvocationStream = Effect.fn("effect-s2-flow.processInvocationStrea
   )
   const invocations = pendingInvocations(snapshot.records)
   if (invocations.length === 0) {
+    if (serviceDefinition.kind === "object") {
+      yield* releaseObjectFence(streamApi, streamName, snapshot.nextSeqNum)
+    }
     return { _tag: "idle" as const }
   }
 
