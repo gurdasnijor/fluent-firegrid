@@ -189,11 +189,23 @@ both complete and final value is `12` against `s2 lite`.
 **Claim.** Concurrent same-key object calls from different hosts cannot lose
 updates.
 
-**Forces:** per-key owner claim/lease/fence, owner handoff, stale owner recovery,
-and fenced writes.
+**Forces:** globally unique generated call ids, `Accepted` admission into one
+owner stream, CAS-protected `Started` ownership, owner lease expiry, and one
+active call at a time.
 
 **Proof:** two hosts race `add(5)` and `add(7)` for the same key; final value is
-`12`; trace evidence shows serialized owner writes and no unfenced owner writes.
+`12` and both hosts participated.
+
+### C3. Stale Owner Recovery And Fencing
+
+**Claim.** A killed object owner cannot block a key forever or allow stale writes
+after takeover.
+
+**Forces:** stale owner recovery, owner handoff, and fenced owner writes.
+
+**Proof:** host A starts a same-key call and is killed before completion; host B
+waits for lease expiry, claims ownership, completes from the owner stream, and
+trace evidence shows no unfenced owner writes.
 
 ### D. Replay-Safe Reads And Writes
 

@@ -29,6 +29,7 @@ import {
 
 export interface S2ObjectRuntimeBindingConfig extends S2ObjectStateBackendConfig {
   readonly now?: () => number
+  readonly objectOwnerLeaseMs?: number
 }
 
 type AcceptedEvent = {
@@ -44,6 +45,7 @@ type StartedEvent = {
   readonly _tag: "Started"
   readonly callId: string
   readonly ownerId: string
+  readonly leaseExpiresAt: number
   readonly now: number
 }
 type CompletedEvent = {
@@ -84,12 +86,15 @@ export const createS2ObjectRuntimeBinding = (
   config: S2ObjectRuntimeBindingConfig
 ): InvocationBinding<FluentFiregridError> => {
   let nextCall = 0
+  const bindingId = Math.random().toString(36).slice(2)
   const runtime = makeRuntime(config)
   const direct = createTanStackRuntimeBinding(host, config.now === undefined ? {} : { now: config.now })
   const now = config.now ?? Date.now
+  const ownerLeaseMs = config.objectOwnerLeaseMs ?? 30_000
 
   const callIdFor = (request: CallRequest): string =>
-    request.runId ?? `${request.kind}:${request.name}:${request.key ?? "no-key"}:${request.handler}:${nextCall++}`
+    request.runId ??
+      `${request.kind}:${request.name}:${request.key ?? "no-key"}:${request.handler}:${bindingId}:${nextCall++}`
 
   const runObject = <Output>(
     request: CallRequest,
@@ -115,7 +120,16 @@ export const createS2ObjectRuntimeBinding = (
           now: now(),
           runId: callId
         })
-        const completed = yield* waitForCompletion(host, runtime, streamName, ownerId, now, request, callId)
+        const completed = yield* waitForCompletion(
+          host,
+          runtime,
+          streamName,
+          ownerId,
+          now,
+          ownerLeaseMs,
+          request,
+          callId
+        )
         if (mode === "send") {
           return {
             invocationId: callId,
@@ -276,12 +290,13 @@ const waitForCompletion = (
   streamName: string,
   ownerId: string,
   now: () => number,
+  ownerLeaseMs: number,
   request: CallRequest,
   callId: string
 ): Effect.Effect<CompletedEvent, unknown> =>
   Effect.gen(function*() {
     for (let attempt = 0; attempt < 500; attempt += 1) {
-      yield* drain(runtime, streamName, ownerId, now, host, request)
+      yield* drain(runtime, streamName, ownerId, now, ownerLeaseMs, host, request)
       const projection = yield* readProjection(runtime, streamName)
       const completed = projection.completed.get(callId)
       if (completed !== undefined) return completed
@@ -304,6 +319,7 @@ const drain = (
   streamName: string,
   ownerId: string,
   now: () => number,
+  ownerLeaseMs: number,
   host: FluentRuntimeHost,
   request: CallRequest
 ): Effect.Effect<void, unknown> =>
@@ -317,12 +333,19 @@ const drain = (
       const accepted = projection.accepted.get(nextCallId)
       if (accepted === undefined) return
       const started = projection.started.get(nextCallId)
-      if (started !== undefined && started.ownerId !== ownerId) return
-      if (started === undefined) {
+      const currentTime = now()
+      if (started !== undefined && started.ownerId !== ownerId && started.leaseExpiresAt > currentTime) return
+      if (started === undefined || (started.ownerId !== ownerId && started.leaseExpiresAt <= currentTime)) {
         const startResult = yield* appendEvent(
           runtime,
           streamName,
-          { _tag: "Started", callId: nextCallId, now: now(), ownerId },
+          {
+            _tag: "Started",
+            callId: nextCallId,
+            leaseExpiresAt: currentTime + ownerLeaseMs,
+            now: currentTime,
+            ownerId
+          },
           projection.nextSeqNum
         ).pipe(Effect.exit)
         if (startResult._tag === "Failure") {
