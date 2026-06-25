@@ -71,18 +71,25 @@ surface an application would use for Capability A: `service`, `client`, `run`,
 Proof-only support code does not belong in this package unless it is a real
 production feature.
 
-The load-bearing green proof establishes:
+The load-bearing green proofs establish:
 
 - Durable step replay survives a `kill -9` after a step journal ack and does not
   re-run the completed step.
+- The first internal Capability B slices are real-substrate proofs: state folds
+  after a fresh process, and two would-be owners of one object stream contend
+  through S2 fencing with a real `FencingTokenMismatchError`.
+
+The root package export still stays Capability-A-only. The object/state/fence
+work is intentionally behind examples and package-internal modules until the
+Capability B authoring surface is cleaned up.
 
 ## Not Yet Production
 
 The package is no longer just stubs, but the product claim is intentionally
 small. These are deferred until their own proofs force them:
 
-- Durable object/state APIs.
-- Fenced ownership for keyed objects under multiple host processes.
+- Public durable object/state APIs.
+- Lease refresh, expiry, and eviction semantics for fenced owners.
 - Idempotent client retries and request de-duplication beyond the current
   explicit invocation id path.
 - Backpressure, stream discovery pagination, and long-running host lifecycle

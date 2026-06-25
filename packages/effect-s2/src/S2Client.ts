@@ -525,7 +525,12 @@ const makeStream = (raw: SdkStream): StreamApi => ({
   append: (input, options) =>
     withS2Span(
       "effect-s2.append",
-      { "s2.append.record_count": input.records.length, "s2.stream": raw.name },
+      {
+        "s2.append.fencing_token": input.fencingToken ?? "",
+        "s2.append.match_seq_num": input.matchSeqNum === undefined ? "" : String(input.matchSeqNum),
+        "s2.append.record_count": input.records.length,
+        "s2.stream": raw.name
+      },
       tryPromise(() => raw.append(input, options))
     ),
   appendSession: (sessionOptions, requestOptions) =>
