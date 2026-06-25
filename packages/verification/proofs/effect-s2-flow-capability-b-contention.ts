@@ -15,8 +15,8 @@ export default proof("effect-s2-flow.capability-b.owner-contention")
     property("capability-b.effect-s2-flow.owner-contention-proof")
       .s2Lite({ persistence: "local-root" })
       .hosts({
-        "owner-a": effectS2FlowHost(),
-        "owner-b": effectS2FlowHost()
+        "owner-a": effectS2FlowHost({ EFFECT_S2_FLOW_FENCE_LEASE: "4 seconds" }),
+        "owner-b": effectS2FlowHost({ EFFECT_S2_FLOW_FENCE_LEASE: "4 seconds" })
       })
       .workload(({ hosts, runtime, s2Endpoint }) =>
         Effect.gen(function*() {
