@@ -1,5 +1,6 @@
 export * from "./FlowError.ts"
 export {
+  attach,
   client,
   FlowRuntime,
   flowRuntimeLayerFromEnv,
@@ -8,6 +9,7 @@ export {
   object,
   run,
   runHostMain,
+  sendClient,
   serve,
   service,
   state
@@ -17,7 +19,9 @@ export type {
   CurrentInvocationScope,
   FlowRuntimeConfig,
   FlowRuntimeError,
+  InvocationHandle,
   ObjectDefinition,
+  SendClient,
   ServeOptions,
   ServiceClient,
   ServiceDefinition,

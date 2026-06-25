@@ -16,7 +16,7 @@ export default proof("effect-s2-flow.capability-b.durable-state")
       .hosts({
         "state-worker": effectS2FlowHost()
       })
-      .workload(({ hosts, s2Endpoint }) =>
+      .workload(({ hosts, runtime, s2Endpoint }) =>
         Effect.gen(function*() {
           if (s2Endpoint === undefined) {
             return yield* new VerificationError({
@@ -38,6 +38,10 @@ export default proof("effect-s2-flow.capability-b.durable-state")
           const readYourWrites = yield* runCounter(
             client(counter, "user-1", { invocationId: "counter-add-then-read" }).addThenRead({ amount: 7 })
           )
+          yield* runtime.waitForSpan("effect-s2-flow.fence.release", {
+            attributes: { "effect-s2-flow.invocation.stream": "counter.object.user-1" },
+            attempts: 200
+          })
 
           return {
             addResult,
@@ -74,6 +78,16 @@ export default proof("effect-s2-flow.capability-b.durable-state")
             AND SpanAttributes['effect-s2-flow.invocation.stream'] = 'counter.object.user-1'
           ) >= 3
           AND countIf(SpanName = 'verification.host.restart') = 1 AS ok
+          FROM trial_spans
+        `
+        ),
+        traceSql(
+          "idle-owner-released-fence",
+          `
+          SELECT countIf(
+            SpanName = 'effect-s2-flow.fence.release'
+            AND SpanAttributes['effect-s2-flow.invocation.stream'] = 'counter.object.user-1'
+          ) >= 1 AS ok
           FROM trial_spans
         `
         ),
