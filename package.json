@@ -18,6 +18,7 @@
     "lint:root": "oxlint -f unix tools/oxc/oxlint-plugin.js",
     "prepare": "simple-git-hooks",
     "preflight": "pnpm run check",
+    "proofs": "pnpm --filter @firegrid/verification proofs",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
     "verify": "pnpm run check"

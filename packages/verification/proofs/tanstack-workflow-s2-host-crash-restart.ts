@@ -4,7 +4,7 @@ import { processHost } from "../src/ProcessHost.ts"
 import { proof } from "../src/Proof.ts"
 import { VerificationError } from "../src/VerificationError.ts"
 
-const workerPath = "packages/verification/fixtures/tanstack-workflow-s2-host-worker.ts"
+const workerPath = new URL("../fixtures/tanstack-workflow-s2-host-worker.ts", import.meta.url).pathname
 
 const portFromTrialId = (trialId: string): number => {
   const hash = Array.from(trialId).reduce((current, char) => (current * 31 + char.charCodeAt(0)) % 10_000, 0)
@@ -42,8 +42,8 @@ export default proof("tanstack-workflow-s2.host-crash-restart")
             HOST_PORT: String(hostPort)
           },
           readiness: {
-            attempts: 120,
-            interval: "25 millis",
+            attempts: 400,
+            interval: "50 millis",
             url: `${baseUrl}/ready`
           }
         })

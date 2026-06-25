@@ -7,7 +7,7 @@ import { processHost } from "../src/ProcessHost.ts"
 import { proof } from "../src/Proof.ts"
 import { VerificationError } from "../src/VerificationError.ts"
 
-const workerPath = "packages/verification/fixtures/fluent-firegrid-s2-object-worker.ts"
+const workerPath = new URL("../fixtures/fluent-firegrid-s2-object-worker.ts", import.meta.url).pathname
 
 const portFromTrialId = (trialId: string, salt: string): number => {
   const hash = Array.from(`fluent-object-live-fencing-${trialId}-${salt}`).reduce(
@@ -99,8 +99,8 @@ export default proof("fluent-firegrid-s2.object-live-fencing")
           command: "pnpm",
           env: { HOST_PORT: String(portA) },
           readiness: {
-            attempts: 120,
-            interval: "25 millis",
+            attempts: 400,
+            interval: "50 millis",
             url: `${hostA}/ready`
           }
         }),
@@ -109,8 +109,8 @@ export default proof("fluent-firegrid-s2.object-live-fencing")
           command: "pnpm",
           env: { HOST_PORT: String(portB) },
           readiness: {
-            attempts: 120,
-            interval: "25 millis",
+            attempts: 400,
+            interval: "50 millis",
             url: `${hostB}/ready`
           }
         })

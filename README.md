@@ -32,6 +32,18 @@ SDD.
 - `@firegrid/fluent-acp-process` — ACP process adapter work; separate from the
   durable execution core.
 
+## Verification
+
+Run the production proof registry with:
+
+```sh
+pnpm run proofs
+```
+
+This starts real `s2 lite` and process-host fixtures, then verifies the current
+`effect-s2`, TanStack/S2, and fluent object surfaces from workload results plus
+OTel/chDB trace evidence.
+
 ## Cleanup Policy
 
 Legacy experiments should not remain as workspace packages. If a direction is

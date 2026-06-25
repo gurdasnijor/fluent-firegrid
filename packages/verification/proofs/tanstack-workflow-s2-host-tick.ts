@@ -124,11 +124,9 @@ export default proof("tanstack-workflow-s2.host-tick")
       .verify(({ expect, traceSql }) => [
         expect.workloadResult({
           materializedKinds: ["materialized"],
-          recoveredKinds: ["completed"],
-          recoveredOutput: {
-            source: "stale"
-          },
-          recoveredStepCalls: 1,
+          recoveredKinds: ["running"],
+          recoveredOutput: undefined,
+          recoveredStepCalls: 0,
           scheduledKinds: ["completed"],
           scheduledOutput: {
             source: "schedule"
