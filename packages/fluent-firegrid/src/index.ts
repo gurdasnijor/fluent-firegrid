@@ -1,6 +1,8 @@
 export {
   bindFluentDefinitions,
   createTanStackRuntimeBinding,
+  type FluentDefinitionBindingContext,
+  type FluentDefinitionBindingOptions,
   type FluentRuntimeHost,
   type FluentWorkflowInput,
   workflowIdForHandler
@@ -34,6 +36,7 @@ export {
   type TanStackWorkflowContext
 } from "./context.ts"
 export {
+  type AnyGeneratorHandler,
   type Definition,
   type DefinitionKind,
   type GeneratorHandler,

@@ -4,13 +4,23 @@ import type { WorkflowRegistrationMap, WorkflowRuntimeRunResult } from "@tanstac
 import * as Effect from "effect/Effect"
 
 import type { CallRequest, InvocationBinding, SendReference } from "./clients.ts"
-import { fluentContextFromTanStack, FluentDurableContext } from "./context.ts"
-import type { Definition, DefinitionKind, GeneratorHandler } from "./definitions.ts"
+import { fluentContextFromTanStack, FluentDurableContext, type ObjectStateBackend } from "./context.ts"
+import type { AnyGeneratorHandler, Definition, DefinitionKind } from "./definitions.ts"
 import { FluentFiregridError } from "./error.ts"
 
 export interface FluentWorkflowInput {
   readonly input: unknown
   readonly key?: string
+}
+
+export interface FluentDefinitionBindingContext {
+  readonly definition: Definition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>
+  readonly handlerName: string
+  readonly input: FluentWorkflowInput
+}
+
+export interface FluentDefinitionBindingOptions {
+  readonly stateBackendFor?: (context: FluentDefinitionBindingContext) => ObjectStateBackend | undefined
 }
 
 export const workflowIdForHandler = (
@@ -22,7 +32,8 @@ const workflowIdForRequest = (request: Pick<CallRequest, "handler" | "kind" | "n
   `${request.kind}:${request.name}:${request.handler}`
 
 export const bindFluentDefinitions = (
-  definitions: ReadonlyArray<Definition<string, DefinitionKind, Record<string, GeneratorHandler>>>
+  definitions: ReadonlyArray<Definition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>>,
+  options: FluentDefinitionBindingOptions = {}
 ): WorkflowRegistrationMap =>
   Object.fromEntries(
     definitions.flatMap((definition) =>
@@ -30,10 +41,14 @@ export const bindFluentDefinitions = (
         const workflowId = workflowIdForHandler(definition, handlerName)
         const workflow = createWorkflow({ id: workflowId }).handler(async (ctx) => {
           const input = ctx.input as FluentWorkflowInput
+          const state = options.stateBackendFor?.({ definition, handlerName, input })
           const effect = Effect.gen(() => handler(input.input)).pipe(
             Effect.provideService(
               FluentDurableContext,
-              fluentContextFromTanStack(ctx, input.key === undefined ? {} : { key: input.key })
+              fluentContextFromTanStack(ctx, {
+                ...(input.key === undefined ? {} : { key: input.key }),
+                ...(state === undefined ? {} : { state })
+              })
             )
           )
           return await Effect.runPromise(effect)

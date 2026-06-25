@@ -5,6 +5,7 @@ import effectS2CapabilityAProof from "./effect-s2-capability-a.ts"
 import { effectS2SubstrateProofs } from "./effect-s2-substrate-proofs.ts"
 import fluentFiregridHostCrashRestartProof from "./fluent-firegrid-host-crash-restart.ts"
 import fluentFiregridObjectKeyRestartProof from "./fluent-firegrid-object-key-restart.ts"
+import fluentFiregridS2ObjectSerializationProof from "./fluent-firegrid-s2-object-serialization.ts"
 import fluentFiregridS2ObjectStateProof from "./fluent-firegrid-s2-object-state.ts"
 import fluentFiregridSignalRestartProof from "./fluent-firegrid-signal-restart.ts"
 import tanstackWorkflowS2HostCrashRestartProof from "./tanstack-workflow-s2-host-crash-restart.ts"
@@ -23,6 +24,7 @@ const proofs = [
   ...effectS2SubstrateProofs,
   fluentFiregridHostCrashRestartProof,
   fluentFiregridObjectKeyRestartProof,
+  fluentFiregridS2ObjectSerializationProof,
   fluentFiregridS2ObjectStateProof,
   fluentFiregridSignalRestartProof,
   tanstackWorkflowS2HostCrashRestartProof,

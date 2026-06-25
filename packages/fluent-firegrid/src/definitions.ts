@@ -8,6 +8,8 @@ export type FluentGenerator<A> = Generator<Effect.Effect<unknown, unknown, Fluen
 
 export type GeneratorHandler<Input = unknown, Output = unknown> = (input: Input) => FluentGenerator<Output>
 
+export type AnyGeneratorHandler = GeneratorHandler<any, any>
+
 export type DefinitionKind = "service" | "workflow" | "object"
 
 declare const descriptorTypes: unique symbol
@@ -26,14 +28,14 @@ export type HandlerOutput<Handler> = Handler extends (input: unknown) => Generat
   ? Output
   : never
 
-export type HandlerDescriptors<Handlers extends Record<string, GeneratorHandler>> = {
+export type HandlerDescriptors<Handlers extends Record<string, AnyGeneratorHandler>> = {
   readonly [Key in keyof Handlers]: HandlerDescriptor<HandlerInput<Handlers[Key]>, HandlerOutput<Handlers[Key]>>
 }
 
 export interface Definition<
   Name extends string,
   Kind extends DefinitionKind,
-  Handlers extends Record<string, GeneratorHandler>
+  Handlers extends Record<string, AnyGeneratorHandler>
 > {
   readonly name: Name
   readonly _kind: Kind
@@ -41,32 +43,32 @@ export interface Definition<
   readonly handlers: Handlers
 }
 
-export type ServiceDefinition<Name extends string, Handlers extends Record<string, GeneratorHandler>> = Definition<
+export type ServiceDefinition<Name extends string, Handlers extends Record<string, AnyGeneratorHandler>> = Definition<
   Name,
   "service",
   Handlers
 >
 
-export type WorkflowDefinition<Name extends string, Handlers extends Record<string, GeneratorHandler>> = Definition<
+export type WorkflowDefinition<Name extends string, Handlers extends Record<string, AnyGeneratorHandler>> = Definition<
   Name,
   "workflow",
   Handlers
 >
 
-export type ObjectDefinition<Name extends string, Handlers extends Record<string, GeneratorHandler>> = Definition<
+export type ObjectDefinition<Name extends string, Handlers extends Record<string, AnyGeneratorHandler>> = Definition<
   Name,
   "object",
   Handlers
 >
 
-interface DefinitionConfig<Name extends string, Handlers extends Record<string, GeneratorHandler>> {
+interface DefinitionConfig<Name extends string, Handlers extends Record<string, AnyGeneratorHandler>> {
   readonly name: Name
   readonly handlers: Handlers
 }
 
 const descriptor = <Input = void, Output = void>(): HandlerDescriptor<Input, Output> => ({ _tag: "HandlerDescriptor" })
 
-const makeDescriptors = <Handlers extends Record<string, GeneratorHandler>>(
+const makeDescriptors = <Handlers extends Record<string, AnyGeneratorHandler>>(
   handlers: Handlers
 ): HandlerDescriptors<Handlers> =>
   Object.fromEntries(
@@ -76,7 +78,7 @@ const makeDescriptors = <Handlers extends Record<string, GeneratorHandler>>(
 const makeDefinition = <
   const Name extends string,
   const Kind extends DefinitionKind,
-  const Handlers extends Record<string, GeneratorHandler>
+  const Handlers extends Record<string, AnyGeneratorHandler>
 >(
   kind: Kind,
   definition: DefinitionConfig<Name, Handlers>
@@ -87,14 +89,14 @@ const makeDefinition = <
   name: definition.name
 })
 
-export const service = <const Name extends string, const Handlers extends Record<string, GeneratorHandler>>(
+export const service = <const Name extends string, const Handlers extends Record<string, AnyGeneratorHandler>>(
   definition: DefinitionConfig<Name, Handlers>
 ): ServiceDefinition<Name, Handlers> => makeDefinition("service", definition)
 
-export const workflow = <const Name extends string, const Handlers extends Record<string, GeneratorHandler>>(
+export const workflow = <const Name extends string, const Handlers extends Record<string, AnyGeneratorHandler>>(
   definition: DefinitionConfig<Name, Handlers>
 ): WorkflowDefinition<Name, Handlers> => makeDefinition("workflow", definition)
 
-export const object = <const Name extends string, const Handlers extends Record<string, GeneratorHandler>>(
+export const object = <const Name extends string, const Handlers extends Record<string, AnyGeneratorHandler>>(
   definition: DefinitionConfig<Name, Handlers>
 ): ObjectDefinition<Name, Handlers> => makeDefinition("object", definition)

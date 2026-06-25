@@ -173,15 +173,27 @@ state backend implementation.
 
 **Proof:** `add(5)` then fresh process `value()` returns `5` against `s2 lite`.
 
-### C. Same-Key Serialization
+### C1. Same-Process Same-Key Serialization
 
-**Claim.** Concurrent same-key object calls cannot lose updates.
+**Claim.** Concurrent same-key object calls through one runtime binding cannot
+lose updates.
 
-**Forces:** `Accepted` admission, owner drainer, per-key lock/fence, one active
-call at a time.
+**Forces:** `Accepted` admission, owner-stream CAS, unique drain owner ids, one
+active call at a time.
+
+**Proof:** two concurrent calls race `add(5)` and `add(7)` for the same key;
+both complete and final value is `12` against `s2 lite`.
+
+### C2. Cross-Host Same-Key Serialization
+
+**Claim.** Concurrent same-key object calls from different hosts cannot lose
+updates.
+
+**Forces:** per-key owner claim/lease/fence, owner handoff, stale owner recovery,
+and fenced writes.
 
 **Proof:** two hosts race `add(5)` and `add(7)` for the same key; final value is
-`12`; trace evidence shows serialized owner writes.
+`12`; trace evidence shows serialized owner writes and no unfenced owner writes.
 
 ### D. Replay-Safe Reads And Writes
 

@@ -1,9 +1,9 @@
 import type { Effect } from "effect"
 
 import type {
+  AnyGeneratorHandler,
   Definition,
   DefinitionKind,
-  GeneratorHandler,
   HandlerDescriptor,
   HandlerDescriptors,
   HandlerInput,
@@ -33,7 +33,7 @@ export interface InvocationBinding<Error = unknown, Requirements = never> {
 }
 
 export type Client<
-  Handlers extends Record<string, GeneratorHandler>,
+  Handlers extends Record<string, AnyGeneratorHandler>,
   Error = unknown,
   Requirements = never
 > = {
@@ -44,7 +44,7 @@ export type Client<
 }
 
 export type SendClient<
-  Handlers extends Record<string, GeneratorHandler>,
+  Handlers extends Record<string, AnyGeneratorHandler>,
   Error = unknown,
   Requirements = never
 > = {
@@ -55,13 +55,13 @@ export type SendClient<
 }
 
 export type ObjectClient<
-  Handlers extends Record<string, GeneratorHandler>,
+  Handlers extends Record<string, AnyGeneratorHandler>,
   Error = unknown,
   Requirements = never
 > = (key: string) => Client<Handlers, Error, Requirements>
 
 export type SendObjectClient<
-  Handlers extends Record<string, GeneratorHandler>,
+  Handlers extends Record<string, AnyGeneratorHandler>,
   Error = unknown,
   Requirements = never
 > = (key: string) => SendClient<Handlers, Error, Requirements>
@@ -70,7 +70,7 @@ type ClientMode = "call" | "send"
 
 type ClientFor<
   Mode extends ClientMode,
-  Handlers extends Record<string, GeneratorHandler>,
+  Handlers extends Record<string, AnyGeneratorHandler>,
   Error,
   Requirements
 > = Mode extends "call" ? Client<Handlers, Error, Requirements> : SendClient<Handlers, Error, Requirements>
@@ -78,7 +78,7 @@ type ClientFor<
 type BindableDefinition<
   Name extends string,
   Kind extends DefinitionKind,
-  Handlers extends Record<string, GeneratorHandler>
+  Handlers extends Record<string, AnyGeneratorHandler>
 > = Definition<Name, Kind, Handlers> | {
   readonly name: Name
   readonly _kind: Kind
@@ -90,7 +90,7 @@ const methodNames = (descriptors: Record<string, HandlerDescriptor>): ReadonlyAr
 const requestFor = <
   Name extends string,
   Kind extends DefinitionKind,
-  Handlers extends Record<string, GeneratorHandler>
+  Handlers extends Record<string, AnyGeneratorHandler>
 >(
   definition: BindableDefinition<Name, Kind, Handlers>,
   key: string | undefined,
@@ -111,7 +111,7 @@ const bindInvocationBinding = (mode: ClientMode) =>
 <
   const Name extends string,
   const Kind extends DefinitionKind,
-  const Handlers extends Record<string, GeneratorHandler>,
+  const Handlers extends Record<string, AnyGeneratorHandler>,
   Error = unknown,
   Requirements = never
 >(
@@ -130,7 +130,7 @@ const bindInvocationBinding = (mode: ClientMode) =>
 export const client = bindInvocationBinding("call") as <
   const Name extends string,
   const Kind extends DefinitionKind,
-  const Handlers extends Record<string, GeneratorHandler>,
+  const Handlers extends Record<string, AnyGeneratorHandler>,
   Error = unknown,
   Requirements = never
 >(
@@ -142,7 +142,7 @@ export const client = bindInvocationBinding("call") as <
 export const sendClient = bindInvocationBinding("send") as <
   const Name extends string,
   const Kind extends DefinitionKind,
-  const Handlers extends Record<string, GeneratorHandler>,
+  const Handlers extends Record<string, AnyGeneratorHandler>,
   Error = unknown,
   Requirements = never
 >(
@@ -161,7 +161,7 @@ export const sendWorkflowClient = sendClient
 
 export const objectClient = <
   const Name extends string,
-  const Handlers extends Record<string, GeneratorHandler>,
+  const Handlers extends Record<string, AnyGeneratorHandler>,
   Error = unknown,
   Requirements = never
 >(
@@ -172,7 +172,7 @@ export const objectClient = <
 
 export const sendObjectClient = <
   const Name extends string,
-  const Handlers extends Record<string, GeneratorHandler>,
+  const Handlers extends Record<string, AnyGeneratorHandler>,
   Error = unknown,
   Requirements = never
 >(
