@@ -23,6 +23,28 @@ export interface AwakeableResolveOptions {
 
 export interface AwakeableRejectOptions extends AwakeableResolveOptions {}
 
+export interface WorkflowEventReference {
+  readonly name: string
+  readonly runId: string
+  readonly signalId?: string
+  readonly stepId?: string
+}
+
+export interface WorkflowEvent<T> extends WorkflowEventReference {
+  readonly await: Effect.Effect<T, FluentFiregridError>
+  readonly promise: Effect.Effect<T, FluentFiregridError>
+  readonly effect: Effect.Effect<T, FluentFiregridError>
+}
+
+export interface WorkflowEventOptions {
+  readonly id?: string
+}
+
+export interface ResolveWorkflowEventOptions {
+  readonly metadata?: Readonly<Record<string, unknown>>
+  readonly signalId?: string
+}
+
 export class AwakeableRejected extends Data.TaggedError("AwakeableRejected")<{
   readonly id: string
   readonly reason: unknown
@@ -49,6 +71,8 @@ type AwakeablePayload<T> =
 const tokenPrefix = "ffg_awakeable:"
 
 const awakeableSignalName = (stepId: string): string => `__firegrid_awakeable:${stepId}`
+
+const workflowEventSignalName = (name: string): string => `__firegrid_workflow_event:${name}`
 
 const encodeToken = (token: AwakeableToken): string => `${tokenPrefix}${encodeURIComponent(JSON.stringify(token))}`
 
@@ -102,6 +126,31 @@ export const awakeable = <T = unknown>(
         )
       )
       return Effect.succeed({ await: effect, effect, id: token, promise: effect })
+    })
+  )
+
+export const workflowEvent = <T = unknown>(
+  name: string,
+  options: WorkflowEventOptions = {}
+): Effect.Effect<WorkflowEvent<T>, FluentFiregridError, FluentDurableContext> =>
+  FluentDurableContext.pipe(
+    Effect.flatMap((ctx) => {
+      if (ctx.runId === undefined) {
+        return Effect.fail(new FluentFiregridError({ message: "workflowEvent requires a durable run id" }))
+      }
+      const stepId = options.id ?? ctx.signalOperationId?.({ kind: "workflowEvent", name }) ??
+        `${ctx.runId}:workflowEvent:${name}`
+      const signalName = workflowEventSignalName(name)
+      const effect = ctx.waitForSignal<T>(signalName, { id: stepId })
+      return Effect.succeed({
+        await: effect,
+        effect,
+        name,
+        promise: effect,
+        runId: ctx.runId,
+        signalId: `workflow-event:${ctx.runId}:${name}`,
+        stepId
+      })
     })
   )
 
@@ -172,6 +221,55 @@ export function rejectAwakeable<Error = unknown, Requirements = never>(
     )
   )
 }
+
+export function resolveWorkflowEvent<T, Error = unknown, Requirements = never>(
+  binding: ExternalSignalBinding<Error, Requirements>,
+  reference: WorkflowEventReference,
+  value: T,
+  options?: ResolveWorkflowEventOptions
+): Effect.Effect<ExternalSignalDelivery, Error | FluentFiregridError, Requirements>
+export function resolveWorkflowEvent<T>(
+  reference: WorkflowEventReference,
+  value: T,
+  options?: ResolveWorkflowEventOptions
+): Effect.Effect<ExternalSignalDelivery, FluentFiregridError, FluentDurableContext>
+export function resolveWorkflowEvent<T, Error = unknown, Requirements = never>(
+  first: ExternalSignalBinding<Error, Requirements> | WorkflowEventReference,
+  second: WorkflowEventReference | T,
+  third?: T | ResolveWorkflowEventOptions,
+  fourth?: ResolveWorkflowEventOptions
+): Effect.Effect<ExternalSignalDelivery, Error | FluentFiregridError, Requirements | FluentDurableContext> {
+  if ("deliverSignal" in first) {
+    return deliverWorkflowEvent(first, second as WorkflowEventReference, third as T, fourth)
+  }
+  return FluentDurableContext.pipe(
+    Effect.flatMap((ctx) =>
+      ctx.externalSignals === undefined
+        ? Effect.fail(new FluentFiregridError({ message: "resolveWorkflowEvent requires an external signal binding" }))
+        : deliverWorkflowEvent(
+          ctx.externalSignals,
+          first,
+          second as T,
+          third as ResolveWorkflowEventOptions | undefined
+        )
+    )
+  )
+}
+
+const deliverWorkflowEvent = <Payload, Error, Requirements>(
+  binding: ExternalSignalBinding<Error, Requirements>,
+  reference: WorkflowEventReference,
+  value: Payload,
+  options: ResolveWorkflowEventOptions | undefined
+): Effect.Effect<ExternalSignalDelivery, Error | FluentFiregridError, Requirements> =>
+  binding.deliverSignal({
+    name: workflowEventSignalName(reference.name),
+    payload: value,
+    runId: reference.runId,
+    signalId: options?.signalId ?? reference.signalId ?? `workflow-event:${reference.runId}:${reference.name}`,
+    ...(reference.stepId === undefined ? {} : { stepId: reference.stepId }),
+    ...(options?.metadata === undefined ? {} : { metadata: options.metadata })
+  })
 
 const deliverAwakeable = <Payload, Error, Requirements>(
   binding: ExternalSignalBinding<Error, Requirements>,

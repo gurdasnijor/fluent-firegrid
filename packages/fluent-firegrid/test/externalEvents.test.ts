@@ -7,7 +7,9 @@ import {
   AwakeableRejected,
   decodeAwakeableToken,
   rejectAwakeable,
-  resolveAwakeable
+  resolveAwakeable,
+  resolveWorkflowEvent,
+  workflowEvent
 } from "../src/externalEvents.ts"
 import { FluentFiregridError } from "../src/error.ts"
 
@@ -132,6 +134,100 @@ describe("awakeable external events", () => {
         runId: "run-1",
         signalId: "awakeable:run-1:signal:0:awakeable:callback",
         stepId: "run-1:signal:0:awakeable:callback"
+      }
+    ])
+  })
+})
+
+describe("workflowEvent external events", () => {
+  it("waits on a workflow-scoped signal and exposes a resolvable reference", async () => {
+    let captured:
+      | {
+        readonly id?: string
+        readonly name: string
+      }
+      | undefined
+    const event = await Effect.runPromise(
+      workflowEvent<string>("decision").pipe(
+        Effect.provideService(
+          FluentDurableContext,
+          baseContext({
+            waitForSignal: <Payload>(name: string, options?: { readonly id?: string }) =>
+              Effect.sync(() => {
+                captured = {
+                  ...(options?.id === undefined ? {} : { id: options.id }),
+                  name
+                }
+                return "approved" as Payload
+              })
+          })
+        )
+      )
+    )
+
+    await expect(Effect.runPromise(event.await)).resolves.toBe("approved")
+    expect(event).toMatchObject({
+      name: "decision",
+      runId: "run-1",
+      signalId: "workflow-event:run-1:decision",
+      stepId: "run-1:signal:0:workflowEvent:decision"
+    })
+    expect(captured).toEqual({
+      id: "run-1:signal:0:workflowEvent:decision",
+      name: "__firegrid_workflow_event:decision"
+    })
+  })
+
+  it("delivers workflow events through explicit or ambient bindings", async () => {
+    const deliveries = new Array<unknown>()
+    const binding: ExternalSignalBinding<never> = {
+      deliverSignal: (request) =>
+        Effect.sync(() => {
+          deliveries.push(request)
+          return { kind: "delivered", runId: request.runId }
+        })
+    }
+    const reference = {
+      name: "decision",
+      runId: "run-1",
+      signalId: "workflow-event:run-1:decision",
+      stepId: "run-1:signal:0:workflowEvent:decision"
+    }
+
+    await expect(Effect.runPromise(resolveWorkflowEvent(binding, reference, "approved"))).resolves.toEqual({
+      kind: "delivered",
+      runId: "run-1"
+    })
+    await expect(
+      Effect.runPromise(
+        resolveWorkflowEvent(reference, "rejected").pipe(
+          Effect.provideService(
+            FluentDurableContext,
+            baseContext({
+              externalSignals: binding
+            })
+          )
+        )
+      )
+    ).resolves.toEqual({
+      kind: "delivered",
+      runId: "run-1"
+    })
+
+    expect(deliveries).toMatchObject([
+      {
+        name: "__firegrid_workflow_event:decision",
+        payload: "approved",
+        runId: "run-1",
+        signalId: "workflow-event:run-1:decision",
+        stepId: "run-1:signal:0:workflowEvent:decision"
+      },
+      {
+        name: "__firegrid_workflow_event:decision",
+        payload: "rejected",
+        runId: "run-1",
+        signalId: "workflow-event:run-1:decision",
+        stepId: "run-1:signal:0:workflowEvent:decision"
       }
     ])
   })

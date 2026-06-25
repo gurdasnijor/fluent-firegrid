@@ -86,7 +86,13 @@ export {
   type AwakeableResolveOptions,
   decodeAwakeableToken,
   rejectAwakeable,
-  resolveAwakeable
+  resolveAwakeable,
+  resolveWorkflowEvent,
+  type ResolveWorkflowEventOptions,
+  type WorkflowEvent,
+  workflowEvent,
+  type WorkflowEventOptions,
+  type WorkflowEventReference
 } from "./externalEvents.ts"
 export {
   type DefinitionDescriptor,

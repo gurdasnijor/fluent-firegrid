@@ -553,8 +553,10 @@ Implementation status as of June 25, 2026:
   `POST /firegrid/awakeables/:id/reject`, and
   `@firegrid/fluent-firegrid-node` wires those routes to the S2 runtime host;
 - rejected awakeables fail with the typed `AwakeableRejected` error;
-- remaining gaps are workflow-scoped named event ergonomics and product examples
-  that show how external systems receive and complete tokens.
+- `workflowEvent<T>(name)` and `resolveWorkflowEvent` provide workflow-scoped
+  named event ergonomics over the same durable signal substrate;
+- remaining gaps are product examples that show how external systems receive
+  and complete tokens.
 
 ### Durable Webhook Example
 
