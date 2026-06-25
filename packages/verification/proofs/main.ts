@@ -6,6 +6,7 @@ import { effectS2SubstrateProofs } from "./effect-s2-substrate-proofs.ts"
 import tanstackWorkflowS2EventLogProof from "./tanstack-workflow-s2-event-log.ts"
 import tanstackWorkflowS2LeasesProof from "./tanstack-workflow-s2-leases.ts"
 import tanstackWorkflowS2RunLifecycleProof from "./tanstack-workflow-s2-run-lifecycle.ts"
+import tanstackWorkflowS2RuntimeProof from "./tanstack-workflow-s2-runtime.ts"
 import tanstackWorkflowS2TimersSignalsProof from "./tanstack-workflow-s2-timers-signals.ts"
 
 const proofs = [
@@ -14,7 +15,8 @@ const proofs = [
   tanstackWorkflowS2EventLogProof,
   tanstackWorkflowS2RunLifecycleProof,
   tanstackWorkflowS2LeasesProof,
-  tanstackWorkflowS2TimersSignalsProof
+  tanstackWorkflowS2TimersSignalsProof,
+  tanstackWorkflowS2RuntimeProof
 ] as const
 
 NodeRuntime.runMain(runCli(proofs))

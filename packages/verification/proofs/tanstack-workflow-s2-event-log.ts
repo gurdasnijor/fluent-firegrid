@@ -1,13 +1,29 @@
-import { LogConflictError, s2WorkflowExecutionStore, type WorkflowEvent } from "@firegrid/tanstack-workflow-s2"
+import {
+  LogConflictError,
+  s2WorkflowExecutionStore,
+  type SerializedError,
+  type WorkflowEvent
+} from "@firegrid/tanstack-workflow-s2"
 import * as Effect from "effect/Effect"
 
 import { proof } from "../src/Proof.ts"
 import { VerificationError } from "../src/VerificationError.ts"
 
-const event = (type: string, ts: number, stepId?: string): WorkflowEvent => ({
-  type,
-  ts,
-  ...(stepId === undefined ? {} : { stepId })
+const error = (message: string): SerializedError => ({ message, name: "Error" })
+
+const runStarted = (runId: string): WorkflowEvent => ({ runId, ts: 1, type: "RUN_STARTED" })
+const stepStarted = (stepId: string): WorkflowEvent => ({ stepId, ts: 2, type: "STEP_STARTED" })
+const stepFailed = (stepId: string): WorkflowEvent => ({
+  error: error("failed"),
+  stepId,
+  ts: 3,
+  type: "STEP_FAILED"
+})
+const stepFinished = (stepId: string): WorkflowEvent => ({
+  result: { ok: true },
+  stepId,
+  ts: 4,
+  type: "STEP_FINISHED"
 })
 
 const eventSummary = (
@@ -46,14 +62,14 @@ export default proof("tanstack-workflow-s2.event-log-cas")
           const runId = "run-event-log"
           const first = yield* promise(() =>
             store.appendEvents({
-              events: [event("RUN_STARTED", 1), event("STEP_STARTED", 2, "step-1")],
+              events: [runStarted(runId), stepStarted("step-1")],
               expectedNextIndex: 0,
               runId
             })
           )
           const stale = yield* promise(() =>
             store.appendEvents({
-              events: [event("STEP_FAILED", 3, "step-1")],
+              events: [stepFailed("step-1")],
               expectedNextIndex: 0,
               runId
             })
@@ -66,7 +82,7 @@ export default proof("tanstack-workflow-s2.event-log-cas")
           )
           const second = yield* promise(() =>
             store.appendEvents({
-              events: [event("STEP_FINISHED", 4, "step-1")],
+              events: [stepFinished("step-1")],
               expectedNextIndex: first.nextIndex,
               runId
             })

@@ -58,6 +58,33 @@ export default defineConfig({
       }),
       defineProject({
         test: {
+          name: "tanstack-workflow-core",
+          include: ["packages/tanstack-workflow-core/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"],
+          passWithNoTests: true
+        },
+        resolve: {
+          alias: {
+            "@tanstack/workflow-core": path.resolve(__dirname, "./packages/tanstack-workflow-core/src/index.ts")
+          }
+        }
+      }),
+      defineProject({
+        test: {
+          name: "tanstack-workflow-runtime",
+          include: ["packages/tanstack-workflow-runtime/test/**/*.test.ts"],
+          exclude: ["**/node_modules/**"],
+          passWithNoTests: true
+        },
+        resolve: {
+          alias: {
+            "@tanstack/workflow-core": path.resolve(__dirname, "./packages/tanstack-workflow-core/src/index.ts"),
+            "@tanstack/workflow-runtime": path.resolve(__dirname, "./packages/tanstack-workflow-runtime/src/index.ts")
+          }
+        }
+      }),
+      defineProject({
+        test: {
           name: "tanstack-workflow-s2",
           include: ["packages/tanstack-workflow-s2/test/**/*.test.ts"],
           exclude: ["**/node_modules/**"],
@@ -65,6 +92,8 @@ export default defineConfig({
         },
         resolve: {
           alias: {
+            "@tanstack/workflow-core": path.resolve(__dirname, "./packages/tanstack-workflow-core/src/index.ts"),
+            "@tanstack/workflow-runtime": path.resolve(__dirname, "./packages/tanstack-workflow-runtime/src/index.ts"),
             "@firegrid/tanstack-workflow-s2": path.resolve(
               __dirname,
               "./packages/tanstack-workflow-s2/src/index.ts"

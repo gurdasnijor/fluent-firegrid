@@ -328,7 +328,7 @@ const appendEvents = (runtime: S2StoreRuntime, args: AppendEventsArgs): Effect.E
         ["tanstack.workflow.run_id", args.runId],
         ["tanstack.workflow.event_index", String(envelope.eventIndex)],
         ["tanstack.workflow.event_type", envelope.event.type],
-        ["tanstack.workflow.step_id", envelope.event.stepId ?? ""]
+        ["tanstack.workflow.step_id", eventStepId(envelope.event) ?? ""]
       ]))
     const ack = yield* stream.append(AppendInput.create(records, { matchSeqNum: args.expectedNextIndex })).pipe(
       Effect.catch((error) =>
@@ -349,15 +349,22 @@ const readEvents = (
   readJsonRecords<EventEnvelope>(runtime, streamNames(runtime).events(args.runId), args.fromIndex ?? 0).pipe(
     Effect.map((result) =>
       result.records.map((envelope) =>
-        ({
-          createdAt: envelope.event.ts,
-          event: envelope.event,
-          eventIndex: envelope.eventIndex,
-          eventType: envelope.event.type,
-          runId: args.runId,
-          ...(envelope.event.stepId === undefined ? {} : { stepId: envelope.event.stepId })
-        }) satisfies StoredWorkflowEvent))
+        storedWorkflowEvent(args.runId, envelope)))
   )
+
+const storedWorkflowEvent = (runId: RunId, envelope: EventEnvelope): StoredWorkflowEvent => {
+  const stepId = eventStepId(envelope.event)
+  return {
+    createdAt: envelope.event.ts,
+    event: envelope.event,
+    eventIndex: envelope.eventIndex,
+    eventType: envelope.event.type,
+    runId,
+    ...(stepId === undefined ? {} : { stepId })
+  }
+}
+
+const eventStepId = (event: WorkflowEvent): string | undefined => "stepId" in event ? event.stepId : undefined
 
 const createRun = (runtime: S2StoreRuntime, args: CreateRunArgs): Effect.Effect<CreateRunResult, unknown> =>
   Effect.gen(function*() {
