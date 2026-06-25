@@ -41,7 +41,7 @@ export {
   workflowClient,
   workflowSendClient
 } from "./clients.ts"
-export { all, race, raceAll } from "./combinators.ts"
+export { all, FluentTimeoutError, orTimeout, race, raceAll, type TimeoutDuration } from "./combinators.ts"
 export {
   type ExternalSignalBinding,
   type ExternalSignalDelivery,

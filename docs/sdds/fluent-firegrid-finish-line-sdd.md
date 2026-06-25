@@ -322,11 +322,11 @@ Implementation status as of June 25, 2026:
 - `createTanStackRuntimeBinding` rejects delayed invocations rather than
   silently executing them immediately;
 - remaining gaps are service/workflow delayed starts backed by the generic
-  runtime scheduler, `orTimeout` ergonomics, and schedule/cron authoring
-  helpers.
+  runtime scheduler and schedule/cron authoring helpers.
 
 `orTimeout` should be an Effect combinator returning a typed timeout error, not a
-new Future abstraction.
+new Future abstraction. `orTimeout(duration)` now maps Effect's native timeout
+failure into `FluentTimeoutError`.
 
 ### Durable Table Waits With CEL
 
