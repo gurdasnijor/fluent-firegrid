@@ -1,4 +1,4 @@
-import { counter } from "effect-s2-flow/capability-b-counter"
+import { counter } from "effect-s2-flow/examples/counter"
 import { client, FlowRuntime } from "effect-s2-flow"
 import * as Effect from "effect/Effect"
 

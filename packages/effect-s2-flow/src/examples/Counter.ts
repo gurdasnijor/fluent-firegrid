@@ -1,4 +1,4 @@
-import { object, state } from "./runtime.ts"
+import { object, state } from "../runtime.ts"
 
 const value = state("counter.value", 0)
 

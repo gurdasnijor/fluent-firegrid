@@ -1,4 +1,4 @@
-import { greeter } from "effect-s2-flow/capability-a-greeter"
+import { greeter } from "effect-s2-flow/examples/greeter"
 import { client, FlowRuntime } from "effect-s2-flow"
 import * as Effect from "effect/Effect"
 import * as Fiber from "effect/Fiber"
