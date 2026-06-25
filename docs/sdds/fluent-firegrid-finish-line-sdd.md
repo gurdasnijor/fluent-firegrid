@@ -60,14 +60,12 @@ Firegrid has the runtime pieces:
 - HTTP call/send ingress;
 - Node server binding;
 - durable handler execution over S2;
-- typed object sends and object state.
+- typed object sends and object state;
+- transport-mounted webhook routes with idempotency-key and verification hooks.
 
 Remaining gaps:
 
 - canonical webhook guide and example;
-- ergonomic public route shape for webhook mounting;
-- first-class idempotency-key option separate from raw `runId`;
-- request authentication/signature-verification helpers;
 - documented retry/dedupe behavior for external senders.
 
 ### Service Communication
@@ -84,14 +82,8 @@ Implemented:
 
 Remaining gaps:
 
-- `genericCall` and `genericSend` for dynamic service/method names;
-- Restate-like option builders for call/send options;
-- explicit `idempotencyKey` option;
-- delayed send option;
 - invocation cancel;
-- workflow key ergonomics closer to `workflowClient(workflow, "wf-id")`;
-- clearer naming aliases matching Restate muscle memory:
-  `serviceSendClient`, `objectSendClient`, `workflowSendClient`.
+- service/workflow delayed execution backed by the generic runtime scheduler.
 
 ### Durable Timers
 
@@ -104,8 +96,6 @@ Implemented:
 
 Remaining gaps:
 
-- delayed messages on send clients;
-- timeout combinators such as `orTimeout`;
 - cron/schedule authoring helpers;
 - docs explaining long sleeps, deployment version retention, and when delayed
   messages are better than sleeping in a handler.
@@ -602,6 +592,18 @@ await serveFluentS2({
 
 The `webhooks` option is intentionally transport-specific and belongs in
 `@firegrid/fluent-firegrid-node`, not fluent core.
+
+Implementation status as of June 25, 2026:
+
+- `serveFluentS2` / `createFluentS2NodeRuntime` accept `webhooks` route
+  mappings;
+- each route targets an existing service/workflow/object handler and forwards
+  through the existing HTTP invocation binding, so descriptor validation and
+  output encoding stay centralized;
+- routes can derive a durable idempotency key from the incoming request and run
+  a raw-body `verify` hook before admission;
+- remaining gap is a canonical runnable example/guide using the full Stripe-like
+  object-state workflow.
 
 ## Finish-Line Acceptance Ladder
 

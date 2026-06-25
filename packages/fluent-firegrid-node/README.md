@@ -25,3 +25,23 @@ await server.close()
 
 The fluent transport routes are provided by `@firegrid/fluent-firegrid-http`.
 This package adds only the Node process binding around them.
+
+Webhook routes can be mounted as transport-specific aliases for normal fluent
+handlers. The route derives the durable idempotency key before forwarding to the
+existing invocation binding.
+
+```ts
+await serveFluentS2({
+  definitions: [stripeWebhook],
+  namespace: "billing",
+  s2Endpoint: "http://127.0.0.1:7070",
+  webhooks: {
+    "/webhooks/stripe": {
+      definition: stripeWebhook,
+      handler: "onEvent",
+      idempotencyKey: (request) => request.headers.get("stripe-event-id") ?? undefined,
+      verify: (request, body) => verifyStripeSignature(request.headers, body)
+    }
+  }
+})
+```

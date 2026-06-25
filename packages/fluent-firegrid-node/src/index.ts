@@ -24,6 +24,7 @@ import * as Http from "node:http"
 import type * as Net from "node:net"
 
 type AnyDefinition = Definition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>
+type MaybePromise<A> = A | Promise<A>
 
 export interface FluentNodeHttpServerOptions {
   readonly handler: (request: Request) => Promise<Response>
@@ -45,6 +46,7 @@ export interface FluentS2NodeRuntimeOptions
   extends Omit<S2WorkflowRuntimeConfig<WorkflowRegistrationMap>, "workflows">, S2ObjectRuntimeBindingConfig
 {
   readonly definitions: ReadonlyArray<AnyDefinition>
+  readonly webhooks?: FluentWebhookRoutes
 }
 
 export interface FluentS2NodeRuntime {
@@ -65,6 +67,16 @@ export interface FluentS2NodeServer extends FluentS2NodeRuntime, FluentNodeHttpS
   readonly close: () => Promise<void>
 }
 
+export type FluentWebhookRoutes = Readonly<Record<string, FluentWebhookRoute>>
+
+export interface FluentWebhookRoute {
+  readonly definition: AnyDefinition
+  readonly handler: string
+  readonly idempotencyKey?: (request: Request) => MaybePromise<string | undefined>
+  readonly key?: string | ((request: Request) => MaybePromise<string | undefined>)
+  readonly verify?: (request: Request, body: Uint8Array) => MaybePromise<boolean | Response | void>
+}
+
 export const createFluentS2NodeRuntime = (options: FluentS2NodeRuntimeOptions): FluentS2NodeRuntime => {
   let binding: ReturnType<typeof createS2ObjectRuntimeBinding> | undefined
   let externalSignals: ReturnType<typeof createTanStackExternalSignalBinding> | undefined
@@ -81,8 +93,42 @@ export const createFluentS2NodeRuntime = (options: FluentS2NodeRuntimeOptions): 
   })
   externalSignals = createTanStackExternalSignalBinding(host)
   binding = createS2ObjectRuntimeBinding(host, options)
-  const handler = createFluentHttpHandler({ binding, definitions: options.definitions, externalSignals })
+  const handler = createFluentWebhookHandler(
+    createFluentHttpHandler({ binding, definitions: options.definitions, externalSignals }),
+    options.webhooks
+  )
   return { binding, handler, host }
+}
+
+export const createFluentWebhookHandler = (
+  fallback: (request: Request) => Promise<Response>,
+  routes: FluentWebhookRoutes | undefined
+): (request: Request) => Promise<Response> => {
+  if (routes === undefined || Object.keys(routes).length === 0) return fallback
+  return async (request) => {
+    const route = routes[new URL(request.url).pathname]
+    if (route === undefined) return await fallback(request)
+    if (request.method !== "POST") return writeWebJson({ error: "method_not_allowed" }, 405)
+
+    const body = new Uint8Array(await request.arrayBuffer())
+    const verification = await route.verify?.(request, body)
+    if (verification instanceof Response) return verification
+    if (verification === false) return writeWebJson({ error: "webhook_verification_failed" }, 401)
+
+    const key = typeof route.key === "function" ? await route.key(request) : route.key
+    if (route.definition._kind === "object" && (key === undefined || key === "")) {
+      return writeWebJson({ error: "object_key_required" }, 400)
+    }
+    const runId = await route.idempotencyKey?.(request)
+    const targetUrl = webhookInvocationUrl(request, route, key, runId)
+    return await fallback(
+      new Request(targetUrl, {
+        body,
+        headers: request.headers,
+        method: "POST"
+      })
+    )
+  }
 }
 
 export const listenFluentHttp = (options: FluentNodeHttpServerOptions): Promise<FluentNodeHttpServer> =>
@@ -233,6 +279,28 @@ const writeJson = (
 ) => {
   response.writeHead(status, { "content-type": "application/json" })
   response.end(JSON.stringify(value))
+}
+
+const writeWebJson = (value: unknown, status: number): Response =>
+  new Response(JSON.stringify(value), {
+    headers: { "content-type": "application/json" },
+    status
+  })
+
+const webhookInvocationUrl = (
+  request: Request,
+  route: FluentWebhookRoute,
+  key: string | undefined,
+  runId: string | undefined
+): URL => {
+  const source = new URL(request.url)
+  const parts = route.definition._kind === "object"
+    ? ["call", route.definition._kind, route.definition.name, key ?? "", route.handler]
+    : ["call", route.definition._kind, route.definition.name, route.handler]
+  source.pathname = `/${parts.map(encodeURIComponent).join("/")}`
+  source.search = ""
+  if (runId !== undefined && runId !== "") source.searchParams.set("runId", runId)
+  return source
 }
 
 const closeServer = (server: Http.Server): Promise<void> =>
