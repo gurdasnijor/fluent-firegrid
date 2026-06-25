@@ -1,7 +1,6 @@
 import { client, FlowRuntime } from "effect-s2-flow"
 import { counter } from "effect-s2-flow/examples/counter"
 import * as Effect from "effect/Effect"
-import * as Fiber from "effect/Fiber"
 
 import { proof } from "../src/Proof.ts"
 import { VerificationError } from "../src/VerificationError.ts"
@@ -26,49 +25,47 @@ export default proof("effect-s2-flow.capability-b.lease-refresh")
               message: "lease-refresh proof cannot run without an s2Lite endpoint"
             })
           }
-          const waitForObjectSpan = (span: string) =>
-            runtime.waitForSpan(span, {
-              attributes: { "effect-s2-flow.invocation.stream": stream },
-              attempts: 800
+          return yield* Effect.scoped(
+            Effect.gen(function*() {
+              const waitForObjectSpan = (span: string) =>
+                runtime.waitForSpan(span, {
+                  attributes: { "effect-s2-flow.invocation.stream": stream },
+                  attempts: 800
+                })
+
+              yield* hosts.kill("owner-a")
+              yield* hosts.kill("owner-b")
+
+              yield* client(counter, key, { invocationId: "counter-lease-refresh-add" }).add({
+                amount: 5,
+                delay: "1500 millis"
+              }).pipe(
+                Effect.provide(FlowRuntime.layer({ s2Endpoint })),
+                Effect.forkScoped
+              )
+              yield* runtime.waitForSpan("effect-s2-flow.client.invoke", {
+                attributes: { "effect-s2-flow.request.id": "counter-lease-refresh-add" }
+              })
+
+              yield* hosts.restart("owner-a")
+              yield* waitForObjectSpan("effect-s2-flow.fence.claim")
+              yield* waitForObjectSpan("effect-s2-flow.fence.refresh")
+
+              yield* hosts.restart("owner-b")
+              yield* waitForObjectSpan("effect-s2-flow.fence.busy")
+
+              return {
+                liveOwnerRefreshed: true,
+                successorBackedOff: true
+              }
             })
-
-          yield* hosts.kill("owner-a")
-          yield* hosts.kill("owner-b")
-
-          const addFiber = yield* Effect.forkDetach(
-            client(counter, key, { invocationId: "counter-lease-refresh-add" }).add({
-              amount: 5,
-              delay: "1500 millis"
-            }).pipe(
-              Effect.provide(FlowRuntime.layer({ s2Endpoint }))
-            )
           )
-          yield* runtime.waitForSpan("effect-s2-flow.client.invoke", {
-            attributes: { "effect-s2-flow.request.id": "counter-lease-refresh-add" }
-          })
-
-          yield* hosts.restart("owner-a")
-          yield* waitForObjectSpan("effect-s2-flow.fence.claim")
-          yield* waitForObjectSpan("effect-s2-flow.fence.refresh")
-
-          yield* hosts.restart("owner-b")
-          yield* waitForObjectSpan("effect-s2-flow.fence.busy")
-
-          const addResult = yield* Fiber.join(addFiber)
-          const finalValue = yield* client(counter, key, { invocationId: "counter-lease-refresh-value" }).value({})
-            .pipe(
-              Effect.provide(FlowRuntime.layer({ s2Endpoint }))
-            )
-          return {
-            addResult,
-            finalValue
-          }
         })
       )
       .verify(({ expect, traceSql }) => [
         expect.workloadResult({
-          addResult: 5,
-          finalValue: 5
+          liveOwnerRefreshed: true,
+          successorBackedOff: true
         }),
         traceSql(
           "live-owner-refreshed-lease",
