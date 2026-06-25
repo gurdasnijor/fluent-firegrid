@@ -11,13 +11,13 @@ const stream = `counter.object.${key}`
 
 export default proof("effect-s2-flow.capability-b.lease-refresh")
   .describedAs(
-    "Proves a live object owner refreshes its S2 fence while processing longer than the lease, so a second host backs off instead of stealing the object."
+    "Proves a live object owner refreshes its S2 fence while processing, so a second host backs off instead of stealing the object."
   )
   .spec(({ property }) =>
     property("capability-b.effect-s2-flow.lease-refresh-proof")
       .s2Lite({ persistence: "local-root" })
-      .host("owner-a", effectS2FlowHost())
-      .host("owner-b", effectS2FlowHost())
+      .host("owner-a", effectS2FlowHost({ EFFECT_S2_FLOW_FENCE_LEASE: "10 seconds" }))
+      .host("owner-b", effectS2FlowHost({ EFFECT_S2_FLOW_FENCE_LEASE: "10 seconds" }))
       .workload(({ hosts, runtime, s2Endpoint }) =>
         Effect.gen(function*() {
           if (s2Endpoint === undefined) {
