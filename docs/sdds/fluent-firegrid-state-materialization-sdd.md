@@ -215,13 +215,18 @@ the final state is `12`.
 
 ### D. Replay-Safe Reads And Writes
 
+**Status:** Implemented.
+
 **Claim.** Read-modify-write remains stable under crash/replay.
 
 **Forces:** `StateReadJournaled`, idempotent state mutations, replay from owner
 stream before handler resume.
 
 **Proof:** crash after state mutation but before call completion; restart does not
-double-apply and returns the original result.
+double-apply and returns the original result. `fluent-firegrid-s2.object-replay-state`
+proves a run that read `0`, wrote `5`, and died before completion resumes without
+turning the value into `10`; the next serialized `add(7)` observes final state
+`12`.
 
 ### E. Restate-Like Handles
 

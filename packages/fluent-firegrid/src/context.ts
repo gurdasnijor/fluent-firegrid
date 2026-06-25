@@ -9,10 +9,26 @@ import { FluentFiregridError } from "./error.ts"
 export interface ObjectStateBackend {
   readonly get: (
     table: string,
-    key: string
+    key: string,
+    options?: { readonly readId?: string }
   ) => Effect.Effect<Option.Option<unknown>, FluentFiregridError>
-  readonly set: (table: string, key: string, value: unknown) => Effect.Effect<void, FluentFiregridError>
-  readonly delete: (table: string, key: string) => Effect.Effect<void, FluentFiregridError>
+  readonly set: (
+    table: string,
+    key: string,
+    value: unknown,
+    options?: { readonly opId?: string }
+  ) => Effect.Effect<void, FluentFiregridError>
+  readonly delete: (
+    table: string,
+    key: string,
+    options?: { readonly opId?: string }
+  ) => Effect.Effect<void, FluentFiregridError>
+}
+
+export interface StateOperationIdentityInput {
+  readonly kind: "get" | "set" | "delete"
+  readonly table: string
+  readonly key: string
 }
 
 export interface RunActionContext {
@@ -28,6 +44,7 @@ export type RunAction<A> = (
 export interface FluentDurableContextService {
   readonly key?: string
   readonly state?: ObjectStateBackend
+  readonly stateOperationId?: (input: StateOperationIdentityInput) => string
   readonly step: <A>(
     name: string,
     action: RunAction<A>,
@@ -46,6 +63,7 @@ export class FluentDurableContext extends Context.Service<FluentDurableContext, 
 ) {}
 
 export interface TanStackWorkflowContext {
+  readonly runId?: string
   readonly step: <A>(
     id: string,
     fn: (stepContext: StepContext) => A | Promise<A>,
@@ -59,35 +77,41 @@ export interface TanStackWorkflowContext {
 export const fluentContextFromTanStack = (
   ctx: TanStackWorkflowContext,
   options: { readonly key?: string; readonly state?: ObjectStateBackend } = {}
-): FluentDurableContextService => ({
-  ...(options.key === undefined ? {} : { key: options.key }),
-  ...(options.state === undefined ? {} : { state: options.state }),
-  sleep: (ms, options) =>
-    Effect.tryPromise({
-      try: () => ctx.sleep(ms, options),
-      catch: (cause) => new FluentFiregridError({ cause, message: `sleep(${ms}) failed` })
-    }),
-  sleepUntil: (timestamp, options) =>
-    Effect.tryPromise({
-      try: () => ctx.sleepUntil(timestamp, options),
-      catch: (cause) => new FluentFiregridError({ cause, message: `sleepUntil(${timestamp}) failed` })
-    }),
-  waitForSignal: (name, options) =>
-    Effect.tryPromise({
-      try: () => ctx.waitForEvent(name, options),
-      catch: (cause) => new FluentFiregridError({ cause, message: `waitForSignal(${name}) failed` })
-    }),
-  step: (name, action, options) =>
-    Effect.tryPromise({
-      try: () =>
-        ctx.step(
-          name,
-          (stepContext) => {
-            const value = action(stepContext)
-            return Effect.isEffect(value) ? Effect.runPromise(value) : Promise.resolve(value)
-          },
-          options
-        ),
-      catch: (cause) => new FluentFiregridError({ cause, message: `step ${name} failed` })
-    })
-})
+): FluentDurableContextService => {
+  let nextStateOperation = 0
+  const runId = ctx.runId ?? "unknown-run"
+  return {
+    ...(options.key === undefined ? {} : { key: options.key }),
+    ...(options.state === undefined ? {} : { state: options.state }),
+    stateOperationId: (input) =>
+      `${runId}:state:${nextStateOperation++}:${input.kind}:${input.table}:${input.key}`,
+    sleep: (ms, options) =>
+      Effect.tryPromise({
+        try: () => ctx.sleep(ms, options),
+        catch: (cause) => new FluentFiregridError({ cause, message: `sleep(${ms}) failed` })
+      }),
+    sleepUntil: (timestamp, options) =>
+      Effect.tryPromise({
+        try: () => ctx.sleepUntil(timestamp, options),
+        catch: (cause) => new FluentFiregridError({ cause, message: `sleepUntil(${timestamp}) failed` })
+      }),
+    waitForSignal: (name, options) =>
+      Effect.tryPromise({
+        try: () => ctx.waitForEvent(name, options),
+        catch: (cause) => new FluentFiregridError({ cause, message: `waitForSignal(${name}) failed` })
+      }),
+    step: (name, action, options) =>
+      Effect.tryPromise({
+        try: () =>
+          ctx.step(
+            name,
+            (stepContext) => {
+              const value = action(stepContext)
+              return Effect.isEffect(value) ? Effect.runPromise(value) : Promise.resolve(value)
+            },
+            options
+          ),
+        catch: (cause) => new FluentFiregridError({ cause, message: `step ${name} failed` })
+      })
+  }
+}

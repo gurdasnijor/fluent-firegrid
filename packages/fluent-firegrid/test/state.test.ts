@@ -65,14 +65,22 @@ describe("ChangeMessage projection", () => {
 describe("state(Table)", () => {
   it("uses the ambient object state backend with schema decoding", async () => {
     const rows = new Map<string, unknown>()
+    const operations = new Array<string>()
+    let nextOperation = 0
     const backend: ObjectStateBackend = {
-      get: (table, key) => Effect.succeed(Option.fromNullishOr(rows.get(`${table}:${key}`))),
-      set: (table, key, value) =>
+      get: (table, key, options) =>
         Effect.sync(() => {
+          operations.push(`get:${options?.readId ?? "none"}`)
+          return Option.fromNullishOr(rows.get(`${table}:${key}`))
+        }),
+      set: (table, key, value, options) =>
+        Effect.sync(() => {
+          operations.push(`set:${options?.opId ?? "none"}`)
           rows.set(`${table}:${key}`, value)
         }),
-      delete: (table, key) =>
+      delete: (table, key, options) =>
         Effect.sync(() => {
+          operations.push(`delete:${options?.opId ?? "none"}`)
           rows.delete(`${table}:${key}`)
         })
     }
@@ -90,6 +98,7 @@ describe("state(Table)", () => {
         FluentDurableContext.of({
           key: "object-1",
           state: backend,
+          stateOperationId: ({ kind, table, key }) => `state-op:${nextOperation++}:${kind}:${table}:${key}`,
           sleep: () => Effect.void,
           sleepUntil: () => Effect.void,
           step: <A>(_name: string, action: RunAction<A>) => {
@@ -106,5 +115,11 @@ describe("state(Table)", () => {
     const result = await Effect.runPromise(program)
     expect(result.current).toEqual(Option.some({ id: "a", value: 3 }))
     expect(Option.isNone(result.removed)).toBeTruthy()
+    expect(operations).toEqual([
+      "set:state-op:0:set:items:a",
+      "get:state-op:1:get:items:a",
+      "delete:state-op:2:delete:items:a",
+      "get:state-op:3:get:items:a"
+    ])
   })
 })

@@ -3,7 +3,7 @@ import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import * as SchemaAST from "effect/SchemaAST"
 
-import { FluentDurableContext, type ObjectStateBackend } from "./context.ts"
+import { FluentDurableContext, type FluentDurableContextService, type ObjectStateBackend } from "./context.ts"
 import { FluentFiregridError } from "./error.ts"
 
 const PrimaryKeyAnnotation = "@firegrid/fluent-firegrid/primaryKey"
@@ -65,7 +65,18 @@ export interface StateControlMessage {
   }
 }
 
-export type StateMessage = StateChangeMessage | StateControlMessage
+export interface StateReadJournaledMessage {
+  readonly type: string
+  readonly key: string
+  readonly value?: unknown
+  readonly headers: {
+    readonly present: boolean
+    readonly read: "journaled"
+    readonly readId: string
+  }
+}
+
+export type StateMessage = StateChangeMessage | StateControlMessage | StateReadJournaledMessage
 
 export namespace ChangeMessage {
   export const Operation = Schema.Literals(["insert", "update", "delete"])
@@ -94,12 +105,27 @@ export namespace ChangeMessage {
   })
   export type ControlMessage = typeof ControlMessage.Type
 
-  export const Message = Schema.Union([ChangeMessage, ControlMessage])
+  export const ReadJournaledMessage = Schema.Struct({
+    type: Schema.String,
+    key: Schema.String,
+    value: Schema.optional(Schema.Unknown),
+    headers: Schema.Struct({
+      present: Schema.Boolean,
+      read: Schema.Literal("journaled"),
+      readId: Schema.String
+    })
+  })
+  export type ReadJournaledMessage = typeof ReadJournaledMessage.Type
+
+  export const Message = Schema.Union([ChangeMessage, ControlMessage, ReadJournaledMessage])
   export type Message = typeof Message.Type
 
   export const isChange = (message: Message): message is ChangeMessage => "operation" in message.headers
 
   export const isControl = (message: Message): message is ControlMessage => "control" in message.headers
+
+  export const isReadJournaled = (message: Message): message is ReadJournaledMessage =>
+    "read" in message.headers
 
   const Json = Schema.UnknownFromJsonString
 
@@ -118,10 +144,11 @@ export class MaterializedState {
   }
 
   apply(message: ChangeMessage.Message): void {
-    if (!ChangeMessage.isChange(message)) {
-      if (message.headers.control !== "snapshot-end") {
-        this.byType.clear()
-      }
+    if (ChangeMessage.isReadJournaled(message)) {
+      return
+    }
+    if (ChangeMessage.isControl(message)) {
+      if (message.headers.control !== "snapshot-end") this.byType.clear()
       return
     }
     const collection = this.collectionFor(message.type)
@@ -206,32 +233,39 @@ const primaryKeyOf = <Tbl extends AnyTable>(
 
 const withStateBackend = <A>(
   operation: string,
-  body: (backend: ObjectStateBackend) => Effect.Effect<A, FluentFiregridError>
+  body: (backend: ObjectStateBackend, ctx: FluentDurableContextService) => Effect.Effect<A, FluentFiregridError>
 ): Effect.Effect<A, FluentFiregridError, FluentDurableContext> =>
   FluentDurableContext.pipe(
     Effect.flatMap((ctx) =>
       ctx.state === undefined
         ? Effect.fail(new FluentFiregridError({ message: `${operation} can only be used in stateful object handlers` }))
-        : body(ctx.state)
+        : body(ctx.state, ctx)
     )
   )
 
 export const state = <Tbl extends AnyTable>(table: Tbl): StateBinding<RowOf<Tbl>> => ({
   get: (key) =>
-    withStateBackend("state.get", (backend) =>
-      backend.get(table.tableName, key).pipe(
+    withStateBackend("state.get", (backend, ctx) => {
+      const readId = ctx.stateOperationId?.({ key, kind: "get", table: table.tableName })
+      return backend.get(table.tableName, key, readId === undefined ? undefined : { readId }).pipe(
         Effect.flatMap((value) =>
           Option.isNone(value)
             ? Effect.succeed(Option.none<RowOf<Tbl>>())
             : decodeRowFor(table, value.value).pipe(Effect.map(Option.some))
         )
-      )),
+      )
+    }),
   set: (row) =>
-    withStateBackend("state.set", (backend) =>
+    withStateBackend("state.set", (backend, ctx) =>
       Effect.gen(function*() {
         const key = yield* primaryKeyOf(table, row)
         const encoded = yield* encodeRowFor(table, row)
-        yield* backend.set(table.tableName, key, encoded)
+        const opId = ctx.stateOperationId?.({ key, kind: "set", table: table.tableName })
+        yield* backend.set(table.tableName, key, encoded, opId === undefined ? undefined : { opId })
       })),
-  delete: (key) => withStateBackend("state.delete", (backend) => backend.delete(table.tableName, key))
+  delete: (key) =>
+    withStateBackend("state.delete", (backend, ctx) => {
+      const opId = ctx.stateOperationId?.({ key, kind: "delete", table: table.tableName })
+      return backend.delete(table.tableName, key, opId === undefined ? undefined : { opId })
+    })
 })

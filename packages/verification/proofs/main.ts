@@ -6,6 +6,7 @@ import { effectS2SubstrateProofs } from "./effect-s2-substrate-proofs.ts"
 import fluentFiregridHostCrashRestartProof from "./fluent-firegrid-host-crash-restart.ts"
 import fluentFiregridObjectKeyRestartProof from "./fluent-firegrid-object-key-restart.ts"
 import fluentFiregridS2ObjectCrossHostProof from "./fluent-firegrid-s2-object-cross-host.ts"
+import fluentFiregridS2ObjectReplayStateProof from "./fluent-firegrid-s2-object-replay-state.ts"
 import fluentFiregridS2ObjectSerializationProof from "./fluent-firegrid-s2-object-serialization.ts"
 import fluentFiregridS2ObjectStateProof from "./fluent-firegrid-s2-object-state.ts"
 import fluentFiregridS2ObjectStaleOwnerProof from "./fluent-firegrid-s2-object-stale-owner.ts"
@@ -27,6 +28,7 @@ const proofs = [
   fluentFiregridHostCrashRestartProof,
   fluentFiregridObjectKeyRestartProof,
   fluentFiregridS2ObjectCrossHostProof,
+  fluentFiregridS2ObjectReplayStateProof,
   fluentFiregridS2ObjectSerializationProof,
   fluentFiregridS2ObjectStateProof,
   fluentFiregridS2ObjectStaleOwnerProof,
