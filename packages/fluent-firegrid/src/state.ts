@@ -5,6 +5,15 @@ import * as SchemaAST from "effect/SchemaAST"
 
 import { FluentDurableContext, type FluentDurableContextService, type ObjectStateBackend } from "./context.ts"
 import { FluentFiregridError } from "./error.ts"
+export {
+  cel,
+  type CelStatePredicate,
+  evaluateStatePredicate,
+  type StatePredicate,
+  type StatePredicateContext,
+  validateStatePredicate
+} from "./statePredicate.ts"
+import type { StatePredicate } from "./statePredicate.ts"
 
 const PrimaryKeyAnnotation = "@firegrid/fluent-firegrid/primaryKey"
 const readPrimaryKey = SchemaAST.resolveAt<boolean>(PrimaryKeyAnnotation)
@@ -196,6 +205,16 @@ export interface StateBinding<Row, Key extends string = string> {
   readonly get: (key: Key) => Effect.Effect<Option.Option<Row>, FluentFiregridError, FluentDurableContext>
   readonly set: (row: Row) => Effect.Effect<void, FluentFiregridError, FluentDurableContext>
   readonly delete: (key: Key) => Effect.Effect<void, FluentFiregridError, FluentDurableContext>
+  readonly waitFor: (
+    key: Key,
+    options: StateWaitOptions
+  ) => Effect.Effect<Row, FluentFiregridError, FluentDurableContext>
+}
+
+export interface StateWaitOptions {
+  readonly name: string
+  readonly timeoutMs?: number
+  readonly when: StatePredicate
 }
 
 const encodeRowFor = <Tbl extends AnyTable>(
@@ -274,5 +293,17 @@ export const state = <Tbl extends AnyTable>(table: Tbl): StateBinding<RowOf<Tbl>
     withStateBackend("state.delete", (backend, ctx) => {
       const opId = ctx.stateOperationId?.({ key, kind: "delete", table: table.tableName })
       return backend.delete(table.tableName, key, opId === undefined ? undefined : { opId })
+    }),
+  waitFor: (key, options) =>
+    withStateBackend("state.waitFor", (backend, ctx) => {
+      if (backend.waitFor === undefined) {
+        return Effect.fail(new FluentFiregridError({ message: "state.waitFor is not supported by this state backend" }))
+      }
+      const waitId = ctx.stateOperationId?.({ key, kind: "waitFor", table: table.tableName })
+      return backend.waitFor(table.tableName, key, options.when, {
+        name: options.name,
+        ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+        ...(waitId === undefined ? {} : { waitId })
+      }).pipe(Effect.flatMap((value) => decodeRowFor(table, value)))
     })
 })

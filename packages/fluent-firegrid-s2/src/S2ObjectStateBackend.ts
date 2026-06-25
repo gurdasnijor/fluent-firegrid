@@ -1,4 +1,10 @@
-import { FluentFiregridError, type ObjectStateBackend } from "@firegrid/fluent-firegrid"
+import {
+  evaluateStatePredicate,
+  FluentFiregridError,
+  type ObjectStateBackend,
+  type StatePredicate,
+  type StateWaitBackendOptions
+} from "@firegrid/fluent-firegrid"
 import { ChangeMessage, MaterializedState } from "@firegrid/fluent-firegrid/state"
 import {
   AppendInput,
@@ -120,7 +126,9 @@ export const createS2ObjectStateBackend = (
           key,
           type: table
         }, owner).pipe(Effect.asVoid)
-      )
+      ),
+    waitFor: (table, key, predicate, options) =>
+      run(waitForState(runtime, streamName, owner, table, key, predicate, options))
   }
 }
 
@@ -320,6 +328,58 @@ const appendChange = (
     return yield* Effect.fail(
       new FluentFiregridError({ message: `S2 object state CAS failed after retries for ${streamName}` })
     )
+  })
+
+const waitForState = (
+  runtime: Runtime,
+  streamName: string,
+  owner: S2ObjectStateOwner | undefined,
+  table: string,
+  key: string,
+  predicate: StatePredicate,
+  options: StateWaitBackendOptions
+): Effect.Effect<unknown, unknown> =>
+  Effect.suspend(() => {
+    const pollIntervalMs = 50
+    const maxAttempts = options.timeoutMs === undefined
+      ? Number.POSITIVE_INFINITY
+      : Math.max(1, Math.ceil(options.timeoutMs / pollIntervalMs))
+    const timedOut = Effect.fail(
+      new FluentFiregridError({
+        message: `S2 object state wait ${options.name} timed out for ${table}:${key}`
+      })
+    )
+
+    const readCurrent = readProjection(runtime, streamName, owner?.invocationStreamName).pipe(
+      Effect.flatMap((projection) => {
+        const current = projection.materialized.get(table, key)
+        if (Option.isNone(current)) return Effect.succeed(Option.none<unknown>())
+        return evaluateStatePredicate(predicate, {
+          change: {
+            key,
+            operation: "snapshot",
+            table
+          },
+          row: current.value
+        }).pipe(Effect.map((matches) => matches ? current : Option.none<unknown>()))
+      })
+    )
+
+    const poll = (attempt: number): Effect.Effect<unknown, unknown> =>
+      attempt >= maxAttempts
+        ? timedOut
+        : readCurrent.pipe(
+          Effect.flatMap((value) =>
+            Option.isSome(value)
+              ? Effect.succeed(value.value)
+              : verifyOwner(runtime, owner).pipe(
+                Effect.flatMap(() => Effect.sleep(pollIntervalMs)),
+                Effect.flatMap(() => poll(attempt + 1))
+              )
+          )
+        )
+
+    return poll(0)
   })
 
 const isCasConflict = (cause: unknown): boolean =>

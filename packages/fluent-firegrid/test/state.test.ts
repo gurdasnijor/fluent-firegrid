@@ -1,14 +1,36 @@
 import { describe, expect, it } from "vitest"
 import { Effect, Option, Schema } from "effect"
 
-import { FluentDurableContext, type ObjectStateBackend, type RunAction } from "../src/context.ts"
-import type { FluentFiregridError } from "../src/error.ts"
-import { ChangeMessage, MaterializedState, primaryKey, state, Table } from "../src/state.ts"
+import { FluentDurableContext, type ObjectStateBackend } from "../src/context.ts"
+import { FluentFiregridError } from "../src/error.ts"
+import {
+  cel,
+  ChangeMessage,
+  evaluateStatePredicate,
+  MaterializedState,
+  primaryKey,
+  state,
+  Table
+} from "../src/state.ts"
 
 class Item extends Table<Item>("items")({
   id: Schema.String.pipe(primaryKey),
   value: Schema.Number
 }) {}
+
+const testContext = (
+  state: ObjectStateBackend,
+  stateOperationId: NonNullable<Parameters<typeof FluentDurableContext.of>[0]["stateOperationId"]>
+) =>
+  FluentDurableContext.of({
+    key: "object-1",
+    state,
+    stateOperationId,
+    sleep: () => Effect.void,
+    sleepUntil: () => Effect.void,
+    step: () => Effect.fail(new FluentFiregridError({ message: "step not used" })),
+    waitForSignal: () => Effect.fail(new FluentFiregridError({ message: "waitForSignal not used" }))
+  })
 
 describe("Table definition", () => {
   it("derives metadata from the schema-owned primary key", () => {
@@ -62,6 +84,29 @@ describe("ChangeMessage projection", () => {
   })
 })
 
+describe("state wait predicates", () => {
+  it("evaluates serializable CEL predicates against the row context", async () => {
+    const result = await Effect.runPromise(
+      evaluateStatePredicate(cel("row.value >= 3 && row.id == 'a'"), {
+        row: { id: "a", value: 3 }
+      })
+    )
+    expect(result).toBeTruthy()
+  })
+
+  it("rejects CEL predicates that do not return bool", async () => {
+    await expect(
+      Effect.runPromise(
+        evaluateStatePredicate(cel("row.value"), {
+          row: { id: "a", value: 3 }
+        })
+      )
+    ).rejects.toMatchObject({
+      _tag: "FluentFiregridError"
+    })
+  })
+})
+
 describe("state(Table)", () => {
   it("uses the ambient object state backend with schema decoding", async () => {
     const rows = new Map<string, unknown>()
@@ -95,20 +140,7 @@ describe("state(Table)", () => {
     }).pipe(
       Effect.provideService(
         FluentDurableContext,
-        FluentDurableContext.of({
-          key: "object-1",
-          state: backend,
-          stateOperationId: ({ kind, table, key }) => `state-op:${nextOperation++}:${kind}:${table}:${key}`,
-          sleep: () => Effect.void,
-          sleepUntil: () => Effect.void,
-          step: <A>(_name: string, action: RunAction<A>) => {
-            const value = action({ attempt: 1, id: "step", signal: new AbortController().signal })
-            return (Effect.isEffect(value)
-              ? value
-              : Effect.promise(() => Promise.resolve(value))) as Effect.Effect<A, FluentFiregridError>
-          },
-          waitForSignal: () => Effect.die("not used")
-        })
+        testContext(backend, ({ kind, table, key }) => `state-op:${nextOperation++}:${kind}:${table}:${key}`)
       )
     )
 
@@ -121,5 +153,57 @@ describe("state(Table)", () => {
       "delete:state-op:2:delete:items:a",
       "get:state-op:3:get:items:a"
     ])
+  })
+
+  it("delegates keyed waits to the ambient backend with a serializable predicate", async () => {
+    let captured:
+      | {
+        readonly key: string
+        readonly name: string
+        readonly table: string
+        readonly timeoutMs?: number
+        readonly waitId?: string
+        readonly expression: string
+      }
+      | undefined
+    let nextOperation = 0
+    const backend: ObjectStateBackend = {
+      get: () => Effect.succeed(Option.none()),
+      set: () => Effect.void,
+      delete: () => Effect.void,
+      waitFor: (table, key, predicate, options) =>
+        Effect.sync(() => {
+          captured = {
+            expression: predicate.expression,
+            key,
+            name: options.name,
+            table,
+            ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+            ...(options.waitId === undefined ? {} : { waitId: options.waitId })
+          }
+          return { id: key, value: 7 }
+        })
+    }
+
+    const program = state(Item).waitFor("a", {
+      name: "value-ready",
+      timeoutMs: 1_000,
+      when: cel("row.value >= 7")
+    }).pipe(
+      Effect.provideService(
+        FluentDurableContext,
+        testContext(backend, ({ kind, table, key }) => `state-op:${nextOperation++}:${kind}:${table}:${key}`)
+      )
+    )
+
+    await expect(Effect.runPromise(program)).resolves.toEqual({ id: "a", value: 7 })
+    expect(captured).toEqual({
+      expression: "row.value >= 7",
+      key: "a",
+      name: "value-ready",
+      table: "items",
+      timeoutMs: 1_000,
+      waitId: "state-op:0:waitFor:items:a"
+    })
   })
 })

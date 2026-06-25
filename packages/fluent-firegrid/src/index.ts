@@ -34,6 +34,7 @@ export {
   type ObjectStateBackend,
   type RunAction,
   type RunActionContext,
+  type StateWaitBackendOptions,
   type TanStackWorkflowContext
 } from "./context.ts"
 export {
@@ -69,5 +70,11 @@ export {
 import * as iface from "./interface.ts"
 export { iface }
 export { objectKey, run, type RunOptions, sleep, sleepUntil, waitForSignal } from "./run.ts"
-export { state } from "./state.ts"
-export type { StateBinding } from "./state.ts"
+export { cel, evaluateStatePredicate, state, validateStatePredicate } from "./state.ts"
+export type {
+  CelStatePredicate,
+  StateBinding,
+  StatePredicate,
+  StatePredicateContext,
+  StateWaitOptions
+} from "./state.ts"

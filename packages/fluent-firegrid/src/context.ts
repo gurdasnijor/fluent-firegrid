@@ -6,6 +6,13 @@ import type * as Option from "effect/Option"
 
 import type { InvocationBinding } from "./clients.ts"
 import { FluentFiregridError } from "./error.ts"
+import type { StatePredicate } from "./statePredicate.ts"
+
+export interface StateWaitBackendOptions {
+  readonly name: string
+  readonly timeoutMs?: number
+  readonly waitId?: string
+}
 
 export interface ObjectStateBackend {
   readonly get: (
@@ -24,10 +31,16 @@ export interface ObjectStateBackend {
     key: string,
     options?: { readonly opId?: string }
   ) => Effect.Effect<void, FluentFiregridError>
+  readonly waitFor?: (
+    table: string,
+    key: string,
+    predicate: StatePredicate,
+    options: StateWaitBackendOptions
+  ) => Effect.Effect<unknown, FluentFiregridError>
 }
 
 interface StateOperationIdentityInput {
-  readonly kind: "get" | "set" | "delete"
+  readonly kind: "get" | "set" | "delete" | "waitFor"
   readonly table: string
   readonly key: string
 }

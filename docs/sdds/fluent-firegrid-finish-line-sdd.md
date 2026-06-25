@@ -340,9 +340,9 @@ cel.env(Invoices)
   .registerVariable("old", "Invoices?")
   .registerVariable("change", {
     schema: {
-      op: "string",
       table: "string",
-      key: "string"
+      key: "string",
+      operation: "string"
     }
   })
 ```
@@ -356,7 +356,7 @@ const ready = yield* state(Invoices).waitFor("invoice-2", {
   when: cel.expr((t) =>
     t.row.status.eq("authorized")
       .and(t.row.amount.greaterThan(0))
-      .and(t.change.op.in(["set", "update"]))
+      .and(t.change.operation.in(["set", "update"]))
   )
 })
 ```
@@ -372,7 +372,7 @@ const invoice = object({
       const row = yield* state(Invoices).waitFor(input.invoiceId, {
         name: "authorized",
         when: cel("row.status == 'authorized'"),
-        timeout: { minutes: 30 }
+        timeoutMs: 30 * 60_000
       })
 
       yield* run(() => capturePayment(row.paymentIntentId), {
@@ -428,6 +428,17 @@ yield* state(Invoices).waitFor("invoice-1", {
   when: cel("row.status == 'paid'")
 })
 ```
+
+Implementation status as of June 25, 2026:
+
+- `cel("...")`, predicate validation/evaluation, and
+  `state(Table).waitFor(key, { name, when, timeoutMs })` exist in
+  `@firegrid/fluent-firegrid`;
+- the S2 object state backend can evaluate keyed waits against the current
+  materialized row projection;
+- this is not yet the final parked invocation scheduler. A same-object wait that
+  depends on a later handler for the same object key still needs persisted
+  `StateWaitRegistered` / `StateWaitResolved` records and queue unblocking.
 
 Query waits can come later, but must require an indexable declaration so the
 runtime does not scan all rows/waits:
