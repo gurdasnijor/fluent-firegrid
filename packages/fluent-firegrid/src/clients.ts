@@ -19,10 +19,31 @@ export interface CallRequest<Input = unknown> {
   readonly key?: string
   readonly input: Input
   readonly runId?: string
+  readonly idempotencyKey?: string
+  readonly delayMs?: number
+  readonly metadata?: Readonly<Record<string, unknown>>
   readonly descriptor?: HandlerDescriptor
 }
 
 export type SendRequest<Input = unknown> = CallRequest<Input>
+
+export type DurationLike = number | {
+  readonly days?: number
+  readonly hours?: number
+  readonly milliseconds?: number
+  readonly minutes?: number
+  readonly seconds?: number
+}
+
+export interface InvocationOptions {
+  readonly delay?: DurationLike
+  readonly idempotencyKey?: string
+  readonly metadata?: Readonly<Record<string, unknown>>
+  readonly runId?: string
+}
+
+export type CallOptions = InvocationOptions
+export type SendOptions = InvocationOptions
 
 export interface SendReference<Output = unknown> {
   readonly handler?: string
@@ -65,7 +86,7 @@ type ClientShape<
 > = {
   readonly [Key in keyof Handlers]: (
     input: HandlerInput<Handlers[Key]>,
-    options?: { readonly runId?: string }
+    options?: Mode extends "send" ? SendOptions : CallOptions
   ) => ClientResult<Mode, Handlers[Key], Error, Requirements, HandleRequirements>
 }
 
@@ -180,16 +201,46 @@ const requestFor = <
   key: string | undefined,
   handler: string,
   input: unknown,
-  options: { readonly runId?: string } | undefined
-): CallRequest => ({
-  handler,
-  input,
-  kind: definition._kind,
-  name: definition.name,
-  ...(definition._handlers[handler] === undefined ? {} : { descriptor: definition._handlers[handler] }),
-  ...(key === undefined ? {} : { key }),
-  ...(options?.runId === undefined ? {} : { runId: options.runId })
-})
+  options: InvocationOptions | undefined
+): CallRequest => {
+  const runId = options?.runId ?? options?.idempotencyKey
+  return {
+    handler,
+    input,
+    kind: definition._kind,
+    name: definition.name,
+    ...(options?.delay === undefined ? {} : { delayMs: normalizeDuration(options.delay) }),
+    ...(options?.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }),
+    ...(options?.metadata === undefined ? {} : { metadata: options.metadata }),
+    ...(definition._handlers[handler] === undefined ? {} : { descriptor: definition._handlers[handler] }),
+    ...(key === undefined ? {} : { key }),
+    ...(runId === undefined ? {} : { runId })
+  }
+}
+
+export const duration = (input: DurationLike): number => {
+  if (typeof input === "number") return input
+  return (input.milliseconds ?? 0)
+    + (input.seconds ?? 0) * 1_000
+    + (input.minutes ?? 0) * 60_000
+    + (input.hours ?? 0) * 3_600_000
+    + (input.days ?? 0) * 86_400_000
+}
+
+const normalizeDuration = (input: DurationLike): number => {
+  const ms = duration(input)
+  if (!Number.isFinite(ms) || ms < 0) {
+    throw new Error("fluent invocation delay must be a non-negative finite duration")
+  }
+  return ms
+}
+
+export const rpc = {
+  callOpts: (options: CallOptions): CallOptions => options,
+  duration,
+  opts: (options: InvocationOptions): InvocationOptions => options,
+  sendOpts: (options: SendOptions): SendOptions => options
+} as const
 
 const invocationHandle = <Output, Error, Requirements>(
   binding: InvocationBinding<Error, Requirements>,
@@ -226,6 +277,122 @@ const invoke = <Output, Error, Requirements>(
       Effect.map((reference) => invocationHandle(binding, request, reference))
     )
 
+export interface GenericInvocationRequest<Input = unknown> extends InvocationOptions {
+  readonly handler: string
+  readonly input: Input
+  readonly key?: string
+  readonly kind: DefinitionKind
+  readonly name: string
+}
+
+const genericRequest = (request: GenericInvocationRequest): CallRequest => ({
+  handler: request.handler,
+  input: request.input,
+  kind: request.kind,
+  name: request.name,
+  ...(request.delay === undefined ? {} : { delayMs: normalizeDuration(request.delay) }),
+  ...(request.idempotencyKey === undefined ? {} : { idempotencyKey: request.idempotencyKey }),
+  ...(request.key === undefined ? {} : { key: request.key }),
+  ...(request.metadata === undefined ? {} : { metadata: request.metadata }),
+  ...((request.runId ?? request.idempotencyKey) === undefined ? {} : { runId: request.runId ?? request.idempotencyKey })
+})
+
+type AttachableReference<Output> =
+  & SendReference<Output>
+  & Pick<CallRequest, "handler" | "kind" | "name">
+  & Partial<Pick<CallRequest, "input">>
+
+export const invocation = <Output, Error, Requirements>(
+  binding: InvocationBinding<Error, Requirements>,
+  reference: AttachableReference<Output>
+): InvocationHandle<Output, Error, Requirements> =>
+  invocationHandle(binding, {
+    handler: reference.handler,
+    input: reference.input,
+    kind: reference.kind,
+    name: reference.name,
+    ...(reference.key === undefined ? {} : { key: reference.key })
+  }, reference)
+
+export function genericCall<Output, Error = unknown, Requirements = never>(
+  binding: InvocationBinding<Error, Requirements>,
+  request: GenericInvocationRequest
+): Effect.Effect<Output, Error, Requirements>
+export function genericCall<Output>(
+  request: GenericInvocationRequest
+): Effect.Effect<Output, FluentFiregridError, FluentDurableContext>
+export function genericCall<Output, Error = unknown, Requirements = never>(
+  first: InvocationBinding<Error, Requirements> | GenericInvocationRequest,
+  second?: GenericInvocationRequest
+): Effect.Effect<Output, Error | FluentFiregridError, Requirements | FluentDurableContext> {
+  if (second !== undefined) {
+    return (first as InvocationBinding<Error, Requirements>).call<Output>(genericRequest(second))
+  }
+  return FluentDurableContext.pipe(
+    Effect.flatMap((ctx) =>
+      ctx.binding === undefined
+        ? Effect.fail(new FluentFiregridError({ message: "genericCall requires an invocation binding" }))
+        : ctx.binding.call<Output>(genericRequest(first as GenericInvocationRequest))
+    )
+  )
+}
+
+export function genericSend<Output, Error = unknown, Requirements = never>(
+  binding: InvocationBinding<Error, Requirements>,
+  request: GenericInvocationRequest
+): Effect.Effect<InvocationHandle<Output, Error, Requirements>, Error, Requirements>
+export function genericSend<Output>(
+  request: GenericInvocationRequest
+): Effect.Effect<InvocationHandle<Output, FluentFiregridError, never>, FluentFiregridError, FluentDurableContext>
+export function genericSend<Output, Error = unknown, Requirements = never>(
+  first: InvocationBinding<Error, Requirements> | GenericInvocationRequest,
+  second?: GenericInvocationRequest
+): Effect.Effect<
+  InvocationHandle<Output, Error, Requirements> | InvocationHandle<Output, FluentFiregridError, never>,
+  Error | FluentFiregridError,
+  Requirements | FluentDurableContext
+> {
+  if (second !== undefined) {
+    const request = genericRequest(second)
+    return (first as InvocationBinding<Error, Requirements>).send<Output>(request).pipe(
+      Effect.map((reference) => invocationHandle(first as InvocationBinding<Error, Requirements>, request, reference))
+    )
+  }
+  return FluentDurableContext.pipe(
+    Effect.flatMap((ctx) => {
+      const binding = ctx.binding
+      if (binding === undefined) {
+        return Effect.fail(new FluentFiregridError({ message: "genericSend requires an invocation binding" }))
+      }
+      const request = genericRequest(first as GenericInvocationRequest)
+      return binding.send<Output>(request).pipe(
+        Effect.map((reference) => invocationHandle(binding, request, reference))
+      )
+    })
+  )
+}
+
+export function attach<Output, Error = unknown, Requirements = never>(
+  binding: InvocationBinding<Error, Requirements>,
+  reference: AttachableReference<Output>
+): Effect.Effect<Output, Error, Requirements>
+export function attach<Output>(
+  reference: AttachableReference<Output>
+): Effect.Effect<Output, FluentFiregridError, FluentDurableContext>
+export function attach<Output, Error = unknown, Requirements = never>(
+  first: InvocationBinding<Error, Requirements> | AttachableReference<Output>,
+  second?: AttachableReference<Output>
+): Effect.Effect<Output, Error | FluentFiregridError, Requirements | FluentDurableContext> {
+  if (second !== undefined) return invocation(first as InvocationBinding<Error, Requirements>, second).attach()
+  return FluentDurableContext.pipe(
+    Effect.flatMap((ctx) =>
+      ctx.binding === undefined
+        ? Effect.fail(new FluentFiregridError({ message: "attach requires an invocation binding" }))
+        : invocation(ctx.binding, first as AttachableReference<Output>).attach()
+    )
+  )
+}
+
 const bindInvocationBinding = (mode: ClientMode) =>
 <
   const Name extends string,
@@ -241,7 +408,7 @@ const bindInvocationBinding = (mode: ClientMode) =>
   Object.fromEntries(
     methodNames(definition._handlers).map((handler) => [
       handler,
-      (input: unknown, options?: { readonly runId?: string }) =>
+      (input: unknown, options?: InvocationOptions) =>
         invoke(binding, mode, requestFor(definition, key, handler, input, options))
     ])
   ) as ClientFor<typeof mode, Handlers, Error, Requirements>
@@ -258,7 +425,7 @@ const bindAmbientContext = (mode: ClientMode) =>
   Object.fromEntries(
     methodNames(definition._handlers).map((handler) => [
       handler,
-      (input: unknown, options?: { readonly runId?: string }) =>
+      (input: unknown, options?: InvocationOptions) =>
         FluentDurableContext.pipe(
           Effect.flatMap((ctx) => {
             const binding = ctx.binding
@@ -315,11 +482,15 @@ export const sendServiceClient = ((
   key?: string
 ) => contextualClient("send", first, second, key)) as ContextualClientFactory<"send">
 
+export const serviceSendClient = sendServiceClient
+
 export const sendWorkflowClient = ((
   first: unknown,
   second?: unknown,
   key?: string
 ) => contextualClient("send", first, second, key)) as ContextualClientFactory<"send">
+
+export const workflowSendClient = sendWorkflowClient
 
 export const objectClient = ((
   first: unknown,
@@ -330,3 +501,5 @@ export const sendObjectClient = ((
   first: unknown,
   second?: unknown
 ) => keyedContextualClient("send", first, second)) as ObjectContextualClientFactory<"send">
+
+export const objectSendClient = sendObjectClient

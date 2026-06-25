@@ -3,6 +3,7 @@ import { describe, expect, expectTypeOf, it } from "vitest"
 import { defineWorkflowRuntime, inMemoryWorkflowExecutionStore } from "@tanstack/workflow-runtime"
 
 import {
+  attach,
   bindFluentDefinitions,
   type CallRequest,
   client,
@@ -10,20 +11,28 @@ import {
   FluentDurableContext,
   type FluentDurableContextService,
   type FluentFiregridError,
+  genericCall,
+  genericSend,
   iface,
   implement,
   type InvocationBinding,
   type InvocationHandle,
+  objectSendClient,
+  rpc,
   run,
   type RunAction,
   schemas,
   sendClient,
+  sendObjectClient,
   type SendReference,
   type SendRequest,
   sendServiceClient,
+  sendWorkflowClient,
   service,
   serviceClient,
-  workflowIdForHandler
+  serviceSendClient,
+  workflowIdForHandler,
+  workflowSendClient
 } from "../src/index.ts"
 
 describe("fluent-firegrid public surface", () => {
@@ -129,6 +138,137 @@ describe("fluent-firegrid public surface", () => {
     expect(calls[0]?.descriptor).toBe(incidentContract._handlers.triage)
     expect(calls[1]?.descriptor).toBe(incidentContract._handlers.triage)
     expect(sends[0]?.descriptor).toBe(incidentContract._handlers.triage)
+  })
+
+  it("normalizes invocation options and exposes Restate-like send aliases", async () => {
+    const incident = service({
+      name: "incident",
+      handlers: {
+        *triage(input: string) {
+          return yield* run(() => `triaged:${input}`, { name: "triage" })
+        }
+      },
+      descriptors: {
+        triage: schemas({
+          input: Schema.String,
+          output: Schema.String
+        })
+      }
+    })
+    const calls = new Array<CallRequest>()
+    const sends = new Array<SendRequest>()
+    const binding: InvocationBinding<never> = {
+      call: <Output>(request: CallRequest) =>
+        Effect.sync(() => {
+          calls.push(request)
+          return `called:${String(request.input)}` as Output
+        }),
+      send: <Output>(request: SendRequest) =>
+        Effect.sync(() => {
+          sends.push(request)
+          return {
+            handler: request.handler,
+            invocationId: request.runId ?? "generated",
+            kind: request.kind,
+            name: request.name
+          } satisfies SendReference<Output>
+        })
+    }
+
+    await Effect.runPromise(
+      client(binding, incident).triage(
+        "INC-7",
+        rpc.opts({
+          idempotencyKey: "incident:INC-7",
+          metadata: { source: "test" }
+        })
+      )
+    )
+    const handle = await Effect.runPromise(
+      serviceSendClient(binding, incident).triage(
+        "INC-8",
+        rpc.sendOpts({
+          delay: rpc.duration({ minutes: 2, seconds: 3 }),
+          idempotencyKey: "incident:INC-8"
+        })
+      )
+    )
+
+    expect(sendServiceClient).toBe(serviceSendClient)
+    expect(workflowSendClient).toBe(sendWorkflowClient)
+    expect(objectSendClient).toBe(sendObjectClient)
+    expect(handle.invocationId).toBe("incident:INC-8")
+    expect(calls[0]).toMatchObject({
+      handler: "triage",
+      idempotencyKey: "incident:INC-7",
+      metadata: { source: "test" },
+      runId: "incident:INC-7"
+    })
+    expect(sends[0]).toMatchObject({
+      delayMs: 123_000,
+      handler: "triage",
+      idempotencyKey: "incident:INC-8",
+      runId: "incident:INC-8"
+    })
+  })
+
+  it("supports generic call/send and attach-by-reference", async () => {
+    const calls = new Array<CallRequest>()
+    const sends = new Array<SendRequest>()
+    const binding: InvocationBinding<never> = {
+      call: <Output>(request: CallRequest) =>
+        Effect.sync(() => {
+          calls.push(request)
+          return `generic:${request.name}:${request.handler}:${String(request.input)}:${request.runId}` as Output
+        }),
+      send: <Output>(request: SendRequest) =>
+        Effect.sync(() => {
+          sends.push(request)
+          return {
+            handler: request.handler,
+            invocationId: request.runId ?? "generic-run",
+            kind: request.kind,
+            name: request.name
+          } satisfies SendReference<Output>
+        })
+    }
+
+    const output = await Effect.runPromise(
+      genericCall<string>(binding, {
+        handler: "triage",
+        idempotencyKey: "incident:INC-9",
+        input: "INC-9",
+        kind: "service",
+        name: "incident"
+      })
+    )
+    const handle = await Effect.runPromise(
+      genericSend<string>(binding, {
+        handler: "triage",
+        input: "INC-10",
+        kind: "service",
+        name: "incident",
+        runId: "manual-run"
+      })
+    )
+    const attached = await Effect.runPromise(attach(binding, {
+      handler: "triage",
+      input: "INC-11",
+      invocationId: "attached-run",
+      kind: "service",
+      name: "incident"
+    }))
+
+    expect(output).toBe("generic:incident:triage:INC-9:incident:INC-9")
+    expect(handle.invocationId).toBe("manual-run")
+    expect(attached).toBe("generic:incident:triage:INC-11:attached-run")
+    expect(sends[0]).toMatchObject({
+      handler: "triage",
+      input: "INC-10",
+      kind: "service",
+      name: "incident",
+      runId: "manual-run"
+    })
   })
 
   it("resolves ambient handler clients from FluentDurableContext", async () => {

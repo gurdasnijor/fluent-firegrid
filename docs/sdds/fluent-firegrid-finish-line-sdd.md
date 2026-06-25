@@ -576,6 +576,19 @@ The `webhooks` option is intentionally transport-specific and belongs in
 **Goal.** Make the fluent client surface feel close enough to Restate that users
 do not need to learn hidden `runId` tricks.
 
+Implementation status as of June 25, 2026:
+
+- `serviceSendClient`, `objectSendClient`, and `workflowSendClient` aliases are
+  exposed next to the older `send*Client` names;
+- typed clients and generic helpers accept `idempotencyKey`, `delay`, and
+  metadata options. `idempotencyKey` maps to the durable run id when `runId` is
+  not supplied;
+- `genericCall`, `genericSend`, `invocation`, and `attach` cover dynamic route
+  metadata without requiring a concrete definition object;
+- delayed-send execution is still owned by the delayed messages slice;
+- `cancel(invocationId)` remains intentionally unexposed until the lower runtime
+  has a real persisted cancel/terminal event.
+
 Ship:
 
 - aliases: `serviceSendClient`, `objectSendClient`, `workflowSendClient`;

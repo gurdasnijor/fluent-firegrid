@@ -8,23 +8,37 @@ export {
   workflowIdForHandler
 } from "./bindTanStack.ts"
 export {
+  attach,
+  type CallOptions,
   type CallRequest,
   type Client,
   client,
+  duration,
+  type DurationLike,
+  genericCall,
+  type GenericInvocationRequest,
+  genericSend,
+  invocation,
   type InvocationBinding,
   type InvocationHandle,
+  type InvocationOptions,
   type ObjectClient,
   objectClient,
+  objectSendClient,
+  rpc,
   type SendClient,
   sendClient,
   type SendObjectClient,
   sendObjectClient,
+  type SendOptions,
   type SendReference,
   type SendRequest,
   sendServiceClient,
   sendWorkflowClient,
   serviceClient,
-  workflowClient
+  serviceSendClient,
+  workflowClient,
+  workflowSendClient
 } from "./clients.ts"
 export { all, race, raceAll } from "./combinators.ts"
 export {
