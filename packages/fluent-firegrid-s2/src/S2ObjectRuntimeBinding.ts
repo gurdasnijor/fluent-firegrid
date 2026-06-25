@@ -105,9 +105,10 @@ export const createS2ObjectRuntimeBinding = (
         new FluentFiregridError({ message: `object invocation ${request.name}.${request.handler} requires a key` })
       )
     }
+    const key = request.key
     const callId = callIdFor(request)
     const ownerId = `object-owner:${callId}:${Math.random().toString(36).slice(2)}`
-    const address = { key: request.key, objectName: request.name } satisfies S2ObjectStateAddress
+    const address = { key, objectName: request.name } satisfies S2ObjectStateAddress
     const streamName = objectInvocationStreamName(config, address)
     return runS2(
       streamName,
@@ -120,6 +121,15 @@ export const createS2ObjectRuntimeBinding = (
           now: now(),
           runId: callId
         })
+        if (mode === "send") {
+          return {
+            handler: request.handler,
+            invocationId: callId,
+            key,
+            kind: request.kind,
+            name: request.name
+          } satisfies SendReference<Output>
+        }
         const completed = yield* waitForCompletion(
           host,
           runtime,
@@ -130,12 +140,6 @@ export const createS2ObjectRuntimeBinding = (
           request,
           callId
         )
-        if (mode === "send") {
-          return {
-            invocationId: callId,
-            ...(completed.output === undefined ? {} : { output: completed.output as Output })
-          } satisfies SendReference<Output>
-        }
         return completed.output as Output
       })
     )

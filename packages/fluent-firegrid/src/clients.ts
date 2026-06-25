@@ -23,7 +23,11 @@ export interface CallRequest<Input = unknown> {
 export type SendRequest<Input = unknown> = CallRequest<Input>
 
 export interface SendReference<Output = unknown> {
+  readonly handler?: string
   readonly invocationId: string
+  readonly key?: string
+  readonly kind?: DefinitionKind
+  readonly name?: string
   readonly output?: Output
 }
 

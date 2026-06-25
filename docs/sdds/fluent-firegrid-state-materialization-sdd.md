@@ -230,13 +230,18 @@ turning the value into `10`; the next serialized `add(7)` observes final state
 
 ### E. Restate-Like Handles
 
+**Status:** Implemented.
+
 **Claim.** `sendObjectClient` returns durable handles with attach/output
 semantics.
 
 **Forces:** idempotency keys, completion lookup by call id, attach/poll APIs.
 
 **Proof:** caller sends with idempotency key, process restarts, another caller
-attaches by handle and reads the completed result.
+attaches by handle and reads the completed result. `fluent-firegrid-s2.object-handles`
+proves `sendObjectClient` returns after durable admission, the sender can die,
+and another host can attach by calling the same object method with
+`{ runId: reference.invocationId }`.
 
 ## Guardrails
 

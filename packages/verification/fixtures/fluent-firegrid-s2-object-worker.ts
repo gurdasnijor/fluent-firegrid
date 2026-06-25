@@ -1,6 +1,6 @@
 /* oxlint-disable effect/restricted-syntax -- This fixture is an HTTP process boundary that runs fluent Effect clients. */
 import { createS2WorkflowRuntimeHost } from "@firegrid/tanstack-workflow-s2"
-import { bindFluentDefinitions, object, objectClient, run, state } from "@firegrid/fluent-firegrid"
+import { bindFluentDefinitions, object, objectClient, run, sendObjectClient, state } from "@firegrid/fluent-firegrid"
 import { primaryKey, Table } from "@firegrid/fluent-firegrid/state"
 import { createS2ObjectRuntimeBinding, s2FluentDefinitionBindingOptions } from "@firegrid/fluent-firegrid-s2"
 import * as Effect from "effect/Effect"
@@ -108,6 +108,7 @@ const binding = createS2ObjectRuntimeBinding(host, {
 })
 
 const client = objectClient(binding, counter)("counter-1")
+const sendClient = sendObjectClient(binding, counter)("counter-1")
 
 const sendJson = (response: http.ServerResponse, value: unknown, status = 200) => {
   response.writeHead(status, { "content-type": "application/json" })
@@ -127,6 +128,11 @@ const readBy = (request: http.IncomingMessage): number => {
 const readNow = (request: http.IncomingMessage): number => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`)
   return Number(url.searchParams.get("value") ?? String(logicalNow))
+}
+
+const readRunId = (request: http.IncomingMessage): string | undefined => {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`)
+  return url.searchParams.get("runId") ?? undefined
 }
 
 const server = http.createServer((request, response) => {
@@ -150,6 +156,26 @@ const server = http.createServer((request, response) => {
 
     if (request.url?.startsWith("/crash-after-set") === true && request.method === "POST") {
       const value = await Effect.runPromise(client.crashAfterSet({ by: readBy(request) }))
+      sendJson(response, { hostId, value })
+      return
+    }
+
+    if (request.url?.startsWith("/send-crash-after-set") === true && request.method === "POST") {
+      const runId = readRunId(request)
+      const reference = await Effect.runPromise(
+        sendClient.crashAfterSet({ by: readBy(request) }, runId === undefined ? undefined : { runId })
+      )
+      sendJson(response, { hostId, reference })
+      return
+    }
+
+    if (request.url?.startsWith("/attach-crash-after-set") === true && request.method === "POST") {
+      const runId = readRunId(request)
+      if (runId === undefined) {
+        sendJson(response, { error: "runId is required" }, 400)
+        return
+      }
+      const value = await Effect.runPromise(client.crashAfterSet({ by: readBy(request) }, { runId }))
       sendJson(response, { hostId, value })
       return
     }
