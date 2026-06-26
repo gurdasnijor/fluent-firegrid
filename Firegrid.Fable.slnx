@@ -4,6 +4,6 @@
     <Project Path="packages/log/Effect.S2.fsproj" />
   </Folder>
   <Folder Name="/packages/store/">
-    <Project Path="packages/store/FluentFiregrid.S2.fsproj" />
+    <Project Path="packages/store/Store.fsproj" />
   </Folder>
 </Solution>

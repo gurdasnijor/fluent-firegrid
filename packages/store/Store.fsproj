@@ -2,8 +2,8 @@
 
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
-    <AssemblyName>Firegrid.FluentFiregrid.S2</AssemblyName>
-    <RootNamespace>Firegrid.FluentFiregrid.S2</RootNamespace>
+    <AssemblyName>Firegrid.Store</AssemblyName>
+    <RootNamespace>Firegrid.Store</RootNamespace>
     <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
     <DefineConstants>$(DefineConstants);FABLE_COMPILER</DefineConstants>
   </PropertyGroup>
@@ -19,13 +19,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="src/FluentFiregrid.S2/Types.fs" />
-    <Compile Include="src/FluentFiregrid.S2/JsJson.fs" />
-    <Compile Include="src/FluentFiregrid.S2/Naming.fs" />
-    <Compile Include="src/FluentFiregrid.S2/Runtime.fs" />
-    <Compile Include="src/FluentFiregrid.S2/ObjectState.fs" />
-    <Compile Include="src/FluentFiregrid.S2/WorkflowLog.fs" />
-    <Compile Include="src/FluentFiregrid.S2/Exports.fs" />
+    <Compile Include="src/Firegrid.Store/Types.fs" />
+    <Compile Include="src/Firegrid.Store/JsJson.fs" />
+    <Compile Include="src/Firegrid.Store/Naming.fs" />
+    <Compile Include="src/Firegrid.Store/Runtime.fs" />
+    <Compile Include="src/Firegrid.Store/ObjectState.fs" />
+    <Compile Include="src/Firegrid.Store/WorkflowLog.fs" />
+    <Compile Include="src/Firegrid.Store/Exports.fs" />
   </ItemGroup>
 
 </Project>

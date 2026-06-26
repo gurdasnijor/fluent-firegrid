@@ -1,7 +1,7 @@
-module Firegrid.FluentFiregrid.S2.Exports
+module Firegrid.Store.Exports
 
 open Effect
-open Firegrid.FluentFiregrid.S2
+open Firegrid.Store
 
 let createS2Runtime (config: S2ObjectStateBackendConfig) : S2Runtime = Runtime.create config
 

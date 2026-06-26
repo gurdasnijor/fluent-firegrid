@@ -1,4 +1,4 @@
-namespace Firegrid.FluentFiregrid.S2
+namespace Firegrid.Store
 
 open Effect
 open Fable.Core.JsInterop
