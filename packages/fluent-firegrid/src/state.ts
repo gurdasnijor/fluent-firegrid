@@ -7,6 +7,12 @@ import { FluentDurableContext, type FluentDurableContextService, type ObjectStat
 import { FluentFiregridError } from "./error.ts"
 export {
   cel,
+  type CelExpressionBuilder,
+  type CelExpressionInput,
+  type CelExpressionNode,
+  type CelFactory,
+  type CelFieldExpression,
+  type CelLiteral,
   type CelStatePredicate,
   evaluateStatePredicate,
   type StatePredicate,

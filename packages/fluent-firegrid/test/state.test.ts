@@ -115,6 +115,31 @@ describe("state wait predicates", () => {
     expect(result).toBeTruthy()
   })
 
+  it("builds CEL predicates with serializable expression helpers", async () => {
+    const predicate = cel.expr((t) =>
+      t.row.value!.greaterThanOrEqual(3)
+        .and(t.row.id!.eq("a"))
+        .and(t.change.operation.in(["insert", "update"]))
+    )
+
+    expect(predicate).toEqual({
+      expression: "((row.value >= 3) && (row.id == \"a\")) && (change.operation in [\"insert\", \"update\"])",
+      language: "cel"
+    })
+    await expect(
+      Effect.runPromise(
+        evaluateStatePredicate(predicate, {
+          change: {
+            key: "a",
+            operation: "insert",
+            table: "items"
+          },
+          row: { id: "a", value: 3 }
+        })
+      )
+    ).resolves.toBeTruthy()
+  })
+
   it("rejects CEL predicates that do not return bool", async () => {
     await expect(
       Effect.runPromise(

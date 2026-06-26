@@ -454,7 +454,10 @@ Implementation status as of June 25, 2026:
 - the S2 object runtime skips pending state-wait calls, continues draining later
   same-key calls, resumes ready waits through the queue-owned signal path, and
   turns expired `timeoutAt` registrations into typed wait failures;
-- remaining gaps are query/index waits and richer typed CEL builder ergonomics.
+- `cel.expr((t) => ...)` provides a serializable builder for common field
+  comparisons, boolean composition, and membership checks while still persisting
+  plain CEL text;
+- remaining gaps are query/index waits and schema-inferred builder field types.
 
 Query waits can come later, but must require an indexable declaration so the
 runtime does not scan all rows/waits:

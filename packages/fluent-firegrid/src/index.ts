@@ -122,6 +122,12 @@ export {
   validateStatePredicateForTable
 } from "./state.ts"
 export type {
+  CelExpressionBuilder,
+  CelExpressionInput,
+  CelExpressionNode,
+  CelFactory,
+  CelFieldExpression,
+  CelLiteral,
   CelStatePredicate,
   StateBinding,
   StatePredicate,
