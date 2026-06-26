@@ -28,10 +28,10 @@ importers:
     dependencies:
       '@firegrid/fluent':
         specifier: workspace:*
-        version: link:../../../packages/fluent
+        version: link:../../../src/Firegrid.Fluent
       '@firegrid/runtime':
         specifier: workspace:*
-        version: link:../../../packages/runtime
+        version: link:../../../src/Firegrid.Runtime
       '@firegrid/store':
         specifier: workspace:*
         version: link:../../../src/Firegrid.Store
@@ -53,19 +53,19 @@ importers:
         version: 4.0.0-beta.87(effect@4.0.0-beta.87)(ioredis@5.11.1)
       '@firegrid/fluent':
         specifier: workspace:*
-        version: link:../../packages/fluent
+        version: link:../../src/Firegrid.Fluent
       '@firegrid/log':
         specifier: workspace:*
         version: link:../../src/Firegrid.Log
       '@firegrid/runtime':
         specifier: workspace:*
-        version: link:../../packages/runtime
+        version: link:../../src/Firegrid.Runtime
       '@firegrid/store':
         specifier: workspace:*
         version: link:../../src/Firegrid.Store
       '@firegrid/trace':
         specifier: workspace:*
-        version: link:../../packages/trace
+        version: link:../../src/Firegrid.Trace
       '@opentelemetry/api-logs':
         specifier: ^0.208.0
         version: 0.208.0
@@ -92,58 +92,32 @@ importers:
         specifier: ^22.10.0
         version: 22.20.0
 
-  packages/core:
-    dependencies:
-      '@standard-schema/spec':
-        specifier: ^1.0.0
-        version: 1.1.0
-      effect:
-        specifier: 4.0.0-beta.87
-        version: 4.0.0-beta.87
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.20.0
-
-  packages/fluent:
+  src/Firegrid.Clients:
     dependencies:
       '@firegrid/core':
         specifier: workspace:*
-        version: link:../core
+        version: link:../Firegrid.Core
+      effect:
+        specifier: 4.0.0-beta.87
+        version: 4.0.0-beta.87
+
+  src/Firegrid.Core:
+    dependencies:
+      effect:
+        specifier: 4.0.0-beta.87
+        version: 4.0.0-beta.87
+
+  src/Firegrid.Fluent:
+    dependencies:
+      '@firegrid/clients':
+        specifier: workspace:*
+        version: link:../Firegrid.Clients
+      '@firegrid/core':
+        specifier: workspace:*
+        version: link:../Firegrid.Core
       '@firegrid/runtime':
         specifier: workspace:*
-        version: link:../runtime
-      '@marcbachmann/cel-js':
-        specifier: ^7.6.1
-        version: 7.6.1
-      effect:
-        specifier: 4.0.0-beta.87
-        version: 4.0.0-beta.87
-
-  packages/runtime:
-    dependencies:
-      '@firegrid/core':
-        specifier: workspace:*
-        version: link:../core
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.20.0
-
-  packages/trace:
-    dependencies:
-      '@opentelemetry/api':
-        specifier: ^1.9.1
-        version: 1.9.1
-      '@opentelemetry/core':
-        specifier: ^2.7.1
-        version: 2.8.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/sdk-trace-base':
-        specifier: ^2.7.1
-        version: 2.8.0(@opentelemetry/api@1.9.1)
-      chdb:
-        specifier: ^3.0.1
-        version: 3.1.0
+        version: link:../Firegrid.Runtime
       effect:
         specifier: 4.0.0-beta.87
         version: 4.0.0-beta.87
@@ -154,14 +128,38 @@ importers:
         specifier: 0.24.1
         version: 0.24.1
 
+  src/Firegrid.Runtime:
+    dependencies:
+      '@firegrid/core':
+        specifier: workspace:*
+        version: link:../Firegrid.Core
+      effect:
+        specifier: 4.0.0-beta.87
+        version: 4.0.0-beta.87
+
   src/Firegrid.Store:
     dependencies:
+      '@firegrid/core':
+        specifier: workspace:*
+        version: link:../Firegrid.Core
       '@firegrid/log':
         specifier: workspace:*
         version: link:../Firegrid.Log
+      '@firegrid/runtime':
+        specifier: workspace:*
+        version: link:../Firegrid.Runtime
       '@s2-dev/streamstore':
         specifier: 0.24.1
         version: 0.24.1
+      effect:
+        specifier: 4.0.0-beta.87
+        version: 4.0.0-beta.87
+
+  src/Firegrid.Trace:
+    dependencies:
+      chdb:
+        specifier: ^3.0.1
+        version: 3.1.0
       effect:
         specifier: 4.0.0-beta.87
         version: 4.0.0-beta.87
@@ -243,11 +241,6 @@ packages:
 
   '@ioredis/commands@1.10.0':
     resolution: {integrity: sha512-UmeW7z4LfctwoQ5wkhVzgq8tXkreED2xZGpX+Bg+zA+WJFZCT6c062AfCK/Dfk81xZnnwdhJCUMkitihRaoC2Q==}
-
-  '@marcbachmann/cel-js@7.6.1':
-    resolution: {integrity: sha512-YyY8yiDU07ByKb2rJUoNgMAkYeeDvkdrONBREV2MP9siAW7yNft0KfbIoonWTIMY0fGtv8og0EhzKx3Xsi1Nmg==}
-    engines: {node: '>=20.19.0'}
-    hasBin: true
 
   '@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.4':
     resolution: {integrity: sha512-LCkGo6JDfaBhgST7UpPWgNgLINpcpabaHfyz5OBx75nUYxBsaEPxjnyNjWpeb/xBup/682QnBfRBy2/LvPutZQ==}
@@ -543,8 +536,6 @@ snapshots:
       - utf-8-validate
 
   '@ioredis/commands@1.10.0': {}
-
-  '@marcbachmann/cel-js@7.6.1': {}
 
   '@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.4':
     optional: true

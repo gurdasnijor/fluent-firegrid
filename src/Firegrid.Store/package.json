@@ -21,7 +21,9 @@
     "typecheck": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet build Firegrid.Store.fsproj -v:q"
   },
   "dependencies": {
+    "@firegrid/core": "workspace:*",
     "@firegrid/log": "workspace:*",
+    "@firegrid/runtime": "workspace:*",
     "@s2-dev/streamstore": "0.24.1",
     "effect": "4.0.0-beta.87"
   }
