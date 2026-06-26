@@ -16,6 +16,7 @@ The package-only dependency-cruiser report currently includes:
 
 | Diagram | Purpose |
 | --- | --- |
+| [`current-package-structure.md`](current-package-structure.md) | Human-readable production directory map, package DAG, source-level shape, and PR #70 cutover mapping. |
 | [`production-packages.svg`](production-packages.svg) | Production packages collapsed by package. Use this to spot surprising package-level edges. |
 | [`core-focus.svg`](core-focus.svg) | `@firegrid/core` neighborhood. This should remain the lowest shared contract package. |
 | [`fluent-focus.svg`](fluent-focus.svg) | `@firegrid/fluent` neighborhood. Use this to catch the authoring surface drifting into concrete stores, log substrate, or trace sinks. |
