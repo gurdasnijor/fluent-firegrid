@@ -129,8 +129,7 @@ Remaining gaps:
 
 - public signal delivery client helpers;
 - examples for human approval, webhook callback, and async external task-token
-  patterns;
-- duplicate resolve/reject behavior should be explicitly tested and documented.
+  patterns.
 
 Implemented:
 
@@ -551,6 +550,8 @@ Implementation status as of June 25, 2026:
   `POST /firegrid/awakeables/:id/reject`, and
   `@firegrid/fluent-firegrid-node` wires those routes to the S2 runtime host;
 - rejected awakeables fail with the typed `AwakeableRejected` error;
+- duplicate awakeable delivery returns the runtime's `duplicate` result and
+  does not re-run completed handler work;
 - `workflowEvent<T>(name)` and `resolveWorkflowEvent` provide workflow-scoped
   named event ergonomics over the same durable signal substrate;
 - remaining gaps are product examples that show how external systems receive

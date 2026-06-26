@@ -113,12 +113,24 @@ export default proof("fluent-firegrid-s2.awakeable")
                 : new VerificationError({ cause, message: "fluent S2 awakeable resolve failed" })
             )
           )
+          const duplicate = yield* resolveAwakeable(
+            createTanStackExternalSignalBinding(host, { now: () => 3_000 }),
+            tokenRef.value,
+            "approved"
+          ).pipe(
+            Effect.mapError((cause) =>
+              cause instanceof VerificationError
+                ? cause
+                : new VerificationError({ cause, message: "fluent S2 awakeable duplicate resolve failed" })
+            )
+          )
 
           const loaded = yield* promise(() => host.store.loadExecution(runId))
 
           return {
             afterCalls: counters.after.value,
             beforeCalls: counters.before.value,
+            duplicateKind: duplicate.kind,
             eventTypes: loaded?.events.map((event) => event.eventType),
             output: loaded?.run.output,
             resolvedKind: resolved.kind,
@@ -132,6 +144,7 @@ export default proof("fluent-firegrid-s2.awakeable")
         expect.workloadResult({
           afterCalls: 1,
           beforeCalls: 1,
+          duplicateKind: "duplicate",
           eventTypes: [
             "STEP_FINISHED",
             "SIGNAL_AWAITED",
