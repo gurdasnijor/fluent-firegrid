@@ -9,27 +9,27 @@ SDD.
 
 ## Production Packages
 
-- `effect-s2` — Effect wrapper around the S2 client/substrate.
-- `@tanstack/workflow-core` — vendored TanStack Workflow core compatibility
-  source.
-- `@tanstack/workflow-runtime` — vendored TanStack Workflow runtime/store
-  compatibility source.
-- `@firegrid/tanstack-workflow-s2` — S2-backed TanStack
-  `WorkflowExecutionStore` plus host recovery/sweep helpers.
-- `@firegrid/fluent-firegrid` — Restate-like Effect-native authoring surface:
+- `@firegrid/log` — Effect wrapper around the S2 client/substrate.
+- `@firegrid/core` — shared durable workflow contract, primitive types, and
+  run-store interfaces.
+- `@firegrid/runtime` — durable workflow runtime, schedule materialization, and
+  in-memory store implementation.
+- `@firegrid/store` — S2-backed workflow execution store plus host
+  recovery/sweep helpers.
+- `@firegrid/fluent` — Restate-like Effect-native authoring surface:
   definitions, descriptor contracts, clients, durable primitives, and virtual
   object state authoring.
-- `@firegrid/fluent-firegrid-s2` — S2-backed fluent object/state runtime
+- `@firegrid/store` — S2-backed fluent object/state runtime
   binding.
-- `@firegrid/fluent-firegrid-http` — framework-neutral HTTP
+- `@firegrid/fluent/http` — framework-neutral HTTP
   `Request -> Response` transport binding for fluent definitions.
 
 ## Support Packages
 
-- `@firegrid/verification` — real-substrate proof harness and proof registry.
-- `@firegrid/observability` — tracing/export support used by verification and
+- `@firegrid/proofs` — real-substrate proof harness and proof registry.
+- `@firegrid/trace` — tracing/export support used by verification and
   runtime processes.
-- `@firegrid/fluent-acp-process` — ACP process adapter work; separate from the
+- `@firegrid/acp-process` — ACP process adapter work; separate from the
   durable execution core.
 
 ## Verification
@@ -41,7 +41,7 @@ pnpm run proofs
 ```
 
 This starts real `s2 lite` and process-host fixtures, then verifies the current
-`effect-s2`, TanStack/S2, and fluent object surfaces from workload results plus
+`@firegrid/log`, store, runtime, and fluent object surfaces from workload results plus
 OTel/chDB trace evidence.
 
 ## Cleanup Policy

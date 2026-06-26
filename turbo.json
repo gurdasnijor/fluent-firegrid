@@ -8,7 +8,15 @@
     },
     "typecheck": {
       "dependsOn": ["^typecheck"],
-      "inputs": ["src/**", "test/**", "proofs/**", "examples/**", "tsconfig.json", "../../tsconfig.json"],
+      "inputs": [
+        "src/**",
+        "test/**",
+        "proofs/**",
+        "examples/**",
+        "tsconfig.json",
+        "../../tsconfig.json",
+        "../../../tsconfig.json"
+      ],
       "outputs": []
     },
     "diagnostics": {
@@ -19,7 +27,8 @@
         "proofs/**",
         "examples/**",
         "tsconfig.json",
-        "../../tsconfig.json"
+        "../../tsconfig.json",
+        "../../../tsconfig.json"
       ],
       "outputs": []
     },
@@ -32,20 +41,32 @@
         "examples/**",
         "tsconfig.json",
         "../../.oxlintrc.json",
+        "../../../.oxlintrc.json",
         "../../dprint.json",
+        "../../../dprint.json",
         "../../tools/oxc/**",
-        "../../tsconfig.json"
+        "../../../tools/oxc/**",
+        "../../tsconfig.json",
+        "../../../tsconfig.json"
       ],
       "outputs": []
     },
     "test": {
       "dependsOn": ["^build"],
-      "inputs": ["src/**", "test/**", "proofs/**", "examples/**", "tsconfig.json", "../../vitest.config.ts"],
+      "inputs": [
+        "src/**",
+        "test/**",
+        "proofs/**",
+        "examples/**",
+        "tsconfig.json",
+        "../../vitest.config.ts",
+        "../../../vitest.config.ts"
+      ],
       "outputs": []
     },
     "proofs": {
       "dependsOn": ["^build"],
-      "inputs": ["src/**", "proofs/**", "tsconfig.json", "../../tsconfig.json"],
+      "inputs": ["src/**", "proofs/**", "tsconfig.json", "../../tsconfig.json", "../../../tsconfig.json"],
       "outputs": []
     },
     "check": {
@@ -58,17 +79,25 @@
         "package.json",
         "packages/**/package.json",
         "packages/**/src/**",
-        "packages/**/proofs/**",
-        "packages/**/test/**"
+        "packages/**/test/**",
+        "apps/**/package.json",
+        "apps/**/src/**",
+        "apps/**/proofs/**",
+        "apps/**/test/**"
       ],
       "cache": false
     },
     "//#lint:dup": {
-      "inputs": ["packages/*/src/**", "packages/*/proofs/**", ".jscpd.json"],
+      "inputs": [
+        "packages/*/src/**",
+        "apps/*/src/**",
+        "apps/examples/*/src/**",
+        ".jscpd.json"
+      ],
       "outputs": []
     },
     "//#lint:deps": {
-      "inputs": ["packages/**", ".dependency-cruiser.cjs", "tsconfig.json"],
+      "inputs": ["packages/**", "apps/**", ".dependency-cruiser.cjs", "tsconfig.json"],
       "outputs": []
     },
     "//#lint:root": {

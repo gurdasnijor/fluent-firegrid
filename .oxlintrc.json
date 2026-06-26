@@ -51,14 +51,14 @@
     },
     {
       "files": [
-        "packages/fluent-acp-process/src/**/*.cjs",
-        "packages/fluent-acp-process/src/**/*.cts",
-        "packages/fluent-acp-process/src/**/*.js",
-        "packages/fluent-acp-process/src/**/*.jsx",
-        "packages/fluent-acp-process/src/**/*.mjs",
-        "packages/fluent-acp-process/src/**/*.mts",
-        "packages/fluent-acp-process/src/**/*.ts",
-        "packages/fluent-acp-process/src/**/*.tsx"
+        "apps/acp-process/src/**/*.cjs",
+        "apps/acp-process/src/**/*.cts",
+        "apps/acp-process/src/**/*.js",
+        "apps/acp-process/src/**/*.jsx",
+        "apps/acp-process/src/**/*.mjs",
+        "apps/acp-process/src/**/*.mts",
+        "apps/acp-process/src/**/*.ts",
+        "apps/acp-process/src/**/*.tsx"
       ],
       "rules": {
         "eslint/no-restricted-imports": ["error", {

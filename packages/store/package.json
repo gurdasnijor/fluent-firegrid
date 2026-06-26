@@ -1,0 +1,38 @@
+{
+  "name": "@firegrid/store",
+  "version": "0.0.0",
+  "description": "S2-backed WorkflowExecutionStore for TanStack Workflow.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": ["src", "README.md"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
+    "lint": "oxlint -f unix --config ../../.oxlintrc.json .",
+    "test": "vitest run --root ../.. --project store --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@firegrid/fluent": "workspace:*",
+    "@firegrid/log": "workspace:*",
+    "@firegrid/runtime": "workspace:*",
+    "effect": "4.0.0-beta.87"
+  },
+  "devDependencies": {
+    "@effect/language-service": "^0.86.2",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.0"
+  }
+}

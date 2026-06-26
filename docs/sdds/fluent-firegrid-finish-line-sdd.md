@@ -6,8 +6,8 @@
 | --- | --- |
 | Status | Finish-line backlog |
 | Date | 2026-06-25 |
-| Package focus | `@firegrid/fluent-firegrid`, `@firegrid/fluent-firegrid-http`, `@firegrid/fluent-firegrid-node`, `@firegrid/fluent-firegrid-s2` |
-| Foundation | Current `packages/verification` proof registry is good enough for the substrate layer |
+| Package focus | `@firegrid/fluent`, `@firegrid/fluent/http`, `@firegrid/example-full-stack-service`, `@firegrid/store` |
+| Foundation | Current `apps/proofs` proof registry is good enough for the substrate layer |
 
 ---
 
@@ -26,7 +26,7 @@ Do not reopen a parallel durable-function engine. Continue building above:
 - transport-neutral HTTP binding;
 - Node server binding.
 
-`packages/verification` should continue protecting regressions, but it should no
+`apps/proofs` should continue protecting regressions, but it should no
 longer be the main delivery artifact. New proofs should be added only when a new
 product behavior needs distributed-systems evidence.
 
@@ -45,8 +45,8 @@ Implemented and passing:
 - CEL-backed keyed and indexed durable table waits over object state;
 - same-key object serialization, stale-owner recovery, live-owner fencing,
   replay-safe state reads/writes, and send handles proven against `s2 lite`;
-- `@firegrid/fluent-firegrid-http` `Request -> Response` transport binding;
-- `@firegrid/fluent-firegrid-node` deployable Node/S2 server binding.
+- `@firegrid/fluent/http` `Request -> Response` transport binding;
+- `@firegrid/example-full-stack-service` deployable Node/S2 server binding.
 
 ## Restate Surface Comparison
 
@@ -154,8 +154,8 @@ Definitions remain the root of type sharing. Apps should be able to expose them
 through the Node/S2 binding without writing fixture server code.
 
 ```ts
-import { iface, implement, run } from "@firegrid/fluent-firegrid"
-import { serveFluentS2 } from "@firegrid/fluent-firegrid-node"
+import { iface, implement, run } from "@firegrid/fluent"
+import { serveFluentS2 } from "@firegrid/example-full-stack-service"
 import { Schema } from "effect"
 
 const ordersContract = iface.service("orders", {
@@ -196,7 +196,7 @@ import {
   workflowClient,
   workflowSendClient,
   rpc
-} from "@firegrid/fluent-firegrid"
+} from "@firegrid/fluent"
 
 const receipt = yield* serviceClient(orders).submit(
   { orderId: "order-1" },
@@ -237,7 +237,7 @@ Generic APIs should exist for dynamic names and cross-language callers that only
 have descriptors or route metadata at runtime.
 
 ```ts
-import { genericCall, genericSend, rpc } from "@firegrid/fluent-firegrid"
+import { genericCall, genericSend, rpc } from "@firegrid/fluent"
 
 const output = yield* genericCall<string>({
   kind: "service",
@@ -262,7 +262,7 @@ const handle = yield* genericSend<{ accepted: boolean }>({
 Send handles should be useful immediately and serializable for later attach.
 
 ```ts
-import { attach, cancel, invocation } from "@firegrid/fluent-firegrid"
+import { attach, cancel, invocation } from "@firegrid/fluent"
 
 const handle = yield* serviceSendClient(orders).submit(
   { orderId: "order-4" },
@@ -290,7 +290,7 @@ Raw sleep is already available. The finish line adds send delays and timeout
 ergonomics.
 
 ```ts
-import { orTimeout, rpc, serviceSendClient, sleep, sleepUntil } from "@firegrid/fluent-firegrid"
+import { orTimeout, rpc, serviceSendClient, sleep, sleepUntil } from "@firegrid/fluent"
 
 yield* sleep("10 seconds")
 yield* sleepUntil(Date.now() + 60_000)
@@ -335,7 +335,7 @@ State waits should subscribe to materialized table changes using a serializable
 predicate, not a JavaScript closure. CEL is the target predicate language.
 
 ```ts
-import { cel, state } from "@firegrid/fluent-firegrid"
+import { cel, state } from "@firegrid/fluent"
 
 const invoices = state(Invoices)
 
@@ -469,7 +469,7 @@ Implementation status as of June 26, 2026:
 
 - `cel("...")`, predicate validation/evaluation, and
   `state(Table).waitFor(key, { name, when, timeoutMs })` exist in
-  `@firegrid/fluent-firegrid`;
+  `@firegrid/fluent`;
 - `state(Table).waitFor({ index, vars, name, where, timeoutMs })` exists for
   indexed table waits;
 - keyed and indexed wait paths derive a serializable predicate environment from
@@ -507,7 +507,7 @@ Awakeables cover task-token and human-in-the-loop patterns for services and
 objects.
 
 ```ts
-import { awakeable, resolveAwakeable, rejectAwakeable, run } from "@firegrid/fluent-firegrid"
+import { awakeable, resolveAwakeable, rejectAwakeable, run } from "@firegrid/fluent"
 
 const reviews = service({
   name: "reviews",
@@ -548,7 +548,7 @@ than manually passing awakeable ids when every signal is scoped to one workflow
 instance.
 
 ```ts
-import { workflow, workflowClient, workflowPromise, run } from "@firegrid/fluent-firegrid"
+import { workflow, workflowClient, workflowPromise, run } from "@firegrid/fluent"
 
 const reviewWorkflow = workflow({
   name: "review",
@@ -578,11 +578,11 @@ Implementation status as of June 25, 2026:
   through explicit or ambient external-signal bindings;
 - `createTanStackExternalSignalBinding` adapts a runtime host's
   `deliverSignal` method for callback handlers and transport bindings;
-- `@firegrid/fluent-firegrid-http` exposes
+- `@firegrid/fluent/http` exposes
   `POST /firegrid/awakeables/:id/resolve` and
   `POST /firegrid/awakeables/:id/reject`, and
-  `@firegrid/fluent-firegrid-node` wires those routes to the S2 runtime host;
-- `createAwakeableHttpClient` in `@firegrid/fluent-firegrid-http` provides a
+  `@firegrid/example-full-stack-service` wires those routes to the S2 runtime host;
+- `createAwakeableHttpClient` in `@firegrid/fluent/http` provides a
   small external callback client for resolve/reject delivery;
 - rejected awakeables fail with the typed `AwakeableRejected` error;
 - duplicate awakeable delivery returns the runtime's `duplicate` result and
@@ -598,8 +598,8 @@ The webhook product shape should be a normal service handler, plus idempotency
 key support at the transport boundary.
 
 ```ts
-import { objectSendClient, run, service } from "@firegrid/fluent-firegrid"
-import { serveFluentS2 } from "@firegrid/fluent-firegrid-node"
+import { objectSendClient, run, service } from "@firegrid/fluent"
+import { serveFluentS2 } from "@firegrid/example-full-stack-service"
 
 const stripeWebhook = service({
   name: "stripe-webhook",
@@ -635,7 +635,7 @@ await serveFluentS2({
 ```
 
 The `webhooks` option is intentionally transport-specific and belongs in
-`@firegrid/fluent-firegrid-node`, not fluent core.
+`@firegrid/example-full-stack-service`, not fluent core.
 
 Implementation status as of June 25, 2026:
 
@@ -646,7 +646,7 @@ Implementation status as of June 25, 2026:
   output encoding stay centralized;
 - routes can derive a durable idempotency key from the incoming request and run
   a raw-body `verify` hook before admission;
-- `packages/fluent-firegrid-node/examples/durable-webhook.ts` and
+- `apps/examples/full-stack-service/examples/durable-webhook.ts` and
   `docs/guides/durable-webhooks.md` provide the canonical Stripe-like
   object-state workflow and retry/dedupe guide.
 
@@ -773,7 +773,7 @@ Tests:
 
 - Do not introduce `Operation<T>` / `Future<T>` as separate primitives. `Effect`
   is the operation type.
-- Do not put HTTP servers into `@firegrid/fluent-firegrid`.
+- Do not put HTTP servers into `@firegrid/fluent`.
 - Do not replace table-shaped object state with string slot state.
 - Do not expand verification into more narrow proofs unless the product surface
   genuinely needs new distributed-systems evidence.

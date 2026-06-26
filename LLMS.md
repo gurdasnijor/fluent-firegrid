@@ -120,7 +120,7 @@ export type DatabaseService = Database["Service"]
 - Use `Schedule` for retry, repeat, polling, and backoff behavior.
 - Prefer Effect `DateTime`/`Clock` APIs over raw `Date.now()` in Effect programs
   that need testable time.
-- Use Effect logging/tracing APIs and existing package observability utilities
+- Use Effect logging/tracing APIs and existing package trace utilities
   instead of bespoke side channels.
 
 ## Testing

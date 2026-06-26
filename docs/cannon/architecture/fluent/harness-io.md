@@ -261,7 +261,7 @@ fake recorders.
 ## Read Next
 
 - [`README.md`](README.md): the provider/role model for Durable Streams, Effect,
-  fluent-firegrid, fluent-runtime, and harnesses.
+  fluent, fluent-runtime, and harnesses.
 - [`execution-models.md`](execution-models.md): why managed sessions resume by
   reconstruction while authored procedures resume by replay.
 - [`substrate-protocol.md`](substrate-protocol.md): the concrete Durable Streams

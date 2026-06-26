@@ -11,7 +11,7 @@ not separate engines. They are specific uses of Durable Streams append/read,
 closure, fork, producer fencing, named consumers, pull-wake, claim/ack/release,
 and TTL.
 
-`packages/fluent-firegrid` defines the authoring primitives over a `Journal`.
+`packages/fluent` defines the authoring primitives over a `Journal`.
 `packages/fluent-runtime` provides that journal and operates the wake/redrive
 loop. Durable Streams owns the transport guarantees.
 
