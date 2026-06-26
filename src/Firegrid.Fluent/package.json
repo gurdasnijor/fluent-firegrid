@@ -1,0 +1,31 @@
+{
+  "name": "@firegrid/fluent",
+  "version": "0.0.0",
+  "description": "Fable-native Firegrid authoring surface.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/Exports.js",
+  "exports": {
+    ".": "./dist/Exports.js",
+    "./http": "./dist/Http.js",
+    "./state": "./dist/State.js"
+  },
+  "files": [
+    "Firegrid.Fluent.fsproj",
+    "*.fs",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet tool run fable -- Firegrid.Fluent.fsproj -o dist --optimize --noCache --noRestore",
+    "diagnostics": "echo '@firegrid/fluent diagnostics are covered by dotnet build'",
+    "lint": "echo '@firegrid/fluent lint is covered by F# compile'",
+    "test": "pnpm run typecheck",
+    "typecheck": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet build Firegrid.Fluent.fsproj -v:q"
+  },
+  "dependencies": {
+    "@firegrid/clients": "workspace:*",
+    "@firegrid/core": "workspace:*",
+    "@firegrid/runtime": "workspace:*",
+    "effect": "4.0.0-beta.87"
+  }
+}

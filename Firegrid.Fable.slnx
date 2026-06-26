@@ -1,8 +1,23 @@
 <Solution>
+  <Folder Name="/src/Firegrid.Core/">
+    <Project Path="src/Firegrid.Core/Firegrid.Core.fsproj" />
+  </Folder>
+  <Folder Name="/src/Firegrid.Clients/">
+    <Project Path="src/Firegrid.Clients/Firegrid.Clients.fsproj" />
+  </Folder>
   <Folder Name="/src/Firegrid.Log/">
     <Project Path="src/Firegrid.Log/Firegrid.Log.fsproj" />
   </Folder>
+  <Folder Name="/src/Firegrid.Runtime/">
+    <Project Path="src/Firegrid.Runtime/Firegrid.Runtime.fsproj" />
+  </Folder>
   <Folder Name="/src/Firegrid.Store/">
     <Project Path="src/Firegrid.Store/Firegrid.Store.fsproj" />
+  </Folder>
+  <Folder Name="/src/Firegrid.Fluent/">
+    <Project Path="src/Firegrid.Fluent/Firegrid.Fluent.fsproj" />
+  </Folder>
+  <Folder Name="/src/Firegrid.Trace/">
+    <Project Path="src/Firegrid.Trace/Firegrid.Trace.fsproj" />
   </Folder>
 </Solution>
