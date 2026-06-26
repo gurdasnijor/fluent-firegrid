@@ -94,9 +94,7 @@ Implemented:
 
 Remaining gaps:
 
-- cron/schedule authoring helpers;
-- docs explaining long sleeps, deployment version retention, and when delayed
-  messages are better than sleeping in a handler.
+- provider-specific schedule examples can be added as adoption demands.
 
 ### Durable Table Waits
 
@@ -312,9 +310,13 @@ Implementation status as of June 25, 2026:
 - the S2 binding persists service/workflow delayed starts to a fluent-owned S2
   admission stream, the Node host loop drains due starts into the TanStack
   runtime, and returned handles attach to terminal output;
+- fluent workflow definitions accept handler-targeted `schedule(...)`
+  declarations using `cron(...)` and `every.*(...)` helpers, and
+  `bindFluentDefinitions` lowers them into TanStack schedule registrations;
 - `createTanStackRuntimeBinding` still rejects delayed invocations because only
   the S2 binding has durable delayed-start support;
-- remaining gaps are schedule/cron authoring helpers.
+- `docs/guides/durable-timers.md` explains sleep vs delayed send vs recurring
+  schedules.
 
 `orTimeout` should be an Effect combinator returning a typed timeout error, not a
 new Future abstraction. `orTimeout(duration)` now maps Effect's native timeout

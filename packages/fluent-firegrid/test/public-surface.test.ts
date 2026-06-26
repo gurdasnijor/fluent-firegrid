@@ -7,8 +7,10 @@ import {
   bindFluentDefinitions,
   type CallRequest,
   client,
+  cron,
   createTanStackExternalSignalBinding,
   createTanStackRuntimeBinding,
+  every,
   FluentDurableContext,
   type FluentDurableContextService,
   type FluentFiregridError,
@@ -24,6 +26,7 @@ import {
   rpc,
   run,
   type RunAction,
+  schedule,
   schemas,
   sendClient,
   sendObjectClient,
@@ -34,6 +37,7 @@ import {
   service,
   serviceClient,
   serviceSendClient,
+  workflow,
   workflowIdForHandler,
   workflowSendClient
 } from "../src/index.ts"
@@ -81,6 +85,52 @@ describe("fluent-firegrid public surface", () => {
     expect(incident.name).toBe("incident")
     expect(incident._kind).toBe("service")
     expect(incident._handlers.triage).toBe(incidentContract._handlers.triage)
+  })
+
+  it("attaches workflow schedules to the targeted handler registration", () => {
+    const handlers = {
+      *daily(input: { readonly id: string }) {
+        return yield* run(() => input.id, { name: "daily" })
+      },
+      *manual(input: { readonly id: string }) {
+        return yield* run(() => input.id, { name: "manual" })
+      }
+    }
+    const jobs = workflow({
+      name: "jobs",
+      handlers,
+      schedules: [
+        schedule<typeof handlers, "daily">({
+          handler: "daily",
+          id: "daily-reconcile",
+          input: { id: "scheduled" },
+          overlapPolicy: "skip",
+          schedule: cron("0 0 * * *")
+        }),
+        schedule<typeof handlers, "daily">({
+          enabled: false,
+          handler: "daily",
+          schedule: every.hours(1)
+        })
+      ]
+    })
+
+    const registrations = bindFluentDefinitions([jobs])
+
+    expect(registrations[workflowIdForHandler(jobs, "daily")]?.schedules).toEqual([
+      {
+        id: "workflow:jobs:daily:daily-reconcile",
+        input: { input: { id: "scheduled" } },
+        overlapPolicy: "skip",
+        schedule: { expression: "0 0 * * *", kind: "cron", timezone: undefined }
+      },
+      {
+        enabled: false,
+        input: { input: undefined },
+        schedule: { everyMs: 3_600_000, kind: "interval" }
+      }
+    ])
+    expect(registrations[workflowIdForHandler(jobs, "manual")]?.schedules).toBeUndefined()
   })
 
   it("derives typed call/send clients from implemented interfaces", async () => {

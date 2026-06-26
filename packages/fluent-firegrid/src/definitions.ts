@@ -1,7 +1,16 @@
 import type * as Effect from "effect/Effect"
 import type * as Schema from "effect/Schema"
+import {
+  cron,
+  every,
+  type WorkflowOverlapPolicy,
+  type WorkflowScheduleDefinition,
+  type WorkflowScheduleSpec
+} from "@tanstack/workflow-runtime"
 
 import type { FluentDurableContext } from "./context.ts"
+
+export { cron, every }
 
 export type Operation<A, E = unknown, R = never> = Effect.Effect<A, E, R>
 
@@ -34,6 +43,14 @@ export type HandlerDescriptors<Handlers extends Record<string, AnyGeneratorHandl
   readonly [Key in keyof Handlers]: HandlerDescriptor<HandlerInput<Handlers[Key]>, HandlerOutput<Handlers[Key]>>
 }
 
+export interface FluentScheduleDefinition<
+  Handlers extends Record<string, AnyGeneratorHandler> = Record<string, AnyGeneratorHandler>,
+  HandlerName extends keyof Handlers & string = keyof Handlers & string
+> extends Omit<WorkflowScheduleDefinition, "input"> {
+  readonly handler: HandlerName
+  readonly input?: HandlerInput<Handlers[HandlerName]> | (() => HandlerInput<Handlers[HandlerName]> | Promise<HandlerInput<Handlers[HandlerName]>>)
+}
+
 export interface Definition<
   Name extends string,
   Kind extends DefinitionKind,
@@ -43,6 +60,7 @@ export interface Definition<
   readonly _kind: Kind
   readonly _handlers: HandlerDescriptors<Handlers>
   readonly handlers: Handlers
+  readonly schedules?: ReadonlyArray<FluentScheduleDefinition<Handlers>>
 }
 
 export type ServiceDefinition<Name extends string, Handlers extends Record<string, AnyGeneratorHandler>> = Definition<
@@ -67,6 +85,7 @@ interface DefinitionConfig<Name extends string, Handlers extends Record<string, 
   readonly name: Name
   readonly handlers: Handlers
   readonly descriptors?: Partial<Record<keyof Handlers, HandlerDescriptor>>
+  readonly schedules?: ReadonlyArray<FluentScheduleDefinition<Handlers>>
 }
 
 export type HandlerDescriptorOptions<Input, Output> = {
@@ -90,6 +109,13 @@ export const schemas = <Input = void, Output = void>(
 
 export const serdes: typeof schemas = (options) => descriptor(options)
 
+export const schedule = <
+  const Handlers extends Record<string, AnyGeneratorHandler>,
+  const HandlerName extends keyof Handlers & string
+>(
+  definition: FluentScheduleDefinition<Handlers, HandlerName>
+): FluentScheduleDefinition<Handlers, HandlerName> => definition
+
 const makeDescriptors = <Handlers extends Record<string, AnyGeneratorHandler>>(
   handlers: Handlers,
   descriptors: Partial<Record<keyof Handlers, HandlerDescriptor>> | undefined
@@ -112,8 +138,15 @@ const makeDefinition = <
   _handlers: makeDescriptors(definition.handlers, definition.descriptors),
   _kind: kind,
   handlers: definition.handlers,
-  name: definition.name
+  name: definition.name,
+  ...(definition.schedules === undefined ? {} : { schedules: definition.schedules })
 })
+
+export type {
+  WorkflowOverlapPolicy,
+  WorkflowScheduleDefinition,
+  WorkflowScheduleSpec
+}
 
 export const service = <const Name extends string, const Handlers extends Record<string, AnyGeneratorHandler>>(
   definition: DefinitionConfig<Name, Handlers>

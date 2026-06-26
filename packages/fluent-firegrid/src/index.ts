@@ -59,6 +59,9 @@ export {
   type AnyGeneratorHandler,
   type Definition,
   type DefinitionKind,
+  cron,
+  every,
+  type FluentScheduleDefinition,
   type GeneratorHandler,
   type HandlerDescriptor,
   type HandlerDescriptorOptions,
@@ -69,12 +72,16 @@ export {
   object,
   type ObjectDefinition,
   type Operation,
+  schedule,
   schemas,
   serdes,
   service,
   type ServiceDefinition,
+  type WorkflowOverlapPolicy,
   workflow,
-  type WorkflowDefinition
+  type WorkflowDefinition,
+  type WorkflowScheduleDefinition,
+  type WorkflowScheduleSpec
 } from "./definitions.ts"
 export { FluentFiregridError } from "./error.ts"
 export {

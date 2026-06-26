@@ -1,6 +1,10 @@
 /* oxlint-disable effect/restricted-syntax -- This module bridges fluent Effect handlers into TanStack's Promise-based workflow handler boundary. */
 import { createWorkflow } from "@tanstack/workflow-core"
-import type { WorkflowRegistrationMap, WorkflowRuntimeRunResult } from "@tanstack/workflow-runtime"
+import type {
+  WorkflowRegistrationMap,
+  WorkflowRuntimeRunResult,
+  WorkflowScheduleDefinition
+} from "@tanstack/workflow-runtime"
 import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 
@@ -11,7 +15,13 @@ import {
   FluentDurableContext,
   type ObjectStateBackend
 } from "./context.ts"
-import type { AnyGeneratorHandler, Definition, DefinitionKind, HandlerDescriptor } from "./definitions.ts"
+import type {
+  AnyGeneratorHandler,
+  Definition,
+  DefinitionKind,
+  FluentScheduleDefinition,
+  HandlerDescriptor
+} from "./definitions.ts"
 import { FluentFiregridError } from "./error.ts"
 
 export interface FluentWorkflowInput {
@@ -78,12 +88,43 @@ export const bindFluentDefinitions = (
         return [
           workflowId,
           {
-            load: async () => workflow
+            load: async () => workflow,
+            ...schedulesForHandler(definition, handlerName, workflowId)
           }
         ] as const
       })
     )
   )
+
+const schedulesForHandler = (
+  definition: Definition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>,
+  handlerName: string,
+  workflowId: string
+): { readonly schedules?: ReadonlyArray<WorkflowScheduleDefinition> } => {
+  if (definition._kind !== "workflow" || definition.schedules === undefined) return {}
+  const schedules = definition.schedules
+    .filter((entry) => entry.handler === handlerName)
+    .map((entry) => scheduleForWorkflow(entry, workflowId))
+  return schedules.length === 0 ? {} : { schedules }
+}
+
+const scheduleForWorkflow = (
+  entry: FluentScheduleDefinition,
+  workflowId: string
+): WorkflowScheduleDefinition => ({
+  ...(entry.enabled === undefined ? {} : { enabled: entry.enabled }),
+  ...(entry.id === undefined ? {} : { id: `${workflowId}:${entry.id}` }),
+  input: scheduledInput(entry.input),
+  ...(entry.overlapPolicy === undefined ? {} : { overlapPolicy: entry.overlapPolicy }),
+  schedule: entry.schedule
+})
+
+const scheduledInput = (
+  input: FluentScheduleDefinition["input"]
+): WorkflowScheduleDefinition["input"] =>
+  typeof input === "function"
+    ? async () => ({ input: await input() } satisfies FluentWorkflowInput)
+    : ({ input } satisfies FluentWorkflowInput)
 
 const invocationBindingFrom = (
   options: FluentDefinitionBindingOptions
