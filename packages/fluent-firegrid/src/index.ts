@@ -49,6 +49,7 @@ export {
   fluentContextFromTanStack,
   FluentDurableContext,
   type FluentDurableContextService,
+  type StateIndexWaitBackendOptions,
   type ObjectStateBackend,
   type RunAction,
   type RunActionContext,
@@ -117,6 +118,7 @@ export {
   celFor,
   evaluateStatePredicate,
   state,
+  stateIndexKey,
   statePredicateEnvironment,
   validateStatePredicate,
   validateStatePredicateForEnvironment,
@@ -136,6 +138,7 @@ export type {
   StatePredicateEnvironment,
   StatePredicateField,
   StatePredicateFieldType,
+  StateIndexWaitOptions,
   TableCelExpressionBuilder,
   TableCelFactory,
   StateWaitOptions

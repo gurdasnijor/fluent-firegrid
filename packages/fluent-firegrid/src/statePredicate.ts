@@ -49,6 +49,7 @@ export interface CelFactory {
 export interface StatePredicateContext {
   readonly row: unknown
   readonly old?: unknown
+  readonly vars?: Readonly<Record<string, unknown>>
   readonly change?: {
     readonly key: string
     readonly table: string
@@ -141,7 +142,7 @@ export const evaluateStatePredicate = (
     Effect.flatMap(() =>
       Effect.try({
         try: () => {
-          const result = createCelEnvironment().evaluate(predicate.expression, context)
+          const result = createCelEnvironment().evaluate(predicate.expression, { ...context.vars, ...context })
           if (typeof result !== "boolean") {
             throw new Error(`state wait CEL expression must evaluate to bool, got ${typeof result}`)
           }

@@ -42,6 +42,7 @@ Implemented and passing:
 - typed service/workflow/object call clients;
 - typed send clients returning durable `InvocationHandle`s with `attach()`;
 - S2-backed virtual object state with table/materialization semantics;
+- CEL-backed keyed and indexed durable table waits over object state;
 - same-key object serialization, stale-owner recovery, live-owner fencing,
   replay-safe state reads/writes, and send handles proven against `s2 lite`;
 - `@firegrid/fluent-firegrid-http` `Request -> Response` transport binding;
@@ -101,7 +102,7 @@ Remaining gaps:
 This is distinct from token-based external events. A handler should be able to
 wait until durable table/materialized state satisfies a serializable predicate.
 
-Target direction:
+Implemented direction:
 
 - use CEL as the persisted predicate grammar;
 - type-check predicates against the table schema at registration time;
@@ -398,8 +399,8 @@ const invoice = object({
 })
 ```
 
-The persisted wait registration should contain the expression text and the table
-identity, not a function:
+The persisted wait registration should contain the serializable predicate and
+the table identity, not a function:
 
 ```ts
 type StateWaitRegistered = {
@@ -408,8 +409,11 @@ type StateWaitRegistered = {
   runId: string
   table: string
   key?: string
+  index?: ReadonlyArray<string>
+  indexKey?: string
+  vars?: Record<string, unknown>
   name: string
-  expression: string
+  predicate: StatePredicate
   environmentVersion: string
   timeoutAt?: number
 }
@@ -431,7 +435,7 @@ Resolution is deterministic:
 7. On replay, TanStack's recorded `SIGNAL_RESOLVED` value returns the selected
    row without re-evaluating against newer state.
 
-Keyed waits are the first production slice:
+Keyed waits are the row-addressed production slice:
 
 ```ts
 yield* state(Invoices).waitFor("invoice-1", {
@@ -440,38 +444,56 @@ yield* state(Invoices).waitFor("invoice-1", {
 })
 ```
 
-Implementation status as of June 25, 2026:
+Indexed waits cover query-shaped waits without JavaScript closures. The caller
+declares the index fields and supplies serializable `vars` for each indexed
+field; those values form the stable wait key used by the S2 backend.
+
+```ts
+const invoice = yield* state(Invoices).waitFor({
+  name: "first-ready-in-account",
+  index: ["accountId", "status"],
+  vars: { accountId: input.accountId, status: "ready" },
+  where: celFor(Invoices).expr((t) =>
+    t.row.accountId.eq(input.accountId).and(t.row.status.eq("ready"))
+  )
+})
+```
+
+Implementation status as of June 26, 2026:
 
 - `cel("...")`, predicate validation/evaluation, and
   `state(Table).waitFor(key, { name, when, timeoutMs })` exist in
   `@firegrid/fluent-firegrid`;
-- the keyed wait path derives a serializable predicate environment from the
-  table schema, rejects unknown `row.*` / `old.*` field references at
-  registration time, and passes a stable `environmentVersion` into the backend
+- `state(Table).waitFor({ index, vars, name, where, timeoutMs })` exists for
+  indexed table waits;
+- keyed and indexed wait paths derive a serializable predicate environment from
+  the table schema, reject unknown `row.*` / `old.*` field references at
+  registration time, and pass a stable `environmentVersion` into the backend
   registration record;
+- indexed waits require `vars` for every index field and build stable keys with
+  `stateIndexKey(index, vars)`;
 - the S2 object state backend evaluates keyed waits against the materialized row
-  projection and appends `StateWaitRegistered` / `StateWaitReady` records;
+  projection, evaluates indexed waits against matching indexed rows, and appends
+  `StateWaitRegistered` / `StateWaitReady` records;
 - the S2 object runtime skips pending state-wait calls, continues draining later
   same-key calls, resumes ready waits through the queue-owned signal path, and
   turns expired `timeoutAt` registrations into typed wait failures;
+- ready state waits can be resumed by a later queue owner even when the original
+  parked invocation lease belongs to an earlier call;
 - `cel.expr((t) => ...)` provides a serializable builder for common field
   comparisons, boolean composition, and membership checks while still persisting
   plain CEL text;
 - `celFor(Table).expr((t) => ...)` adds table-scoped field typing for `row.*`
   and `old.*` builder access;
-- remaining gap: query/index waits.
+- proof coverage includes keyed state waits and indexed waits where an unrelated
+  row does not resume the waiter and a later matching row does.
 
-Query waits can come later, but must require an indexable declaration so the
-runtime does not scan all rows/waits:
+Remaining internal optimization:
 
-```ts
-yield* state(Invoices).waitFor({
-  name: "first-ready-in-account",
-  index: ["accountId", "status"],
-  where: cel("row.accountId == accountId && row.status == 'ready'"),
-  vars: { accountId }
-})
-```
+- indexed wait snapshot/current matching currently reads the object materialized
+  projection and filters rows by the declared index key. The resolver already
+  avoids scanning all waits by checking the changed row's index key first, but a
+  persisted secondary-index projection would make large object tables cheaper.
 
 ### Awakeables
 
@@ -665,10 +687,12 @@ Tests:
 Ship:
 
 - `state(Table).waitFor(key, { name, when: cel(...) })`;
+- `state(Table).waitFor({ index, vars, name, where: cel(...) })`;
 - CEL environment generation from table schemas;
 - parse/type-check at registration time;
-- persisted wait registrations with expression text and environment version;
+- persisted wait registrations with predicate text and environment version;
 - keyed wait index by `(table, key)`;
+- indexed wait routing by `(table, indexKey)`;
 - timeout support through object-queue-owned `timeoutAt` delivery;
 - replay from the recorded signal resolution value.
 
@@ -677,6 +701,8 @@ Tests:
 - wait returns immediately if the current row satisfies the predicate;
 - wait parks, another handler mutates the row, predicate evaluates true, and the
   waiting run resumes;
+- indexed wait ignores unrelated rows and resumes from a later matching row even
+  when a different object call owns the queue lease;
 - replay returns the recorded resolved value even if later state changes;
 - invalid CEL fails at registration with a typed error.
 
@@ -751,7 +777,9 @@ Tests:
 ## Order Of Work
 
 1. Service communication parity.
-2. CEL-backed durable table waits.
+2. CEL-backed durable table waits. Done for keyed and explicit indexed waits;
+   remaining work is secondary-index projection optimization if object tables
+   grow large enough to need it.
 3. Durable external-token events.
 4. Delayed messages and timeout ergonomics.
 5. Durable webhook example and guide.

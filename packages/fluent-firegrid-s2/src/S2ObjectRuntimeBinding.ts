@@ -79,12 +79,15 @@ type StateWaitRegisteredEvent = {
   readonly _tag: "StateWaitRegistered"
   readonly callId: string
   readonly environmentVersion?: string
-  readonly key: string
+  readonly index?: ReadonlyArray<string>
+  readonly indexKey?: string
+  readonly key?: string
   readonly name: string
   readonly signalName: string
   readonly table: string
   readonly timeoutAt?: number
   readonly timeoutMs?: number
+  readonly vars?: Readonly<Record<string, unknown>>
   readonly waitId: string
 }
 type StateWaitReadyEvent = {
@@ -877,26 +880,35 @@ const drain = (
       if (accepted === undefined) return
       const started = projection.started.get(nextCallId)
       const stateWaitStatus = stateWaitStatusForCall(projection, nextCallId, currentTime)
-      if (started !== undefined && started.ownerId !== ownerId && started.leaseExpiresAt > currentTime) return
-      if (
-        started !== undefined
-        && started.ownerId === ownerId
-        && started.leaseExpiresAt > currentTime
-        && stateWaitStatus._tag !== "Ready"
-      ) {
-        return
-      }
       if (stateWaitStatus._tag === "Ready" && started !== undefined) {
+        if (started.ownerId !== ownerId) {
+          const handoffResult = yield* appendEvent(
+            runtime,
+            streamName,
+            {
+              _tag: "Started",
+              callId: nextCallId,
+              leaseExpiresAt: currentTime + ownerLeaseMs,
+              now: currentTime,
+              ownerId
+            },
+            projection.nextSeqNum
+          ).pipe(Effect.exit)
+          if (handoffResult._tag === "Failure") {
+            if (isCasConflict(handoffResult.cause)) continue
+            return yield* Effect.failCause(handoffResult.cause)
+          }
+        }
         const result = yield* deliverStateWait(host, {
           callId: nextCallId,
           leaseMs: ownerLeaseMs,
-          leaseOwner: started.ownerId,
+          leaseOwner: ownerId,
           now: now(),
           ready: stateWaitStatus.ready,
           request
         }).pipe(Effect.exit)
         if (result._tag === "Failure") {
-          yield* appendTerminalEvent(runtime, streamName, started.ownerId, nextCallId, {
+          yield* appendTerminalEvent(runtime, streamName, ownerId, nextCallId, {
             _tag: "Errored",
             callId: nextCallId,
             error: Cause.pretty(result.cause),
@@ -906,7 +918,7 @@ const drain = (
         }
         yield* appendStateWaitDelivered(runtime, streamName, stateWaitStatus.ready.waitId)
         if (result.value.kind === "completed") {
-          yield* appendTerminalEvent(runtime, streamName, started.ownerId, nextCallId, {
+          yield* appendTerminalEvent(runtime, streamName, ownerId, nextCallId, {
             _tag: "Completed",
             callId: nextCallId,
             now: now(),
@@ -914,7 +926,7 @@ const drain = (
           })
         }
         if (result.value.kind === "errored") {
-          yield* appendTerminalEvent(runtime, streamName, started.ownerId, nextCallId, {
+          yield* appendTerminalEvent(runtime, streamName, ownerId, nextCallId, {
             _tag: "Errored",
             callId: nextCallId,
             error: result.value.run?.error ?? "state wait resume failed",
@@ -922,6 +934,15 @@ const drain = (
           })
         }
         continue
+      }
+      if (started !== undefined && started.ownerId !== ownerId && started.leaseExpiresAt > currentTime) return
+      if (
+        started !== undefined
+        && started.ownerId === ownerId
+        && started.leaseExpiresAt > currentTime
+        && stateWaitStatus._tag !== "Ready"
+      ) {
+        return
       }
       if (started === undefined || (started.ownerId !== ownerId && started.leaseExpiresAt <= currentTime)) {
         const startResult = yield* appendEvent(

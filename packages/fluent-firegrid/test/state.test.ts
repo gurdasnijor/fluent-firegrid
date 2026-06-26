@@ -316,6 +316,94 @@ describe("state(Table)", () => {
     expect(backendCalled).toBeFalsy()
   })
 
+  it("delegates indexed waits with a serializable predicate and index key", async () => {
+    let captured:
+      | {
+        readonly environmentVersion?: string
+        readonly expression: string
+        readonly index: ReadonlyArray<string>
+        readonly indexKey: string
+        readonly name: string
+        readonly signalName: string
+        readonly table: string
+        readonly vars: Readonly<Record<string, unknown>>
+        readonly waitId?: string
+      }
+      | undefined
+    let nextOperation = 0
+    const backend: ObjectStateBackend = {
+      get: () => Effect.succeed(Option.none()),
+      set: () => Effect.void,
+      delete: () => Effect.void,
+      waitForIndex: (table, predicate, options) =>
+        Effect.sync(() => {
+          captured = {
+            ...(options.environmentVersion === undefined ? {} : { environmentVersion: options.environmentVersion }),
+            expression: predicate.expression,
+            index: options.index,
+            indexKey: options.indexKey,
+            name: options.name,
+            signalName: options.signalName,
+            table,
+            vars: options.vars,
+            ...(options.waitId === undefined ? {} : { waitId: options.waitId })
+          }
+          return Option.some({ id: "a", value: 7 })
+        })
+    }
+
+    const program = state(Item).waitFor({
+      index: ["value"],
+      name: "value-index",
+      vars: { value: 7 },
+      where: celFor(Item).expr((t) => t.row.value.eq(7))
+    }).pipe(
+      Effect.provideService(
+        FluentDurableContext,
+        testContext(backend, ({ kind, table, key }) => `state-op:${nextOperation++}:${kind}:${table}:${key}`)
+      )
+    )
+
+    await expect(Effect.runPromise(program)).resolves.toEqual({ id: "a", value: 7 })
+    expect(captured).toEqual({
+      environmentVersion: "table:items:id:string,value:number",
+      expression: "row.value == 7",
+      index: ["value"],
+      indexKey: "value=7",
+      name: "value-index",
+      signalName: "__firegrid_state_wait:items:index:value=7:value-index",
+      table: "items",
+      vars: { value: 7 },
+      waitId: "state-op:0:waitFor:items:index:value=7"
+    })
+  })
+
+  it("rejects indexed waits without vars for every index field", async () => {
+    const backend: ObjectStateBackend = {
+      get: () => Effect.succeed(Option.none()),
+      set: () => Effect.void,
+      delete: () => Effect.void,
+      waitForIndex: () => Effect.succeed(Option.none())
+    }
+
+    const program = state(Item).waitFor({
+      index: ["value"],
+      name: "missing-index-var",
+      vars: {},
+      where: cel("row.value == 7")
+    }).pipe(
+      Effect.provideService(
+        FluentDurableContext,
+        testContext(backend, ({ kind, table, key }) => `state-op:0:${kind}:${table}:${key}`)
+      )
+    )
+
+    await expect(Effect.runPromise(program)).rejects.toMatchObject({
+      _tag: "FluentFiregridError",
+      message: "state.waitFor index for table items requires vars for value"
+    })
+  })
+
   it("parks on the ambient signal when the backend registers a wait", async () => {
     let capturedSignal:
       | {

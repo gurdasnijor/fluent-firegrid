@@ -218,16 +218,24 @@ export interface StateBinding<Row, Key extends string = string> {
   readonly get: (key: Key) => Effect.Effect<Option.Option<Row>, FluentFiregridError, FluentDurableContext>
   readonly set: (row: Row) => Effect.Effect<void, FluentFiregridError, FluentDurableContext>
   readonly delete: (key: Key) => Effect.Effect<void, FluentFiregridError, FluentDurableContext>
-  readonly waitFor: (
-    key: Key,
-    options: StateWaitOptions
-  ) => Effect.Effect<Row, FluentFiregridError, FluentDurableContext>
+  readonly waitFor: {
+    (key: Key, options: StateWaitOptions): Effect.Effect<Row, FluentFiregridError, FluentDurableContext>
+    (options: StateIndexWaitOptions<Row>): Effect.Effect<Row, FluentFiregridError, FluentDurableContext>
+  }
 }
 
 export interface StateWaitOptions {
   readonly name: string
   readonly timeoutMs?: number
   readonly when: StatePredicate
+}
+
+export interface StateIndexWaitOptions<Row> {
+  readonly index: ReadonlyArray<Extract<keyof Row, string>>
+  readonly name: string
+  readonly timeoutMs?: number
+  readonly vars: Readonly<Partial<Record<Extract<keyof Row, string>, unknown>> & Record<string, unknown>>
+  readonly where: StatePredicate
 }
 
 export type StatePredicateFieldType = "boolean" | "number" | "string" | "unknown"
@@ -267,6 +275,9 @@ export interface TableCelFactory<Tbl extends AnyTable> {
 const stateWaitSignalName = (table: string, key: string, name: string): string =>
   `__firegrid_state_wait:${table}:${key}:${name}`
 
+const stateIndexWaitSignalName = (table: string, indexKey: string, name: string): string =>
+  `__firegrid_state_wait:${table}:index:${indexKey}:${name}`
+
 interface StateWaitTimedOutPayload {
   readonly _tag: "StateWaitTimedOut"
   readonly name: string
@@ -276,6 +287,21 @@ const isStateWaitTimedOutPayload = (value: unknown): value is StateWaitTimedOutP
   typeof value === "object"
   && value !== null
   && (value as { readonly _tag?: unknown })._tag === "StateWaitTimedOut"
+
+const stableJson = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`
+  if (typeof value === "object" && value !== null) {
+    return `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nested]) => `${JSON.stringify(key)}:${stableJson(nested)}`).join(",")}}`
+  }
+  return JSON.stringify(value)
+}
+
+export const stateIndexKey = (
+  index: ReadonlyArray<string>,
+  vars: Readonly<Record<string, unknown>>
+): string =>
+  index.map((field) => `${field}=${stableJson(vars[field])}`).join("&")
 
 const primitiveFieldType = (ast: SchemaAST.AST): StatePredicateFieldType => {
   const typeAst = SchemaAST.toType(ast)
@@ -384,6 +410,35 @@ export const celFor = <Tbl extends AnyTable>(table: Tbl): TableCelFactory<Tbl> =
   })
 }
 
+const validateStateIndexWait = (
+  table: AnyTable,
+  options: StateIndexWaitOptions<unknown>
+): Effect.Effect<{ readonly environment: StatePredicateEnvironment; readonly indexKey: string }, FluentFiregridError> =>
+  Effect.gen(function*() {
+    const environment = statePredicateEnvironment(table)
+    if (options.index.length === 0) {
+      return yield* Effect.fail(new FluentFiregridError({ message: "state.waitFor index waits require at least one index field" }))
+    }
+    const missingFields = options.index.filter((field) => environment.row[field] === undefined)
+    if (missingFields.length > 0) {
+      return yield* Effect.fail(
+        new FluentFiregridError({
+          message: `state.waitFor index for table ${table.tableName} references unknown field ${missingFields.join(", ")}`
+        })
+      )
+    }
+    const missingVars = options.index.filter((field) => options.vars[field] === undefined)
+    if (missingVars.length > 0) {
+      return yield* Effect.fail(
+        new FluentFiregridError({
+          message: `state.waitFor index for table ${table.tableName} requires vars for ${missingVars.join(", ")}`
+        })
+      )
+    }
+    yield* validateStatePredicateForEnvironment(options.where, environment)
+    return { environment, indexKey: stateIndexKey(options.index, options.vars) }
+  })
+
 const encodeRowFor = <Tbl extends AnyTable>(
   table: Tbl,
   row: RowOf<Tbl>
@@ -461,36 +516,87 @@ export const state = <Tbl extends AnyTable>(table: Tbl): StateBinding<RowOf<Tbl>
       const opId = ctx.stateOperationId?.({ key, kind: "delete", table: table.tableName })
       return backend.delete(table.tableName, key, opId === undefined ? undefined : { opId })
     }),
-  waitFor: (key, options) =>
-    withStateBackend("state.waitFor", (backend, ctx) =>
-      Effect.gen(function*() {
-        if (backend.waitFor === undefined) {
-          return yield* Effect.fail(
-            new FluentFiregridError({ message: "state.waitFor is not supported by this state backend" })
-          )
-        }
-        const predicateEnvironment = statePredicateEnvironment(table)
-        yield* validateStatePredicateForEnvironment(options.when, predicateEnvironment)
-        const waitId = ctx.stateOperationId?.({ key, kind: "waitFor", table: table.tableName })
-        const signalName = stateWaitSignalName(table.tableName, key, options.name)
-        const timeoutAt = options.timeoutMs === undefined || ctx.now === undefined
-          ? undefined
-          : (yield* ctx.now(waitId === undefined ? undefined : { id: `${waitId}:timeoutAt` })) + options.timeoutMs
-        const registered = yield* backend.waitFor(table.tableName, key, options.when, {
-          environmentVersion: predicateEnvironment.environmentVersion,
-          name: options.name,
-          signalName,
-          ...(timeoutAt === undefined ? {} : { timeoutAt }),
-          ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-          ...(waitId === undefined ? {} : { waitId })
-        })
-        if (Option.isSome(registered)) {
-          return yield* decodeRowFor(table, registered.value)
-        }
-        const value = yield* ctx.waitForSignal<unknown>(signalName, waitId === undefined ? undefined : { id: waitId })
-        if (isStateWaitTimedOutPayload(value)) {
-          return yield* Effect.fail(new FluentFiregridError({ message: `state.waitFor ${options.name} timed out` }))
-        }
-        return yield* decodeRowFor(table, value)
-      }))
+  waitFor: ((first: string | StateIndexWaitOptions<RowOf<Tbl>>, second?: StateWaitOptions) =>
+    typeof first === "string"
+      ? waitForKey(table, first, second!)
+      : waitForIndex(table, first)) as StateBinding<RowOf<Tbl>>["waitFor"]
 })
+
+const waitForKey = <Tbl extends AnyTable>(
+  table: Tbl,
+  key: string,
+  options: StateWaitOptions
+): Effect.Effect<RowOf<Tbl>, FluentFiregridError, FluentDurableContext> =>
+  withStateBackend("state.waitFor", (backend, ctx) =>
+    Effect.gen(function*() {
+      if (backend.waitFor === undefined) {
+        return yield* Effect.fail(
+          new FluentFiregridError({ message: "state.waitFor is not supported by this state backend" })
+        )
+      }
+      const predicateEnvironment = statePredicateEnvironment(table)
+      yield* validateStatePredicateForEnvironment(options.when, predicateEnvironment)
+      const waitId = ctx.stateOperationId?.({ key, kind: "waitFor", table: table.tableName })
+      const signalName = stateWaitSignalName(table.tableName, key, options.name)
+      const timeoutAt = options.timeoutMs === undefined || ctx.now === undefined
+        ? undefined
+        : (yield* ctx.now(waitId === undefined ? undefined : { id: `${waitId}:timeoutAt` })) + options.timeoutMs
+      const registered = yield* backend.waitFor(table.tableName, key, options.when, {
+        environmentVersion: predicateEnvironment.environmentVersion,
+        name: options.name,
+        signalName,
+        ...(timeoutAt === undefined ? {} : { timeoutAt }),
+        ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+        ...(waitId === undefined ? {} : { waitId })
+      })
+      if (Option.isSome(registered)) {
+        return yield* decodeRowFor(table, registered.value)
+      }
+      const value = yield* ctx.waitForSignal<unknown>(signalName, waitId === undefined ? undefined : { id: waitId })
+      if (isStateWaitTimedOutPayload(value)) {
+        return yield* Effect.fail(new FluentFiregridError({ message: `state.waitFor ${options.name} timed out` }))
+      }
+      return yield* decodeRowFor(table, value)
+    }))
+
+const waitForIndex = <Tbl extends AnyTable>(
+  table: Tbl,
+  options: StateIndexWaitOptions<RowOf<Tbl>>
+): Effect.Effect<RowOf<Tbl>, FluentFiregridError, FluentDurableContext> =>
+  withStateBackend("state.waitFor", (backend, ctx) =>
+    Effect.gen(function*() {
+      if (backend.waitForIndex === undefined) {
+        return yield* Effect.fail(
+          new FluentFiregridError({ message: "state.waitFor index waits are not supported by this state backend" })
+        )
+      }
+      const validated = yield* validateStateIndexWait(table, options as StateIndexWaitOptions<unknown>)
+      const waitId = ctx.stateOperationId?.({
+        key: `index:${validated.indexKey}`,
+        kind: "waitFor",
+        table: table.tableName
+      })
+      const signalName = stateIndexWaitSignalName(table.tableName, validated.indexKey, options.name)
+      const timeoutAt = options.timeoutMs === undefined || ctx.now === undefined
+        ? undefined
+        : (yield* ctx.now(waitId === undefined ? undefined : { id: `${waitId}:timeoutAt` })) + options.timeoutMs
+      const registered = yield* backend.waitForIndex(table.tableName, options.where, {
+        environmentVersion: validated.environment.environmentVersion,
+        index: options.index,
+        indexKey: validated.indexKey,
+        name: options.name,
+        signalName,
+        ...(timeoutAt === undefined ? {} : { timeoutAt }),
+        ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+        vars: options.vars,
+        ...(waitId === undefined ? {} : { waitId })
+      })
+      if (Option.isSome(registered)) {
+        return yield* decodeRowFor(table, registered.value)
+      }
+      const value = yield* ctx.waitForSignal<unknown>(signalName, waitId === undefined ? undefined : { id: waitId })
+      if (isStateWaitTimedOutPayload(value)) {
+        return yield* Effect.fail(new FluentFiregridError({ message: `state.waitFor ${options.name} timed out` }))
+      }
+      return yield* decodeRowFor(table, value)
+    }))

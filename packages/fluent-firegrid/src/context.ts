@@ -23,6 +23,12 @@ export interface StateWaitBackendOptions {
   readonly waitId?: string
 }
 
+export interface StateIndexWaitBackendOptions extends StateWaitBackendOptions {
+  readonly index: ReadonlyArray<string>
+  readonly indexKey: string
+  readonly vars: Readonly<Record<string, unknown>>
+}
+
 export interface SignalOperationIdentityInput {
   readonly kind: "awakeable" | "workflowEvent"
   readonly name: string
@@ -71,6 +77,11 @@ export interface ObjectStateBackend {
     key: string,
     predicate: StatePredicate,
     options: StateWaitBackendOptions
+  ) => Effect.Effect<Option.Option<unknown>, FluentFiregridError>
+  readonly waitForIndex?: (
+    table: string,
+    predicate: StatePredicate,
+    options: StateIndexWaitBackendOptions
   ) => Effect.Effect<Option.Option<unknown>, FluentFiregridError>
 }
 

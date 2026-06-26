@@ -2,10 +2,11 @@ import {
   evaluateStatePredicate,
   FluentFiregridError,
   type ObjectStateBackend,
+  type StateIndexWaitBackendOptions,
   type StatePredicate,
   type StateWaitBackendOptions
 } from "@firegrid/fluent-firegrid"
-import { ChangeMessage, MaterializedState } from "@firegrid/fluent-firegrid/state"
+import { ChangeMessage, MaterializedState, stateIndexKey } from "@firegrid/fluent-firegrid/state"
 import {
   AppendInput,
   AppendRecord,
@@ -65,13 +66,16 @@ interface StateWaitRegisteredEvent {
   readonly _tag: "StateWaitRegistered"
   readonly callId: string
   readonly environmentVersion?: string
-  readonly key: string
+  readonly index?: ReadonlyArray<string>
+  readonly indexKey?: string
+  readonly key?: string
   readonly name: string
   readonly predicate: StatePredicate
   readonly signalName: string
   readonly table: string
   readonly timeoutAt?: number
   readonly timeoutMs?: number
+  readonly vars?: Readonly<Record<string, unknown>>
   readonly waitId: string
 }
 
@@ -163,7 +167,9 @@ export const createS2ObjectStateBackend = (
         )
       ),
     waitFor: (table, key, predicate, options) =>
-      run(waitForState(runtime, streamName, owner, table, key, predicate, options))
+      run(waitForState(runtime, streamName, owner, table, key, predicate, options)),
+    waitForIndex: (table, predicate, options) =>
+      run(waitForIndexedState(runtime, streamName, owner, table, predicate, options))
   }
 }
 
@@ -235,7 +241,6 @@ const isStateWaitRegisteredEvent = (event: unknown): event is StateWaitRegistere
   && event !== null
   && (event as { readonly _tag?: unknown })._tag === "StateWaitRegistered"
   && typeof (event as { readonly callId?: unknown }).callId === "string"
-  && typeof (event as { readonly key?: unknown }).key === "string"
   && typeof (event as { readonly name?: unknown }).name === "string"
   && typeof (event as { readonly signalName?: unknown }).signalName === "string"
   && typeof (event as { readonly table?: unknown }).table === "string"
@@ -438,6 +443,54 @@ const waitForState = (
     return Option.none()
   })
 
+const waitForIndexedState = (
+  runtime: Runtime,
+  streamName: string,
+  owner: S2ObjectStateOwner | undefined,
+  table: string,
+  predicate: StatePredicate,
+  options: StateIndexWaitBackendOptions
+): Effect.Effect<Option.Option<unknown>, unknown> =>
+  Effect.gen(function*() {
+    if (owner !== undefined && options.waitId !== undefined) {
+      const invocation = yield* readInvocationProjection(runtime, owner.invocationStreamName)
+      if (invocation.stateWaits.has(options.waitId)) {
+        return Option.none()
+      }
+    }
+    const current = yield* matchingCurrentIndexedState(
+      runtime,
+      streamName,
+      owner?.invocationStreamName,
+      table,
+      predicate,
+      options,
+      "snapshot"
+    )
+    if (Option.isSome(current)) return current
+    if (owner === undefined || options.waitId === undefined) {
+      return yield* new FluentFiregridError({
+        message: `S2 object state indexed wait ${options.name} for ${table}:${options.indexKey} requires an object invocation owner`
+      })
+    }
+    yield* appendStateWaitRegistration(runtime, owner.invocationStreamName, {
+      _tag: "StateWaitRegistered",
+      callId: owner.callId,
+      ...(options.environmentVersion === undefined ? {} : { environmentVersion: options.environmentVersion }),
+      index: options.index,
+      indexKey: options.indexKey,
+      name: options.name,
+      predicate,
+      signalName: options.signalName,
+      table,
+      ...(options.timeoutAt === undefined ? {} : { timeoutAt: options.timeoutAt }),
+      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      vars: options.vars,
+      waitId: options.waitId
+    })
+    return Option.none()
+  })
+
 const matchingCurrentState = (
   runtime: Runtime,
   streamName: string,
@@ -461,6 +514,45 @@ const matchingCurrentState = (
       }).pipe(Effect.map((matches) => matches ? current : Option.none<unknown>()))
     })
   )
+
+const matchingCurrentIndexedState = (
+  runtime: Runtime,
+  streamName: string,
+  invocationStreamName: string | undefined,
+  table: string,
+  predicate: StatePredicate,
+  wait: Pick<StateWaitRegisteredEvent, "index" | "indexKey" | "vars">,
+  operation: "snapshot" | "update" | "delete"
+): Effect.Effect<Option.Option<unknown>, unknown> =>
+  readProjection(runtime, streamName, invocationStreamName).pipe(
+    Effect.flatMap((projection) =>
+      Effect.forEach(
+        projection.materialized.entries().filter((entry) =>
+          entry.type === table && indexedRowKey(wait.index, entry.value) === wait.indexKey
+        ),
+        (entry) =>
+          evaluateStatePredicate(predicate, {
+            change: {
+              key: entry.key,
+              operation,
+              table
+            },
+            row: entry.value,
+            ...(wait.vars === undefined ? {} : { vars: wait.vars })
+          }).pipe(Effect.map((matches) => matches ? Option.some(entry.value) : Option.none<unknown>()))
+      ).pipe(
+        Effect.map((results) => results.find(Option.isSome) ?? Option.none<unknown>())
+      )
+    )
+  )
+
+const indexedRowKey = (
+  index: ReadonlyArray<string> | undefined,
+  row: unknown
+): string | undefined =>
+  index === undefined || typeof row !== "object" || row === null
+    ? undefined
+    : stateIndexKey(index, row as Record<string, unknown>)
 
 const appendInvocationEvent = (
   runtime: Runtime,
@@ -531,15 +623,34 @@ const resolveStateWaits = (
     ? Effect.void
     : Effect.gen(function*() {
       const invocation = yield* readInvocationProjection(runtime, invocationStreamName)
+      const projection = yield* readProjection(runtime, streamName, invocationStreamName)
+      const changed = projection.materialized.get(table, key)
       yield* Effect.forEach(
-        Array.from(invocation.stateWaits.values()).filter((wait) =>
-          wait.table === table
-          && wait.key === key
-          && !invocation.stateWaitReady.has(wait.waitId)
-          && !invocation.stateWaitDelivered.has(wait.waitId)
-        ),
+        Array.from(invocation.stateWaits.values()).filter((wait) => {
+          if (
+            wait.table !== table
+            || invocation.stateWaitReady.has(wait.waitId)
+            || invocation.stateWaitDelivered.has(wait.waitId)
+          ) {
+            return false
+          }
+          if (wait.key !== undefined) return wait.key === key
+          return Option.isSome(changed) && indexedRowKey(wait.index, changed.value) === wait.indexKey
+        }),
         (wait) =>
-          matchingCurrentState(runtime, streamName, invocationStreamName, table, key, wait.predicate, "update").pipe(
+          (
+            wait.key !== undefined
+              ? matchingCurrentState(runtime, streamName, invocationStreamName, table, key, wait.predicate, "update")
+              : matchingCurrentIndexedState(
+                runtime,
+                streamName,
+                invocationStreamName,
+                table,
+                wait.predicate,
+                wait,
+                "update"
+              )
+          ).pipe(
             Effect.flatMap((current) =>
               Option.isNone(current)
                 ? Effect.void
