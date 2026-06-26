@@ -190,8 +190,6 @@ Important shape only:
 ```fsharp
 namespace Firegrid.Core
 
-open Effect
-
 type WorkflowId = string
 type RunId = string
 type StepId = string
@@ -205,18 +203,12 @@ type WorkflowEvent =
     | SignalResolved of stepId: StepId * payload: obj
     | RunErrored of runId: RunId * error: obj
 
-type IWorkflowContext<'Input, 'State, 'R> =
-    abstract RunId: RunId
-    abstract Input: 'Input
-    abstract State: 'State
-    abstract Step<'A>: string -> Effect<'A, obj, 'R> -> Effect<'A, FluentFiregridError, 'R>
-    abstract Sleep: durationMs: int64 -> Effect<unit, FluentFiregridError, 'R>
-    abstract WaitForSignal<'Payload>: string -> Effect<'Payload, FluentFiregridError, 'R>
+type Workflow<'A>
 
-type WorkflowDefinition<'Input, 'Output, 'State, 'R> =
+type WorkflowDefinition<'Input, 'Output, 'State> =
     { Id: WorkflowId
       Initialize: 'Input -> 'State
-      Handler: IWorkflowContext<'Input, 'State, 'R> -> Effect<'Output, FluentFiregridError, 'R> }
+      Handler: 'Input -> Workflow<'Output> }
 ```
 
 The important point is not the exact payload list above; it is the shape:
@@ -266,7 +258,6 @@ store contract should be implemented in code, not duplicated in this document.
 ```fsharp
 namespace Firegrid.Runtime
 
-open Effect
 open Firegrid.Core
 
 type WorkflowExecution =
@@ -276,14 +267,14 @@ type RuntimeError<'StoreError> =
     | StoreError of 'StoreError
     | WorkflowError of FluentFiregridError
 
-type WorkflowExecutionStore<'StoreError, 'R> =
+type WorkflowExecutionStore<'StoreError> =
     { Runs: obj; Events: obj; Signals: obj; Timers: obj; Schedules: obj }
 
-type WorkflowRuntimeDefinition<'StoreError, 'R> =
-    { Workflows: Map<WorkflowId, WorkflowRegistration<'R>>
-      Store: WorkflowExecutionStore<'StoreError, 'R>
-      StartRun: obj -> Effect<RunResult, RuntimeError<'StoreError>, 'R>
-      Sweep: obj -> Effect<SweepResult, RuntimeError<'StoreError>, 'R> }
+type WorkflowRuntimeDefinition<'StoreError> =
+    { Workflows: Map<WorkflowId, WorkflowRegistration>
+      Store: WorkflowExecutionStore<'StoreError>
+      StartRun: obj -> JS.Promise<Result<RunResult, RuntimeError<'StoreError>>>
+      Sweep: obj -> JS.Promise<Result<SweepResult, RuntimeError<'StoreError>>> }
 ```
 
 The `obj` placeholders above are intentional in this document. The concrete
@@ -311,8 +302,10 @@ type WorkflowScheduleSpec =
 1. Replace the current stub `Types.fs` with the full store and runtime contract.
 2. Port `schedule-materializer.ts` as a mostly pure module.
 3. Port `run-store-adapter.ts` after `Core.runWorkflow` exists.
-4. Port `runtime-driver.ts` into `RuntimeDriver.fs` using `effect {}`.
-5. Port `in-memory-store.ts` with scoped mutable state hidden behind a layer.
+4. Port `runtime-driver.ts` into `RuntimeDriver.fs` as the interpreter for
+   `Workflow<'A>`.
+5. Port `in-memory-store.ts` with scoped mutable state hidden behind a runtime
+   record; add an EffSharp layer adapter only if host composition needs it.
 6. Make `defineWorkflowRuntime` return `WorkflowRuntimeDefinition`, not a loose
    record with only `Workflows`.
 
@@ -429,7 +422,6 @@ Important shape only:
 ```fsharp
 namespace Firegrid.Clients
 
-open Effect
 open Firegrid.Core
 
 type DefinitionKind = Service | Workflow | Object
@@ -446,9 +438,9 @@ type CallRequest<'Input> =
       Key: string option
       Input: 'Input }
 
-type IInvocationBinding<'Error, 'R> =
-    abstract Call<'Output>: CallRequest<obj> -> Effect<'Output, 'Error, 'R>
-    abstract Send<'Output>: CallRequest<obj> -> Effect<InvocationHandle<'Output>, 'Error, 'R>
+type InvocationBinding<'Error> =
+    { Call: CallRequest<obj> -> JS.Promise<Result<obj, 'Error>>
+      Send: CallRequest<obj> -> JS.Promise<Result<InvocationHandle<obj>, 'Error>> }
 ```
 
 Typed helper shape:
@@ -459,12 +451,12 @@ module Client =
     val call:
         HandlerRef<'Input, 'Output> ->
         'Input ->
-            Effect<'Output, FluentFiregridError, FluentDurableContext>
+            JS.Promise<Result<'Output, FluentFiregridError>>
 
     val send:
         HandlerRef<'Input, 'Output> ->
         'Input ->
-            Effect<InvocationHandle<'Output>, FluentFiregridError, FluentDurableContext>
+            JS.Promise<Result<InvocationHandle<'Output>, FluentFiregridError>>
 ```
 
 Details such as idempotency keys, delayed sends, metadata, attach/output
@@ -515,7 +507,6 @@ For app-local services, workflows, and objects, a computation expression should
 be the primary surface:
 
 ```fsharp
-open Effect
 open Firegrid.Fluent
 
 type TriageInput = { IncidentId: string }
@@ -524,11 +515,14 @@ type TriageOutput = { Accepted: bool }
 let triage =
     handler<TriageInput, TriageOutput> "triage"
 
+let reserveIncident =
+    Step.defineAsync "reserve" reserveIncidentAsync
+
 let incident =
     service "incident" {
         handle triage (fun input ->
-            effect {
-                do! step "reserve" (fun _ -> reserveIncident input.IncidentId)
+            workflow {
+                do! Step.call reserveIncident input.IncidentId
                 return { Accepted = true }
             })
     }
@@ -539,8 +533,10 @@ The important ergonomic choices are:
 - the handler reference is a typed value;
 - `service "incident" { ... }` reads as a definition block;
 - `handle triage ...` ties implementation to the typed handler reference;
-- `step`, `sleep`, `waitForSignal`, and clients are ordinary EffSharp
-  functions available inside `effect {}`.
+- `workflow { ... }` is the durable Firegrid computation, not a raw EffSharp
+  program;
+- named durable work is represented by typed values such as
+  `Step<'Input, 'Output>`.
 
 Runtime schemas/codecs should be opt-in:
 
@@ -584,8 +580,8 @@ An implementation then stays concise and type-safe:
 let incident =
     implement IncidentApi.contract {
         handle IncidentApi.triage (fun input ->
-            effect {
-                do! step "reserve" (fun _ -> reserveIncident input.IncidentId)
+            workflow {
+                do! Step.call reserveIncident input.IncidentId
                 return { Accepted = true }
             })
     }
@@ -595,7 +591,7 @@ Typed clients should consume the same handler reference:
 
 ```fsharp
 let routeIncident incidentId =
-    effect {
+    promise {
         let! result =
             IncidentApi.contract
             |> Client.call IncidentApi.triage { IncidentId = incidentId }
@@ -625,13 +621,13 @@ module JobsApi =
 let jobs =
     workflow "jobs" {
         handle JobsApi.daily (fun input ->
-            effect {
-                do! step "reconcile" (fun _ -> reconcile input.Id)
+            workflow {
+                do! Step.call reconcileJob input.Id
                 return { Id = input.Id }
             })
 
         handle JobsApi.manual (fun input ->
-            effect {
+            workflow {
                 return { Id = input.Id }
             })
 
@@ -662,10 +658,10 @@ module CounterApi =
 let counter =
     durableObject "counter" {
         handle CounterApi.add (fun input ->
-            effect {
-                let! current = state.get "value" |> Effect.map (Option.defaultValue 0)
+            workflow {
+                let! current = State.get "value" |> Workflow.map (Option.defaultValue 0)
                 let next = current + input.By
-                do! state.set "value" next
+                do! State.set "value" next
                 return { Value = next }
             })
     }
@@ -678,20 +674,22 @@ definition records by computation-expression builders. Avoid exposing these
 internals as the main user-facing API.
 
 ```fsharp
+type Workflow<'A>
+
 type HandlerRef<'Input, 'Output> =
     { Name: string
       Descriptor: Firegrid.Core.HandlerDescriptor }
 
 type HandlerImplementation =
     { Handler: HandlerRef<obj, obj>
-      Invoke: obj -> Effect<obj, FluentFiregridError, Context> }
+      Invoke: obj -> Workflow<obj> }
 
 type DefinitionBuilder =
     [<CustomOperation("handle")>]
     member Handle:
         spec: DefinitionSpec *
         handler: HandlerRef<'Input, 'Output> *
-        run: ('Input -> Effect<'Output, FluentFiregridError, Context>) ->
+        run: ('Input -> Workflow<'Output>) ->
             DefinitionSpec
 
 let handler<'Input, 'Output> : string -> HandlerRef<'Input, 'Output>
@@ -700,15 +698,24 @@ let workflow : string -> WorkflowBuilder
 let durableObject : string -> DefinitionBuilder
 ```
 
-Durable context should remain an EffSharp service:
+Workflow operations should be typed durable values:
 
 ```fsharp
-type IFluentDurableContext =
-    abstract RunId: RunId option
-    abstract Step<'A>: string -> Effect<'A, obj, unit> -> Effect<'A, FluentFiregridError, unit>
-    abstract Sleep: Duration -> Effect<unit, FluentFiregridError, unit>
-    abstract WaitForSignal<'Payload>: string -> Effect<'Payload, FluentFiregridError, unit>
-    abstract Binding: IInvocationBinding<FluentFiregridError, Context> option
+type Step<'Input, 'Output>
+
+[<RequireQualifiedAccess>]
+module Step =
+    val define: string -> ('Input -> 'Output) -> Step<'Input, 'Output>
+    val defineAsync: string -> ('Input -> Async<'Output>) -> Step<'Input, 'Output>
+    val definePromise: string -> ('Input -> JS.Promise<'Output>) -> Step<'Input, 'Output>
+    val call: Step<'Input, 'Output> -> 'Input -> Workflow<'Output>
+    val callWithRetry: RetryPolicy -> Step<'Input, 'Output> -> 'Input -> Workflow<'Output>
+
+[<RequireQualifiedAccess>]
+module Workflow =
+    val all: Workflow<'A> seq -> Workflow<'A list>
+    val seq: Workflow<'A> list -> Workflow<'A list>
+    val map: ('A -> 'B) -> Workflow<'A> -> Workflow<'B>
 ```
 
 State tables should use F# records and explicit primary keys:
@@ -726,14 +733,14 @@ let IncidentTable =
           Schema = None }
 
 let waitForHighPriority id =
-    effect {
-        let incidents = State.binding IncidentTable
+    workflow {
         let! row =
-            incidents.WaitForKey
+            State.waitForKey
+                IncidentTable
                 id
-                { Name = "high-priority"
-                  TimeoutMs = Some 60_000
-                  When = Cel.expr "row.priority >= 3 && change.operation != 'delete'" }
+                (Cel.expr "row.priority >= 3 && change.operation != 'delete'")
+            |> Wait.timeout (Duration.minutes 1)
+
         return row
     }
 ```
@@ -744,7 +751,7 @@ DUs internally:
 ```fsharp
 type Awakeable<'A> =
     { Id: string
-      Effect: Effect<'A, AwakeableError, Context> }
+      Await: Workflow<Result<'A, AwakeableError>> }
 
 type AwakeablePayload<'A> =
     | AwakeableResolved of 'A
@@ -753,12 +760,12 @@ type AwakeablePayload<'A> =
 type IExternalSignalBinding<'Error, 'R> =
     abstract DeliverSignal<'Payload>:
         ExternalSignalDeliveryRequest<'Payload> ->
-            Effect<ExternalSignalDelivery, 'Error, 'R>
+            JS.Promise<Result<ExternalSignalDelivery, 'Error>>
 
 [<RequireQualifiedAccess>]
 module ExternalEvents =
-    val awakeable<'A>: string -> Effect<Awakeable<'A>, FluentFiregridError, Context>
-    val resolveAwakeable<'A>: string -> 'A -> Effect<ExternalSignalDelivery, FluentFiregridError, Context>
+    val awakeable<'A>: string -> Workflow<Awakeable<'A>>
+    val resolveAwakeable<'A>: string -> 'A -> JS.Promise<Result<ExternalSignalDelivery, FluentFiregridError>>
 ```
 
 ### Migration Plan
@@ -766,11 +773,13 @@ module ExternalEvents =
 1. Port `HandlerRef`, erased handler descriptors, and definition records first.
 2. Implement `service`, `workflow`, `durableObject`, `serviceContract`, and
    `implement` computation expression builders.
-3. Port `FluentDurableContext` and `fluentContextFromTanStack`.
+3. Implement `Workflow<'A>` and the `workflow {}` builder before exposing
+   handler implementations.
 4. Port typed client helpers around `HandlerRef` after `Firegrid.Clients` is
    ready.
-5. Port `run.ts` primitives as F# functions (`step`, `sleep`, `sleepUntil`,
-   `waitForSignal`) against the durable context service.
+5. Port `run.ts` primitives as typed workflow operations (`Step.call`,
+   `Timer.sleep`, `Timer.sleepUntil`, `Wait.event`) against the runtime
+   interpreter.
 6. Port external events and awakeables.
 7. Port state table/CEL helpers after the context service is stable.
 8. Port `bindTanStack.ts` into a runtime binding module.

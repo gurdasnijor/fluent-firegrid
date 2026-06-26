@@ -66,12 +66,13 @@ thing the user sees:
 
 ```fsharp
 let triage = handler<TriageInput, TriageOutput> "triage"
+let reserve = Step.defineAsync "reserve" reserveIncidentAsync
 
 let incident =
     service "incident" {
         handle triage (fun input ->
             workflow {
-                do! step "reserve" (fun () -> reserveIncident input.IncidentId)
+                do! Step.call reserve input.IncidentId
                 return { Accepted = true }
             })
     }
@@ -148,9 +149,9 @@ workflows:
 
 ```fsharp
 workflow {
-    let! order = step "load-order" (fun () -> loadOrder id)
-    do! sleep (Duration.minutes 5)
-    let! decision = waitFor "approval" Approval.codec
+    let! order = Step.call loadOrder id
+    do! Timer.sleep (Duration.minutes 5)
+    let! decision = Wait.event "approval" Approval.codec
     return decide order decision
 }
 ```
@@ -158,6 +159,100 @@ workflow {
 That is the right place to encode Firegrid semantics: journal lookup, step
 recording, park/resume, deterministic replay, durable wait registration, and
 runtime control outcomes.
+
+## DurableFunctions.FSharp Lessons
+
+`DurableFunctions.FSharp` is the closest ergonomic reference point for this
+migration. It wraps Azure Durable Functions with an F#-friendly layer instead of
+asking users to program directly against the host context. The useful ideas are:
+
+- a dedicated `orchestrator {}` computation expression;
+- typed callable descriptors, such as `Activity<'Input, 'Output>`;
+- descriptor constructors for sync, `Async`, and `Task` implementations;
+- `Activity.call descriptor input` with inferred input/output types;
+- `Activity.all` and `Activity.seq` for fan-out/fan-in and ordered execution;
+- durable delay and external-event waits as normal CE operations;
+- retry policies modeled as discriminated unions;
+- eternal orchestration modeled as a `Stop | ContinueAsNew of 'State` union;
+- runner functions that hide the durable host context from workflow authors.
+
+The direct Firegrid equivalent should not be named after Azure activities, but
+the shape is right. Firegrid should have typed durable-operation descriptors and
+a Firegrid-specific workflow CE:
+
+```fsharp
+let reserveIncident =
+    Step.defineAsync "reserve-incident" reserveIncidentAsync
+
+let notifyReviewer =
+    Step.definePromise "notify-reviewer" notifyReviewer
+
+let incident =
+    service "incident" {
+        handle triage (fun input ->
+            workflow {
+                let! reservation = Step.call reserveIncident input.IncidentId
+                and! notification = Step.call notifyReviewer input.IncidentId
+
+                let! decision =
+                    Wait.event "review.decision" ReviewDecision.codec
+                    |> Wait.timeout (Duration.hours 48)
+
+                match decision with
+                | Ok approved ->
+                    return { Accepted = approved.Accepted }
+                | Error Timeout ->
+                    return { Accepted = false }
+            })
+    }
+```
+
+This is cleaner than a raw `effect {}` body because:
+
+- the durable operation is a typed value with a stable name;
+- `let!` reads as "await this durable Firegrid operation";
+- `and!` can express independent durable work without a separate fan-out API;
+- wait timeouts are domain results, not exceptions or generic effect errors;
+- the handler author never sees the runtime context unless they are building a
+  runtime adapter.
+
+Do not copy `DurableFunctions.FSharp` wholesale. Its builder can bind arbitrary
+task-like values because it targets the Durable Task runtime. Firegrid should be
+stricter: arbitrary promises inside `workflow {}` can break replay
+determinism. Prefer explicit durable wrappers:
+
+```fsharp
+workflow {
+    let! value = Step.call fetchAccount accountId
+    let! local = Workflow.local "derive-score" (fun () -> deriveScore value)
+    return local
+}
+```
+
+`Workflow.local` should be reserved for deterministic local work or explicitly
+marked non-durable. External side effects should go through `Step.call`,
+`Client.call`, `Client.send`, or another named durable primitive.
+
+### Computation Expression Features To Use
+
+F# computation expressions are not limited to `Bind` and `Return`. The builder
+should intentionally support the methods that map to Firegrid semantics:
+
+| CE feature | Builder hook | Firegrid meaning |
+| --- | --- | --- |
+| `let!` / `do!` | `Bind` | sequence durable operations |
+| `return` | `Return` | complete the workflow value |
+| `return!` | `ReturnFrom` | tail-call another workflow program |
+| `match!` | `Bind` + pattern match | pattern match a durable result inline |
+| `and!` | `MergeSources` / `BindN` | independent durable work, fan-out/fan-in |
+| `try/with` | `TryWith` | local recovery around workflow operations |
+| `try/finally` / `use` | `TryFinally` / `Using` | cleanup for local scoped resources |
+| `for` / `while` | `For` / `While` | ordinary F# control flow over durable ops |
+| `Delay` / `Run` | `Delay` / `Run` | build an uninterpreted workflow program and run it only at the host edge |
+
+The important implementation choice is `Delay` plus `Run`: the body should build
+a workflow program or interpreter function, not execute side effects while the
+definition is being assembled.
 
 ### Dependencies
 
@@ -338,12 +433,12 @@ let approvals =
     service "approvals" {
         handle approve (fun input ->
             workflow {
-                let! existing = state.tryGet ApprovalState.codec input.Id
+                let! existing = State.tryGet ApprovalState.codec input.Id
                 match existing with
                 | Some value -> return { Accepted = value.Accepted }
                 | None ->
-                    let! result = step "reserve" (fun () -> reserve input.Id)
-                    do! state.set ApprovalState.codec input.Id result
+                    let! result = Step.call reserveApproval input.Id
+                    do! State.set ApprovalState.codec input.Id result
                     return { Accepted = true }
             })
     }
@@ -511,37 +606,181 @@ uses EffSharp, direct Promises, or a small custom continuation model.
 
 ## API Direction
 
-### Definition API
+### Typed Operation API
 
-Prefer typed references and builder CEs:
+Prefer values for all named durable operations. This follows the
+`DurableFunctions.FSharp` pattern where an activity definition is a typed value,
+but uses Firegrid names:
+
+```fsharp
+module IncidentSteps =
+    let reserve =
+        Step.defineAsync "reserve" reserveIncident
+
+    let notify =
+        Step.definePromise "notify-reviewer" notifyReviewer
+
+    let score =
+        Step.define "score" scoreIncident
+```
+
+Use constructors by implementation shape:
+
+```fsharp
+Step.define        : string -> ('Input -> 'Output) -> Step<'Input, 'Output>
+Step.defineAsync   : string -> ('Input -> Async<'Output>) -> Step<'Input, 'Output>
+Step.definePromise : string -> ('Input -> JS.Promise<'Output>) -> Step<'Input, 'Output>
+```
+
+These constructors keep function implementation concerns out of the handler
+body. The workflow only sees `Step.call`.
+
+### Contract API
+
+Contracts should still use typed handler references:
 
 ```fsharp
 module IncidentApi =
     type TriageInput = { IncidentId: string }
     type TriageOutput = { Accepted: bool }
 
-    let triage = handler<TriageInput, TriageOutput> "triage"
+    let triage = Handler.define<TriageInput, TriageOutput> "triage"
 
-    let contract =
-        serviceContract "incident" {
-            endpoint triage
+    let service =
+        Service.define "incident" {
+            handler triage
         }
 ```
 
-### Implementation API
+The contract contains names and codecs. It does not contain EffSharp programs.
 
-The implementation should expose Firegrid concepts:
+### Handler API
+
+The implementation should expose Firegrid concepts through `workflow {}`:
 
 ```fsharp
 let incident =
-    implement IncidentApi.contract {
+    Service.implement IncidentApi.service {
         handle IncidentApi.triage (fun input ->
             workflow {
-                do! step "reserve" (fun () -> reserveIncident input.IncidentId)
-                return { Accepted = true }
+                let! reservation =
+                    Step.call IncidentSteps.reserve input.IncidentId
+
+                let! notification =
+                    Step.call IncidentSteps.notify reservation.ReviewerId
+
+                match! Wait.event "review.decision" ReviewDecision.codec |> Wait.timeout (Duration.hours 48) with
+                | Ok decision ->
+                    return { Accepted = decision.Accepted }
+                | Error Timeout ->
+                    return { Accepted = false }
             })
     }
 ```
+
+The durable vocabulary is namespaced so call sites stay readable:
+
+- `Step.call`
+- `Step.callWithRetry`
+- `Workflow.all`
+- `Workflow.seq`
+- `Wait.event`
+- `Wait.timeout`
+- `Timer.sleep`
+- `Timer.sleepUntil`
+- `Client.call`
+- `Client.send`
+- `State.get` / `State.set`
+
+This avoids a crowded global namespace while still keeping the handler body
+short.
+
+### Parallel Work
+
+Support both `and!` and explicit collection helpers:
+
+```fsharp
+workflow {
+    let! fraud = Step.call checkFraud input.OrderId
+    and! stock = Step.call reserveInventory input.OrderId
+    and! payment = Step.call authorizePayment input.Payment
+
+    return decide fraud stock payment
+}
+
+workflow {
+    let! results =
+        input.Items
+        |> List.map (Step.call processItem)
+        |> Workflow.all
+
+    return summarize results
+}
+```
+
+`and!` is best for fixed independent operations. `Workflow.all` is best for
+dynamic fan-out.
+
+### Retry
+
+Model retry policy as a discriminated union:
+
+```fsharp
+type RetryPolicy =
+    | NoRetry
+    | ExponentialBackoff of
+        firstDelay: Duration *
+        maxAttempts: int *
+        coefficient: float
+
+workflow {
+    let policy = ExponentialBackoff(Duration.seconds 1, 5, 2.0)
+    let! receipt = Step.callWithRetry policy chargeCard input.Payment
+    return receipt
+}
+```
+
+Retries are a durable policy on a named operation, not an ambient EffSharp
+retry.
+
+### External Events And Timeouts
+
+Timeouts should be explicit domain outcomes:
+
+```fsharp
+workflow {
+    match! Wait.event "approval" Approval.codec |> Wait.timeout (Duration.days 2) with
+    | Ok approval ->
+        return Approved approval
+    | Error Timeout ->
+        return Expired
+}
+```
+
+This follows the `Result` style from the reference library and avoids treating
+normal timeout behavior as a thrown exception.
+
+### Continue As New
+
+Use a small DU for recurring workflows:
+
+```fsharp
+type WorkflowLoop<'State, 'Output> =
+    | ContinueAsNew of 'State
+    | Stop of 'Output
+
+let sweep state =
+    workflow {
+        let! batch = Step.call sweepBatch state.Cursor
+        return
+            match batch.NextCursor with
+            | Some cursor -> ContinueAsNew { state with Cursor = cursor }
+            | None -> Stop batch.Summary
+    }
+```
+
+The runner can interpret this specially without exposing host context to the
+author.
 
 ### Client API
 
@@ -549,11 +788,29 @@ Clients should not expose Effect requirements:
 
 ```fsharp
 let! result =
-    IncidentApi.contract
+    IncidentApi.service
     |> Client.call IncidentApi.triage { IncidentId = "inc-1" }
 ```
 
 For Fable exports, this becomes a Promise-returning JS API.
+
+### Runtime Representation Sketch
+
+Keep the public type listing small:
+
+```fsharp
+type Workflow<'A>
+
+type WorkflowBuilder =
+    member Bind : Workflow<'A> * ('A -> Workflow<'B>) -> Workflow<'B>
+    member MergeSources : Workflow<'A> * Workflow<'B> -> Workflow<'A * 'B>
+    member Delay : (unit -> Workflow<'A>) -> Workflow<'A>
+    member Run : Workflow<'A> -> Workflow<'A>
+```
+
+The real implementation may represent `Workflow<'A>` as an AST, an interpreter
+function, an EffSharp-backed program, or a hybrid. The public contract is that
+it is a durable Firegrid workflow.
 
 ### Optional EffSharp API
 
@@ -616,6 +873,8 @@ the abstraction pays for itself.
 
 ## References
 
+- DurableFunctions.FSharp:
+  <https://github.com/mikhailshilkov/DurableFunctions.FSharp>
 - F# async and task overview:
   <https://learn.microsoft.com/en-us/dotnet/fsharp/tutorials/async>
 - F# computation expressions:
