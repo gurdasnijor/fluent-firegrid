@@ -35,7 +35,7 @@ Firegrid. It is Durable Streams plus Firegrid product semantics.
 
 ## Model A: Authored Procedures Resume By Replay
 
-Authored procedures are Effect programs written against `fluent-firegrid`
+Authored procedures are Effect programs written against `fluent`
 primitives. They are replayable because the body is deterministic at the durable
 boundary: completed steps are journal hits, not re-executed effects.
 

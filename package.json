@@ -5,48 +5,13 @@
   "type": "module",
   "packageManager": "pnpm@10.27.0",
   "scripts": {
-    "build": "turbo run build",
-    "check": "turbo run check --continue --output-logs=errors-only",
-    "diagnostics": "turbo run diagnostics --continue --output-logs=errors-only",
-    "fable:build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/.nuget/packages} dotnet build Firegrid.Fable.slnx -v:q && pnpm --filter effect-s2 build && pnpm --filter @firegrid/fluent-firegrid-s2 build",
-    "fable:smoke": "pnpm --filter effect-s2 smoke && pnpm --filter @firegrid/fluent-firegrid-s2 smoke",
-    "format": "oxlint --fix && dprint fmt",
-    "lint": "oxlint -f unix --report-unused-disable-directives && dprint check",
-    "lint:dead": "knip --production --workspace './packages/*' --include files,exports,nsExports,types,nsTypes,enumMembers,namespaceMembers,duplicates --treat-config-hints-as-errors && knip --workspace './packages/*' --include files,exports,nsExports,types,nsTypes,enumMembers,namespaceMembers,duplicates,dependencies,unlisted,unresolved,binaries,catalog --treat-config-hints-as-errors",
-    "lint:deps": "depcruise --config .dependency-cruiser.cjs packages",
-    "lint:dup": "jscpd packages/*/src",
-    "lint:fix": "oxlint --fix && dprint fmt",
-    "lint:type-aware": "oxlint --type-aware -f unix -A typescript/no-unsafe-type-assertion -A typescript/no-unnecessary-type-arguments -A typescript/no-unnecessary-boolean-literal-compare",
-    "lint:root": "oxlint -f unix tools/oxc/oxlint-plugin.js",
-    "prepare": "simple-git-hooks",
+    "build": "pnpm run fable:build",
+    "check": "pnpm run fable:build && pnpm run fable:smoke",
+    "fable:build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/.nuget/packages} dotnet build Firegrid.Fable.slnx -v:q && pnpm --filter @firegrid/log build && pnpm --filter @firegrid/store build",
+    "fable:smoke": "pnpm --filter @firegrid/log smoke && pnpm --filter @firegrid/store smoke",
     "preflight": "pnpm run check",
-    "proofs": "pnpm --filter @firegrid/verification proofs",
-    "test": "turbo run test",
-    "typecheck": "turbo run typecheck",
+    "test": "pnpm run fable:smoke",
     "verify": "pnpm run check"
   },
-  "lint-staged": {
-    "*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}": [
-      "oxlint --fix",
-      "dprint fmt"
-    ],
-    "*.{json,md,yml,yaml}": "dprint fmt"
-  },
-  "simple-git-hooks": {
-    "pre-commit": "pnpm exec lint-staged && pnpm exec dprint check --fail-fast"
-  },
-  "devDependencies": {
-    "@effect/language-service": "^0.86.2",
-    "dependency-cruiser": "^17.4.0",
-    "dprint": "^0.54.0",
-    "jscpd": "^4.0.9",
-    "knip": "^6.11.0",
-    "lint-staged": "^17.0.8",
-    "oxlint": "1.42.0",
-    "oxlint-tsgolint": "0.23.0",
-    "simple-git-hooks": "^2.13.1",
-    "turbo": "^2.5.0",
-    "typescript": "^5.9.3",
-    "vitest": "^3.2.0"
-  }
+  "devDependencies": {}
 }

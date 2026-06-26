@@ -6,8 +6,8 @@
 | --- | --- |
 | Status | Implemented through transport binding |
 | Date | 2026-06-25 |
-| Package | `@firegrid/fluent-firegrid`, `@firegrid/fluent-firegrid-http`, `@firegrid/fluent-firegrid-node` |
-| Lower runtime | TanStack Workflow over `@firegrid/tanstack-workflow-s2` |
+| Package | `@firegrid/fluent`, `@firegrid/fluent/http`, `@firegrid/example-full-stack-service` |
+| Lower runtime | TanStack Workflow over `@firegrid/store` |
 
 ---
 
@@ -31,7 +31,7 @@ proof-only packages.
 Descriptor-first contracts are supported through `iface`:
 
 ```ts
-import { iface, implement, run } from "@firegrid/fluent-firegrid"
+import { iface, implement, run } from "@firegrid/fluent"
 import { Schema } from "effect"
 
 export const ordersContract = iface.service("orders", {
@@ -86,7 +86,7 @@ descriptors.
 **Forces:** `iface.service/object/workflow`, `iface.schemas/json/serdes`,
 `implement`, descriptor preservation in typed clients.
 
-**Proof:** `packages/fluent-firegrid/test/public-surface.test.ts` covers
+**Proof:** `packages/fluent/test/public-surface.test.ts` covers
 descriptor metadata, interface implementation, and typed call/send request
 metadata.
 
@@ -100,7 +100,7 @@ TanStack binding enters and exits a handler.
 **Forces:** decode input before invoking the generator, validate output before
 storing run completion, map schema failures to `FluentFiregridError`.
 
-**Proof:** `packages/fluent-firegrid/test/public-surface.test.ts` runs an
+**Proof:** `packages/fluent/test/public-surface.test.ts` runs an
 in-memory TanStack runtime and verifies descriptor-valid input completes while
 descriptor-invalid input fails at the fluent handler boundary.
 
@@ -115,7 +115,7 @@ logic.
 **Forces:** ambient invocation binding in `FluentDurableContext`, service and
 workflow call/send helpers, object-keyed helper shape, no transport coupling.
 
-**Proof:** `packages/fluent-firegrid/test/public-surface.test.ts` verifies
+**Proof:** `packages/fluent/test/public-surface.test.ts` verifies
 `serviceClient(definition)` resolves through `FluentDurableContext`, emits the
 same descriptor-bearing request shape as process-level clients, and works
 through `bindFluentDefinitions({ invocationBinding: () => binding })` in an
@@ -131,9 +131,9 @@ placing servers in fluent core.
 **Forces:** separate package or fixture-only adapter, descriptor-driven routing,
 schema-aware request/response handling, no dependency from core to Node HTTP.
 
-**Proof:** `@firegrid/fluent-firegrid-http` exposes
+**Proof:** `@firegrid/fluent/http` exposes
 `createFluentHttpHandler(Request -> Response)` with no listener ownership.
-`packages/fluent-firegrid-http/test/http-handler.test.ts` covers call/send
+`packages/fluent/test/http-handler.test.ts` covers call/send
 routes, keyed object routing, descriptor validation before invocation, response
 encoding, and `runId` forwarding.
 
@@ -148,7 +148,7 @@ to manually pass `runId` back through call clients.
 invocation id, support explicit and ambient invocation bindings, keep handle
 methods out of JSON/enumeration.
 
-**Proof:** `packages/fluent-firegrid/test/public-surface.test.ts` verifies
+**Proof:** `packages/fluent/test/public-surface.test.ts` verifies
 typed explicit send handles, ambient send handles, descriptor-bearing attach
 requests, and context-free `attach()` after the ambient handle has been created.
 
@@ -163,7 +163,7 @@ while core fluent remains transport-free.
 transport-neutral HTTP handler, health/readiness routes, host loop lifecycle, and
 graceful shutdown in a separate package.
 
-**Proof:** `@firegrid/fluent-firegrid-node` exposes `serveFluentS2`,
+**Proof:** `@firegrid/example-full-stack-service` exposes `serveFluentS2`,
 `createFluentS2NodeRuntime`, and `listenFluentHttp`.
-`packages/fluent-firegrid-node/test/server.test.ts` covers health, readiness,
+`apps/examples/full-stack-service/test/server.test.ts` covers health, readiness,
 call/send routing, and S2 runtime construction without starting a listener.

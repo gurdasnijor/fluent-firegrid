@@ -1,0 +1,29 @@
+{
+  "name": "@firegrid/acp-process",
+  "version": "0.0.0",
+  "description": "ACP harness process owner: spawn/kill an ACP agent and expose its acp.Stream. Firegrid's ACP client runtime lane wraps the stream.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {},
+  "dependencies": {
+    "@agentclientprotocol/sdk": "^0.22.0",
+    "effect": "4.0.0-beta.87"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "4.0.0-beta.87",
+    "@types/node": "^22.10.0"
+  }
+}

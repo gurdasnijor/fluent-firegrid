@@ -10,7 +10,7 @@ The key inversion is:
 
 - **Durable Streams** owns state and the durable half of coordination.
 - **Effect** owns computation and local structured concurrency.
-- **`packages/fluent-firegrid`** defines the authoring surface over a journal.
+- **`packages/fluent`** defines the authoring surface over a journal.
 - **`packages/fluent-runtime`** provides that journal over Durable Streams and
   operates wake/redrive for sessions and durable tools.
 - **Harness I/O roles** adapt ACP, native, cloud, and model-provider protocols
@@ -64,7 +64,7 @@ Durable Streams               Durable Streams                    Effect
   producer epoch                webhook wake                       Schema/Clock/Random
 
           ┌─────────────────────────────────────────────────────────────┐
-          │ packages/fluent-firegrid                                    │
+          │ packages/fluent                                    │
           │ process-free authoring: run, keyed replay, durable          │
           │ primitives, combinators, descriptors, typed definitions      │
           └──────────────────────────┬──────────────────────────────────┘
@@ -88,7 +88,7 @@ The package split follows the role split:
 
 | Layer | Owns | Must not own |
 |---|---|---|
-| `fluent-firegrid` | Authoring surface, `run`, keyed replay, durable primitive definitions, local Effect composition | Durable Streams clients, leases, worker pools, HTTP/MCP hosts |
+| `fluent` | Authoring surface, `run`, keyed replay, durable primitive definitions, local Effect composition | Durable Streams clients, leases, worker pools, HTTP/MCP hosts |
 | `fluent-runtime` | DS-backed journal, session facts, wait/timer/child/tool semantics, wake redrive, control/MCP surfaces | Raw model loop, DS lease/cursor implementation, provider webhook retry |
 | Durable Streams | Storage, offsets, closure, fork, TTL, producer fencing, consumer cursor, claim/ack/release, retry, subscription-webhook wake/signing | Firegrid product semantics, CEL predicates, harness protocol fidelity |
 | Harness I/O | Protocol fidelity, Layer 1 recording, native resume artifacts, replay suppression | Wait matching, timer firing, child lifecycle, committed tool-result authority |
@@ -163,7 +163,7 @@ fencing. The split is narrower than a monolithic workflow engine:
 - Durable Streams is the durable broker and substrate system of record.
 - `packages/fluent-runtime` is the Firegrid semantics host in front of that
   broker.
-- `packages/fluent-firegrid` is the authoring SDK over `Journal`; it does not
+- `packages/fluent` is the authoring SDK over `Journal`; it does not
   import Durable Streams or own listeners, workers, leases, or cursors.
 - Raw harnesses and process owners speak native protocols only; they do not
   import Durable Streams or write session facts directly.
@@ -208,9 +208,9 @@ resolution form; managed-session facts such as `wait_matched`, `timer_fired`,
 `child_terminal`, and `tool_result` are named members of the same Layer 2
 resolution-fact family.
 
-## `fluent-firegrid`: Durable Effect Authoring
+## `fluent`: Durable Effect Authoring
 
-`fluent-firegrid` is process-free. It is the authoring package and should be
+`fluent` is process-free. It is the authoring package and should be
 usable anywhere an Effect program can be built. Its durable concern is the
 `Journal` service, not a host process.
 
@@ -247,7 +247,7 @@ Authoring invariants:
 7. **Durable child/session work is not local `fork`.** A local fiber is an
    in-process computation. A durable child is a stream/session coordination fact.
 
-`fluent-firegrid` may expose service/object/workflow metadata and typed
+`fluent` may expose service/object/workflow metadata and typed
 definition helpers so `fluent-runtime` can bind external ingress later. It does
 not open listeners, hold leases, operate worker pools, or directly expose the
 external control plane.
@@ -412,7 +412,7 @@ README carries only the summary:
    edge.
 8. Prove cross-harness spawn: parent harness A spawns child harness B and wakes
    on child terminal state.
-9. Fix the fluent-firegrid journal write path so concurrent Effect appends do
+9. Fix the fluent journal write path so concurrent Effect appends do
    not depend on unsafe producer sequence ordering.
 
 ## Read Next
@@ -426,5 +426,5 @@ README carries only the summary:
   TTL.
 - [`harness-io.md`](harness-io.md): ACP client/conductor, native/cloud, and
   LanguageModel I/O boundaries.
-- [`../../../sdds/fluent-firegrid-sdd.md`](../../../sdds/fluent-firegrid-sdd.md):
+- [`../../../sdds/fluent-sdd.md`](../../../sdds/fluent-sdd.md):
   execution-focused design details and acceptance context.

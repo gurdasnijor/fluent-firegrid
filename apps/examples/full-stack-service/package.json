@@ -1,0 +1,35 @@
+{
+  "name": "@firegrid/example-full-stack-service",
+  "version": "0.0.0",
+  "description": "Node HTTP server binding for S2-backed @firegrid/fluent definitions.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./examples/durable-webhook": {
+      "types": "./examples/durable-webhook.ts",
+      "default": "./examples/durable-webhook.ts"
+    }
+  },
+  "files": [
+    "src",
+    "examples",
+    "README.md"
+  ],
+  "scripts": {},
+  "dependencies": {
+    "@firegrid/fluent": "workspace:*",
+    "@firegrid/runtime": "workspace:*",
+    "@firegrid/store": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "effect": "4.0.0-beta.87"
+  }
+}

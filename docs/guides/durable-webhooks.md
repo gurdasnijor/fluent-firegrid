@@ -6,14 +6,14 @@ same invocation path used by `/call/...`, with a durable idempotency key derived
 from the external delivery.
 
 See the compiled example in
-`packages/fluent-firegrid-node/examples/durable-webhook.ts`.
+`apps/examples/full-stack-service/examples/durable-webhook.ts`.
 
 ```ts
-import { serveFluentS2 } from "@firegrid/fluent-firegrid-node"
+import { serveFluentS2 } from "@firegrid/example-full-stack-service"
 import {
   stripeWebhookRoutes,
   webhookDefinitions
-} from "@firegrid/fluent-firegrid-node/examples/durable-webhook"
+} from "@firegrid/example-full-stack-service/examples/durable-webhook"
 
 await serveFluentS2({
   definitions: webhookDefinitions,

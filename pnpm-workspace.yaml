@@ -1,5 +1,7 @@
 packages:
   - packages/*
+  - apps/*
+  - apps/examples/*
 
 onlyBuiltDependencies:
   - chdb

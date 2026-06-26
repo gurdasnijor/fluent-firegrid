@@ -1,0 +1,41 @@
+{
+  "name": "@firegrid/proofs",
+  "version": "0.0.0",
+  "description": "Trace-native verification harness for Firegrid distributed-system properties.",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "src",
+    "proofs",
+    "README.md"
+  ],
+  "scripts": {},
+  "dependencies": {
+    "@effect/opentelemetry": "4.0.0-beta.87",
+    "@effect/platform-node": "4.0.0-beta.87",
+    "@firegrid/fluent": "workspace:*",
+    "@firegrid/log": "workspace:*",
+    "@firegrid/runtime": "workspace:*",
+    "@firegrid/store": "workspace:*",
+    "@firegrid/trace": "workspace:*",
+    "@opentelemetry/api-logs": "^0.208.0",
+    "@opentelemetry/resources": "^2.8.0",
+    "@opentelemetry/sdk-logs": "^0.208.0",
+    "@opentelemetry/sdk-metrics": "^2.8.0",
+    "@opentelemetry/sdk-trace-base": "^2.8.0",
+    "@opentelemetry/sdk-trace-node": "^2.8.0",
+    "effect": "4.0.0-beta.87"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0"
+  }
+}

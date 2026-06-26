@@ -4,7 +4,7 @@ Awakeables are durable task tokens. A fluent handler creates a token, sends it t
 an external system, and then waits for the token to be resolved or rejected.
 
 ```ts
-import { awakeable, run, service } from "@firegrid/fluent-firegrid"
+import { awakeable, run, service } from "@firegrid/fluent"
 
 export const reviews = service({
   name: "reviews",
@@ -33,7 +33,7 @@ POST /firegrid/awakeables/:id/reject
 The HTTP helper builds those routes and payloads for callback services.
 
 ```ts
-import { createAwakeableHttpClient } from "@firegrid/fluent-firegrid-http"
+import { createAwakeableHttpClient } from "@firegrid/fluent/http"
 
 const firegrid = createAwakeableHttpClient({
   baseUrl: "https://orders.example.com",

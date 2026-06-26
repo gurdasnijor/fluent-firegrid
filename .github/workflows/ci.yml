@@ -7,6 +7,7 @@ on:
   push:
     branches:
       - main
+      - eff-sharp
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -17,145 +18,26 @@ permissions:
 
 env:
   CI: true
-  TURBO_TELEMETRY_DISABLED: 1
-
-# Per-job setup (pnpm + node + install) lives in the local composite action at
-# `.github/actions/setup`. Checkout stays per-job because the durable-streams
-# submodule must be checked out before install.
-#
-# Gating jobs run in parallel so a slow one (tests) stops gating the fast ones
-# (lint), and each persists its tool cache so unchanged work is skipped:
-#   lint               — oxlint + dprint + dead-code (knip) + dup (jscpd) + dep boundaries
-#   typecheck          — turbo run typecheck
-#   effect-diagnostics — effect-language-service diagnostics
-#   tests              — turbo run test + verification proofs
 
 jobs:
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Check out repository (with submodules)
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Setup pnpm + Node + install
-        uses: ./.github/actions/setup
-
-      - name: Lint and format (oxlint + dprint)
-        run: pnpm run lint
-
-      - name: Dead-code (knip, strict-0)
-        run: pnpm run lint:dead
-
-      - name: Dependency boundaries (dep-cruiser)
-        run: pnpm run lint:deps
-
-      - name: Duplication (jscpd, strict-0)
-        run: pnpm run lint:dup
-
-  typecheck:
-    name: Typecheck
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Check out repository (with submodules)
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Setup pnpm + Node + install
-        uses: ./.github/actions/setup
-
-      # Turbo content-hashes task inputs and caches the result; persisting the
-      # cache lets unchanged packages skip typecheck entirely. Unique per-job key
-      # with a shared restore prefix so typecheck/tests/diagnostics seed each
-      # other's cache without racing on the same save.
-      - name: Restore Turbo cache
-        uses: actions/cache@v4
-        with:
-          path: .turbo
-          key: turbo-${{ runner.os }}-typecheck-${{ github.sha }}
-          restore-keys: |
-            turbo-${{ runner.os }}-
-
-      - name: Typecheck
-        run: pnpm run typecheck
-
-  effect-diagnostics:
-    name: Effect diagnostics
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Check out repository (with submodules)
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Setup pnpm + Node + install
-        uses: ./.github/actions/setup
-
-      - name: Restore Turbo cache
-        uses: actions/cache@v4
-        with:
-          path: .turbo
-          key: turbo-${{ runner.os }}-diagnostics-${{ github.sha }}
-          restore-keys: |
-            turbo-${{ runner.os }}-
-
-      - name: Effect diagnostics
-        run: pnpm run diagnostics
-
-  tests:
-    name: Tests
+  fable:
+    name: Fable build and smoke
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Check out repository (with submodules)
+      - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
         with:
-          submodules: recursive
+          dotnet-version: "10.0.x"
 
       - name: Setup pnpm + Node + install
         uses: ./.github/actions/setup
 
-      - name: Restore Turbo cache
-        uses: actions/cache@v4
-        with:
-          path: .turbo
-          key: turbo-${{ runner.os }}-tests-${{ github.sha }}
-          restore-keys: |
-            turbo-${{ runner.os }}-
+      - name: Restore .NET tools
+        run: dotnet tool restore
 
-      - name: Install S2 CLI
-        run: |
-          set -euo pipefail
-          curl --fail --location --silent --show-error \
-            --output /tmp/s2.zip \
-            https://github.com/s2-streamstore/s2/releases/download/s2-cli-v0.36.6/s2-x86_64-unknown-linux-gnu.zip
-          echo "ea181584c8568a8fc607da894f5299225345268cb7419dfd488baef251eea04e  /tmp/s2.zip" | sha256sum --check
-          unzip -q /tmp/s2.zip -d /tmp/s2
-          sudo install -m 0755 /tmp/s2/s2 /usr/local/bin/s2
-          s2 --version
-
-      - name: Prepare chDB native binding
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          chdb_lib_dirs=(node_modules/.pnpm/@chdb+lib-linux-x64-gnu@*/node_modules/@chdb/lib-linux-x64-gnu)
-          if [ ${#chdb_lib_dirs[@]} -eq 0 ]; then
-            echo "Unable to locate @chdb/lib-linux-x64-gnu under node_modules/.pnpm" >&2
-            exit 1
-          fi
-          chdb_lib_dir="$PWD/${chdb_lib_dirs[0]}"
-          echo "LD_LIBRARY_PATH=$chdb_lib_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
-          mkdir -p /home/runner/work/chdb-node/chdb-node
-          ln -sf "$chdb_lib_dir/libchdb.so" /home/runner/work/chdb-node/chdb-node/libchdb.so
-
-      - name: Test
-        run: pnpm run test
-
-      - name: Verification proofs
-        run: pnpm --filter @firegrid/verification proofs
+      - name: Check
+        run: pnpm run check

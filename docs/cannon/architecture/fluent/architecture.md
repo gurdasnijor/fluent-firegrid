@@ -8,7 +8,7 @@ Owner: Firegrid Architecture
 This is the canonical high-level architecture reference for the fluent Firegrid
 workstream. It defines package boundaries, process ownership, durable stream
 read/write ownership, and schema ownership. The execution-focused design details
-remain in `docs/sdds/fluent-firegrid-sdd.md`.
+remain in `docs/sdds/fluent-sdd.md`.
 
 ## Document Shape
 
@@ -62,7 +62,7 @@ harness I/O roles may write through fluent-runtime, but those roles are part of
 the Firegrid integration boundary, not the harness itself.
 
 The same boundary applies to authored procedures. Product authors import the
-process-free `packages/fluent-firegrid` authoring surface and write Effect
+process-free `packages/fluent` authoring surface and write Effect
 bodies against a `Journal` abstraction. The target runtime deployment supplies
 that journal from `packages/fluent-runtime`; authored code must not import
 Durable Streams clients or own substrate leases, cursors, workers, or listeners.
@@ -131,7 +131,7 @@ Durable-Streams-client-free.
 |---|---|---|
 | External app/client -> Firegrid host | Product API, ACP/MCP command, webhook/source delivery, authorized control request | Direct session-log mutation or Durable Streams coordination writes |
 | Firegrid host -> Durable Streams | Append/read/close/fork, producer fencing, named consumer claim/ack/release, wake delivery, TTL | Firegrid-owned lease tables, cursor stores, pull queues, webhook retry loops, or task locks |
-| Authored procedure -> fluent authoring | `packages/fluent-firegrid` definitions, `run`, durable primitives, typed descriptors over `Journal` | Durable Streams clients, listeners, workers, process ownership, or substrate retry/lease logic |
+| Authored procedure -> fluent authoring | `packages/fluent` definitions, `run`, durable primitives, typed descriptors over `Journal` | Durable Streams clients, listeners, workers, process ownership, or substrate retry/lease logic |
 | Firegrid host -> authored procedure | Supply the `Journal`, invoke/replay the Effect body, serve journal hits, append terminal outcomes | Let the authored body own DS writes or bypass schemas |
 | Firegrid host -> harness I/O role | Session callbacks, resume artifacts, committed tool results, Layer 1 observation recording through runtime | Let the I/O role decide waits, timers, children, or committed tool-result authority |
 | Harness I/O role -> raw harness | Native ACP/cloud/provider protocol only | Raw harness Durable Streams imports, direct session fact writes, or Firegrid coordination decisions |
@@ -142,7 +142,7 @@ Durable-Streams-client-free.
 ```text
 ┌──────────────────────────────────────────────────────────────────────┐
 │ AUTHORING                                                            │
-│ packages/fluent-firegrid                                             │
+│ packages/fluent                                             │
 │ Effect-native authoring: run, keyed replay, durable primitive defs,   │
 │ combinators via Effect, descriptors, typed definitions and clients.    │
 │ Process-free; imported by handlers and fluent-runtime.                │
@@ -222,11 +222,11 @@ host:
 - `packages/fluent-runtime` owns Firegrid semantics after the substrate fires:
   session facts, wait matching, timers, child lifecycle, committed tool results,
   harness redrive, external ingress acceptance, and projection inputs.
-- `packages/fluent-firegrid` remains an SDK for authoring durable Effect bodies;
+- `packages/fluent` remains an SDK for authoring durable Effect bodies;
   it is not a process host and does not expose the Durable Streams substrate.
 
 The proxy comparison is about ownership, not whether code imports a library.
-Authored handlers may link the `fluent-firegrid` SDK just as other platforms
+Authored handlers may link the `fluent` SDK just as other platforms
 link their workflow SDKs. They still remain downstream of the host for durable
 journaling and invocation, and they do not write Durable Streams directly.
 
@@ -443,7 +443,7 @@ without duplicated Layer 1 side effects.
 
 | Component | Owns | Does not own |
 |---|---|---|
-| `packages/fluent-firegrid` | Process-free authoring API: `run`, keyed replay, durable primitive definitions, Effect-based composition, descriptors, typed definitions and clients | Bespoke `Operation`/`Future` runtime, processes, HTTP servers, MCP servers, Durable Streams workers, agent loop ownership |
+| `packages/fluent` | Process-free authoring API: `run`, keyed replay, durable primitive definitions, Effect-based composition, descriptors, typed definitions and clients | Bespoke `Operation`/`Future` runtime, processes, HTTP servers, MCP servers, Durable Streams workers, agent loop ownership |
 | `packages/fluent-runtime` | Fluent host: store, ingress, sources, workers, future HTTP/MCP surfaces, ACP client/conductor roles, wake/redrive semantics, Durable Streams reads/writes | The agent's model loop, UI read-model schema, raw process ownership |
 | ACP process owner package | Spawning/killing downstream ACP agent processes and exposing ACP streams | Firegrid ACP client callbacks, Durable Streams writes, Layer 1/Layer 2 facts, read-model schemas |
 | Native/cloud harness adapters | Native protocol fidelity, native resume, replay suppression for harness-native side effects | Firegrid coordination semantics such as wait matching, timer firing, child lifecycle ownership |
@@ -558,7 +558,7 @@ Durable Streams facts.
 | `NormalizedEvent` taxonomy | projection/read-model layer | Shared read-model input for harness events. |
 | Agent DB rows: messages, turns, tool calls, permission requests, participants | projection/read-model layer | UI/query schema over Layer 1. Not fluent-runtime coordination state. Prior art may be ported from `coding-agents/src/agent-db-schema.ts`, but ownership moves to Firegrid projections. |
 | Firegrid coordination rows: waits, timers, child lifecycle, committed tool results, terminal records | `packages/fluent-runtime` | Layer 2 durable coordination facts. |
-| Authoring types: `run`, durable primitive definitions, descriptors, typed clients | `packages/fluent-firegrid` | Effect-native library surface; no bespoke `Operation`/`Future` runtime, process, or worker ownership. |
+| Authoring types: `run`, durable primitive definitions, descriptors, typed clients | `packages/fluent` | Effect-native library surface; no bespoke `Operation`/`Future` runtime, process, or worker ownership. |
 | Durable Streams protocol: append/read/close/fork/subscription/fencing | Durable Streams packages | Substrate, not product semantics. |
 
 ## External Producers
@@ -723,11 +723,11 @@ which still require side machinery.
 | Agent loop ownership | Post-cutover runtime already trends toward a per-event adapter-forwarding shape where the harness owns the loop. | Same principle, made explicit as the package/process contract. |
 | Durable topology | Runtime keeps key coordination durability in workflow tables/context/channel machinery beside the event stream. | Durable Streams session log is the single durable boundary; Layer 1 and Layer 2 are explicit stream facts. |
 | Primary runtime unit | Runtime context, channel router, workflow-engine bodies, subscribers, and edge adapters. | `handleSession(wake)` over a materialized stream, plus role-specific harness I/O resume. |
-| Public authoring layer | Historically coupled to runtime execution and protocol projections. | `packages/fluent-firegrid` is process-free: `run`, keyed replay, durable primitive definitions, Effect-based composition, descriptors, and typed clients only. |
+| Public authoring layer | Historically coupled to runtime execution and protocol projections. | `packages/fluent` is process-free: `run`, keyed replay, durable primitive definitions, Effect-based composition, descriptors, and typed clients only. |
 | Process/host layer | Large runtime package owns edge routing, workflows, substrate adapters, and session machinery together. | `packages/fluent-runtime` is the fluent host: store, ingress, wake/redrive, workers, and future HTTP/MCP surfaces. |
 | Agent events | Runtime-specific observation/projection paths. | Firegrid harness I/O roles record Layer 1 harness events; projection/read-model schemas stay outside fluent-runtime. |
 | Coordination events | Spread across runtime workflows, channels, context state, and subscribers. | Fluent host owns Layer 2 facts: waits, timers, children, committed tool results, approvals, terminal records. |
-| Schema ownership | Multiple surfaces historically projected through runtime/client/protocol edges. | Schema families have explicit owners: projection for agent DB; fluent-runtime for coordination; fluent-firegrid for authoring types. |
+| Schema ownership | Multiple surfaces historically projected through runtime/client/protocol edges. | Schema families have explicit owners: projection for agent DB; fluent-runtime for coordination; fluent for authoring types. |
 | Extensibility | Adding surfaces tends to add runtime-specific adapters or route plumbing. | New harnesses plug in through role-specific harness I/O contracts; new coordination behavior lands as Layer 2 facts plus fluent host handling. |
 | Verification target | Often requires understanding internal runtime workflows and traces. | Firelab/acceptance verifies product-observable stream facts and projections; traces are diagnostic. |
 
@@ -745,8 +745,8 @@ lessons should be mined and revalidated against the fluent architecture.
 
 ## Import And Dependency Rules
 
-- `fluent-runtime` may depend on `fluent-firegrid`.
-- `fluent-firegrid` must not depend on `fluent-runtime`, Durable Streams workers,
+- `fluent-runtime` may depend on `fluent`.
+- `fluent` must not depend on `fluent-runtime`, Durable Streams workers,
   MCP servers, HTTP servers, or process/sandbox launchers.
 - Product code must not import vendored references under `repos/`.
 - Projection packages may consume stream logs and normalized events, but must not
@@ -762,7 +762,7 @@ lessons should be mined and revalidated against the fluent architecture.
 ## Non-Goals
 
 - Do not replay the model loop as the durable mechanism.
-- Do not implement a session as a long-lived `fluent-firegrid` generator body
+- Do not implement a session as a long-lived `fluent` generator body
   parked on durable promises; use generators for coordination workflows, not the
   external agent loop.
 - Do not make the raw agent process a Durable Streams writer.

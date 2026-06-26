@@ -4,7 +4,7 @@ Use `sleep` and `sleepUntil` when a running handler needs to pause and resume
 with the same durable execution history.
 
 ```ts
-import { sleep, sleepUntil } from "@firegrid/fluent-firegrid"
+import { sleep, sleepUntil } from "@firegrid/fluent"
 
 yield* sleep("10 seconds")
 yield* sleepUntil(Date.now() + 60_000)
@@ -14,7 +14,7 @@ Use delayed sends when the current handler should finish now and another
 invocation should start later.
 
 ```ts
-import { rpc, serviceSendClient } from "@firegrid/fluent-firegrid"
+import { rpc, serviceSendClient } from "@firegrid/fluent"
 
 yield* serviceSendClient(emails).sendReceipt(
   { orderId: "order-1" },
@@ -26,7 +26,7 @@ Use workflow schedules for recurring work. Schedules target a specific fluent
 workflow handler and are materialized by the S2 host loop.
 
 ```ts
-import { cron, every, schedule, workflow } from "@firegrid/fluent-firegrid"
+import { cron, every, schedule, workflow } from "@firegrid/fluent"
 
 const jobs = workflow({
   name: "jobs",

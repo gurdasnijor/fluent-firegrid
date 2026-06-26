@@ -98,6 +98,6 @@
       }
     ]
   },
-  "include": ["packages/**/*.ts", "packages/**/*.tsx"],
+  "include": ["packages/**/*.ts", "packages/**/*.tsx", "apps/**/*.ts", "apps/**/*.tsx"],
   "exclude": ["node_modules", "**/node_modules", "**/dist/**", "**/build/**"]
 }

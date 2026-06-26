@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <AssemblyName>Firegrid.FluentFiregrid.S2</AssemblyName>
+    <RootNamespace>Firegrid.FluentFiregrid.S2</RootNamespace>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <DefineConstants>$(DefineConstants);FABLE_COMPILER</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="EffSharp" Version="0.0.1-alpha.1" />
+    <PackageReference Include="Fable.Core" Version="5.1.0" />
+    <PackageReference Include="Fable.Promise" Version="3.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../log/Effect.S2.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="src/FluentFiregrid.S2/Types.fs" />
+    <Compile Include="src/FluentFiregrid.S2/Naming.fs" />
+    <Compile Include="src/FluentFiregrid.S2/Runtime.fs" />
+    <Compile Include="src/FluentFiregrid.S2/ObjectState.fs" />
+    <Compile Include="src/FluentFiregrid.S2/Exports.fs" />
+  </ItemGroup>
+
+</Project>
