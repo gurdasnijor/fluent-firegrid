@@ -73,6 +73,12 @@ importers:
         specifier: ^3.2.0
         version: 3.2.6(@types/node@25.9.2)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.22.4)(yaml@2.9.0)
 
+  packages/effect-s2-effsharp:
+    dependencies:
+      '@s2-dev/streamstore':
+        specifier: 0.24.1
+        version: 0.24.1
+
   packages/fluent-acp-process:
     dependencies:
       '@agentclientprotocol/sdk':

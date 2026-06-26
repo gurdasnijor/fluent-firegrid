@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <AssemblyName>Firegrid.EffectS2.EffSharp</AssemblyName>
+    <RootNamespace>Firegrid.EffectS2.EffSharp</RootNamespace>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <DefineConstants>$(DefineConstants);FABLE_COMPILER</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="EffSharp" Version="0.0.1-alpha.1" />
+    <PackageReference Include="Fable.Core" Version="5.1.0" />
+    <PackageReference Include="Fable.Promise" Version="3.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="src/Effect.S2/Types.fs" />
+    <Compile Include="src/Effect.S2/InternalSdk.fs" />
+    <Compile Include="src/Effect.S2/S2.fs" />
+    <Compile Include="src/Bridge.fs" />
+  </ItemGroup>
+
+</Project>
