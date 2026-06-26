@@ -3,25 +3,16 @@ strict digraph "dependency-cruiser output"{
     node [shape="box" style="rounded, filled" height="0.2" color="black" fillcolor="#ffffcc" fontcolor="black" fontname="Helvetica" fontsize="9"]
     edge [arrowhead="normal" arrowsize="0.6" penwidth="2.0" color="#00000033" fontname="Helvetica" fontsize="9"]
 
-    subgraph "cluster_packages" {label="packages" "packages/effect-s2" [label=<effect-s2> tooltip="effect-s2" URL="packages/effect-s2" shape="box3d"] }
-    subgraph "cluster_packages" {label="packages" "packages/fluent-firegrid" [label=<fluent-firegrid> tooltip="fluent-firegrid" URL="packages/fluent-firegrid" shape="box3d"] }
-    "packages/fluent-firegrid" -> "packages/tanstack-workflow-core"
-    "packages/fluent-firegrid" -> "packages/tanstack-workflow-runtime"
-    subgraph "cluster_packages" {label="packages" "packages/fluent-firegrid-http" [label=<fluent-firegrid-http> tooltip="fluent-firegrid-http" URL="packages/fluent-firegrid-http" shape="box3d"] }
-    "packages/fluent-firegrid-http" -> "packages/fluent-firegrid"
-    subgraph "cluster_packages" {label="packages" "packages/fluent-firegrid-node" [label=<fluent-firegrid-node> tooltip="fluent-firegrid-node" URL="packages/fluent-firegrid-node" shape="box3d"] }
-    "packages/fluent-firegrid-node" -> "packages/fluent-firegrid"
-    "packages/fluent-firegrid-node" -> "packages/fluent-firegrid-http"
-    "packages/fluent-firegrid-node" -> "packages/fluent-firegrid-s2"
-    "packages/fluent-firegrid-node" -> "packages/tanstack-workflow-s2"
-    subgraph "cluster_packages" {label="packages" "packages/fluent-firegrid-s2" [label=<fluent-firegrid-s2> tooltip="fluent-firegrid-s2" URL="packages/fluent-firegrid-s2" shape="box3d"] }
-    "packages/fluent-firegrid-s2" -> "packages/fluent-firegrid"
-    "packages/fluent-firegrid-s2" -> "packages/effect-s2"
-    subgraph "cluster_packages" {label="packages" "packages/tanstack-workflow-core" [label=<tanstack-workflow-core> tooltip="tanstack-workflow-core" URL="packages/tanstack-workflow-core" shape="box3d"] }
-    subgraph "cluster_packages" {label="packages" "packages/tanstack-workflow-runtime" [label=<tanstack-workflow-runtime> tooltip="tanstack-workflow-runtime" URL="packages/tanstack-workflow-runtime" fillcolor="#ccffcc" shape="box3d"] }
-    "packages/tanstack-workflow-runtime" -> "packages/tanstack-workflow-core"
-    subgraph "cluster_packages" {label="packages" "packages/tanstack-workflow-s2" [label=<tanstack-workflow-s2> tooltip="tanstack-workflow-s2" URL="packages/tanstack-workflow-s2" shape="box3d"] }
-    "packages/tanstack-workflow-s2" -> "packages/effect-s2"
-    "packages/tanstack-workflow-s2" -> "packages/tanstack-workflow-runtime"
-    "packages/tanstack-workflow-s2" -> "packages/tanstack-workflow-core" [arrowhead="inv"]
+    subgraph "cluster_packages" {label="packages" "packages/core" [label=<core> tooltip="core" URL="packages/core" shape="box3d"] }
+    subgraph "cluster_packages" {label="packages" "packages/fluent" [label=<fluent> tooltip="fluent" URL="packages/fluent" shape="box3d"] }
+    "packages/fluent" -> "packages/runtime"
+    "packages/fluent" -> "packages/core" [arrowhead="inv"]
+    subgraph "cluster_packages" {label="packages" "packages/log" [label=<log> tooltip="log" URL="packages/log" shape="box3d"] }
+    subgraph "cluster_packages" {label="packages" "packages/runtime" [label=<runtime> tooltip="runtime" URL="packages/runtime" fillcolor="#ccffcc" shape="box3d"] }
+    "packages/runtime" -> "packages/core" [arrowhead="inv"]
+    subgraph "cluster_packages" {label="packages" "packages/store" [label=<store> tooltip="store" URL="packages/store" shape="box3d"] }
+    "packages/store" -> "packages/fluent"
+    "packages/store" -> "packages/log"
+    "packages/store" -> "packages/runtime"
+    subgraph "cluster_packages" {label="packages" "packages/trace" [label=<trace> tooltip="trace" URL="packages/trace" shape="box3d"] }
 }

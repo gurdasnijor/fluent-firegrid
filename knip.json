@@ -1,40 +1,36 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignoreIssues": {
-    "packages/fluent-firegrid/src/clients.ts": ["duplicates"]
+    "packages/fluent/src/clients.ts": ["duplicates"]
   },
   "workspaces": {
-    "packages/effect-s2": {
+    "packages/core": {
+      "project": ["src/**/*.ts!"]
+    },
+    "packages/fluent": {
+      "project": ["src/**/*.ts!", "test/**/*.ts"]
+    },
+    "packages/log": {
       "entry": ["examples/**/*.ts!"],
       "project": ["src/**/*.ts!", "test/**/*.ts", "examples/**/*.ts!"]
     },
-    "packages/fluent-acp-process": {
-      "project": ["src/**/*.ts!", "test/**/*.ts"]
-    },
-    "packages/fluent-firegrid": {
-      "project": ["src/**/*.ts!", "test/**/*.ts"]
-    },
-    "packages/fluent-firegrid-http": {
-      "project": ["src/**/*.ts!", "test/**/*.ts"]
-    },
-    "packages/fluent-firegrid-s2": {
+    "packages/runtime": {
       "project": ["src/**/*.ts!"]
     },
-    "packages/observability": {
+    "packages/store": {
+      "project": ["src/**/*.ts!"]
+    },
+    "packages/trace": {
       "project": ["src/**/*.ts!", "test/**/*.ts"]
     },
-    "packages/tanstack-workflow-core": {
-      "project": ["src/**/*.ts!"]
+    "apps/acp-process": {
+      "project": ["src/**/*.ts!", "test/**/*.ts"]
     },
-    "packages/tanstack-workflow-runtime": {
-      "project": ["src/**/*.ts!"]
-    },
-    "packages/tanstack-workflow-s2": {
-      "project": ["src/**/*.ts!"]
-    },
-    "packages/verification": {
-      "entry": ["proofs/main.ts!"],
+    "apps/proofs": {
       "project": ["src/**/*.ts!", "proofs/**/*.ts!", "test/**/*.ts"]
+    },
+    "apps/examples/full-stack-service": {
+      "project": ["src/**/*.ts!", "examples/**/*.ts!", "test/**/*.ts"]
     }
   }
 }

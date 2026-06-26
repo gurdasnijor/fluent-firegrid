@@ -1,0 +1,34 @@
+{
+  "name": "@firegrid/core",
+  "version": "0.0.0",
+  "description": "Core Firegrid workflow contract, durable primitives, and run-store interfaces.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": ["src"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "lint": "oxlint -f unix --config ../../.oxlintrc.json -A effect/restricted-syntax .",
+    "test": "vitest run --root ../.. --project core --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@standard-schema/spec": "^1.0.0",
+    "effect": "4.0.0-beta.87"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.0"
+  }
+}

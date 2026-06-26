@@ -1,0 +1,34 @@
+{
+  "name": "@firegrid/runtime",
+  "version": "0.0.1",
+  "description": "Vendored TanStack Workflow runtime.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./types": {
+      "types": "./src/types.ts",
+      "default": "./src/types.ts"
+    }
+  },
+  "files": ["src"],
+  "scripts": {
+    "build": "tsc",
+    "lint": "oxlint -f unix --config ../../.oxlintrc.json -A effect/restricted-syntax .",
+    "test": "vitest run --root ../.. --project runtime --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@firegrid/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.0"
+  }
+}

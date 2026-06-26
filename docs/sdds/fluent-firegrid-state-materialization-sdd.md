@@ -6,9 +6,9 @@
 | --- | --- |
 | Status | Implemented through A-E; complete for current state/materialization layer |
 | Date | 2026-06-25 |
-| Package | `@firegrid/fluent-firegrid` plus S2 object-owner support |
+| Package | `@firegrid/fluent` plus S2 object-owner support |
 | Design lineage | table-shaped fluent object state over S2 object-owner storage |
-| Lower runtime | TanStack Workflow over `@firegrid/tanstack-workflow-s2` |
+| Lower runtime | TanStack Workflow over `@firegrid/store` |
 
 ---
 
@@ -24,8 +24,8 @@ durable-function runtime.
 The public authoring target is:
 
 ```ts
-import { object, objectClient, state } from "@firegrid/fluent-firegrid"
-import { primaryKey, Table } from "@firegrid/fluent-firegrid/state"
+import { object, objectClient, state } from "@firegrid/fluent"
+import { primaryKey, Table } from "@firegrid/fluent/state"
 import { Option, Schema } from "effect"
 
 class CounterState extends Table<CounterState>("counterState")({
@@ -68,7 +68,7 @@ The table schema owns the row codec, table name, and primary key.
 
 This layer is split deliberately:
 
-1. `@firegrid/fluent-firegrid` owns the authoring surface:
+1. `@firegrid/fluent` owns the authoring surface:
    `Table`, `primaryKey`, materialization fold types, `state(Table)`, and an
    abstract handler-context state backend.
 2. The S2 object-owner runtime owns persistence:
@@ -76,7 +76,7 @@ This layer is split deliberately:
    fenced draining, and crash recovery.
 3. Transport bindings remain outside fluent core.
 
-Fluent core must not import `effect-s2`. The S2 owner stream implements the
+Fluent core must not import `@firegrid/log`. The S2 owner stream implements the
 backend consumed by `state(Table)`.
 
 ## Physical Model
@@ -223,10 +223,10 @@ fencing, and owner-token terminal event fencing.
 
 **Proof:** host A starts a same-key call and is killed before completion; host B
 waits for lease expiry, claims ownership, resumes the abandoned run from S2, then
-serializes its own same-key call. `fluent-firegrid-s2.object-stale-owner` proves
+serializes its own same-key call. `store.object-stale-owner` proves
 the final state is `12`.
 
-`fluent-firegrid-s2.object-live-fencing` keeps host A alive after lease expiry,
+`store.object-live-fencing` keeps host A alive after lease expiry,
 lets host B take over and complete the call, then proves host A's late state
 write does not affect the final materialized value.
 
@@ -240,7 +240,7 @@ write does not affect the final materialized value.
 stream before handler resume.
 
 **Proof:** crash after state mutation but before call completion; restart does not
-double-apply and returns the original result. `fluent-firegrid-s2.object-replay-state`
+double-apply and returns the original result. `store.object-replay-state`
 proves a run that read `0`, wrote `5`, and died before completion resumes without
 turning the value into `10`; the next serialized `add(7)` observes final state
 `12`.
@@ -255,7 +255,7 @@ semantics.
 **Forces:** idempotency keys, completion lookup by call id, attach/poll APIs.
 
 **Proof:** caller sends with idempotency key, process restarts, another caller
-attaches by handle and reads the completed result. `fluent-firegrid-s2.object-handles`
+attaches by handle and reads the completed result. `store.object-handles`
 proves `sendObjectClient` returns after durable admission, the sender can die,
 and another host can attach by calling the same object method with
 `{ runId: reference.invocationId }`.
@@ -264,7 +264,7 @@ and another host can attach by calling the same object method with
 
 - Do not replace `state(Table)` with string slots.
 - Do not put HTTP in fluent core.
-- Do not import `effect-s2` into fluent core.
+- Do not import `@firegrid/log` into fluent core.
 - Do not allow state operations inside `run` actions.
 - Do not claim object-state correctness without a real `s2 lite` crash/restart
   proof.

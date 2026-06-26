@@ -14,19 +14,7 @@ module.exports = {
       comment:
         "This module depends on an npm package that is not declared in package.json.",
       from: {},
-      to: {
-        dependencyTypes: ["npm-no-pkg", "npm-unknown"],
-      },
-    },
-    {
-      name: "not-to-deprecated",
-      severity: "error",
-      comment:
-        "This module uses a deprecated npm package. Upgrade it or replace it.",
-      from: {},
-      to: {
-        dependencyTypes: ["deprecated"],
-      },
+      to: { dependencyTypes: ["npm-no-pkg", "npm-unknown"] },
     },
     {
       name: "no-duplicate-dep-types",
@@ -56,107 +44,74 @@ module.exports = {
       },
     },
     {
-      name: "production-not-to-verification",
+      name: "production-not-to-apps",
       severity: "error",
       comment:
-        "Production packages must not import verification infrastructure or concrete proofs.",
-      from: {
-        path: "^packages/(?!verification/)[^/]+/src/",
-      },
-      to: {
-        path: "^packages/verification/",
-      },
+        "Production packages must not import examples, proof harnesses, or app composition code.",
+      from: { path: "^packages/[^/]+/src/" },
+      to: { path: "^apps/" },
     },
     {
-      name: "fluent-authoring-not-to-transport-runtime-or-substrate",
+      name: "core-not-to-firegrid-packages",
       severity: "error",
       comment:
-        "@firegrid/fluent-firegrid is the transport-neutral authoring surface. Keep HTTP, Node, S2 binding, TanStack/S2 store, raw S2 substrate, and verification imports below it.",
-      from: { path: "^packages/fluent-firegrid/src/" },
-      to: {
-        path:
-          "^packages/(?:fluent-firegrid-http|fluent-firegrid-node|fluent-firegrid-s2|tanstack-workflow-s2|effect-s2|verification)/",
-      },
+        "@firegrid/core is the shared contract. It must not import other Firegrid packages.",
+      from: { path: "^packages/core/src/" },
+      to: { path: "^packages/(?!core/)[^/]+/" },
     },
     {
-      name: "fluent-http-not-to-node-s2-or-verification",
+      name: "runtime-only-to-core",
       severity: "error",
       comment:
-        "@firegrid/fluent-firegrid-http is a transport binding. Keep Node hosting, S2 runtime binding, raw S2 substrate, and verification imports out of it.",
-      from: { path: "^packages/fluent-firegrid-http/src/" },
-      to: {
-        path:
-          "^packages/(?:fluent-firegrid-node|fluent-firegrid-s2|tanstack-workflow-s2|effect-s2|verification)/",
-      },
+        "@firegrid/runtime may depend on @firegrid/core, but not fluent authoring, stores, substrates, trace, or apps.",
+      from: { path: "^packages/runtime/src/" },
+      to: { path: "^packages/(?!core/|runtime/)[^/]+/" },
     },
     {
-      name: "fluent-s2-not-to-transport-host-or-verification",
+      name: "log-not-to-product-packages",
       severity: "error",
       comment:
-        "@firegrid/fluent-firegrid-s2 is the S2 runtime binding. Keep HTTP transport, Node hosting, and verification imports out of it.",
-      from: { path: "^packages/fluent-firegrid-s2/src/" },
-      to: {
-        path: "^packages/(?:fluent-firegrid-http|fluent-firegrid-node|verification)/",
-      },
+        "@firegrid/log is the raw S2 log substrate and must not import product/runtime packages.",
+      from: { path: "^packages/log/src/" },
+      to: { path: "^packages/(?!log/)[^/]+/" },
     },
     {
-      name: "tanstack-core-runtime-not-to-firegrid-or-s2-store",
+      name: "trace-not-to-product-packages",
       severity: "error",
       comment:
-        "Vendored TanStack core/runtime packages should stay generic and must not depend on Firegrid product APIs, S2 stores, raw S2 substrate, or verification.",
-      from: { path: "^packages/tanstack-workflow-(?:core|runtime)/src/" },
-      to: {
-        path:
-          "^packages/(?:fluent-firegrid|fluent-firegrid-http|fluent-firegrid-node|fluent-firegrid-s2|tanstack-workflow-s2|effect-s2|verification|observability)/",
-      },
+        "@firegrid/trace is an observability sink and must not import product/runtime packages.",
+      from: { path: "^packages/trace/src/" },
+      to: { path: "^packages/(?!trace/)[^/]+/" },
     },
     {
-      name: "tanstack-s2-store-not-to-fluent-or-verification",
+      name: "fluent-not-to-store-log-trace-or-apps",
       severity: "error",
       comment:
-        "@firegrid/tanstack-workflow-s2 is a lower-level store/runtime adapter. Keep fluent product APIs and verification imports out of it.",
-      from: { path: "^packages/tanstack-workflow-s2/src/" },
-      to: {
-        path:
-          "^packages/(?:fluent-firegrid|fluent-firegrid-http|fluent-firegrid-node|fluent-firegrid-s2|verification)/",
-      },
+        "@firegrid/fluent is the authoring surface. Keep concrete stores, raw log substrate, trace sinks, and apps below it.",
+      from: { path: "^packages/fluent/src/" },
+      to: { path: "^packages/(?:store|log|trace)/|^apps/" },
     },
     {
-      name: "effect-s2-substrate-not-to-product-packages",
+      name: "store-not-to-trace-or-apps",
       severity: "error",
       comment:
-        "effect-s2 is the raw S2 substrate client. It must not import Firegrid product, TanStack store/runtime, verification, or observability packages.",
-      from: { path: "^packages/effect-s2/src/" },
-      to: {
-        path:
-          "^packages/(?:fluent-firegrid|fluent-firegrid-http|fluent-firegrid-node|fluent-firegrid-s2|tanstack-workflow-core|tanstack-workflow-runtime|tanstack-workflow-s2|verification|observability)/",
-      },
+        "@firegrid/store is the production S2-backed store/binding. It may use core/runtime/fluent contracts and @firegrid/log, but must not import trace sinks or apps.",
+      from: { path: "^packages/store/src/" },
+      to: { path: "^packages/trace/|^apps/" },
     },
     {
-      name: "fluent-acp-process-tiny-import-surface",
+      name: "proof-runtime-not-to-proof-registration",
       severity: "error",
       comment:
-        "fluent-acp-process is the ACP harness process owner (spawn -> acp.Stream). It must not import the durable-streams substrate or Store/Host/EventIngress/Sources/projection internals. Allowed: @agentclientprotocol/sdk + effect (+ @effect/platform).",
-      from: { path: "^packages/fluent-acp-process/src/" },
-      to: {
-        path: [
-          "(^|/)node_modules/(?:\\.pnpm/)?@durable-streams/",
-        ],
-      },
-    },
-    {
-      name: "verification-runtime-not-to-proofs",
-      severity: "error",
-      comment:
-        "The verification runtime must not import concrete proofs. Keep proof registration in packages/verification/proofs so src stays reusable verification infrastructure.",
-      from: { path: "^packages/verification/src/" },
-      to: { path: "^packages/verification/proofs/" },
+        "The proof harness runtime must not import concrete proof registrations.",
+      from: { path: "^apps/proofs/src/" },
+      to: { path: "^apps/proofs/proofs/" },
     },
   ],
   options: {
     tsConfig: { fileName: "tsconfig.json" },
     doNotFollow: { path: "node_modules" },
-    includeOnly: "^packages/.*/(?:src|proofs)",
+    includeOnly: "^(?:packages/.*/src|apps/proofs/(?:src|proofs)|apps/acp-process/src|apps/examples/full-stack-service/src)",
     enhancedResolveOptions: { exportsFields: ["exports"] },
   },
 }

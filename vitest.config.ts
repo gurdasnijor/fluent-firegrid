@@ -1,181 +1,47 @@
 import path from "node:path"
 import { defineConfig, defineProject } from "vitest/config"
 
+const alias = [
+  { find: "@firegrid/fluent/http", replacement: path.resolve(__dirname, "./packages/fluent/src/http.ts") },
+  { find: "@firegrid/fluent/state", replacement: path.resolve(__dirname, "./packages/fluent/src/state.ts") },
+  { find: "@firegrid/core", replacement: path.resolve(__dirname, "./packages/core/src/index.ts") },
+  { find: "@firegrid/fluent", replacement: path.resolve(__dirname, "./packages/fluent/src/index.ts") },
+  { find: "@firegrid/log", replacement: path.resolve(__dirname, "./packages/log/src/index.ts") },
+  { find: "@firegrid/proofs", replacement: path.resolve(__dirname, "./apps/proofs/src/index.ts") },
+  { find: "@firegrid/runtime", replacement: path.resolve(__dirname, "./packages/runtime/src/index.ts") },
+  { find: "@firegrid/store", replacement: path.resolve(__dirname, "./packages/store/src/index.ts") },
+  { find: "@firegrid/trace", replacement: path.resolve(__dirname, "./packages/trace/src/index.ts") }
+]
+
+const testProject = (
+  name: string,
+  include: ReadonlyArray<string>,
+  passWithNoTests = false
+) =>
+  defineProject({
+    resolve: { alias },
+    test: {
+      name,
+      include: [...include],
+      exclude: ["**/node_modules/**"],
+      passWithNoTests
+    }
+  })
+
 export default defineConfig({
   root: __dirname,
+  resolve: { alias },
   test: {
     projects: [
-      defineProject({
-        test: {
-          name: "fluent-acp-process",
-          include: ["packages/fluent-acp-process/test/**/*.test.ts"],
-          exclude: ["**/node_modules/**"]
-        }
-      }),
-      defineProject({
-        test: {
-          name: "observability",
-          include: ["packages/observability/test/**/*.test.ts"],
-          exclude: ["**/node_modules/**"]
-        }
-      }),
-      defineProject({
-        test: {
-          name: "verification",
-          include: ["packages/verification/test/**/*.test.ts"],
-          exclude: ["**/node_modules/**"]
-        },
-        resolve: {
-          alias: {
-            "@firegrid/verification": path.resolve(__dirname, "./packages/verification/src/index.ts")
-          }
-        }
-      }),
-      defineProject({
-        test: {
-          name: "effect-s2",
-          include: ["packages/effect-s2/test/**/*.test.ts"],
-          exclude: ["**/node_modules/**"]
-        },
-        resolve: {
-          alias: {
-            "effect-s2": path.resolve(__dirname, "./packages/effect-s2/src/index.ts")
-          }
-        }
-      }),
-      defineProject({
-        test: {
-          name: "fluent-firegrid",
-          include: ["packages/fluent-firegrid/test/**/*.test.ts"],
-          exclude: ["**/node_modules/**"],
-          passWithNoTests: true
-        },
-        resolve: {
-          alias: {
-            "@firegrid/fluent-firegrid": path.resolve(__dirname, "./packages/fluent-firegrid/src/index.ts"),
-            "@firegrid/tanstack-workflow-s2": path.resolve(
-              __dirname,
-              "./packages/tanstack-workflow-s2/src/index.ts"
-            ),
-            "@tanstack/workflow-core": path.resolve(__dirname, "./packages/tanstack-workflow-core/src/index.ts"),
-            "@tanstack/workflow-runtime": path.resolve(__dirname, "./packages/tanstack-workflow-runtime/src/index.ts")
-          }
-        }
-      }),
-      defineProject({
-        test: {
-          name: "fluent-firegrid-s2",
-          include: ["packages/fluent-firegrid-s2/test/**/*.test.ts"],
-          exclude: ["**/node_modules/**"],
-          passWithNoTests: true
-        },
-        resolve: {
-          alias: {
-            "@firegrid/fluent-firegrid": path.resolve(__dirname, "./packages/fluent-firegrid/src/index.ts"),
-            "@firegrid/fluent-firegrid/state": path.resolve(__dirname, "./packages/fluent-firegrid/src/state.ts"),
-            "@firegrid/fluent-firegrid-s2": path.resolve(
-              __dirname,
-              "./packages/fluent-firegrid-s2/src/index.ts"
-            ),
-            "effect-s2": path.resolve(__dirname, "./packages/effect-s2/src/index.ts")
-          }
-        }
-      }),
-      defineProject({
-        test: {
-          name: "fluent-firegrid-http",
-          include: ["packages/fluent-firegrid-http/test/**/*.test.ts"],
-          exclude: ["**/node_modules/**"],
-          passWithNoTests: true
-        },
-        resolve: {
-          alias: {
-            "@firegrid/fluent-firegrid": path.resolve(__dirname, "./packages/fluent-firegrid/src/index.ts"),
-            "@firegrid/fluent-firegrid-http": path.resolve(
-              __dirname,
-              "./packages/fluent-firegrid-http/src/index.ts"
-            )
-          }
-        }
-      }),
-      defineProject({
-        test: {
-          name: "fluent-firegrid-node",
-          include: ["packages/fluent-firegrid-node/test/**/*.test.ts"],
-          exclude: ["**/node_modules/**"],
-          passWithNoTests: true
-        },
-        resolve: {
-          alias: {
-            "@firegrid/fluent-firegrid/state": path.resolve(__dirname, "./packages/fluent-firegrid/src/state.ts"),
-            "@firegrid/fluent-firegrid": path.resolve(__dirname, "./packages/fluent-firegrid/src/index.ts"),
-            "@firegrid/fluent-firegrid-http": path.resolve(
-              __dirname,
-              "./packages/fluent-firegrid-http/src/index.ts"
-            ),
-            "@firegrid/fluent-firegrid-node": path.resolve(
-              __dirname,
-              "./packages/fluent-firegrid-node/src/index.ts"
-            ),
-            "@firegrid/fluent-firegrid-s2": path.resolve(
-              __dirname,
-              "./packages/fluent-firegrid-s2/src/index.ts"
-            ),
-            "@firegrid/tanstack-workflow-s2": path.resolve(
-              __dirname,
-              "./packages/tanstack-workflow-s2/src/index.ts"
-            ),
-            "@tanstack/workflow-core": path.resolve(__dirname, "./packages/tanstack-workflow-core/src/index.ts"),
-            "@tanstack/workflow-runtime": path.resolve(__dirname, "./packages/tanstack-workflow-runtime/src/index.ts"),
-            "effect-s2": path.resolve(__dirname, "./packages/effect-s2/src/index.ts")
-          }
-        }
-      }),
-      defineProject({
-        test: {
-          name: "tanstack-workflow-core",
-          include: ["packages/tanstack-workflow-core/test/**/*.test.ts"],
-          exclude: ["**/node_modules/**"],
-          passWithNoTests: true
-        },
-        resolve: {
-          alias: {
-            "@tanstack/workflow-core": path.resolve(__dirname, "./packages/tanstack-workflow-core/src/index.ts")
-          }
-        }
-      }),
-      defineProject({
-        test: {
-          name: "tanstack-workflow-runtime",
-          include: ["packages/tanstack-workflow-runtime/test/**/*.test.ts"],
-          exclude: ["**/node_modules/**"],
-          passWithNoTests: true
-        },
-        resolve: {
-          alias: {
-            "@tanstack/workflow-core": path.resolve(__dirname, "./packages/tanstack-workflow-core/src/index.ts"),
-            "@tanstack/workflow-runtime": path.resolve(__dirname, "./packages/tanstack-workflow-runtime/src/index.ts")
-          }
-        }
-      }),
-      defineProject({
-        test: {
-          name: "tanstack-workflow-s2",
-          include: ["packages/tanstack-workflow-s2/test/**/*.test.ts"],
-          exclude: ["**/node_modules/**"],
-          passWithNoTests: true
-        },
-        resolve: {
-          alias: {
-            "@tanstack/workflow-core": path.resolve(__dirname, "./packages/tanstack-workflow-core/src/index.ts"),
-            "@tanstack/workflow-runtime": path.resolve(__dirname, "./packages/tanstack-workflow-runtime/src/index.ts"),
-            "@firegrid/tanstack-workflow-s2": path.resolve(
-              __dirname,
-              "./packages/tanstack-workflow-s2/src/index.ts"
-            )
-          }
-        }
-      })
+      testProject("acp-process", ["apps/acp-process/test/**/*.test.ts"]),
+      testProject("core", ["packages/core/test/**/*.test.ts"], true),
+      testProject("fluent", ["packages/fluent/test/**/*.test.ts"], true),
+      testProject("log", ["packages/log/test/**/*.test.ts"]),
+      testProject("runtime", ["packages/runtime/test/**/*.test.ts"], true),
+      testProject("store", ["packages/store/test/**/*.test.ts"], true),
+      testProject("trace", ["packages/trace/test/**/*.test.ts"]),
+      testProject("proofs", ["apps/proofs/test/**/*.test.ts"]),
+      testProject("example-full-stack-service", ["apps/examples/full-stack-service/test/**/*.test.ts"], true)
     ]
   }
 })

@@ -6,10 +6,10 @@
 | --- | --- |
 | Status | Implemented through A-E; active hardening substrate |
 | Date | 2026-06-25 |
-| Package | `@firegrid/tanstack-workflow-s2` (working name) |
-| Primary contract | `WorkflowExecutionStore` from `@tanstack/workflow-runtime` |
+| Package | `@firegrid/store` (working name) |
+| Primary contract | `WorkflowExecutionStore` from `@firegrid/runtime` |
 | Local reference | `repos/tanstack-workflow` @ `602cdec439876335168d96f5443c0dc59e4cc436` |
-| Lower dependency | `effect-s2` |
+| Lower dependency | `@firegrid/log` |
 
 ---
 
@@ -46,7 +46,7 @@ Use the vendored TanStack source as the contract reference:
 - `repos/tanstack-workflow/research/PRIOR_ART_AI_ORCHESTRATION.md`
 - `repos/tanstack-workflow/research/COMPETITOR_GAP_ANALYSIS_2026-05-25.md`
 
-The current npm packages are early (`@tanstack/workflow-runtime` `0.0.x`), so implementation should pin an exact version or commit. If we lift types wholesale instead of depending on the package, keep source attribution and isolate the compatibility copy under the adapter package.
+The current npm packages are early (`@firegrid/runtime` `0.0.x`), so implementation should pin an exact version or commit. If we lift types wholesale instead of depending on the package, keep source attribution and isolate the compatibility copy under the adapter package.
 
 ## Non-Negotiable Boundaries
 
@@ -54,7 +54,7 @@ The current npm packages are early (`@tanstack/workflow-runtime` `0.0.x`), so im
 - Do not implement `service(...)`, `object(...)`, `workflow(...)`, generated clients, or virtual-object `state(...)` inside the TanStack/S2 store package. Those are fluent-layer concerns.
 - Do not add proof-only runtime APIs.
 - Do not add an in-memory S2 substitute.
-- Runtime I/O uses `effect-s2` / `S2Client.ts`; no second transport facade.
+- Runtime I/O uses `@firegrid/log` / `S2Client.ts`; no second transport facade.
 - Existing proofs must not be weakened or deleted to make adapter work pass.
 
 ## Store Contract Summary
@@ -80,11 +80,11 @@ store-proof PRs.
 
 | Slice | Status | Production surface | Real-`s2 lite` proof |
 | --- | --- | --- | --- |
-| A. Event Log CAS | Implemented | `appendEvents`, `readEvents`, `loadExecution` | `tanstack-workflow-s2.event-log-cas` |
-| B. Run Lifecycle | Implemented | `createRun`, run state load/save, terminal state, timeline | `tanstack-workflow-s2.run-lifecycle`, `tanstack-workflow-s2.runtime-end-to-end`, `tanstack-workflow-s2.host-crash-restart` |
-| C. Leases And Stale Claims | Implemented | `claimRun`, `heartbeatRunLease`, `releaseRunLease`, `claimStaleRuns`, host recovery | `tanstack-workflow-s2.leases`, `tanstack-workflow-s2.host-crash-restart`, `tanstack-workflow-s2.host-tick` |
-| D. Timers, Signals, And Approvals | Implemented | `scheduleTimer`, `claimDueTimers`, `deliverSignal`, `deliverApproval`, runtime sweeps | `tanstack-workflow-s2.timers-signals`, `tanstack-workflow-s2.runtime-timer-sweep`, `tanstack-workflow-s2.runtime-approval` |
-| E. Schedules | Implemented | `upsertSchedule`, `claimDueScheduleBuckets`, `markScheduleBucketStarted`, schedule sweep | `tanstack-workflow-s2.runtime-schedule-sweep` |
+| A. Event Log CAS | Implemented | `appendEvents`, `readEvents`, `loadExecution` | `store.event-log-cas` |
+| B. Run Lifecycle | Implemented | `createRun`, run state load/save, terminal state, timeline | `store.run-lifecycle`, `store.runtime-end-to-end`, `store.host-crash-restart` |
+| C. Leases And Stale Claims | Implemented | `claimRun`, `heartbeatRunLease`, `releaseRunLease`, `claimStaleRuns`, host recovery | `store.leases`, `store.host-crash-restart`, `store.host-tick` |
+| D. Timers, Signals, And Approvals | Implemented | `scheduleTimer`, `claimDueTimers`, `deliverSignal`, `deliverApproval`, runtime sweeps | `store.timers-signals`, `store.runtime-timer-sweep`, `store.runtime-approval` |
+| E. Schedules | Implemented | `upsertSchedule`, `claimDueScheduleBuckets`, `markScheduleBucketStarted`, schedule sweep | `store.runtime-schedule-sweep` |
 
 ### Remaining Hardening
 
@@ -233,7 +233,7 @@ Build the adapter in thin vertical slices. Each slice uses TanStack's runtime co
 
 **Forces:** `appendEvents`, `readEvents`, `loadExecution` event hydration.
 
-**Proof:** `tanstack-workflow-s2.event-log-cas` races two writers with the same
+**Proof:** `store.event-log-cas` races two writers with the same
 `expectedNextIndex`; one succeeds, one maps to `LogConflictError`, and reading
 from S2 returns exactly the committed ordered events.
 
@@ -245,9 +245,9 @@ from S2 returns exactly the committed ordered events.
 
 **Forces:** `createRun`, `loadRun`, `loadRunState`, `saveRunState`, `markRunPaused`, `markRunFinished`, `markRunErrored`, `getRunTimeline`.
 
-**Proof:** `tanstack-workflow-s2.run-lifecycle`,
-`tanstack-workflow-s2.runtime-end-to-end`, and
-`tanstack-workflow-s2.host-crash-restart` start workflows through the S2 store,
+**Proof:** `store.run-lifecycle`,
+`store.runtime-end-to-end`, and
+`store.host-crash-restart` start workflows through the S2 store,
 load execution from S2, and continue without losing run state or duplicating
 events.
 
@@ -259,9 +259,9 @@ events.
 
 **Forces:** `claimRun`, `heartbeatRunLease`, `releaseRunLease`, `claimStaleRuns`.
 
-**Proof:** `tanstack-workflow-s2.leases` races claims and validates heartbeat
-protection; `tanstack-workflow-s2.host-crash-restart` and
-`tanstack-workflow-s2.host-tick` validate stale recovery from S2.
+**Proof:** `store.leases` races claims and validates heartbeat
+protection; `store.host-crash-restart` and
+`store.host-tick` validate stale recovery from S2.
 
 ### D. Timers, Signals, And Approvals
 
@@ -271,9 +271,9 @@ protection; `tanstack-workflow-s2.host-crash-restart` and
 
 **Forces:** `scheduleTimer`, `claimDueTimers`, `deliverSignal`, `deliverApproval`.
 
-**Proof:** `tanstack-workflow-s2.timers-signals`,
-`tanstack-workflow-s2.runtime-timer-sweep`, and
-`tanstack-workflow-s2.runtime-approval` prove timer and approval wakeups resume
+**Proof:** `store.timers-signals`,
+`store.runtime-timer-sweep`, and
+`store.runtime-approval` prove timer and approval wakeups resume
 paused runs from S2 exactly once.
 
 ### E. Schedules
@@ -284,7 +284,7 @@ paused runs from S2 exactly once.
 
 **Forces:** `upsertSchedule`, `claimDueScheduleBuckets`, `markScheduleBucketStarted`.
 
-**Proof:** `tanstack-workflow-s2.runtime-schedule-sweep` proves schedule
+**Proof:** `store.runtime-schedule-sweep` proves schedule
 materialization and due bucket claiming start the scheduled run exactly once.
 
 ## PR Contract

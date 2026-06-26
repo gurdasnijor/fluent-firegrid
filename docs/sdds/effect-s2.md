@@ -1,4 +1,4 @@
-# SDD: `effect-s2` — an Effect-native client for S2 (durable streams)
+# SDD: `@firegrid/log` — an Effect-native client for S2 (durable streams)
 
 | | |
 |---|---|
@@ -47,7 +47,7 @@ Build a thin, idiomatic Effect facade over the S2 TypeScript SDK. The facade tur
 The agent **MUST** follow the `effect-ts` skill. Specifically:
 
 - C1. **No `any`. No `as` casts. No non-null assertions. No `namespace`.** (`SKILL.md` → TypeScript Preferences.) External/boundary values are decoded with `Schema`, never asserted.
-- C2. Reusable effectful operations are defined with `Effect.fn("Name")(...)`, not bare `Effect.gen`. (`guide-observability.md`.) Use `Effect.fnUntraced` only with a measured reason (none expected here).
+- C2. Reusable effectful operations are defined with `Effect.fn("Name")(...)`, not bare `Effect.gen`. (`guide-trace.md`.) Use `Effect.fnUntraced` only with a measured reason (none expected here).
 - C3. Services are `Context.Service`; layers are plain exported constants or `static` members, never hidden in `namespace`. (`guide-layers.md`.)
 - C4. Resource-owning construction uses `Layer.effect` + `Effect.acquireRelease`. `Layer.scoped` does not exist in this API; `Layer.effect` is the scoped constructor. (`guide-layers.md`.)
 - C5. Errors are `Schema.TaggedErrorClass` with `Schema.Defect` preserving the foreign cause. (`guide-error-handling.md`.)
@@ -117,7 +117,7 @@ Divergence from effect-kafka (recorded decision D1): effect-kafka splits `Produc
 ### 5.2 Package layout
 
 ```
-packages/effect-s2/
+packages/log/
   package.json            # effect@beta, @s2-dev/streamstore; dev: @effect/vitest, @effect/platform-node
   tsconfig.json
   src/
@@ -306,7 +306,7 @@ export declare namespace S2Client {
 
 ### 7.3 Observability
 
-Service-method implementations are `Effect.fn`-named (`"S2.append"`, `"S2.read"`, `"S2.producer.submit"`, etc.). Inside `append`/`submit`, `Effect.annotateCurrentSpan({ stream, matchSeqNum? })`; on success annotate the resulting `seqNum`. The read `Stream` carries `Stream.withSpan("S2.read", { attributes: { stream } })`. The library provides **no** telemetry layer; the consuming app composes `@effect/opentelemetry` once at the top (`guide-observability` → OTel integration). Library code stays observability-agnostic.
+Service-method implementations are `Effect.fn`-named (`"S2.append"`, `"S2.read"`, `"S2.producer.submit"`, etc.). Inside `append`/`submit`, `Effect.annotateCurrentSpan({ stream, matchSeqNum? })`; on success annotate the resulting `seqNum`. The read `Stream` carries `Stream.withSpan("S2.read", { attributes: { stream } })`. The library provides **no** telemetry layer; the consuming app composes `@effect/opentelemetry` once at the top (`guide-trace` → OTel integration). Library code stays trace-agnostic.
 
 ### 7.4 Retry division (decision D3)
 
@@ -469,7 +469,7 @@ Any divergence from §4.1 MUST also edit §4.1 and the affected §6 signature, w
 - Package API coverage tests pass; live examples can be run with a token for smoke testing.
 - Public surface matches §6 exactly (or a §12 entry justifies each change).
 - Examples 01–05 run against live S2.
-- Package README links this SDD; `effect-s2` importable.
+- Package README links this SDD; `@firegrid/log` importable.
 
 ---
 
