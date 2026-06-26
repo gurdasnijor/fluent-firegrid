@@ -9,7 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="EffSharp" Version="0.0.1-alpha.1" />
+    <PackageReference Include="EffSharp" Version="*-*" />
     <PackageReference Include="Fable.Core" Version="5.1.0" />
     <PackageReference Include="Fable.Promise" Version="3.2.0" />
   </ItemGroup>
