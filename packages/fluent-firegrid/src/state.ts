@@ -19,7 +19,14 @@ export {
   type StatePredicateContext,
   validateStatePredicate
 } from "./statePredicate.ts"
-import { validateStatePredicate, type StatePredicate } from "./statePredicate.ts"
+import {
+  cel,
+  type CelExpressionBuilder,
+  type CelExpressionInput,
+  type CelFieldExpression,
+  validateStatePredicate,
+  type StatePredicate
+} from "./statePredicate.ts"
 
 const PrimaryKeyAnnotation = "@firegrid/fluent-firegrid/primaryKey"
 const readPrimaryKey = SchemaAST.resolveAt<boolean>(PrimaryKeyAnnotation)
@@ -242,6 +249,21 @@ export interface StatePredicateEnvironment {
   readonly table: string
 }
 
+type StringKeyOf<A> = Extract<keyof A, string>
+
+export type TableCelExpressionBuilder<Row> =
+  & Omit<CelExpressionBuilder, "old" | "row">
+  & {
+    readonly old: { readonly [Key in StringKeyOf<Row>]: CelFieldExpression }
+    readonly row: { readonly [Key in StringKeyOf<Row>]: CelFieldExpression }
+  }
+
+export interface TableCelFactory<Tbl extends AnyTable> {
+  readonly environment: StatePredicateEnvironment
+  readonly expr: (build: (builder: TableCelExpressionBuilder<RowOf<Tbl>>) => CelExpressionInput) => StatePredicate
+  (expression: string): StatePredicate
+}
+
 const stateWaitSignalName = (table: string, key: string, name: string): string =>
   `__firegrid_state_wait:${table}:${key}:${name}`
 
@@ -352,6 +374,15 @@ export const validateStatePredicateForTable: (
 ) {
   yield* validateStatePredicateForEnvironment(predicate, statePredicateEnvironment(table))
 })
+
+export const celFor = <Tbl extends AnyTable>(table: Tbl): TableCelFactory<Tbl> => {
+  const environment = statePredicateEnvironment(table)
+  return Object.assign((expression: string) => cel(expression), {
+    environment,
+    expr: (build: (builder: TableCelExpressionBuilder<RowOf<Tbl>>) => CelExpressionInput): StatePredicate =>
+      cel.expr((builder) => build(builder as TableCelExpressionBuilder<RowOf<Tbl>>))
+  })
+}
 
 const encodeRowFor = <Tbl extends AnyTable>(
   table: Tbl,

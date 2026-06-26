@@ -5,6 +5,7 @@ import { FluentDurableContext, type ObjectStateBackend } from "../src/context.ts
 import { FluentFiregridError } from "../src/error.ts"
 import {
   cel,
+  celFor,
   ChangeMessage,
   evaluateStatePredicate,
   MaterializedState,
@@ -134,6 +135,26 @@ describe("state wait predicates", () => {
             operation: "insert",
             table: "items"
           },
+          row: { id: "a", value: 3 }
+        })
+      )
+    ).resolves.toBeTruthy()
+  })
+
+  it("builds CEL predicates from a table-scoped typed field helper", async () => {
+    const predicate = celFor(Item).expr((t) =>
+      t.row.value.greaterThan(2).and(t.old.id.eq("a"))
+    )
+
+    expect(celFor(Item).environment.environmentVersion).toBe("table:items:id:string,value:number")
+    expect(predicate).toEqual({
+      expression: "(row.value > 2) && (old.id == \"a\")",
+      language: "cel"
+    })
+    await expect(
+      Effect.runPromise(
+        evaluateStatePredicate(predicate, {
+          old: { id: "a", value: 1 },
           row: { id: "a", value: 3 }
         })
       )

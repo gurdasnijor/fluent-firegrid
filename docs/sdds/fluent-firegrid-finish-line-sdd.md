@@ -457,7 +457,9 @@ Implementation status as of June 25, 2026:
 - `cel.expr((t) => ...)` provides a serializable builder for common field
   comparisons, boolean composition, and membership checks while still persisting
   plain CEL text;
-- remaining gaps are query/index waits and schema-inferred builder field types.
+- `celFor(Table).expr((t) => ...)` adds table-scoped field typing for `row.*`
+  and `old.*` builder access;
+- remaining gap: query/index waits.
 
 Query waits can come later, but must require an indexable declaration so the
 runtime does not scan all rows/waits:

@@ -114,6 +114,7 @@ export { iface }
 export { objectKey, run, type RunOptions, sleep, sleepUntil, waitForSignal } from "./run.ts"
 export {
   cel,
+  celFor,
   evaluateStatePredicate,
   state,
   statePredicateEnvironment,
@@ -135,5 +136,7 @@ export type {
   StatePredicateEnvironment,
   StatePredicateField,
   StatePredicateFieldType,
+  TableCelExpressionBuilder,
+  TableCelFactory,
   StateWaitOptions
 } from "./state.ts"
