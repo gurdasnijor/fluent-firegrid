@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <AssemblyName>Firegrid.Runtime</AssemblyName>
+    <RootNamespace>Firegrid.Runtime</RootNamespace>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <DefineConstants>$(DefineConstants);FABLE_COMPILER</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="EffSharp" Version="*-*" />
+    <PackageReference Include="Fable.Core" Version="5.1.0" />
+    <PackageReference Include="Fable.Promise" Version="3.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Firegrid.Core/Firegrid.Core.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Sdk.fs" />
+    <Compile Include="Types.fs" />
+    <Compile Include="InMemoryStore.fs" />
+    <Compile Include="RunStoreAdapter.fs" />
+    <Compile Include="ScheduleMaterializer.fs" />
+    <Compile Include="RuntimeDriver.fs" />
+    <Compile Include="DefineRuntime.fs" />
+    <Compile Include="Exports.fs" />
+  </ItemGroup>
+
+</Project>

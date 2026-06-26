@@ -1,0 +1,26 @@
+{
+  "name": "@firegrid/runtime",
+  "version": "0.0.0",
+  "description": "Fable-native workflow runtime, execution store, and scheduler for Firegrid.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/Exports.js",
+  "exports": {
+    ".": "./dist/Exports.js"
+  },
+  "files": [
+    "Firegrid.Runtime.fsproj",
+    "*.fs",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet tool run fable -- Firegrid.Runtime.fsproj -o dist --optimize --noCache --noRestore",
+    "diagnostics": "echo '@firegrid/runtime diagnostics are covered by dotnet build'",
+    "lint": "echo '@firegrid/runtime lint is covered by F# compile'",
+    "test": "pnpm run typecheck",
+    "typecheck": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet build Firegrid.Runtime.fsproj -v:q"
+  },
+  "dependencies": {
+    "@firegrid/core": "workspace:*"
+  }
+}
