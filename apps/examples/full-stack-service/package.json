@@ -15,6 +15,10 @@
     "./examples/durable-webhook": {
       "types": "./examples/durable-webhook.ts",
       "default": "./examples/durable-webhook.ts"
+    },
+    "./examples/ordering": {
+      "types": "./examples/ordering.ts",
+      "default": "./examples/ordering.ts"
     }
   },
   "files": ["src", "examples", "README.md"],

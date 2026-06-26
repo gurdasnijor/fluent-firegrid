@@ -17,6 +17,7 @@ import {
   listenFluentHttp
 } from "../src/index.ts"
 import { createFluentHttpHandler } from "@firegrid/fluent/http"
+import { orderingDefinitions, orderingServerOptions } from "../examples/ordering.ts"
 import { stripeWebhookRoutes, webhookDefinitions } from "../examples/durable-webhook.ts"
 
 let currentServer: FluentNodeHttpServer | undefined
@@ -203,6 +204,83 @@ describe("example-full-stack-service", () => {
       kind: "service",
       name: "stripe-webhook",
       runId: "stripe:evt_paid_1"
+    })
+  })
+
+  it("smoke tests the ordering service/workflow/object example definitions", async () => {
+    const calls = new Array<CallRequest>()
+    const sends = new Array<SendRequest>()
+    const binding: InvocationBinding<never> = {
+      call: <Output>(request: CallRequest) =>
+        Effect.sync(() => {
+          calls.push(request)
+          return { cartId: request.key, status: "open" } as Output
+        }),
+      send: <Output>(request: SendRequest) =>
+        Effect.sync(() => {
+          sends.push(request)
+          return {
+            handler: request.handler,
+            invocationId: request.runId ?? `send:${request.name}:${request.handler}`,
+            kind: request.kind,
+            name: request.name,
+            ...(request.key === undefined ? {} : { key: request.key })
+          } satisfies SendReference<Output>
+        })
+    }
+    currentServer = await listenFluentHttp({
+      handler: createFluentHttpHandler({ binding, definitions: orderingDefinitions })
+    })
+
+    const addItem = await fetch(`${currentServer.url}/call/object/shopping-cart/cart-1/addItem`, {
+      body: JSON.stringify({ customerId: "customer-1", quantity: 2, sku: "sku-1" }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    })
+    const checkout = await fetch(`${currentServer.url}/send/object/shopping-cart/cart-1/checkout?runId=checkout-1`, {
+      body: JSON.stringify({
+        customerId: "customer-1",
+        paymentToken: "tok_visa",
+        quantity: 2,
+        requestId: "req-1",
+        shippingAddress: "1 Market St",
+        sku: "sku-1"
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    })
+    const serverOptions = orderingServerOptions("http://127.0.0.1:7070")
+
+    expect(orderingDefinitions.map((definition) => `${definition._kind}:${definition.name}`)).toEqual([
+      "object:shopping-cart",
+      "workflow:checkout",
+      "object:order",
+      "service:fulfillment"
+    ])
+    expect(serverOptions.definitions).toBe(orderingDefinitions)
+    expect(addItem.status).toBe(200)
+    expect(await addItem.json()).toEqual({ output: { cartId: "cart-1", status: "open" } })
+    expect(checkout.status).toBe(202)
+    expect(await checkout.json()).toMatchObject({
+      handler: "checkout",
+      invocationId: "checkout-1",
+      key: "cart-1",
+      kind: "object",
+      name: "shopping-cart"
+    })
+    expect(calls[0]).toMatchObject({
+      handler: "addItem",
+      input: { customerId: "customer-1", quantity: 2, sku: "sku-1" },
+      key: "cart-1",
+      kind: "object",
+      name: "shopping-cart"
+    })
+    expect(sends[0]).toMatchObject({
+      handler: "checkout",
+      key: "cart-1",
+      kind: "object",
+      name: "shopping-cart",
+      runId: "checkout-1"
     })
   })
 
