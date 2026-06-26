@@ -169,7 +169,7 @@ const ambientClient = (
 const contextualClient = (
   mode: ClientMode,
   first: unknown,
-  second: unknown | undefined,
+  second: unknown,
   key: string | undefined
 ) =>
   second === undefined
@@ -181,7 +181,7 @@ const contextualClient = (
 const keyedContextualClient = (
   mode: ClientMode,
   first: unknown,
-  second: unknown | undefined,
+  second: unknown,
   key: string | undefined
 ) =>
   key !== undefined

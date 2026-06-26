@@ -7,7 +7,6 @@ import { FileSystem } from "effect/FileSystem"
 import * as Layer from "effect/Layer"
 // @effect-diagnostics-next-line nodeBuiltinImport:off
 import * as Http from "node:http"
-import type * as Net from "node:net"
 
 import { TrialId, VerificationRuntime, type WaitForSpanOptions } from "./Property.ts"
 import { bindTrialSql } from "./TraceViews.ts"
@@ -126,7 +125,7 @@ const startSpanReceiver = Effect.fn("TraceRuntime.startSpanReceiver")(function*(
           return
         }
         resume(Effect.succeed({
-          endpoint: `http://127.0.0.1:${(address as Net.AddressInfo).port}/v1/traces`,
+          endpoint: `http://127.0.0.1:${address.port}/v1/traces`,
           server
         }))
       })

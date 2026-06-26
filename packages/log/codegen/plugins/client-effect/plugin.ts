@@ -105,7 +105,7 @@ const schemaExpression = (
 const parametersFields = (
   plugin: ClientEffectPlugin["Instance"],
   parameters: Record<string, any> | undefined
-): any | undefined => {
+): any => {
   if (!parameters || !Object.keys(parameters).length) {
     return undefined
   }
@@ -121,7 +121,7 @@ const parametersFields = (
 }
 
 const rawComponentSchemas = (plugin: ClientEffectPlugin["Instance"]): Record<string, any> => {
-  const spec = plugin.context?.spec as any
+  const spec = plugin.context?.spec
   return spec?.components?.schemas ?? {}
 }
 
@@ -311,7 +311,7 @@ const rawResponsesFor = (
   plugin: ClientEffectPlugin["Instance"],
   operation: IR.OperationObject
 ): Record<string, any> => {
-  const spec = plugin.context?.spec as any
+  const spec = plugin.context?.spec
   return spec?.paths?.[operation.path]?.[operation.method.toLowerCase()]?.responses ?? {}
 }
 
@@ -475,7 +475,7 @@ const responsesFor = (
   operation: IR.OperationObject,
   kind: "error" | "success",
   artifacts: ResponseArtifacts
-): any | undefined => {
+): any => {
   const entries = responseEntriesFor(plugin, operation, kind)
   const setKey = kind === "error" ? errorSetKeyFor(entries) : undefined
   const setSymbol = setKey ? artifacts.responseSetSymbols.get(setKey) : undefined

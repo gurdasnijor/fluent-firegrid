@@ -316,18 +316,36 @@ export interface RunPropertyOptions {
 
 const trialIdFromName = (name: string): string => name.replace(/[^A-Za-z0-9_.-]/g, "-")
 
+const s2LitePortMin = 30_000
+const s2LitePortMax = 44_999
+
+const probePort = (port: number): Effect.Effect<number, VerificationError> =>
+  Effect.gen(function*() {
+    const server = yield* NodeSocketServer.make({ host: "127.0.0.1", port }).pipe(
+      Effect.mapError((cause) => new VerificationError({ message: "failed to allocate a local port", cause }))
+    )
+    if (server.address._tag !== "TcpAddress") {
+      return yield* new VerificationError({ message: "allocated a non-TCP socket for s2 lite" })
+    }
+    return server.address.port
+  }).pipe(Effect.scoped)
+
 const allocatePort = Effect.fn("runProperty.allocatePort")(function*() {
-  return yield* Effect.scoped(
+  const probe = (remaining: number): Effect.Effect<number, VerificationError> =>
     Effect.gen(function*() {
-      const server = yield* NodeSocketServer.make({ host: "127.0.0.1", port: 0 }).pipe(
-        Effect.mapError((cause) => new VerificationError({ message: "failed to allocate a local port", cause }))
-      )
-      if (server.address._tag !== "TcpAddress") {
-        return yield* new VerificationError({ message: "allocated a non-TCP socket for s2 lite" })
+      const port = yield* Random.nextIntBetween(s2LitePortMin, s2LitePortMax)
+      const allocated = yield* probePort(port).pipe(Effect.exit)
+      if (Exit.isSuccess(allocated)) return allocated.value
+      if (remaining <= 0) {
+        return yield* new VerificationError({
+          message: `failed to allocate an s2 lite port in ${s2LitePortMin}-${s2LitePortMax}`,
+          cause: allocated.cause
+        })
       }
-      return server.address.port
+      return yield* probe(remaining - 1)
     })
-  )
+
+  return yield* probe(50)
 })
 
 const makeLocalRoot = Effect.fn("runProperty.makeLocalRoot")(function*() {

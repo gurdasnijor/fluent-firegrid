@@ -23,17 +23,25 @@ import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 import { describe, expect, it } from "vitest"
 
-const request = (path: string, body: unknown, headers?: HeadersInit): Request =>
-  new Request(`http://fluent.test${path}`, {
+const request = (path: string, body: unknown, headers?: HeadersInit): Request => {
+  const requestHeaders = new Headers(headers)
+  requestHeaders.set("content-type", "application/json")
+  return new Request(`http://fluent.test${path}`, {
     body: JSON.stringify(body),
-    headers: {
-      "content-type": "application/json",
-      ...headers
-    },
+    headers: requestHeaders,
     method: "POST"
   })
+}
 
 const json = async <A>(response: Response): Promise<A> => await response.json() as A
+
+const requestUrl = (input: RequestInfo | URL): string =>
+  typeof input === "string" ? input : input instanceof URL ? input.href : input.url
+
+const requestBodyText = (body: BodyInit | null | undefined): string => {
+  if (typeof body === "string") return body
+  throw new Error("expected string request body")
+}
 
 describe("createAwakeableHttpClient", () => {
   it("posts resolve and reject payloads to awakeable endpoints", async () => {
@@ -47,10 +55,10 @@ describe("createAwakeableHttpClient", () => {
       baseUrl: "https://callbacks.test/base/",
       fetch: async (input, init) => {
         requests.push({
-          body: JSON.parse(String(init?.body)),
+          body: JSON.parse(requestBodyText(init?.body)),
           headers: Object.fromEntries(new Headers(init?.headers).entries()),
           method: init?.method ?? "GET",
-          url: String(input)
+          url: requestUrl(input)
         })
         return Response.json({ kind: "delivered", runId: "run-1" }, { status: 202 })
       },

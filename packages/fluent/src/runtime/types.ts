@@ -201,7 +201,7 @@ export interface WorkflowScheduleDefinition {
   id?: ScheduleId
   schedule: WorkflowScheduleSpec
   overlapPolicy?: WorkflowOverlapPolicy
-  input?: unknown | (() => unknown | Promise<unknown>)
+  input?: unknown
   enabled?: boolean
 }
 
