@@ -38,10 +38,12 @@ jobs:
         uses: ./.github/actions/setup
 
       - name: Authenticate GitHub NuGet source
+        env:
+          NUGET_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           dotnet nuget update source github \
-            --username "${{ github.actor }}" \
-            --password "${{ secrets.GITHUB_TOKEN }}" \
+            --username "${{ github.repository_owner }}" \
+            --password "$NUGET_AUTH_TOKEN" \
             --store-password-in-clear-text \
             --configfile nuget.config
 
