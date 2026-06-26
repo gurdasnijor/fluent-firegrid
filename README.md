@@ -2,7 +2,7 @@
 
 Effect-native durable execution and fluent authoring over S2.
 
-This repo no longer carries legacy durable-runtime experiments in `packages/*`.
+This branch no longer uses `packages/*` as the production source layout.
 Production work should land in one of the source lanes below. If a lane is
 not listed here, do not add it without also updating this map and the relevant
 SDD.
@@ -10,24 +10,24 @@ SDD.
 ## Production Lanes
 
 - `Firegrid.Log` — EffSharp wrapper around the S2 client/substrate.
-- `@firegrid/core` — shared durable workflow contract, primitive types, and
+- `Firegrid.Core` — shared durable workflow contract, primitive types, and
   run-store interfaces.
-- `@firegrid/runtime` — durable workflow runtime, schedule materialization, and
+- `Firegrid.Runtime` — durable workflow runtime, schedule materialization, and
   in-memory store implementation.
 - `Firegrid.Store` — S2-backed workflow execution store plus host
   recovery/sweep helpers.
-- `@firegrid/fluent` — Restate-like Effect-native authoring surface:
+- `Firegrid.Fluent` — Restate-like Effect-native authoring surface:
   definitions, descriptor contracts, clients, durable primitives, and virtual
   object state authoring.
 - `Firegrid.Store` — S2-backed fluent object/state runtime
   binding.
-- `@firegrid/fluent/http` — framework-neutral HTTP
+- `Firegrid.Fluent.Http` — framework-neutral HTTP
   `Request -> Response` transport binding for fluent definitions.
 
 ## Support Packages
 
 - `@firegrid/proofs` — real-substrate proof harness and proof registry.
-- `@firegrid/trace` — tracing/export support used by verification and
+- `Firegrid.Trace` — tracing/export support used by verification and
   runtime processes.
 - `@firegrid/acp-process` — ACP process adapter work; separate from the
   durable execution core.

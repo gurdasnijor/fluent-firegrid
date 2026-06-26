@@ -1,0 +1,27 @@
+{
+  "name": "@firegrid/clients",
+  "version": "0.0.0",
+  "description": "Fable-native Firegrid invocation clients.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/Exports.js",
+  "exports": {
+    ".": "./dist/Exports.js"
+  },
+  "files": [
+    "Firegrid.Clients.fsproj",
+    "*.fs",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet tool run fable -- Firegrid.Clients.fsproj -o dist --optimize --noCache --noRestore",
+    "diagnostics": "echo '@firegrid/clients diagnostics are covered by dotnet build'",
+    "lint": "echo '@firegrid/clients lint is covered by F# compile'",
+    "test": "pnpm run typecheck",
+    "typecheck": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet build Firegrid.Clients.fsproj -v:q"
+  },
+  "dependencies": {
+    "@firegrid/core": "workspace:*",
+    "effect": "4.0.0-beta.87"
+  }
+}

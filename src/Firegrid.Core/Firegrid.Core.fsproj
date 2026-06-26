@@ -2,8 +2,8 @@
 
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
-    <AssemblyName>Firegrid.Store</AssemblyName>
-    <RootNamespace>Firegrid.Store</RootNamespace>
+    <AssemblyName>Firegrid.Core</AssemblyName>
+    <RootNamespace>Firegrid.Core</RootNamespace>
     <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
     <DefineConstants>$(DefineConstants);FABLE_COMPILER</DefineConstants>
   </PropertyGroup>
@@ -15,18 +15,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../Firegrid.Core/Firegrid.Core.fsproj" />
-    <ProjectReference Include="../Firegrid.Log/Firegrid.Log.fsproj" />
-    <ProjectReference Include="../Firegrid.Runtime/Firegrid.Runtime.fsproj" />
-  </ItemGroup>
-
-  <ItemGroup>
     <Compile Include="Types.fs" />
-    <Compile Include="JsJson.fs" />
-    <Compile Include="Naming.fs" />
-    <Compile Include="Runtime.fs" />
-    <Compile Include="ObjectState.fs" />
-    <Compile Include="WorkflowLog.fs" />
+    <Compile Include="Errors.fs" />
+    <Compile Include="Invocation.fs" />
+    <Compile Include="StatePredicates.fs" />
     <Compile Include="Exports.fs" />
   </ItemGroup>
 
