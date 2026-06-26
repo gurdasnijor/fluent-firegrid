@@ -144,19 +144,6 @@ importers:
         specifier: ^3.2.0
         version: 3.2.6(@types/node@22.20.0)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)
 
-  packages/clients:
-    dependencies:
-      '@firegrid/fluent':
-        specifier: workspace:*
-        version: link:../fluent
-    devDependencies:
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.6(@types/node@22.20.0)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)
-
   packages/core:
     dependencies:
       '@marcbachmann/cel-js':
@@ -222,41 +209,6 @@ importers:
       '@hey-api/openapi-ts':
         specifier: 0.99.0
         version: 0.99.0(typescript@5.9.3)
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.6(@types/node@22.20.0)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)
-
-  packages/runtime:
-    dependencies:
-      '@firegrid/fluent':
-        specifier: workspace:*
-        version: link:../fluent
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.20.0
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.0
-        version: 3.2.6(@types/node@22.20.0)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)
-
-  packages/store:
-    dependencies:
-      '@firegrid/fluent':
-        specifier: workspace:*
-        version: link:../fluent
-    devDependencies:
-      '@effect/language-service':
-        specifier: ^0.86.2
-        version: 0.86.2
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.20.0
       typescript:
         specifier: ^5.7.0
         version: 5.9.3

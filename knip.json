@@ -1,7 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignoreIssues": {
-    "packages/clients/src/index.ts": ["duplicates"],
     "packages/fluent/src/clients/base.ts": ["duplicates"],
     "packages/fluent/src/clients.ts": ["duplicates"],
     "packages/fluent/src/runtime/types.ts": ["types"]
@@ -10,21 +9,12 @@
     "packages/core": {
       "project": ["src/**/*.ts!"]
     },
-    "packages/clients": {
-      "project": ["src/**/*.ts!"]
-    },
     "packages/fluent": {
       "project": ["src/**/*.ts!", "test/**/*.ts"]
     },
     "packages/log": {
       "entry": ["examples/**/*.ts!"],
       "project": ["src/**/*.ts!", "test/**/*.ts", "examples/**/*.ts!"]
-    },
-    "packages/runtime": {
-      "project": ["src/**/*.ts!"]
-    },
-    "packages/store": {
-      "project": ["src/**/*.ts!"]
     },
     "packages/trace": {
       "project": ["src/**/*.ts!", "test/**/*.ts"]

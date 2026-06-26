@@ -1,19 +1,10 @@
 flowchart LR
 
 subgraph 0["packages"]
-1["clients"]
-2["core"]
-3["fluent"]
-4["log"]
-5["runtime"]
-6["store"]
-7["trace"]
+1["core"]
+2["fluent"]
+3["log"]
+4["trace"]
 end
-1-->2
-3-->2
-3-->5
-3-->1
-5-->2
-6-->2
-6-->4
-6-->5
+2-->1
+2-->3

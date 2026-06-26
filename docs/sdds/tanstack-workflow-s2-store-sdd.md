@@ -6,7 +6,7 @@
 | --- | --- |
 | Status | Implemented through A-E; active hardening substrate |
 | Date | 2026-06-25 |
-| Package | `@firegrid/fluent/s2` with `@firegrid/store` as a compatibility package |
+| Package | `@firegrid/fluent/s2` |
 | Primary contract | `WorkflowExecutionStore` from `@firegrid/fluent/runtime` |
 | Local reference | `repos/tanstack-workflow` @ `602cdec439876335168d96f5443c0dc59e4cc436` |
 | Lower dependency | `@firegrid/log` |
@@ -46,7 +46,10 @@ Use the vendored TanStack source as the contract reference:
 - `repos/tanstack-workflow/research/PRIOR_ART_AI_ORCHESTRATION.md`
 - `repos/tanstack-workflow/research/COMPETITOR_GAP_ANALYSIS_2026-05-25.md`
 
-The current npm packages are early (`@firegrid/runtime` `0.0.x`), so implementation should pin an exact version or commit. If we lift types wholesale instead of depending on the package, keep source attribution and isolate the compatibility copy under the adapter package.
+The TanStack Workflow reference packages are early, so implementation should pin
+an exact version or commit when lifting behavior. If we lift types wholesale
+instead of depending on the package, keep source attribution and isolate the
+compatibility copy under the Fluent runtime/S2 adapter modules.
 
 ## Non-Negotiable Boundaries
 
