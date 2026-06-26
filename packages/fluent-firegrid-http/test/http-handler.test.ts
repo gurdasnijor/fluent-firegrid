@@ -14,7 +14,11 @@ import {
   type SendRequest,
   service
 } from "@firegrid/fluent-firegrid"
-import { createFluentHttpHandler } from "@firegrid/fluent-firegrid-http"
+import {
+  type AwakeableHttpClientError,
+  createAwakeableHttpClient,
+  createFluentHttpHandler
+} from "@firegrid/fluent-firegrid-http"
 import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 import { describe, expect, it } from "vitest"
@@ -30,6 +34,67 @@ const request = (path: string, body: unknown, headers?: HeadersInit): Request =>
   })
 
 const json = async <A>(response: Response): Promise<A> => await response.json() as A
+
+describe("createAwakeableHttpClient", () => {
+  it("posts resolve and reject payloads to awakeable endpoints", async () => {
+    const requests = new Array<{
+      readonly body: unknown
+      readonly headers: Record<string, string>
+      readonly method: string
+      readonly url: string
+    }>()
+    const client = createAwakeableHttpClient({
+      baseUrl: "https://callbacks.test/base/",
+      fetch: async (input, init) => {
+        requests.push({
+          body: JSON.parse(String(init?.body)),
+          headers: Object.fromEntries(new Headers(init?.headers).entries()),
+          method: init?.method ?? "GET",
+          url: String(input)
+        })
+        return Response.json({ kind: "delivered", runId: "run-1" }, { status: 202 })
+      },
+      headers: { authorization: "Bearer token" }
+    })
+
+    await expect(client.resolve("token/1", "ok")).resolves.toEqual({ kind: "delivered", runId: "run-1" })
+    await expect(client.reject("token/1", "no")).resolves.toEqual({ kind: "delivered", runId: "run-1" })
+
+    expect(requests).toEqual([
+      {
+        body: { value: "ok" },
+        headers: {
+          authorization: "Bearer token",
+          "content-type": "application/json"
+        },
+        method: "POST",
+        url: "https://callbacks.test/base/firegrid/awakeables/token%2F1/resolve"
+      },
+      {
+        body: { reason: "no" },
+        headers: {
+          authorization: "Bearer token",
+          "content-type": "application/json"
+        },
+        method: "POST",
+        url: "https://callbacks.test/base/firegrid/awakeables/token%2F1/reject"
+      }
+    ])
+  })
+
+  it("throws a typed error for failed awakeable HTTP delivery", async () => {
+    const client = createAwakeableHttpClient({
+      baseUrl: "https://callbacks.test",
+      fetch: async () => Response.json({ error: "not_found" }, { status: 404 })
+    })
+
+    await expect(client.resolve("missing", "ok")).rejects.toMatchObject({
+      _tag: "AwakeableHttpClientError",
+      body: { error: "not_found" },
+      status: 404
+    } satisfies Partial<AwakeableHttpClientError>)
+  })
+})
 
 describe("createFluentHttpHandler", () => {
   it("routes awakeable resolve and reject endpoints through external signal bindings", async () => {

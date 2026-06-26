@@ -127,9 +127,7 @@ Implemented substrate:
 
 Remaining gaps:
 
-- public signal delivery client helpers;
-- examples for human approval, webhook callback, and async external task-token
-  patterns.
+- provider-specific external callback examples can be added as adoption demands.
 
 Implemented:
 
@@ -549,13 +547,15 @@ Implementation status as of June 25, 2026:
   `POST /firegrid/awakeables/:id/resolve` and
   `POST /firegrid/awakeables/:id/reject`, and
   `@firegrid/fluent-firegrid-node` wires those routes to the S2 runtime host;
+- `createAwakeableHttpClient` in `@firegrid/fluent-firegrid-http` provides a
+  small external callback client for resolve/reject delivery;
 - rejected awakeables fail with the typed `AwakeableRejected` error;
 - duplicate awakeable delivery returns the runtime's `duplicate` result and
   does not re-run completed handler work;
 - `workflowEvent<T>(name)` and `resolveWorkflowEvent` provide workflow-scoped
   named event ergonomics over the same durable signal substrate;
-- remaining gaps are product examples that show how external systems receive
-  and complete tokens.
+- `docs/guides/external-events.md` shows human approval, webhook callback, and
+  async task-token patterns.
 
 ### Durable Webhook Example
 

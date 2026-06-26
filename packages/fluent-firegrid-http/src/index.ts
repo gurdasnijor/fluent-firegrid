@@ -5,6 +5,7 @@ import {
   type Definition,
   type DefinitionKind,
   type ExternalSignalBinding,
+  type ExternalSignalDelivery,
   FluentFiregridError,
   type HandlerDescriptor,
   type InvocationBinding,
@@ -18,6 +19,54 @@ import type { ConstraintDecoder, ConstraintEncoder } from "effect/Schema"
 
 type AnyDefinition = Definition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>
 type TransportMode = "call" | "send"
+
+export interface AwakeableHttpClientOptions {
+  readonly baseUrl: string | URL
+  readonly fetch?: typeof fetch
+  readonly headers?: HeadersInit | (() => HeadersInit | Promise<HeadersInit>)
+}
+
+export interface AwakeableHttpClient {
+  readonly reject: (id: string, reason: unknown) => Promise<ExternalSignalDelivery>
+  readonly resolve: <T>(id: string, value: T) => Promise<ExternalSignalDelivery>
+}
+
+export class AwakeableHttpClientError extends Error {
+  readonly _tag = "AwakeableHttpClientError"
+  readonly body: unknown
+  readonly status: number
+
+  constructor(options: {
+    readonly body: unknown
+    readonly status: number
+  }) {
+    super(`awakeable HTTP delivery failed with status ${options.status}`)
+    this.body = options.body
+    this.status = options.status
+  }
+}
+
+export const createAwakeableHttpClient = (
+  options: AwakeableHttpClientOptions
+): AwakeableHttpClient => {
+  const fetchImpl = options.fetch ?? fetch
+  const post = async (id: string, action: "reject" | "resolve", body: unknown): Promise<ExternalSignalDelivery> => {
+    const response = await fetchImpl(awakeableUrl(options.baseUrl, id, action), {
+      body: JSON.stringify(body),
+      headers: await awakeableHeaders(options.headers),
+      method: "POST"
+    })
+    const payload = await response.json().catch(() => undefined) as unknown
+    if (!response.ok) {
+      throw new AwakeableHttpClientError({ body: payload, status: response.status })
+    }
+    return payload as ExternalSignalDelivery
+  }
+  return {
+    reject: (id, reason) => post(id, "reject", { reason }),
+    resolve: (id, value) => post(id, "resolve", { value })
+  }
+}
 
 export interface FluentHttpHandlerOptions<Error = unknown> {
   readonly binding: InvocationBinding<Error>
@@ -138,6 +187,31 @@ const parseExternalEventRoute = (url: URL): ExternalEventRoute | undefined => {
   const action = parts[3]
   if (id === undefined || (action !== "resolve" && action !== "reject") || parts.length !== 4) return undefined
   return { action, id }
+}
+
+const awakeableUrl = (
+  baseUrl: string | URL,
+  id: string,
+  action: "reject" | "resolve"
+): URL => {
+  const url = new URL(baseUrl)
+  const basePath = url.pathname.endsWith("/") ? url.pathname.slice(0, -1) : url.pathname
+  url.pathname = `${basePath}/firegrid/awakeables/${encodeURIComponent(id)}/${action}`
+  url.search = ""
+  return url
+}
+
+const awakeableHeaders = async (
+  source: AwakeableHttpClientOptions["headers"]
+): Promise<Headers> => {
+  const headers = new Headers({ "content-type": "application/json" })
+  const resolved = typeof source === "function" ? await source() : source
+  if (resolved !== undefined) {
+    new Headers(resolved).forEach((value, key) => {
+      headers.set(key, value)
+    })
+  }
+  return headers
 }
 
 const parseRoute = (url: URL): RouteMatch | undefined => {
