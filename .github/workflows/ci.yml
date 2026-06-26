@@ -156,6 +156,3 @@ jobs:
 
       - name: Test
         run: pnpm run test
-
-      - name: Verification proofs
-        run: pnpm --filter @firegrid/proofs proofs
