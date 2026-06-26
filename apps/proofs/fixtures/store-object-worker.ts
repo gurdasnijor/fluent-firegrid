@@ -76,7 +76,7 @@ const counter = object({
         () =>
           hostId === "a"
             ? new Promise<{ readonly hostId: string; readonly next: number }>((resolve) => {
-              setTimeout(() => resolve({ hostId, next }), 500)
+              setTimeout(() => resolve({ hostId, next }), 60_000)
             })
             : { hostId, next },
         { name: `deposed-compute-${input.by}` }

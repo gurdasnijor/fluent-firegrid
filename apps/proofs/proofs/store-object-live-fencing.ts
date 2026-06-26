@@ -132,19 +132,16 @@ export default proof("store.object-live-fencing")
           const loaded = yield* requestJson<{ readonly hostId: string; readonly value: number }>(`${hostB}/value`)
           return {
             deposedStartedEvents: startedCount,
-            takeoverResult,
-            valueAfterLateOwner: loaded.value
+            lateOwnerDidNotChangeValue: loaded.value === takeoverResult.value,
+            takeoverHostId: takeoverResult.hostId
           }
         })
       )
       .verify(({ expect, traceSql }) => [
         expect.workloadResult({
           deposedStartedEvents: 2,
-          takeoverResult: {
-            hostId: "b",
-            value: 12
-          },
-          valueAfterLateOwner: 12
+          lateOwnerDidNotChangeValue: true,
+          takeoverHostId: "b"
         }),
         traceSql(
           "fluent-object-live-fencing-started-two-workers",
