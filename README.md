@@ -12,17 +12,10 @@ SDD.
 - `@firegrid/log` — Effect wrapper around the S2 client/substrate.
 - `@firegrid/core` — shared durable workflow contract, primitive types, and
   run-store interfaces.
-- `@firegrid/runtime` — durable workflow runtime, schedule materialization, and
-  in-memory store implementation.
-- `@firegrid/store` — S2-backed workflow execution store plus host
-  recovery/sweep helpers.
 - `@firegrid/fluent` — Restate-like Effect-native authoring surface:
-  definitions, descriptor contracts, clients, durable primitives, and virtual
-  object state authoring.
-- `@firegrid/store` — S2-backed fluent object/state runtime
-  binding.
-- `@firegrid/fluent/http` — framework-neutral HTTP
-  `Request -> Response` transport binding for fluent definitions.
+  definitions, descriptor contracts, clients, durable primitives, virtual
+  object state authoring, runtime driving, S2 adapters, testing helpers, and
+  HTTP transport bindings.
 
 ## Support Packages
 
@@ -41,8 +34,8 @@ pnpm run proofs
 ```
 
 This starts real `s2 lite` and process-host fixtures, then verifies the current
-`@firegrid/log`, store, runtime, and fluent object surfaces from workload results plus
-OTel/chDB trace evidence.
+`@firegrid/log` and `@firegrid/fluent` runtime/object surfaces from workload
+results plus OTel/chDB trace evidence.
 
 ## Cleanup Policy
 

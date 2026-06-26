@@ -60,22 +60,6 @@ module.exports = {
       to: { path: "^packages/(?!core/)[^/]+/" },
     },
     {
-      name: "runtime-compat-only-to-fluent",
-      severity: "error",
-      comment:
-        "@firegrid/runtime is currently a compatibility package and should only re-export from @firegrid/fluent/runtime.",
-      from: { path: "^packages/runtime/src/" },
-      to: { path: "^packages/(?!fluent/|runtime/)[^/]+/" },
-    },
-    {
-      name: "clients-compat-only-to-fluent",
-      severity: "error",
-      comment:
-        "@firegrid/clients is currently a compatibility package and should only re-export from @firegrid/fluent/clients.",
-      from: { path: "^packages/clients/src/" },
-      to: { path: "^packages/(?!fluent/|clients/)[^/]+/" },
-    },
-    {
       name: "log-not-to-product-packages",
       severity: "error",
       comment:
@@ -92,20 +76,12 @@ module.exports = {
       to: { path: "^packages/(?!trace/)[^/]+/" },
     },
     {
-      name: "fluent-not-to-compat-trace-or-apps",
+      name: "fluent-not-to-trace-or-apps",
       severity: "error",
       comment:
-        "@firegrid/fluent is the product package. Runtime and S2 adapters live inside it; keep compatibility packages, trace sinks, and apps out.",
+        "@firegrid/fluent is the product package. Runtime and S2 adapters live inside it; keep trace sinks and apps out.",
       from: { path: "^packages/fluent/src/" },
-      to: { path: "^packages/(?:clients|runtime|store|trace)/|^apps/" },
-    },
-    {
-      name: "store-compat-only-to-fluent",
-      severity: "error",
-      comment:
-        "@firegrid/store is currently a compatibility package and should only re-export from @firegrid/fluent/s2.",
-      from: { path: "^packages/store/src/" },
-      to: { path: "^packages/(?!fluent/|store/)[^/]+/|^apps/" },
+      to: { path: "^packages/trace/|^apps/" },
     },
     {
       name: "proof-runtime-not-to-proof-registration",

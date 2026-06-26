@@ -589,11 +589,11 @@ the match/resolution to the same stream, then redrive from that recorded fact.
 
 ## External Ingress And Webhooks
 
-Webhook ingress is a specialized external producer. The legacy
-`packages/runtime/src/verified-webhook-ingest` path verifies a product-owned HTTP
-request and writes a `VerifiedWebhookFactTable` row. In fluent, the equivalent
-accepted fact is a session-stream state-change event; no side DurableTable is the
-authoritative store.
+Webhook ingress is a specialized external producer. The former legacy runtime's
+verified webhook ingest path verified a product-owned HTTP request and wrote a
+`VerifiedWebhookFactTable` row. In fluent, the equivalent accepted fact is a
+session-stream state-change event; no side DurableTable is the authoritative
+store.
 
 ```text
 product HTTP route / Worker
@@ -712,13 +712,13 @@ implemented. The first load-bearing proofs are:
 | Cancel/interrupt safety | Cancel during a parked wait and interrupt during an active harness turn do not corrupt the session, drop owed native responses, or duplicate side effects on subsequent redrive. |
 | Cross-harness spawn | A parent session running harness A spawns a child session running harness B; the child terminal fact wakes the parent; both adapters resume safely after kill/restart. |
 
-## Difference From `packages/runtime`
+## Difference From The Former Legacy Runtime
 
-The fluent architecture is not a reshaped copy of `packages/runtime`. The main
-difference is durable topology: which facts live on the session stream, and
+The fluent architecture is not a reshaped copy of the former legacy runtime. The
+main difference is durable topology: which facts live on the session stream, and
 which still require side machinery.
 
-| Concern | `packages/runtime` | Fluent architecture |
+| Concern | Former legacy runtime | Fluent architecture |
 |---|---|---|
 | Agent loop ownership | Post-cutover runtime already trends toward a per-event adapter-forwarding shape where the harness owns the loop. | Same principle, made explicit as the package/process contract. |
 | Durable topology | Runtime keeps key coordination durability in workflow tables/context/channel machinery beside the event stream. | Durable Streams session log is the single durable boundary; Layer 1 and Layer 2 are explicit stream facts. |
@@ -737,11 +737,12 @@ reviewable runtime state. Anything that pushes model-loop ownership, UI
 projection schemas, or harness protocol details back into `packages/fluent-runtime`
 is drift toward the old runtime shape.
 
-This does not mean legacy runtime knowledge is useless. `packages/runtime` is not
-the durability architecture reference, but its edge-case inventory is valuable:
-permission timeout behavior, adapter quirks, packaged-agent environment allow
-lists, tool-use modes, streaming tool-call shape drift, and other integration
-lessons should be mined and revalidated against the fluent architecture.
+This does not mean legacy runtime knowledge is useless. The former legacy
+runtime is not the durability architecture reference, but its edge-case inventory
+is valuable: permission timeout behavior, adapter quirks, packaged-agent
+environment allow lists, tool-use modes, streaming tool-call shape drift, and
+other integration lessons should be mined and revalidated against the fluent
+architecture.
 
 ## Import And Dependency Rules
 
@@ -755,9 +756,9 @@ lessons should be mined and revalidated against the fluent architecture.
   implement Firegrid wait/timer/child semantics or write Durable Streams facts.
 - Harness I/O packages may translate protocol traffic into Layer 1 facts, but
   Layer 2 coordination authority stays in fluent-runtime.
-- Legacy `packages/runtime` is not a durability design reference for fluent
-  architecture. It may be read for integration edge cases that must be tested
-  through the fluent harness I/O roles and host.
+- The former legacy runtime is not a durability design reference for fluent
+  architecture. Its old designs may be read for integration edge cases that
+  must be tested through the fluent harness I/O roles and host.
 
 ## Non-Goals
 

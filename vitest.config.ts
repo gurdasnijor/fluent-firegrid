@@ -13,13 +13,10 @@ const alias = [
     replacement: path.resolve(__dirname, "./packages/core/src/statePredicate.ts")
   },
   { find: "@firegrid/core/state", replacement: path.resolve(__dirname, "./packages/core/src/state.ts") },
-  { find: "@firegrid/clients", replacement: path.resolve(__dirname, "./packages/clients/src/index.ts") },
   { find: "@firegrid/core", replacement: path.resolve(__dirname, "./packages/core/src/index.ts") },
   { find: "@firegrid/fluent", replacement: path.resolve(__dirname, "./packages/fluent/src/index.ts") },
   { find: "@firegrid/log", replacement: path.resolve(__dirname, "./packages/log/src/index.ts") },
   { find: "@firegrid/proofs", replacement: path.resolve(__dirname, "./apps/proofs/src/index.ts") },
-  { find: "@firegrid/runtime", replacement: path.resolve(__dirname, "./packages/runtime/src/index.ts") },
-  { find: "@firegrid/store", replacement: path.resolve(__dirname, "./packages/store/src/index.ts") },
   { find: "@firegrid/trace", replacement: path.resolve(__dirname, "./packages/trace/src/index.ts") }
 ]
 
@@ -44,12 +41,9 @@ export default defineConfig({
   test: {
     projects: [
       testProject("acp-process", ["apps/acp-process/test/**/*.test.ts"]),
-      testProject("clients", ["packages/clients/test/**/*.test.ts"], true),
       testProject("core", ["packages/core/test/**/*.test.ts"], true),
       testProject("fluent", ["packages/fluent/test/**/*.test.ts"], true),
       testProject("log", ["packages/log/test/**/*.test.ts"]),
-      testProject("runtime", ["packages/runtime/test/**/*.test.ts"], true),
-      testProject("store", ["packages/store/test/**/*.test.ts"], true),
       testProject("trace", ["packages/trace/test/**/*.test.ts"]),
       testProject("proofs", ["apps/proofs/test/**/*.test.ts"]),
       testProject("example-full-stack-service", ["apps/examples/full-stack-service/test/**/*.test.ts"], true)

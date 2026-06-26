@@ -4,9 +4,9 @@
 
 |   |   |
 | --- | --- |
-| Status | Implemented as package consolidation branch |
+| Status | Implemented; greenfield compatibility shims removed |
 | Date | 2026-06-26 |
-| Package focus | `@firegrid/core`, `@firegrid/runtime`, `@firegrid/clients`, `@firegrid/fluent`, `@firegrid/store`, `@firegrid/log`, `@firegrid/trace` |
+| Package focus | `@firegrid/core`, `@firegrid/fluent`, `@firegrid/log`, `@firegrid/trace` |
 
 ---
 
@@ -26,8 +26,10 @@ Implemented near-term shape:
   non-Fluent consumers; otherwise treat it as an internal S2 substrate module.
 - `@firegrid/trace` can remain separate because it is observability
   infrastructure, not part of the workflow authoring/runtime loop.
-- `@firegrid/runtime`, `@firegrid/clients`, and `@firegrid/store` are
-  compatibility packages that re-export from `@firegrid/fluent` subpaths.
+- `@firegrid/runtime`, `@firegrid/clients`, and `@firegrid/store` were removed
+  instead of kept as compatibility re-exports. This repo is greenfield, and
+  trivial package shims obscure ownership without protecting a real external
+  contract.
 - `@firegrid/core` remains as the shared contract package for now, but should
   be shrunk only after the consolidated Fluent package stabilizes.
 
@@ -96,7 +98,7 @@ Current exports include:
 
 - fluent definitions;
 - descriptor-first `iface` / `implement`;
-- clients re-exported from `@firegrid/clients`;
+- client helpers exported from `@firegrid/fluent` and `@firegrid/fluent/clients`;
 - durable run/sleep/wait primitives;
 - TanStack binding;
 - durable context service;
@@ -120,7 +122,8 @@ Current exports include:
 - S2 fluent definition binding options;
 - `defineS2WorkflowRuntime`;
 - `createS2WorkflowRuntimeHost`;
-- runtime/store types re-exported from `@firegrid/runtime`;
+- runtime/store types now exported from `@firegrid/fluent/runtime` and
+  `@firegrid/fluent/s2`;
 - `LogConflictError`.
 
 This is the clearest boundary problem. A package named `store` now creates
@@ -221,7 +224,7 @@ package is needed.
 
 ### `runtime` Is Both Engine And Contract
 
-`@firegrid/runtime` contains runtime driver behavior, store interfaces,
+The former `@firegrid/runtime` package contained runtime driver behavior, store interfaces,
 schedule helpers, and type exports. It is useful code, but not yet a clean
 package boundary. The runtime is evolving together with Fluent authoring and S2
 hosting, so forcing package separation increases churn.
@@ -287,14 +290,15 @@ This keeps the namespaces clear without forcing separate packages:
 ### Moved `@firegrid/clients` Into `fluent/clients`
 
 The implementation lives under `packages/fluent/src/clients`. The
-`@firegrid/clients` package remains as a compatibility re-export.
+`@firegrid/clients` package was removed. Use `@firegrid/fluent` or
+`@firegrid/fluent/clients`.
 
 ### Moved `@firegrid/runtime` Into `fluent/runtime`
 
 Runtime driver, schedule materializer, runtime types, and in-memory execution
 store now live together under `packages/fluent/src/runtime`.
 
-The `@firegrid/runtime` package remains as a compatibility re-export.
+The `@firegrid/runtime` package was removed. Use `@firegrid/fluent/runtime`.
 
 ### Moved `@firegrid/store` Into `fluent/adapters/s2`
 
@@ -307,7 +311,7 @@ Rename by responsibility:
 - `createS2ObjectRuntimeBinding` -> `createS2ObjectInvocationBinding`
 
 The implementation lives under `packages/fluent/src/adapters/s2`. The
-`@firegrid/store` package remains as a compatibility re-export.
+`@firegrid/store` package was removed. Use `@firegrid/fluent/s2`.
 
 ### Deferred: Shrink `@firegrid/core` Into Internal Domain Modules
 
@@ -332,7 +336,8 @@ There are two reasonable choices:
 2. Mark it internal while Fluent is iterating and expose only
    `@firegrid/fluent/s2`.
 
-Either is better than letting `@firegrid/store` be the public S2 product API.
+Either is better than letting `@firegrid/store` be the public S2 product API,
+so the package has been removed in favor of the `@firegrid/fluent/s2` subpath.
 
 ### Keep `@firegrid/trace` Separate
 
@@ -386,17 +391,17 @@ By this standard:
 
 - `trace` passes.
 - `log` may pass.
-- `clients`, `core`, `runtime`, and `store` do not pass yet.
+- `core` does not pass yet.
+- `clients`, `runtime`, and `store` are no longer packages; they are internal
+  Fluent submodules/subpaths while the API stabilizes.
 
 ## Follow-Up Migration Plan
 
 1. Stop adding new public packages for Fluent workflow concerns.
-2. Keep temporary compatibility packages that re-export from `@firegrid/fluent`
-   while downstream callers are migrated.
+2. Keep `clients`, `runtime`, and `s2` as `@firegrid/fluent` subpaths until a
+   real independent ownership boundary emerges.
 3. Shrink `@firegrid/core` only after the consolidated Fluent internals have
    stabilized.
-4. Delete or mark private the compatibility packages once no first-party code
-   imports them.
 
 ## Specific Store Recommendation
 
