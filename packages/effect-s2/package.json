@@ -1,47 +1,27 @@
 {
   "name": "effect-s2",
   "version": "0.0.0",
-  "description": "Effect-native facade for S2 durable streams.",
+  "description": "Fable-native EffSharp bindings for S2 durable streams.",
   "license": "Apache-2.0",
   "type": "module",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./src/generated/src/Effect.S2/S2.js",
   "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "default": "./src/index.ts"
-    },
-    "./generated": {
-      "types": "./src/generated/index.ts",
-      "default": "./src/generated/index.ts"
-    }
+    ".": "./src/generated/src/Effect.S2/S2.js"
   },
   "files": [
+    "Effect.S2.fsproj",
     "src",
-    "examples",
     "README.md"
   ],
-  "publishConfig": {
-    "access": "public"
-  },
   "scripts": {
-    "build": "tsc",
-    "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
-    "generate:openapi": "openapi-ts -f openapi-ts.config.ts && pnpm --dir ../.. exec dprint fmt 'packages/effect-s2/src/generated/*.ts' && oxlint -f unix --config ../../.oxlintrc.json src/generated",
-    "lint": "oxlint -f unix --config ../../.oxlintrc.json .",
-    "test": "vitest run --root ../.. --project effect-s2",
-    "typecheck": "tsc --noEmit"
+    "build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet tool run fable -- Effect.S2.fsproj -o src/generated --optimize --noCache",
+    "diagnostics": "echo 'effect-s2 diagnostics are covered by dotnet build'",
+    "lint": "echo 'effect-s2 lint is covered by F# compile'",
+    "smoke": "bash ./smoke/import.sh",
+    "test": "pnpm run smoke",
+    "typecheck": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet build Effect.S2.fsproj -v:q"
   },
   "dependencies": {
-    "@s2-dev/streamstore": "0.24.1",
-    "@s2-dev/streamstore-patterns": "2.1.3",
-    "effect": "4.0.0-beta.87"
-  },
-  "devDependencies": {
-    "@effect/platform-node": "4.0.0-beta.87",
-    "@effect/vitest": "4.0.0-beta.87",
-    "@hey-api/openapi-ts": "0.99.0",
-    "typescript": "^5.7.0",
-    "vitest": "^3.2.0"
+    "@s2-dev/streamstore": "0.24.1"
   }
 }

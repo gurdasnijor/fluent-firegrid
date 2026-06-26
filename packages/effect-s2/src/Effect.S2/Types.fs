@@ -5,11 +5,13 @@ namespace Effect
 /// be added without changing the service shape.
 type S2Config =
     { AccessToken: string
+      Endpoint: string option
       RequestTimeoutMillis: int option
       ConnectionTimeoutMillis: int option }
 
     static member Create(accessToken: string) =
         { AccessToken = accessToken
+          Endpoint = None
           RequestTimeoutMillis = None
           ConnectionTimeoutMillis = None }
 

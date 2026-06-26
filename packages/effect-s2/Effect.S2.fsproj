@@ -2,8 +2,8 @@
 
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
-    <AssemblyName>Firegrid.EffectS2.EffSharp</AssemblyName>
-    <RootNamespace>Firegrid.EffectS2.EffSharp</RootNamespace>
+    <AssemblyName>Effect.S2</AssemblyName>
+    <RootNamespace>Effect.S2</RootNamespace>
     <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
     <DefineConstants>$(DefineConstants);FABLE_COMPILER</DefineConstants>
   </PropertyGroup>
@@ -18,7 +18,6 @@
     <Compile Include="src/Effect.S2/Types.fs" />
     <Compile Include="src/Effect.S2/InternalSdk.fs" />
     <Compile Include="src/Effect.S2/S2.fs" />
-    <Compile Include="src/Bridge.fs" />
   </ItemGroup>
 
 </Project>

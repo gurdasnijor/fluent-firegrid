@@ -8,6 +8,8 @@
     "build": "turbo run build",
     "check": "turbo run check --continue --output-logs=errors-only",
     "diagnostics": "turbo run diagnostics --continue --output-logs=errors-only",
+    "fable:build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/.nuget/packages} dotnet build Firegrid.Fable.slnx -v:q && pnpm --filter effect-s2 build && pnpm --filter @firegrid/fluent-firegrid-s2 build",
+    "fable:smoke": "pnpm --filter effect-s2 smoke && pnpm --filter @firegrid/fluent-firegrid-s2 smoke",
     "format": "oxlint --fix && dprint fmt",
     "lint": "oxlint -f unix --report-unused-disable-directives && dprint check",
     "lint:dead": "knip --production --workspace './packages/*' --include files,exports,nsExports,types,nsTypes,enumMembers,namespaceMembers,duplicates --treat-config-hints-as-errors && knip --workspace './packages/*' --include files,exports,nsExports,types,nsTypes,enumMembers,namespaceMembers,duplicates,dependencies,unlisted,unresolved,binaries,catalog --treat-config-hints-as-errors",

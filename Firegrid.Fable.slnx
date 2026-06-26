@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/packages/" />
+  <Folder Name="/packages/effect-s2/">
+    <Project Path="packages/effect-s2/Effect.S2.fsproj" />
+  </Folder>
+  <Folder Name="/packages/fluent-firegrid-s2/">
+    <Project Path="packages/fluent-firegrid-s2/FluentFiregrid.S2.fsproj" />
+  </Folder>
+</Solution>

@@ -75,11 +75,25 @@ module S2 =
         Effect.tryPromiseJS promise toError |> Effect.map map
 
     let private clientOptions (config: S2Config) : obj =
+        let endpoints =
+            config.Endpoint
+            |> Option.map (fun endpoint ->
+                createObj
+                    [ "account" ==> endpoint
+                      "basin" ==> endpoint ])
+
         [ Some("accessToken" ==> config.AccessToken)
+          boxOption "endpoints" endpoints
           boxOption "requestTimeoutMillis" config.RequestTimeoutMillis
           boxOption "connectionTimeoutMillis" config.ConnectionTimeoutMillis ]
         |> List.choose id
         |> createObj
+
+    let config (accessToken: string) : S2Config = S2Config.Create accessToken
+
+    let configWithEndpoint (accessToken: string) (endpoint: string) : S2Config =
+        { S2Config.Create accessToken with
+            Endpoint = Some endpoint }
 
     let make (config: S2Config) : Effect<S2Client, S2Error, 'R> =
         Effect.sync (fun () -> { Raw = S2Sdk.client (clientOptions config) })
@@ -87,6 +101,8 @@ module S2 =
     let layer (config: S2Config) : Layer<S2Error, 'RIn> = Layer.effect tag (make config)
 
     let service<'E> : Effect<S2Client, 'E, Context> = Effect.service tag
+
+    let streamRef (basin: string) (stream: string) : S2StreamRef = { Basin = basin; Stream = stream }
 
     let private withClient (f: S2Client -> Effect<'A, S2Error, Context>) : Effect<'A, S2Error, Context> =
         Effect.service tag |> Effect.flatMap f
@@ -328,12 +344,45 @@ module S2 =
                 let stream = streamHandle target client
                 tryPromise (fun () -> S2Sdk.checkTail stream S2Sdk.undefinedObj) tailResponse)
 
+        let tail (target: S2StreamRef) : Effect<S2StreamPosition, S2Error, Context> =
+            checkTail target |> Effect.map (fun response -> response.Tail)
+
         let append (request: S2AppendRequest) : Effect<S2AppendAck, S2Error, Context> =
             withClient (fun client ->
                 let stream = streamHandle request.Target client
                 let input = appendInput request
 
                 tryPromise (fun () -> S2Sdk.append stream input (requestOptions request.RequestOptions)) appendAck)
+
+        let appendRecords
+            (target: S2StreamRef)
+            (records: S2AppendRecord list)
+            (options: S2AppendOptions option)
+            : Effect<S2AppendAck, S2Error, Context> =
+            append
+                { Target = target
+                  Records = records
+                  Options = options
+                  RequestOptions = None }
+
+        let appendString
+            (target: S2StreamRef)
+            (body: string)
+            (options: S2AppendOptions option)
+            : Effect<S2AppendAck, S2Error, Context> =
+            appendRecords target [ AppendRecord.string body ] options
+
+        let appendJsonString
+            (target: S2StreamRef)
+            (body: string)
+            (matchSeqNum: float option)
+            : Effect<S2AppendAck, S2Error, Context> =
+            appendString
+                target
+                body
+                (Some
+                    { S2AppendOptions.Empty with
+                        MatchSeqNum = matchSeqNum })
 
         let read (request: S2ReadRequest) : Effect<S2ReadBatch, S2Error, Context> =
             withClient (fun client ->
@@ -342,6 +391,20 @@ module S2 =
                 let options = readOptions request
 
                 tryPromise (fun () -> S2Sdk.read stream input options) (readBatch request.Format))
+
+        let readStrings
+            (target: S2StreamRef)
+            (start: S2ReadStart option)
+            (stop: S2ReadStop option)
+            : Effect<S2ReadBatch, S2Error, Context> =
+            read
+                { Target = target
+                  Start = start
+                  Clamp = None
+                  Stop = stop
+                  IgnoreCommandRecords = None
+                  Format = ReadString
+                  RequestOptions = None }
 
         let readSession (request: S2ReadRequest) : Effect.Stream<S2ReadRecord, S2Error, Context> =
             Effect.Stream.unwrap (
