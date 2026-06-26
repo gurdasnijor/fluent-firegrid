@@ -63,10 +63,13 @@ Firegrid has the runtime pieces:
 - durable handler execution over S2;
 - typed object sends and object state;
 - transport-mounted webhook routes with idempotency-key and verification hooks.
+- a Stripe-like webhook example, durable webhook guide, and Node binding smoke
+  tests.
 
 Remaining gaps:
 
-- provider-specific examples for common webhook senders.
+- no runtime surface gap currently tracked; add more provider-specific examples
+  as adoption demands.
 
 ### Service Communication
 
@@ -90,12 +93,16 @@ Implemented:
 
 - `sleep`;
 - `sleepUntil`;
+- delayed send for objects, services, and workflows on the S2 binding;
+- recurring workflow schedules;
 - S2 persisted timer/signal substrate and host sweeps;
-- proof coverage for timer/signal wakeup paths.
+- proof coverage for timer/signal wakeup paths;
+- durable timer guide covering sleep, delayed send, and recurring schedules.
 
 Remaining gaps:
 
-- provider-specific schedule examples can be added as adoption demands.
+- no runtime surface gap currently tracked; add provider-specific schedule
+  examples as adoption demands.
 
 ### Durable Table Waits
 
@@ -115,26 +122,25 @@ keeping the predicate portable and inspectable.
 
 ### External Events
 
-This is now mostly an ergonomics and examples gap above the durable signal
-substrate.
+This is now implemented above the durable signal substrate.
 
-Implemented substrate:
+Implemented:
 
 - `waitForSignal` inside handlers;
 - lower TanStack signal delivery APIs;
 - S2-backed signal/timer persistence.
-
-Remaining gaps:
-
-- provider-specific external callback examples can be added as adoption demands.
-
-Implemented:
-
 - `awakeable<T>()`;
 - `resolveAwakeable` / `rejectAwakeable`;
 - HTTP resolve/reject endpoints for external systems;
 - workflow-scoped durable event helpers;
 - rejection/terminal-error semantics.
+- external-events guide covering human approval, webhook callback, and async
+  task-token patterns.
+
+Remaining gaps:
+
+- no runtime surface gap currently tracked; add provider-specific callback
+  examples as adoption demands.
 
 ## Target API Shape
 
