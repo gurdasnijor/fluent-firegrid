@@ -14,20 +14,26 @@ strict digraph "dependency-cruiser output"{
     "packages/core/src/index.ts" -> "packages/core/src/engine/handle-webhook.ts" [arrowhead="inv"]
     "packages/core/src/index.ts" -> "packages/core/src/engine/run-workflow.ts" [arrowhead="inv"]
     "packages/core/src/index.ts" -> "packages/core/src/error.ts" [arrowhead="inv"]
+    "packages/core/src/index.ts" -> "packages/core/src/invocation.ts" [arrowhead="inv"]
     "packages/core/src/index.ts" -> "packages/core/src/middleware/create-middleware.ts" [arrowhead="inv"]
     "packages/core/src/index.ts" -> "packages/core/src/registry/select-version.ts" [arrowhead="inv"]
     "packages/core/src/index.ts" -> "packages/core/src/result.ts" [arrowhead="inv"]
     "packages/core/src/index.ts" -> "packages/core/src/run-store/in-memory.ts" [arrowhead="inv"]
     "packages/core/src/index.ts" -> "packages/core/src/server/index.ts" [arrowhead="inv"]
+    "packages/core/src/index.ts" -> "packages/core/src/state.ts" [arrowhead="inv"]
     "packages/core/src/index.ts" -> "packages/core/src/types.ts" [arrowhead="inv"]
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/core" {label="core" subgraph "cluster_packages/core/src" {label="src" "packages/core/src/invocation.ts" [label=<invocation.ts> tooltip="invocation.ts" URL="packages/core/src/invocation.ts" fillcolor="#ddfeff"] } } }
+    "packages/core/src/invocation.ts" -> "packages/core/src/error.ts"
     subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/core" {label="core" subgraph "cluster_packages/core/src" {label="src" subgraph "cluster_packages/core/src/middleware" {label="middleware" "packages/core/src/middleware/create-middleware.ts" [label=<create-middleware.ts> tooltip="create-middleware.ts" URL="packages/core/src/middleware/create-middleware.ts" fillcolor="#ddfeff"] } } } }
     subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/core" {label="core" subgraph "cluster_packages/core/src" {label="src" subgraph "cluster_packages/core/src/registry" {label="registry" "packages/core/src/registry/select-version.ts" [label=<select-version.ts> tooltip="select-version.ts" URL="packages/core/src/registry/select-version.ts" fillcolor="#ddfeff"] } } } }
     subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/core" {label="core" subgraph "cluster_packages/core/src" {label="src" "packages/core/src/result.ts" [label=<result.ts> tooltip="result.ts" URL="packages/core/src/result.ts" fillcolor="#ddfeff"] } } }
     subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/core" {label="core" subgraph "cluster_packages/core/src" {label="src" subgraph "cluster_packages/core/src/run-store" {label="run-store" "packages/core/src/run-store/in-memory.ts" [label=<in-memory.ts> tooltip="in-memory.ts" URL="packages/core/src/run-store/in-memory.ts" fillcolor="#ddfeff"] } } } }
     "packages/core/src/run-store/in-memory.ts" -> "packages/core/src/types.ts"
     subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/core" {label="core" subgraph "cluster_packages/core/src" {label="src" subgraph "cluster_packages/core/src/server" {label="server" "packages/core/src/server/index.ts" [label=<index.ts> tooltip="index.ts" URL="packages/core/src/server/index.ts" fillcolor="#ddfeff"] } } } }
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/core" {label="core" subgraph "cluster_packages/core/src" {label="src" "packages/core/src/state.ts" [label=<state.ts> tooltip="state.ts" URL="packages/core/src/state.ts" fillcolor="#ddfeff"] } } }
     subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/core" {label="core" subgraph "cluster_packages/core/src" {label="src" "packages/core/src/types.ts" [label=<types.ts> tooltip="types.ts" URL="packages/core/src/types.ts" fillcolor="#ddfeff"] } } }
     subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/fluent" {label="fluent" subgraph "cluster_packages/fluent/src" {label="src" "packages/fluent/src/bindTanStack.ts" [label=<bindTanStack.ts> tooltip="bindTanStack.ts" URL="packages/fluent/src/bindTanStack.ts" fillcolor="#ddfeff"] } } }
+    "packages/fluent/src/bindTanStack.ts" -> "packages/core/src/index.ts"
     "packages/fluent/src/bindTanStack.ts" -> "packages/runtime/src/index.ts"
     subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/fluent" {label="fluent" subgraph "cluster_packages/fluent/src" {label="src" "packages/fluent/src/definitions.ts" [label=<definitions.ts> tooltip="definitions.ts" URL="packages/fluent/src/definitions.ts" fillcolor="#ddfeff"] } } }
     "packages/fluent/src/definitions.ts" -> "packages/runtime/src/index.ts"

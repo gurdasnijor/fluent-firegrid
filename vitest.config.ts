@@ -4,6 +4,12 @@ import { defineConfig, defineProject } from "vitest/config"
 const alias = [
   { find: "@firegrid/fluent/http", replacement: path.resolve(__dirname, "./packages/fluent/src/http.ts") },
   { find: "@firegrid/fluent/state", replacement: path.resolve(__dirname, "./packages/fluent/src/state.ts") },
+  {
+    find: "@firegrid/core/statePredicate",
+    replacement: path.resolve(__dirname, "./packages/core/src/statePredicate.ts")
+  },
+  { find: "@firegrid/core/state", replacement: path.resolve(__dirname, "./packages/core/src/state.ts") },
+  { find: "@firegrid/clients", replacement: path.resolve(__dirname, "./packages/clients/src/index.ts") },
   { find: "@firegrid/core", replacement: path.resolve(__dirname, "./packages/core/src/index.ts") },
   { find: "@firegrid/fluent", replacement: path.resolve(__dirname, "./packages/fluent/src/index.ts") },
   { find: "@firegrid/log", replacement: path.resolve(__dirname, "./packages/log/src/index.ts") },
@@ -34,6 +40,7 @@ export default defineConfig({
   test: {
     projects: [
       testProject("acp-process", ["apps/acp-process/test/**/*.test.ts"]),
+      testProject("clients", ["packages/clients/test/**/*.test.ts"], true),
       testProject("core", ["packages/core/test/**/*.test.ts"], true),
       testProject("fluent", ["packages/fluent/test/**/*.test.ts"], true),
       testProject("log", ["packages/log/test/**/*.test.ts"]),

@@ -1,27 +1,18 @@
 {
   "modules": [
     {
-      "source": "packages/core/src/define/define-workflow.ts",
-      "dependencies": [],
-      "dependents": [
-        "packages/core/src/index.ts"
-      ],
-      "orphan": false,
-      "valid": true
-    },
-    {
-      "source": "packages/core/src/engine/handle-webhook.ts",
+      "source": "packages/clients/src/index.ts",
       "dependencies": [
         {
-          "module": "./run-workflow",
+          "module": "@firegrid/core",
           "moduleSystem": "es6",
           "dynamic": false,
           "exoticallyRequired": false,
           "dependencyTypes": [
-            "local",
+            "undetermined",
             "import"
           ],
-          "resolved": "packages/core/src/engine/run-workflow.ts",
+          "resolved": "packages/core/src/index.ts",
           "coreModule": false,
           "followable": true,
           "couldNotResolve": false,
@@ -31,81 +22,7 @@
         }
       ],
       "dependents": [
-        "packages/core/src/index.ts"
-      ],
-      "orphan": false,
-      "valid": true
-    },
-    {
-      "source": "packages/core/src/engine/run-workflow.ts",
-      "dependencies": [
-        {
-          "module": "../types",
-          "moduleSystem": "es6",
-          "dynamic": false,
-          "exoticallyRequired": false,
-          "dependencyTypes": [
-            "local",
-            "import"
-          ],
-          "resolved": "packages/core/src/types.ts",
-          "coreModule": false,
-          "followable": true,
-          "couldNotResolve": false,
-          "matchesDoNotFollow": false,
-          "circular": false,
-          "valid": true
-        },
-        {
-          "module": "./state-diff",
-          "moduleSystem": "es6",
-          "dynamic": false,
-          "exoticallyRequired": false,
-          "dependencyTypes": [
-            "local",
-            "import"
-          ],
-          "resolved": "packages/core/src/engine/state-diff.ts",
-          "coreModule": false,
-          "followable": true,
-          "couldNotResolve": false,
-          "matchesDoNotFollow": false,
-          "circular": false,
-          "valid": true
-        }
-      ],
-      "dependents": [
-        "packages/core/src/engine/handle-webhook.ts",
-        "packages/core/src/index.ts"
-      ],
-      "orphan": false,
-      "valid": true
-    },
-    {
-      "source": "packages/core/src/types.ts",
-      "dependencies": [],
-      "dependents": [
-        "packages/core/src/engine/run-workflow.ts",
-        "packages/core/src/index.ts",
-        "packages/core/src/run-store/in-memory.ts"
-      ],
-      "orphan": false,
-      "valid": true
-    },
-    {
-      "source": "packages/core/src/engine/state-diff.ts",
-      "dependencies": [],
-      "dependents": [
-        "packages/core/src/engine/run-workflow.ts"
-      ],
-      "orphan": false,
-      "valid": true
-    },
-    {
-      "source": "packages/core/src/error.ts",
-      "dependencies": [],
-      "dependents": [
-        "packages/core/src/index.ts"
+        "packages/fluent/src/clients.ts"
       ],
       "orphan": false,
       "valid": true
@@ -174,6 +91,23 @@
             "export"
           ],
           "resolved": "packages/core/src/error.ts",
+          "coreModule": false,
+          "followable": true,
+          "couldNotResolve": false,
+          "matchesDoNotFollow": false,
+          "circular": false,
+          "valid": true
+        },
+        {
+          "module": "./invocation.js",
+          "moduleSystem": "es6",
+          "dynamic": false,
+          "exoticallyRequired": false,
+          "dependencyTypes": [
+            "local",
+            "export"
+          ],
+          "resolved": "packages/core/src/invocation.ts",
           "coreModule": false,
           "followable": true,
           "couldNotResolve": false,
@@ -267,6 +201,23 @@
           "valid": true
         },
         {
+          "module": "./state.js",
+          "moduleSystem": "es6",
+          "dynamic": false,
+          "exoticallyRequired": false,
+          "dependencyTypes": [
+            "local",
+            "export"
+          ],
+          "resolved": "packages/core/src/state.ts",
+          "coreModule": false,
+          "followable": true,
+          "couldNotResolve": false,
+          "matchesDoNotFollow": false,
+          "circular": false,
+          "valid": true
+        },
+        {
           "module": "./types",
           "moduleSystem": "es6",
           "dynamic": false,
@@ -285,10 +236,153 @@
         }
       ],
       "dependents": [
+        "packages/clients/src/index.ts",
+        "packages/fluent/src/bindTanStack.ts",
         "packages/fluent/src/error.ts",
         "packages/runtime/src/index.ts",
         "packages/runtime/src/runtime-driver.ts",
-        "packages/runtime/src/in-memory-store.ts"
+        "packages/runtime/src/in-memory-store.ts",
+        "packages/store/src/S2ObjectRuntimeBinding.ts",
+        "packages/store/src/S2ObjectStateBackend.ts"
+      ],
+      "orphan": false,
+      "valid": true
+    },
+    {
+      "source": "packages/core/src/define/define-workflow.ts",
+      "dependencies": [],
+      "dependents": [
+        "packages/core/src/index.ts"
+      ],
+      "orphan": false,
+      "valid": true
+    },
+    {
+      "source": "packages/core/src/engine/handle-webhook.ts",
+      "dependencies": [
+        {
+          "module": "./run-workflow",
+          "moduleSystem": "es6",
+          "dynamic": false,
+          "exoticallyRequired": false,
+          "dependencyTypes": [
+            "local",
+            "import"
+          ],
+          "resolved": "packages/core/src/engine/run-workflow.ts",
+          "coreModule": false,
+          "followable": true,
+          "couldNotResolve": false,
+          "matchesDoNotFollow": false,
+          "circular": false,
+          "valid": true
+        }
+      ],
+      "dependents": [
+        "packages/core/src/index.ts"
+      ],
+      "orphan": false,
+      "valid": true
+    },
+    {
+      "source": "packages/core/src/engine/run-workflow.ts",
+      "dependencies": [
+        {
+          "module": "../types",
+          "moduleSystem": "es6",
+          "dynamic": false,
+          "exoticallyRequired": false,
+          "dependencyTypes": [
+            "local",
+            "import"
+          ],
+          "resolved": "packages/core/src/types.ts",
+          "coreModule": false,
+          "followable": true,
+          "couldNotResolve": false,
+          "matchesDoNotFollow": false,
+          "circular": false,
+          "valid": true
+        },
+        {
+          "module": "./state-diff",
+          "moduleSystem": "es6",
+          "dynamic": false,
+          "exoticallyRequired": false,
+          "dependencyTypes": [
+            "local",
+            "import"
+          ],
+          "resolved": "packages/core/src/engine/state-diff.ts",
+          "coreModule": false,
+          "followable": true,
+          "couldNotResolve": false,
+          "matchesDoNotFollow": false,
+          "circular": false,
+          "valid": true
+        }
+      ],
+      "dependents": [
+        "packages/core/src/index.ts",
+        "packages/core/src/engine/handle-webhook.ts"
+      ],
+      "orphan": false,
+      "valid": true
+    },
+    {
+      "source": "packages/core/src/types.ts",
+      "dependencies": [],
+      "dependents": [
+        "packages/core/src/index.ts",
+        "packages/core/src/engine/run-workflow.ts",
+        "packages/core/src/run-store/in-memory.ts"
+      ],
+      "orphan": false,
+      "valid": true
+    },
+    {
+      "source": "packages/core/src/engine/state-diff.ts",
+      "dependencies": [],
+      "dependents": [
+        "packages/core/src/engine/run-workflow.ts"
+      ],
+      "orphan": false,
+      "valid": true
+    },
+    {
+      "source": "packages/core/src/error.ts",
+      "dependencies": [],
+      "dependents": [
+        "packages/core/src/index.ts",
+        "packages/core/src/invocation.ts",
+        "packages/core/src/statePredicate.ts"
+      ],
+      "orphan": false,
+      "valid": true
+    },
+    {
+      "source": "packages/core/src/invocation.ts",
+      "dependencies": [
+        {
+          "module": "./error.js",
+          "moduleSystem": "es6",
+          "dynamic": false,
+          "exoticallyRequired": false,
+          "dependencyTypes": [
+            "local",
+            "import"
+          ],
+          "resolved": "packages/core/src/error.ts",
+          "coreModule": false,
+          "followable": true,
+          "couldNotResolve": false,
+          "matchesDoNotFollow": false,
+          "circular": false,
+          "valid": true
+        }
+      ],
+      "dependents": [
+        "packages/core/src/index.ts"
       ],
       "orphan": false,
       "valid": true
@@ -384,6 +478,62 @@
       "valid": true
     },
     {
+      "source": "packages/core/src/state.ts",
+      "dependencies": [
+        {
+          "module": "./statePredicate.js",
+          "moduleSystem": "es6",
+          "dynamic": false,
+          "exoticallyRequired": false,
+          "dependencyTypes": [
+            "local",
+            "export"
+          ],
+          "resolved": "packages/core/src/statePredicate.ts",
+          "coreModule": false,
+          "followable": true,
+          "couldNotResolve": false,
+          "matchesDoNotFollow": false,
+          "circular": false,
+          "valid": true
+        }
+      ],
+      "dependents": [
+        "packages/core/src/index.ts",
+        "packages/fluent/src/state.ts"
+      ],
+      "orphan": false,
+      "valid": true
+    },
+    {
+      "source": "packages/core/src/statePredicate.ts",
+      "dependencies": [
+        {
+          "module": "./error.js",
+          "moduleSystem": "es6",
+          "dynamic": false,
+          "exoticallyRequired": false,
+          "dependencyTypes": [
+            "local",
+            "import"
+          ],
+          "resolved": "packages/core/src/error.ts",
+          "coreModule": false,
+          "followable": true,
+          "couldNotResolve": false,
+          "matchesDoNotFollow": false,
+          "circular": false,
+          "valid": true
+        }
+      ],
+      "dependents": [
+        "packages/core/src/state.ts",
+        "packages/fluent/src/statePredicate.ts"
+      ],
+      "orphan": false,
+      "valid": true
+    },
+    {
       "source": "packages/fluent/src/bindTanStack.ts",
       "dependencies": [
         {
@@ -413,6 +563,23 @@
             "import"
           ],
           "resolved": "packages/fluent/src/error.ts",
+          "coreModule": false,
+          "followable": true,
+          "couldNotResolve": false,
+          "matchesDoNotFollow": false,
+          "circular": false,
+          "valid": true
+        },
+        {
+          "module": "@firegrid/core",
+          "moduleSystem": "es6",
+          "dynamic": false,
+          "exoticallyRequired": false,
+          "dependencyTypes": [
+            "undetermined",
+            "import"
+          ],
+          "resolved": "packages/core/src/index.ts",
           "coreModule": false,
           "followable": true,
           "couldNotResolve": false,
@@ -467,7 +634,6 @@
       ],
       "dependents": [
         "packages/fluent/src/bindTanStack.ts",
-        "packages/fluent/src/clients.ts",
         "packages/fluent/src/externalEvents.ts",
         "packages/fluent/src/index.ts"
       ],
@@ -501,8 +667,7 @@
         "packages/fluent/src/clients.ts",
         "packages/fluent/src/externalEvents.ts",
         "packages/fluent/src/index.ts",
-        "packages/fluent/src/state.ts",
-        "packages/fluent/src/statePredicate.ts"
+        "packages/fluent/src/state.ts"
       ],
       "orphan": false,
       "valid": true
@@ -744,23 +909,6 @@
       "source": "packages/fluent/src/clients.ts",
       "dependencies": [
         {
-          "module": "./context.js",
-          "moduleSystem": "es6",
-          "dynamic": false,
-          "exoticallyRequired": false,
-          "dependencyTypes": [
-            "local",
-            "import"
-          ],
-          "resolved": "packages/fluent/src/context.ts",
-          "coreModule": false,
-          "followable": true,
-          "couldNotResolve": false,
-          "matchesDoNotFollow": false,
-          "circular": false,
-          "valid": true
-        },
-        {
           "module": "./error.js",
           "moduleSystem": "es6",
           "dynamic": false,
@@ -770,6 +918,23 @@
             "import"
           ],
           "resolved": "packages/fluent/src/error.ts",
+          "coreModule": false,
+          "followable": true,
+          "couldNotResolve": false,
+          "matchesDoNotFollow": false,
+          "circular": false,
+          "valid": true
+        },
+        {
+          "module": "@firegrid/clients",
+          "moduleSystem": "es6",
+          "dynamic": false,
+          "exoticallyRequired": false,
+          "dependencyTypes": [
+            "undetermined",
+            "import"
+          ],
+          "resolved": "packages/clients/src/index.ts",
           "coreModule": false,
           "followable": true,
           "couldNotResolve": false,
@@ -1065,9 +1230,7 @@
           "valid": true
         }
       ],
-      "dependents": [
-        "packages/store/src/S2ObjectRuntimeBinding.ts"
-      ],
+      "dependents": [],
       "orphan": false,
       "valid": true
     },
@@ -1143,11 +1306,27 @@
           "matchesDoNotFollow": false,
           "circular": false,
           "valid": true
+        },
+        {
+          "module": "@firegrid/core/state",
+          "moduleSystem": "es6",
+          "dynamic": false,
+          "exoticallyRequired": false,
+          "dependencyTypes": [
+            "undetermined",
+            "import"
+          ],
+          "resolved": "packages/core/src/state.ts",
+          "coreModule": false,
+          "followable": true,
+          "couldNotResolve": false,
+          "matchesDoNotFollow": false,
+          "circular": false,
+          "valid": true
         }
       ],
       "dependents": [
-        "packages/fluent/src/index.ts",
-        "packages/store/src/S2ObjectStateBackend.ts"
+        "packages/fluent/src/index.ts"
       ],
       "orphan": false,
       "valid": true
@@ -1156,15 +1335,15 @@
       "source": "packages/fluent/src/statePredicate.ts",
       "dependencies": [
         {
-          "module": "./error.js",
+          "module": "@firegrid/core/statePredicate",
           "moduleSystem": "es6",
           "dynamic": false,
           "exoticallyRequired": false,
           "dependencyTypes": [
-            "local",
-            "import"
+            "undetermined",
+            "export"
           ],
-          "resolved": "packages/fluent/src/error.ts",
+          "resolved": "packages/core/src/statePredicate.ts",
           "coreModule": false,
           "followable": true,
           "couldNotResolve": false,
@@ -1324,7 +1503,7 @@
           "valid": true
         },
         {
-          "module": "@firegrid/fluent",
+          "module": "@firegrid/core",
           "moduleSystem": "es6",
           "dynamic": false,
           "exoticallyRequired": false,
@@ -1332,7 +1511,7 @@
             "undetermined",
             "import"
           ],
-          "resolved": "packages/fluent/src/index.ts",
+          "resolved": "packages/core/src/index.ts",
           "coreModule": false,
           "followable": true,
           "couldNotResolve": false,
@@ -1368,7 +1547,7 @@
       "source": "packages/store/src/S2ObjectStateBackend.ts",
       "dependencies": [
         {
-          "module": "@firegrid/fluent/state",
+          "module": "@firegrid/core",
           "moduleSystem": "es6",
           "dynamic": false,
           "exoticallyRequired": false,
@@ -1376,7 +1555,7 @@
             "undetermined",
             "import"
           ],
-          "resolved": "packages/fluent/src/state.ts",
+          "resolved": "packages/core/src/index.ts",
           "coreModule": false,
           "followable": true,
           "couldNotResolve": false,
@@ -1668,10 +1847,10 @@
     "warn": 0,
     "info": 0,
     "ignore": 0,
-    "totalCruised": 47,
-    "totalDependenciesCruised": 70,
+    "totalCruised": 51,
+    "totalDependenciesCruised": 78,
     "optionsUsed": {
-      "baseDir": "/Users/gnijor/gurdasnijor/fluent-firegrid-restructure",
+      "baseDir": "/Users/gnijor/gurdasnijor/fluent-firegrid",
       "combinedDependencies": false,
       "detectJSDocImports": false,
       "detectProcessBuiltinModuleCalls": false,
@@ -1792,6 +1971,18 @@
           "scope": "module"
         },
         {
+          "name": "clients-only-to-core",
+          "severity": "error",
+          "comment": "@firegrid/clients is a pure invocation-client package. It may depend on @firegrid/core, but not fluent authoring, runtime, stores, substrates, trace, or apps.",
+          "from": {
+            "path": "^packages/clients/src/"
+          },
+          "to": {
+            "path": "^packages/(?!core/|clients/)[^/]+/"
+          },
+          "scope": "module"
+        },
+        {
           "name": "log-not-to-product-packages",
           "severity": "error",
           "comment": "@firegrid/log is the raw S2 log substrate and must not import product/runtime packages.",
@@ -1830,12 +2021,12 @@
         {
           "name": "store-not-to-trace-or-apps",
           "severity": "error",
-          "comment": "@firegrid/store is the production S2-backed store/binding. It may use core/runtime/fluent contracts and @firegrid/log, but must not import trace sinks or apps.",
+          "comment": "@firegrid/store is the production S2-backed store/binding. It may use core/runtime contracts and @firegrid/log, but must not import fluent authoring, clients, trace sinks, or apps.",
           "from": {
             "path": "^packages/store/src/"
           },
           "to": {
-            "path": "^packages/trace/|^apps/"
+            "path": "^packages/(?:fluent|clients|trace)/|^apps/"
           },
           "scope": "module"
         },

@@ -68,6 +68,14 @@ module.exports = {
       to: { path: "^packages/(?!core/|runtime/)[^/]+/" },
     },
     {
+      name: "clients-only-to-core",
+      severity: "error",
+      comment:
+        "@firegrid/clients is a pure invocation-client package. It may depend on @firegrid/core, but not fluent authoring, runtime, stores, substrates, trace, or apps.",
+      from: { path: "^packages/clients/src/" },
+      to: { path: "^packages/(?!core/|clients/)[^/]+/" },
+    },
+    {
       name: "log-not-to-product-packages",
       severity: "error",
       comment:
@@ -95,9 +103,9 @@ module.exports = {
       name: "store-not-to-trace-or-apps",
       severity: "error",
       comment:
-        "@firegrid/store is the production S2-backed store/binding. It may use core/runtime/fluent contracts and @firegrid/log, but must not import trace sinks or apps.",
+        "@firegrid/store is the production S2-backed store/binding. It may use core/runtime contracts and @firegrid/log, but must not import fluent authoring, clients, trace sinks, or apps.",
       from: { path: "^packages/store/src/" },
-      to: { path: "^packages/trace/|^apps/" },
+      to: { path: "^packages/(?:fluent|clients|trace)/|^apps/" },
     },
     {
       name: "proof-runtime-not-to-proof-registration",

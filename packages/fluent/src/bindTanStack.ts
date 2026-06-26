@@ -1,10 +1,15 @@
 /* oxlint-disable effect/restricted-syntax -- This module bridges fluent Effect handlers into TanStack's Promise-based workflow handler boundary. */
+import {
+  createTanStackRuntimeBinding,
+  type FluentRuntimeHost,
+  type FluentWorkflowInput,
+  type InvocationBinding
+} from "@firegrid/core"
 import { createWorkflow } from "@firegrid/runtime"
-import type { WorkflowRegistrationMap, WorkflowRuntimeRunResult, WorkflowScheduleDefinition } from "@firegrid/runtime"
+import type { WorkflowRegistrationMap, WorkflowScheduleDefinition } from "@firegrid/runtime"
 import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 
-import type { CallRequest, InvocationBinding } from "./clients.ts"
 import {
   type ExternalSignalBinding,
   fluentContextFromTanStack,
@@ -20,11 +25,8 @@ import type {
 } from "./definitions.ts"
 import { FluentFiregridError } from "./error.ts"
 
-export interface FluentWorkflowInput {
-  readonly input: unknown
-  readonly key?: string
-  readonly stateContext?: unknown
-}
+export { createTanStackRuntimeBinding }
+export type { FluentRuntimeHost, FluentWorkflowInput }
 
 export interface FluentDefinitionBindingContext {
   readonly definition: Definition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>
@@ -46,9 +48,6 @@ export const workflowIdForHandler = (
   definition: { readonly _kind: DefinitionKind; readonly name: string },
   handler: string
 ): string => `${definition._kind}:${definition.name}:${handler}`
-
-const workflowIdForRequest = (request: Pick<CallRequest, "handler" | "kind" | "name">): string =>
-  `${request.kind}:${request.name}:${request.handler}`
 
 export const bindFluentDefinitions = (
   definitions: ReadonlyArray<Definition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>>,
@@ -176,29 +175,6 @@ const decodeHandlerOutput = (
         )
       )
 
-export interface FluentRuntimeHost {
-  readonly runtime: {
-    readonly deliverSignal?: (args: {
-      readonly runId: string
-      readonly signalId: string
-      readonly stepId?: string
-      readonly name: string
-      readonly payload: unknown
-      readonly leaseMs?: number
-      readonly leaseOwner?: string
-      readonly now?: number
-    }) => Promise<WorkflowRuntimeRunResult>
-    readonly startRun: (args: {
-      readonly workflowId: string
-      readonly runId: string
-      readonly input: unknown
-      readonly leaseMs?: number
-      readonly leaseOwner?: string
-      readonly now?: number
-    }) => Promise<WorkflowRuntimeRunResult>
-  }
-}
-
 export const createTanStackExternalSignalBinding = (
   host: FluentRuntimeHost,
   options: { readonly now?: () => number } = {}
@@ -212,7 +188,6 @@ export const createTanStackExternalSignalBinding = (
           try: () =>
             host.runtime.deliverSignal!({
               name: request.name,
-              ...(request.metadata === undefined ? {} : { meta: request.metadata }),
               now: now(),
               payload: request.payload,
               runId: request.runId,
@@ -227,60 +202,5 @@ export const createTanStackExternalSignalBinding = (
             ...(result.workflowId === undefined ? {} : { workflowId: result.workflowId })
           }))
         )
-  }
-}
-
-export const createTanStackRuntimeBinding = (
-  host: FluentRuntimeHost,
-  options: { readonly now?: () => number } = {}
-): InvocationBinding<FluentFiregridError> => {
-  let nextRun = 0
-  const now = options.now ?? Date.now
-  const runIdFor = (request: CallRequest): string =>
-    request.runId ?? `${request.kind}:${request.name}:${request.handler}:${nextRun++}`
-
-  const start = (request: CallRequest): Effect.Effect<WorkflowRuntimeRunResult, FluentFiregridError> =>
-    request.delayMs !== undefined && request.delayMs > 0
-      ? Effect.fail(
-        new FluentFiregridError({
-          message: "delayed fluent invocations require a binding with durable delayed-send support"
-        })
-      )
-      : Effect.tryPromise({
-        try: () =>
-          host.runtime.startRun({
-            input: {
-              input: request.input,
-              ...(request.key === undefined ? {} : { key: request.key })
-            } satisfies FluentWorkflowInput,
-            now: now(),
-            runId: runIdFor(request),
-            workflowId: workflowIdForRequest(request)
-          }),
-        catch: (cause) => new FluentFiregridError({ cause, message: "fluent TanStack binding failed to start run" })
-      })
-
-  return {
-    call: <Output>(request: CallRequest) =>
-      start(request).pipe(
-        Effect.flatMap((result) =>
-          result.kind === "completed"
-            ? Effect.succeed(result.run?.output as Output)
-            : Effect.fail(
-              new FluentFiregridError({
-                message: `fluent call ${request.name}.${request.handler} did not complete synchronously: ${result.kind}`
-              })
-            )
-        )
-      ),
-    send: <Output>(request: CallRequest) => {
-      const invocationId = runIdFor(request)
-      return start({ ...request, runId: invocationId }).pipe(
-        Effect.map((result) => ({
-          invocationId,
-          ...(result.run?.output === undefined ? {} : { output: result.run.output as Output })
-        }))
-      )
-    }
   }
 }

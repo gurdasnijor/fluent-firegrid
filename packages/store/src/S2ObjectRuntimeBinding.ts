@@ -1,12 +1,11 @@
 import {
   type CallRequest,
   createTanStackRuntimeBinding,
-  type FluentDefinitionBindingOptions,
   FluentFiregridError,
   type FluentRuntimeHost,
   type InvocationBinding,
   type SendReference
-} from "@firegrid/fluent"
+} from "@firegrid/core"
 import {
   AppendInput,
   AppendRecord,
@@ -49,7 +48,24 @@ export interface S2ObjectRuntimeBinding extends InvocationBinding<FluentFiregrid
 }
 
 export interface S2FluentDefinitionBindingOptions {
-  readonly invocationBinding?: FluentDefinitionBindingOptions["invocationBinding"]
+  readonly invocationBinding?:
+    | InvocationBinding<FluentFiregridError>
+    | (() => InvocationBinding<FluentFiregridError> | undefined)
+}
+
+interface S2FluentDefinitionBindingContext {
+  readonly definition: { readonly _kind: string; readonly name: string }
+  readonly input: {
+    readonly key?: string
+    readonly stateContext?: unknown
+  }
+}
+
+export interface S2FluentDefinitionBindingResult {
+  readonly invocationBinding?: NonNullable<S2FluentDefinitionBindingOptions["invocationBinding"]>
+  readonly stateBackendFor: (
+    context: S2FluentDefinitionBindingContext
+  ) => ReturnType<typeof createS2ObjectStateBackend> | undefined
 }
 
 type AcceptedEvent = {
@@ -184,7 +200,7 @@ const completionPollInterval = "5 millis"
 export const s2FluentDefinitionBindingOptions = (
   config: S2ObjectStateBackendConfig,
   options: S2FluentDefinitionBindingOptions = {}
-): FluentDefinitionBindingOptions => ({
+): S2FluentDefinitionBindingResult => ({
   ...(options.invocationBinding === undefined ? {} : { invocationBinding: options.invocationBinding }),
   stateBackendFor: ({ definition, input }) => {
     if (definition._kind !== "object" || input.key === undefined) return undefined

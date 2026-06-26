@@ -10,6 +10,14 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./state": {
+      "types": "./src/state.ts",
+      "default": "./src/state.ts"
+    },
+    "./statePredicate": {
+      "types": "./src/statePredicate.ts",
+      "default": "./src/statePredicate.ts"
     }
   },
   "files": ["src"],
@@ -23,6 +31,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@marcbachmann/cel-js": "^7.6.1",
     "@standard-schema/spec": "^1.0.0",
     "effect": "4.0.0-beta.87"
   },

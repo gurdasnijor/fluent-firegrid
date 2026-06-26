@@ -1,12 +1,14 @@
 import {
+  ChangeMessage,
   evaluateStatePredicate,
   FluentFiregridError,
+  MaterializedState,
   type ObjectStateBackend,
+  stateIndexKey,
   type StateIndexWaitBackendOptions,
   type StatePredicate,
   type StateWaitBackendOptions
-} from "@firegrid/fluent"
-import { ChangeMessage, MaterializedState, stateIndexKey } from "@firegrid/fluent/state"
+} from "@firegrid/core"
 import {
   AppendInput,
   AppendRecord,

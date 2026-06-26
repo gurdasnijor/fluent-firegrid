@@ -6,28 +6,12 @@ import type {
   StepOptions,
   WaitForEventOptions
 } from "@firegrid/runtime"
+import type { InvocationBinding, ObjectStateBackend } from "@firegrid/core"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
-import type * as Option from "effect/Option"
 
-import type { InvocationBinding } from "./clients.ts"
 import { FluentFiregridError } from "./error.ts"
-import type { StatePredicate } from "./statePredicate.ts"
-
-export interface StateWaitBackendOptions {
-  readonly environmentVersion?: string
-  readonly name: string
-  readonly signalName: string
-  readonly timeoutAt?: number
-  readonly timeoutMs?: number
-  readonly waitId?: string
-}
-
-export interface StateIndexWaitBackendOptions extends StateWaitBackendOptions {
-  readonly index: ReadonlyArray<string>
-  readonly indexKey: string
-  readonly vars: Readonly<Record<string, unknown>>
-}
+export type { ObjectStateBackend, StateIndexWaitBackendOptions, StateWaitBackendOptions } from "@firegrid/core"
 
 interface SignalOperationIdentityInput {
   readonly kind: "awakeable" | "workflowEvent"
@@ -53,36 +37,6 @@ export interface ExternalSignalBinding<Error = unknown, Requirements = never> {
   readonly deliverSignal: <Payload = unknown>(
     request: ExternalSignalDeliveryRequest<Payload>
   ) => Effect.Effect<ExternalSignalDelivery, Error, Requirements>
-}
-
-export interface ObjectStateBackend {
-  readonly get: (
-    table: string,
-    key: string,
-    options?: { readonly readId?: string }
-  ) => Effect.Effect<Option.Option<unknown>, FluentFiregridError>
-  readonly set: (
-    table: string,
-    key: string,
-    value: unknown,
-    options?: { readonly opId?: string }
-  ) => Effect.Effect<void, FluentFiregridError>
-  readonly delete: (
-    table: string,
-    key: string,
-    options?: { readonly opId?: string }
-  ) => Effect.Effect<void, FluentFiregridError>
-  readonly waitFor?: (
-    table: string,
-    key: string,
-    predicate: StatePredicate,
-    options: StateWaitBackendOptions
-  ) => Effect.Effect<Option.Option<unknown>, FluentFiregridError>
-  readonly waitForIndex?: (
-    table: string,
-    predicate: StatePredicate,
-    options: StateIndexWaitBackendOptions
-  ) => Effect.Effect<Option.Option<unknown>, FluentFiregridError>
 }
 
 interface StateOperationIdentityInput {

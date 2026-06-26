@@ -25,6 +25,12 @@ packages/
       registry/
       run-store/
       server/
+      invocation.ts
+      state.ts
+      statePredicate.ts
+  clients/
+    src/
+      index.ts
   fluent/
     src/
       bindTanStack.ts
@@ -183,6 +189,7 @@ This is the actual package-level import graph generated from
 flowchart LR
 
   fluent["@firegrid/fluent"]
+  clients["@firegrid/clients"]
   runtime["@firegrid/runtime"]
   core["@firegrid/core"]
   store["@firegrid/store"]
@@ -190,9 +197,11 @@ flowchart LR
   trace["@firegrid/trace"]
 
   fluent --> runtime
+  fluent --> clients
   fluent --> core
+  clients --> core
   runtime --> core
-  store --> fluent
+  store --> core
   store --> log
   store --> runtime
 ```
@@ -202,6 +211,12 @@ Packages with no Firegrid package dependencies:
 - `@firegrid/core`
 - `@firegrid/log`
 - `@firegrid/trace`
+
+Forbidden production edges:
+
+- `@firegrid/store` must not depend on `@firegrid/fluent`.
+- `@firegrid/store` must not depend on `@firegrid/clients`.
+- `@firegrid/clients` must not depend on anything except `@firegrid/core`.
 
 ## Source-Level Shape
 
@@ -219,11 +234,18 @@ subgraph packages
     coreHandleWebhook["src/engine/handle-webhook.ts"]
     coreRunWorkflow["src/engine/run-workflow.ts"]
     coreStateDiff["src/engine/state-diff.ts"]
+    coreInvocation["src/invocation.ts"]
     coreMiddleware["src/middleware/create-middleware.ts"]
     coreRegistry["src/registry/select-version.ts"]
     coreRunStore["src/run-store/in-memory.ts"]
     coreServer["src/server/index.ts"]
+    coreState["src/state.ts"]
+    coreStatePredicate["src/statePredicate.ts"]
     coreTypes["src/types.ts"]
+  end
+
+  subgraph clients
+    clientsIndex["src/index.ts"]
   end
 
   subgraph fluent
@@ -273,16 +295,21 @@ end
 
 coreIndex --> coreDefine
 coreIndex --> coreHandleWebhook
+coreIndex --> coreInvocation
 coreIndex --> coreRunWorkflow
 coreIndex --> coreMiddleware
 coreIndex --> coreRegistry
 coreIndex --> coreRunStore
 coreIndex --> coreServer
+coreIndex --> coreState
 coreIndex --> coreTypes
 coreHandleWebhook --> coreRunWorkflow
 coreRunWorkflow --> coreStateDiff
 coreRunWorkflow --> coreTypes
 coreRunStore --> coreTypes
+coreState --> coreStatePredicate
+
+clientsIndex --> coreIndex
 
 runtimeIndex --> runtimeDefine
 runtimeIndex --> runtimeDriver
@@ -305,12 +332,18 @@ fluentIndex --> fluentRun
 fluentIndex --> fluentState
 fluentBind --> runtimeIndex
 fluentBind --> fluentContext
+fluentBind --> coreIndex
+fluentClients --> clientsIndex
 fluentClients --> fluentContext
 fluentContext --> runtimeIndex
+fluentContext --> coreIndex
 fluentDefinitions --> runtimeIndex
+fluentDefinitions --> coreIndex
 fluentExternalEvents --> fluentContext
 fluentRun --> runtimeIndex
+fluentState --> coreState
 fluentState --> fluentStatePredicate
+fluentStatePredicate --> coreStatePredicate
 
 logIndex --> logClient
 logIndex --> logGenerated
@@ -320,9 +353,9 @@ storeIndex --> storeStateBackend
 storeIndex --> storeExecutionStore
 storeIndex --> storeHost
 storeIndex --> storeTypes
-storeObjectBinding --> fluentIndex
+storeObjectBinding --> coreIndex
 storeObjectBinding --> logIndex
-storeStateBackend --> fluentState
+storeStateBackend --> coreIndex
 storeStateBackend --> logIndex
 storeHost --> storeExecutionStore
 storeHost --> runtimeIndex

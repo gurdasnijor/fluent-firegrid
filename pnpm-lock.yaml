@@ -156,8 +156,27 @@ importers:
         specifier: ^3.2.0
         version: 3.2.6(@types/node@22.20.0)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)
 
+  packages/clients:
+    dependencies:
+      '@firegrid/core':
+        specifier: workspace:*
+        version: link:../core
+      effect:
+        specifier: 4.0.0-beta.87
+        version: 4.0.0-beta.87
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.0
+        version: 3.2.6(@types/node@22.20.0)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)
+
   packages/core:
     dependencies:
+      '@marcbachmann/cel-js':
+        specifier: ^7.6.1
+        version: 7.6.1
       '@standard-schema/spec':
         specifier: ^1.0.0
         version: 1.1.0
@@ -177,15 +196,15 @@ importers:
 
   packages/fluent:
     dependencies:
+      '@firegrid/clients':
+        specifier: workspace:*
+        version: link:../clients
       '@firegrid/core':
         specifier: workspace:*
         version: link:../core
       '@firegrid/runtime':
         specifier: workspace:*
         version: link:../runtime
-      '@marcbachmann/cel-js':
-        specifier: ^7.6.1
-        version: 7.6.1
       effect:
         specifier: 4.0.0-beta.87
         version: 4.0.0-beta.87
@@ -246,9 +265,9 @@ importers:
 
   packages/store:
     dependencies:
-      '@firegrid/fluent':
+      '@firegrid/core':
         specifier: workspace:*
-        version: link:../fluent
+        version: link:../core
       '@firegrid/log':
         specifier: workspace:*
         version: link:../log

@@ -3,15 +3,18 @@ strict digraph "dependency-cruiser output"{
     node [shape="box" style="rounded, filled" height="0.2" color="black" fillcolor="#ffffcc" fontcolor="black" fontname="Helvetica" fontsize="9"]
     edge [arrowhead="normal" arrowsize="0.6" penwidth="2.0" color="#00000033" fontname="Helvetica" fontsize="9"]
 
+    subgraph "cluster_packages" {label="packages" "packages/clients" [label=<clients> tooltip="clients" URL="packages/clients" shape="box3d"] }
+    "packages/clients" -> "packages/core"
     subgraph "cluster_packages" {label="packages" "packages/core" [label=<core> tooltip="core" URL="packages/core" shape="box3d"] }
     subgraph "cluster_packages" {label="packages" "packages/fluent" [label=<fluent> tooltip="fluent" URL="packages/fluent" shape="box3d"] }
+    "packages/fluent" -> "packages/core"
     "packages/fluent" -> "packages/runtime"
-    "packages/fluent" -> "packages/core" [arrowhead="inv"]
+    "packages/fluent" -> "packages/clients"
     subgraph "cluster_packages" {label="packages" "packages/log" [label=<log> tooltip="log" URL="packages/log" shape="box3d"] }
     subgraph "cluster_packages" {label="packages" "packages/runtime" [label=<runtime> tooltip="runtime" URL="packages/runtime" fillcolor="#ccffcc" shape="box3d"] }
     "packages/runtime" -> "packages/core" [arrowhead="inv"]
     subgraph "cluster_packages" {label="packages" "packages/store" [label=<store> tooltip="store" URL="packages/store" shape="box3d"] }
-    "packages/store" -> "packages/fluent"
+    "packages/store" -> "packages/core"
     "packages/store" -> "packages/log"
     "packages/store" -> "packages/runtime"
     subgraph "cluster_packages" {label="packages" "packages/trace" [label=<trace> tooltip="trace" URL="packages/trace" shape="box3d"] }

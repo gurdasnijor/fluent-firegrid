@@ -1,5 +1,58 @@
 // @ts-nocheck -- Vendored TanStack source targets a looser optional-property TypeScript policy.
 export { FluentFiregridError } from "./error.ts"
+export {
+  type AnyGeneratorHandler,
+  type AttachableReference,
+  type CallOptions,
+  type CallRequest,
+  createTanStackRuntimeBinding,
+  type DefinitionKind,
+  duration,
+  type DurationLike,
+  type FluentRuntimeHost,
+  type FluentWorkflowInput,
+  type GenericInvocationRequest,
+  type HandlerDescriptor,
+  type HandlerDescriptors,
+  type HandlerInput,
+  type HandlerOutput,
+  type InvocationBinding,
+  type InvocationHandle,
+  type InvocationOptions,
+  normalizeDuration,
+  type RuntimeInvocationHost,
+  type RuntimeInvocationRunResult,
+  type SendOptions,
+  type SendReference,
+  type SendRequest,
+  workflowIdForRequest
+} from "./invocation.ts"
+export {
+  cel,
+  type CelExpressionBuilder,
+  type CelExpressionInput,
+  type CelExpressionNode,
+  type CelFactory,
+  type CelFieldExpression,
+  type CelLiteral,
+  type CelStatePredicate,
+  ChangeMessage,
+  evaluateStatePredicate,
+  MaterializedState,
+  type ObjectStateBackend,
+  type StateChangeMessage,
+  type StateControl,
+  type StateControlMessage,
+  stateIndexKey,
+  type StateIndexWaitBackendOptions,
+  type StateMessage,
+  type StateOperation,
+  type StatePredicate,
+  type StatePredicateContext,
+  type StateReadJournaledMessage,
+  type StateWaitBackendOptions,
+  validateStatePredicate
+} from "./state.ts"
 // ===== Workflow definition =====
 export { createWorkflow } from "./define/define-workflow"
 export type { AccumulateExtensions, CreateWorkflowConfig, WorkflowBuilder } from "./define/define-workflow"

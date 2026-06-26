@@ -1,5 +1,6 @@
 import type * as Effect from "effect/Effect"
 import type * as Schema from "effect/Schema"
+import type { DefinitionKind, HandlerDescriptor, HandlerDescriptors, HandlerInput } from "@firegrid/core"
 import {
   cron,
   every,
@@ -19,29 +20,7 @@ export type FluentGenerator<A> = Generator<Effect.Effect<unknown, unknown, Fluen
 export type GeneratorHandler<Input = unknown, Output = unknown> = (input: Input) => FluentGenerator<Output>
 
 export type AnyGeneratorHandler = GeneratorHandler<any, any>
-
-export type DefinitionKind = "service" | "workflow" | "object"
-
-declare const descriptorTypes: unique symbol
-
-export interface HandlerDescriptor<Input = unknown, Output = unknown> {
-  readonly _tag: "HandlerDescriptor"
-  readonly input?: Schema.Schema<unknown>
-  readonly output?: Schema.Schema<unknown>
-  readonly [descriptorTypes]?: {
-    readonly input: Input
-    readonly output: Output
-  }
-}
-
-export type HandlerInput<Handler> = Handler extends (input: infer Input) => unknown ? Input : never
-
-export type HandlerOutput<Handler> = Handler extends (input: any) => Generator<unknown, infer Output, unknown> ? Output
-  : never
-
-export type HandlerDescriptors<Handlers extends Record<string, AnyGeneratorHandler>> = {
-  readonly [Key in keyof Handlers]: HandlerDescriptor<HandlerInput<Handlers[Key]>, HandlerOutput<Handlers[Key]>>
-}
+export type { DefinitionKind, HandlerDescriptor, HandlerDescriptors, HandlerInput, HandlerOutput } from "@firegrid/core"
 
 export interface FluentScheduleDefinition<
   Handlers extends Record<string, AnyGeneratorHandler> = Record<string, AnyGeneratorHandler>,

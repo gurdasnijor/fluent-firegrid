@@ -7,8 +7,8 @@ under `apps/` and are intentionally excluded from the runtime diagrams.
 
 The package-only dependency-cruiser report currently includes:
 
-- 47 modules cruised;
-- 70 dependencies cruised;
+- 51 modules cruised;
+- 78 dependencies cruised;
 - 0 errors;
 - 0 warnings.
 
