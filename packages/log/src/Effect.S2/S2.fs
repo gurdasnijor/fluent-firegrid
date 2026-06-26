@@ -304,6 +304,11 @@ module S2 =
                         |> Array.toList
                       HasMore = S2Sdk.prop<bool> raw "hasMore" }))
 
+        let ensure (basinName: string) : Effect<unit, S2Error, Context> =
+            withClient (fun client ->
+                let args = createObj [ "basin" ==> basinName ]
+                tryPromise (fun () -> S2Sdk.ensureBasin client.Raw args S2Sdk.undefinedObj) (fun _ -> ()))
+
     [<RequireQualifiedAccess>]
     module Streams =
 
@@ -329,6 +334,12 @@ module S2 =
                     |> createObj
 
                 tryPromise (fun () -> S2Sdk.createStream basin args (requestOptions request.RequestOptions)) streamInfo)
+
+        let ensure (target: S2StreamRef) : Effect<unit, S2Error, Context> =
+            withClient (fun client ->
+                let basin = S2Sdk.basin client.Raw target.Basin
+                let args = createObj [ "stream" ==> target.Stream ]
+                tryPromise (fun () -> S2Sdk.ensureStream basin args S2Sdk.undefinedObj) (fun _ -> ()))
 
         let delete (target: S2StreamRef) : Effect<unit, S2Error, Context> =
             withClient (fun client ->

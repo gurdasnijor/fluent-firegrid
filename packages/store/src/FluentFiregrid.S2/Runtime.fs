@@ -20,3 +20,21 @@ module Runtime =
 
     let streamTarget (runtime: S2Runtime) (streamName: string) : S2StreamRef =
         S2.streamRef runtime.Basin streamName
+
+    let ensureTargetContext (_runtime: S2Runtime) (target: S2StreamRef) : Effect<S2StreamRef, S2Error, Context> =
+        effect {
+            do! S2.Basins.ensure target.Basin
+            do! S2.Streams.ensure target
+            return target
+        }
+
+    let ensureStreamContext (runtime: S2Runtime) (streamName: string) : Effect<S2StreamRef, S2Error, Context> =
+        ensureTargetContext runtime (streamTarget runtime streamName)
+
+    let ensureTarget (runtime: S2Runtime) (target: S2StreamRef) : Effect<unit, S2Error, unit> =
+        ensureTargetContext runtime target
+        |> Effect.map (fun _ -> ())
+        |> provide runtime
+
+    let ensureStream (runtime: S2Runtime) (streamName: string) : Effect<S2StreamRef, S2Error, unit> =
+        ensureStreamContext runtime streamName |> provide runtime

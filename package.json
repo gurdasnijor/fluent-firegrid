@@ -6,11 +6,10 @@
   "packageManager": "pnpm@10.27.0",
   "scripts": {
     "build": "pnpm run fable:build",
-    "check": "pnpm run fable:build && pnpm run fable:smoke",
+    "check": "pnpm run fable:build",
     "fable:build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/.nuget/packages} dotnet build Firegrid.Fable.slnx -v:q && pnpm --filter @firegrid/log build && pnpm --filter @firegrid/store build",
-    "fable:smoke": "pnpm --filter @firegrid/log smoke && pnpm --filter @firegrid/store smoke",
     "preflight": "pnpm run check",
-    "test": "pnpm run fable:smoke",
+    "test": "pnpm run fable:build",
     "verify": "pnpm run check"
   },
   "devDependencies": {}

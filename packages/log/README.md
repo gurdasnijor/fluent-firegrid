@@ -27,5 +27,5 @@ Useful local commands:
 ```sh
 NUGET_PACKAGES=$PWD/.nuget/packages dotnet build packages/log/Effect.S2.fsproj -v:q
 NUGET_PACKAGES=$PWD/.nuget/packages pnpm --filter @firegrid/log build
-NUGET_PACKAGES=$PWD/.nuget/packages pnpm --filter @firegrid/log smoke
+NUGET_PACKAGES=$PWD/.nuget/packages pnpm --filter @firegrid/log typecheck
 ```

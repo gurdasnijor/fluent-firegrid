@@ -81,8 +81,14 @@ module internal S2Sdk =
     [<Emit("$0.basins.list($1, $2)")>]
     let listBasins (_client: RawClient) (_args: obj) (_options: obj) : JS.Promise<obj> = jsNative
 
+    [<Emit("$0.basins.ensure($1, $2)")>]
+    let ensureBasin (_client: RawClient) (_args: obj) (_options: obj) : JS.Promise<obj> = jsNative
+
     [<Emit("$0.streams.list($1, $2)")>]
     let listStreams (_basin: RawBasin) (_args: obj) (_options: obj) : JS.Promise<obj> = jsNative
+
+    [<Emit("$0.streams.ensure($1, $2)")>]
+    let ensureStream (_basin: RawBasin) (_args: obj) (_options: obj) : JS.Promise<obj> = jsNative
 
     [<Emit("$0.streams.create($1, $2)")>]
     let createStream (_basin: RawBasin) (_args: obj) (_options: obj) : JS.Promise<obj> = jsNative

@@ -15,5 +15,5 @@ Useful local commands:
 ```sh
 NUGET_PACKAGES=$PWD/.nuget/packages dotnet build packages/store/FluentFiregrid.S2.fsproj -v:q
 NUGET_PACKAGES=$PWD/.nuget/packages pnpm --filter @firegrid/store build
-NUGET_PACKAGES=$PWD/.nuget/packages pnpm --filter @firegrid/store smoke
+NUGET_PACKAGES=$PWD/.nuget/packages pnpm --filter @firegrid/store typecheck
 ```
