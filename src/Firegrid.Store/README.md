@@ -1,9 +1,9 @@
-# @firegrid/store
+# Firegrid.Store
 
 Fable-native S2-backed durable store adapters for Firegrid.
 
 This package is authored in F# and compiled with Fable. It depends on
-`@firegrid/log` for the lower-level S2 durable stream binding.
+`Firegrid.Log` for the lower-level S2 durable stream binding.
 
 The current cutover surface exposes the `Firegrid.Store` modules
 compiled to JavaScript. The package is intentionally Fable-first on the
@@ -13,7 +13,5 @@ the migration rather than active implementation files here.
 Useful local commands:
 
 ```sh
-NUGET_PACKAGES=$PWD/.nuget/packages dotnet build packages/store/Store.fsproj -v:q
-NUGET_PACKAGES=$PWD/.nuget/packages pnpm --filter @firegrid/store build
-NUGET_PACKAGES=$PWD/.nuget/packages pnpm --filter @firegrid/store typecheck
+NUGET_PACKAGES=$PWD/.nuget/packages dotnet build src/Firegrid.Store/Firegrid.Store.fsproj -v:q
 ```

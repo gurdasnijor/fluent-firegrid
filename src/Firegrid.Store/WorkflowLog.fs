@@ -1,6 +1,7 @@
 namespace Firegrid.Store
 
 open Effect
+open Firegrid.Log
 open Fable.Core.JsInterop
 
 [<RequireQualifiedAccess>]

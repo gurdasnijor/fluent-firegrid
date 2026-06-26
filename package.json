@@ -7,7 +7,7 @@
   "scripts": {
     "build": "pnpm run fable:build",
     "check": "pnpm run fable:build",
-    "fable:build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/.nuget/packages} dotnet build Firegrid.Fable.slnx -v:q && pnpm --filter @firegrid/log build && pnpm --filter @firegrid/store build",
+    "fable:build": "export NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/.nuget/packages}; dotnet restore Firegrid.Fable.slnx ${NUGET_CONFIG:+--configfile \"$NUGET_CONFIG\"} -v:q && dotnet build Firegrid.Fable.slnx --no-restore -v:q && pnpm --dir src/Firegrid.Log build && pnpm --dir src/Firegrid.Store build",
     "preflight": "pnpm run check",
     "test": "pnpm run fable:build",
     "verify": "pnpm run check"

@@ -4,21 +4,21 @@
   "description": "Fable-native EffSharp bindings for S2 durable streams.",
   "license": "Apache-2.0",
   "type": "module",
-  "main": "./src/generated/src/Effect.S2/S2.js",
+  "main": "./dist/S2/S2.js",
   "exports": {
-    ".": "./src/generated/src/Effect.S2/S2.js"
+    ".": "./dist/S2/S2.js"
   },
   "files": [
-    "Effect.S2.fsproj",
-    "src",
+    "Firegrid.Log.fsproj",
+    "S2",
     "README.md"
   ],
   "scripts": {
-    "build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet tool run fable -- Effect.S2.fsproj -o src/generated --optimize --noCache",
+    "build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet tool run fable -- Firegrid.Log.fsproj -o dist --optimize --noCache --noRestore",
     "diagnostics": "echo '@firegrid/log diagnostics are covered by dotnet build'",
     "lint": "echo '@firegrid/log lint is covered by F# compile'",
     "test": "pnpm run typecheck",
-    "typecheck": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet build Effect.S2.fsproj -v:q"
+    "typecheck": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet build Firegrid.Log.fsproj -v:q"
   },
   "dependencies": {
     "@s2-dev/streamstore": "0.24.1"

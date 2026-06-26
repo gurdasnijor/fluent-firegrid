@@ -1,6 +1,7 @@
 namespace Firegrid.Store
 
 open Effect
+open Firegrid.Log
 
 [<RequireQualifiedAccess>]
 module Runtime =

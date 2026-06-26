@@ -1,6 +1,7 @@
 namespace Firegrid.Store
 
 open Effect
+open Firegrid.Log
 
 type S2ObjectStateBackendConfig =
     { S2Endpoint: string

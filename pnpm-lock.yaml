@@ -34,7 +34,7 @@ importers:
         version: link:../../../packages/runtime
       '@firegrid/store':
         specifier: workspace:*
-        version: link:../../../packages/store
+        version: link:../../../src/Firegrid.Store
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -56,13 +56,13 @@ importers:
         version: link:../../packages/fluent
       '@firegrid/log':
         specifier: workspace:*
-        version: link:../../packages/log
+        version: link:../../src/Firegrid.Log
       '@firegrid/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
       '@firegrid/store':
         specifier: workspace:*
-        version: link:../../packages/store
+        version: link:../../src/Firegrid.Store
       '@firegrid/trace':
         specifier: workspace:*
         version: link:../../packages/trace
@@ -120,12 +120,6 @@ importers:
         specifier: 4.0.0-beta.87
         version: 4.0.0-beta.87
 
-  packages/log:
-    dependencies:
-      '@s2-dev/streamstore':
-        specifier: 0.24.1
-        version: 0.24.1
-
   packages/runtime:
     dependencies:
       '@firegrid/core':
@@ -135,18 +129,6 @@ importers:
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.0
-
-  packages/store:
-    dependencies:
-      '@firegrid/log':
-        specifier: workspace:*
-        version: link:../log
-      '@s2-dev/streamstore':
-        specifier: 0.24.1
-        version: 0.24.1
-      effect:
-        specifier: 4.0.0-beta.87
-        version: 4.0.0-beta.87
 
   packages/trace:
     dependencies:
@@ -162,6 +144,24 @@ importers:
       chdb:
         specifier: ^3.0.1
         version: 3.1.0
+      effect:
+        specifier: 4.0.0-beta.87
+        version: 4.0.0-beta.87
+
+  src/Firegrid.Log:
+    dependencies:
+      '@s2-dev/streamstore':
+        specifier: 0.24.1
+        version: 0.24.1
+
+  src/Firegrid.Store:
+    dependencies:
+      '@firegrid/log':
+        specifier: workspace:*
+        version: link:../Firegrid.Log
+      '@s2-dev/streamstore':
+        specifier: 0.24.1
+        version: 0.24.1
       effect:
         specifier: 4.0.0-beta.87
         version: 4.0.0-beta.87

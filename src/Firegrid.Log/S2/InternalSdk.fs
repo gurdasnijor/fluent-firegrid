@@ -1,4 +1,4 @@
-namespace Effect
+namespace Firegrid.Log
 
 open Fable.Core
 open Fable.Core.JsInterop

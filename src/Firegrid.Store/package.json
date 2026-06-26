@@ -4,21 +4,21 @@
   "description": "Fable-native S2-backed durable store adapters for Firegrid.",
   "license": "Apache-2.0",
   "type": "module",
-  "main": "./src/generated/src/Firegrid.Store/Exports.js",
+  "main": "./dist/Exports.js",
   "exports": {
-    ".": "./src/generated/src/Firegrid.Store/Exports.js"
+    ".": "./dist/Exports.js"
   },
   "files": [
-    "Store.fsproj",
-    "src",
+    "Firegrid.Store.fsproj",
+    "*.fs",
     "README.md"
   ],
   "scripts": {
-    "build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet tool run fable -- Store.fsproj -o src/generated --optimize --noCache && mkdir -p src/generated/log/fable_modules && cp -R src/generated/fable_modules/. src/generated/log/fable_modules/",
+    "build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet tool run fable -- Firegrid.Store.fsproj -o dist --optimize --noCache --noRestore",
     "diagnostics": "echo '@firegrid/store diagnostics are covered by dotnet build'",
     "lint": "echo '@firegrid/store lint is covered by F# compile'",
     "test": "pnpm run typecheck",
-    "typecheck": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet build Store.fsproj -v:q"
+    "typecheck": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet build Firegrid.Store.fsproj -v:q"
   },
   "dependencies": {
     "@firegrid/log": "workspace:*",

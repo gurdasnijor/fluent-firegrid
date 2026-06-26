@@ -15,17 +15,17 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../log/Effect.S2.fsproj" />
+    <ProjectReference Include="../Firegrid.Log/Firegrid.Log.fsproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="src/Firegrid.Store/Types.fs" />
-    <Compile Include="src/Firegrid.Store/JsJson.fs" />
-    <Compile Include="src/Firegrid.Store/Naming.fs" />
-    <Compile Include="src/Firegrid.Store/Runtime.fs" />
-    <Compile Include="src/Firegrid.Store/ObjectState.fs" />
-    <Compile Include="src/Firegrid.Store/WorkflowLog.fs" />
-    <Compile Include="src/Firegrid.Store/Exports.fs" />
+    <Compile Include="Types.fs" />
+    <Compile Include="JsJson.fs" />
+    <Compile Include="Naming.fs" />
+    <Compile Include="Runtime.fs" />
+    <Compile Include="ObjectState.fs" />
+    <Compile Include="WorkflowLog.fs" />
+    <Compile Include="Exports.fs" />
   </ItemGroup>
 
 </Project>

@@ -1,6 +1,7 @@
 module Firegrid.Store.Exports
 
 open Effect
+open Firegrid.Log
 open Firegrid.Store
 
 let createS2Runtime (config: S2ObjectStateBackendConfig) : S2Runtime = Runtime.create config
