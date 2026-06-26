@@ -1,0 +1,29 @@
+{
+  "name": "@firegrid/fluent",
+  "version": "0.0.0",
+  "description": "Restate-like fluent API over the Firegrid TanStack/S2 durable runtime (Fable-native EffSharp port).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/Exports.js",
+  "exports": {
+    ".": "./dist/Exports.js"
+  },
+  "files": [
+    "Firegrid.Fluent.fsproj",
+    "*.fs",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet tool run fable -- Firegrid.Fluent.fsproj -o dist --optimize --noCache --noRestore",
+    "diagnostics": "echo '@firegrid/fluent diagnostics are covered by dotnet build'",
+    "lint": "echo '@firegrid/fluent lint is covered by F# compile'",
+    "test": "pnpm run typecheck",
+    "typecheck": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet build Firegrid.Fluent.fsproj -v:q"
+  },
+  "dependencies": {
+    "@firegrid/core": "workspace:*",
+    "@firegrid/runtime": "workspace:*",
+    "@marcbachmann/cel-js": "^7.6.1",
+    "effect": "4.0.0-beta.87"
+  }
+}
