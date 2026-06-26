@@ -13,16 +13,25 @@ import {
 } from "../src/externalEvents.ts"
 import { FluentFiregridError } from "../src/error.ts"
 
+const testSleep = Effect.fn("testSleep")(function*() {})
+const testSleepUntil = Effect.fn("testSleepUntil")(function*() {})
+const unusedStep = Effect.fn("unusedStep")(function*() {
+  return yield* new FluentFiregridError({ message: "step not used" })
+})
+const waitForSignalNotConfigured = Effect.fn("waitForSignalNotConfigured")(function*() {
+  return yield* new FluentFiregridError({ message: "waitForSignal not configured" })
+})
+
 const baseContext = (
   overrides: Partial<Parameters<typeof FluentDurableContext.of>[0]> = {}
 ) =>
   FluentDurableContext.of({
     runId: "run-1",
     signalOperationId: ({ kind, name }) => `run-1:signal:0:${kind}:${name}`,
-    sleep: () => Effect.void,
-    sleepUntil: () => Effect.void,
-    step: () => Effect.fail(new FluentFiregridError({ message: "step not used" })),
-    waitForSignal: () => Effect.fail(new FluentFiregridError({ message: "waitForSignal not configured" })),
+    sleep: testSleep,
+    sleepUntil: testSleepUntil,
+    step: unusedStep,
+    waitForSignal: waitForSignalNotConfigured,
     ...overrides
   })
 

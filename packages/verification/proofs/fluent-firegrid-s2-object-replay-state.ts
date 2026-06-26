@@ -1,7 +1,9 @@
 import { getS2ObjectStateValue, objectStateStreamName } from "@firegrid/fluent-firegrid-s2"
 import * as Effect from "effect/Effect"
+import * as Fiber from "effect/Fiber"
 import * as Option from "effect/Option"
 
+import { requestJson } from "../src/HttpProofClient.ts"
 import { processHost } from "../src/ProcessHost.ts"
 import { proof } from "../src/Proof.ts"
 import { VerificationError } from "../src/VerificationError.ts"
@@ -15,18 +17,6 @@ const portFromTrialId = (trialId: string, salt: string): number => {
   )
   return 45_000 + hash
 }
-
-const requestJson = <A>(url: string, init?: RequestInit): Effect.Effect<A, VerificationError> =>
-  Effect.tryPromise({
-    try: async () => {
-      const response = await fetch(url, init)
-      if (!response.ok) {
-        throw new Error(`request ${url} failed with ${response.status}: ${await response.text()}`)
-      }
-      return await response.json() as A
-    },
-    catch: (cause) => new VerificationError({ cause, message: `fluent object replay-state request failed: ${url}` })
-  })
 
 const waitForStateValue = (
   s2Endpoint: string,
@@ -103,14 +93,9 @@ export default proof("fluent-firegrid-s2.object-replay-state")
             return yield* new VerificationError({ message: "fluent S2 object replay-state proof requires s2Lite" })
           }
           const namespace = `fluent-object-cross-host-${trialId}`
-          const crashRequest = yield* Effect.sync(() => {
-            const controller = new AbortController()
-            void fetch(`${hostA}/crash-after-set?by=5`, {
-              method: "POST",
-              signal: controller.signal
-            }).catch(() => undefined)
-            return controller
-          })
+          const crashRequest = yield* requestJson(`${hostA}/crash-after-set?by=5`, { method: "POST" }).pipe(
+            Effect.forkDetach
+          )
           const preCrashValue = yield* waitForStateValue(s2Endpoint, namespace, 5)
 
           yield* faults.killHost("a")
@@ -121,7 +106,7 @@ export default proof("fluent-firegrid-s2.object-replay-state")
             { method: "POST" }
           )
           const loaded = yield* requestJson<{ readonly hostId: string; readonly value: number }>(`${hostB}/value`)
-          yield* Effect.sync(() => crashRequest.abort())
+          yield* Fiber.interrupt(crashRequest)
 
           return {
             afterTakeover,

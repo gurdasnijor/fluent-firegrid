@@ -3,7 +3,6 @@ import {
   type FluentDurableContextService,
   FluentFiregridError,
   type ObjectStateBackend,
-  type RunAction,
   state
 } from "@firegrid/fluent-firegrid"
 import { primaryKey, Table } from "@firegrid/fluent-firegrid/state"
@@ -22,18 +21,25 @@ class CounterState extends Table<CounterState>("counterState")({
 
 const counter = state(CounterState)
 
+const testSleep = Effect.fn("testSleep")(function*() {})
+const testSleepUntil = Effect.fn("testSleepUntil")(function*() {})
+const unusedWaitForSignal = Effect.fn("unusedWaitForSignal")(function*() {
+  return yield* new FluentFiregridError({ message: "waitForSignal is not used in this proof" })
+})
+const proofStep: FluentDurableContextService["step"] = Effect.fn("proofStep")(function*(name, action) {
+  const value = action({ attempt: 1, id: name, signal: new AbortController().signal })
+  return yield* (Effect.isEffect(value)
+    ? value.pipe(Effect.mapError((cause) => new FluentFiregridError({ cause, message: "proof step failed" })))
+    : Effect.promise(() => Promise.resolve(value)))
+})
+
 const contextFor = (stateBackend: ObjectStateBackend): FluentDurableContextService => ({
   key: "counter-1",
   state: stateBackend,
-  sleep: () => Effect.void,
-  sleepUntil: () => Effect.void,
-  step: <A>(_name: string, action: RunAction<A>) => {
-    const value = action({ attempt: 1, id: "step", signal: new AbortController().signal })
-    return (Effect.isEffect(value)
-      ? value
-      : Effect.promise(() => Promise.resolve(value))) as Effect.Effect<A, never>
-  },
-  waitForSignal: () => Effect.fail(new FluentFiregridError({ message: "waitForSignal is not used in this proof" }))
+  sleep: testSleep,
+  sleepUntil: testSleepUntil,
+  step: proofStep,
+  waitForSignal: unusedWaitForSignal
 })
 
 export default proof("fluent-firegrid-s2.object-state")

@@ -28,9 +28,7 @@ const invoiceObject = object({
         index: ["accountId", "status"],
         name: "first-ready-in-account",
         vars: { accountId: input.accountId, status: "ready" },
-        where: celFor(InvoiceState).expr((t) =>
-          t.row.accountId.eq(input.accountId).and(t.row.status.eq("ready"))
-        )
+        where: celFor(InvoiceState).expr((t) => t.row.accountId.eq(input.accountId).and(t.row.status.eq("ready")))
       })
       return row.id
     }

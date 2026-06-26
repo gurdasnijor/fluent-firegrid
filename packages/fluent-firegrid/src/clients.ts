@@ -333,19 +333,20 @@ export const invocation = <Output, Error, Requirements>(
     ...(reference.key === undefined ? {} : { key: reference.key })
   }, reference)
 
-export function genericCall<Output, Error = unknown, Requirements = never>(
-  binding: InvocationBinding<Error, Requirements>,
+export function genericCall<Output>(
+  binding: InvocationBinding<FluentFiregridError>,
   request: GenericInvocationRequest
-): Effect.Effect<Output, Error, Requirements>
+): Effect.Effect<Output, FluentFiregridError>
 export function genericCall<Output>(
   request: GenericInvocationRequest
 ): Effect.Effect<Output, FluentFiregridError, FluentDurableContext>
-export function genericCall<Output, Error = unknown, Requirements = never>(
-  first: InvocationBinding<Error, Requirements> | GenericInvocationRequest,
+export function genericCall<Output>(
+  first: InvocationBinding<FluentFiregridError> | GenericInvocationRequest,
   second?: GenericInvocationRequest
-): Effect.Effect<Output, Error | FluentFiregridError, Requirements | FluentDurableContext> {
+) {
   if (second !== undefined) {
-    return (first as InvocationBinding<Error, Requirements>).call<Output>(genericRequest(second))
+    const binding = first as InvocationBinding<FluentFiregridError>
+    return genericCallWithBinding<Output>(binding, second)
   }
   return FluentDurableContext.pipe(
     Effect.flatMap((ctx) =>
@@ -356,26 +357,25 @@ export function genericCall<Output, Error = unknown, Requirements = never>(
   )
 }
 
-export function genericSend<Output, Error = unknown, Requirements = never>(
-  binding: InvocationBinding<Error, Requirements>,
+const genericCallWithBinding = <Output>(
+  binding: InvocationBinding<FluentFiregridError>,
   request: GenericInvocationRequest
-): Effect.Effect<InvocationHandle<Output, Error, Requirements>, Error, Requirements>
+): Effect.Effect<Output, FluentFiregridError> => binding.call<Output>(genericRequest(request))
+
+export function genericSend<Output>(
+  binding: InvocationBinding<FluentFiregridError>,
+  request: GenericInvocationRequest
+): Effect.Effect<InvocationHandle<Output, FluentFiregridError, never>, FluentFiregridError>
 export function genericSend<Output>(
   request: GenericInvocationRequest
 ): Effect.Effect<InvocationHandle<Output, FluentFiregridError, never>, FluentFiregridError, FluentDurableContext>
-export function genericSend<Output, Error = unknown, Requirements = never>(
-  first: InvocationBinding<Error, Requirements> | GenericInvocationRequest,
+export function genericSend<Output>(
+  first: InvocationBinding<FluentFiregridError> | GenericInvocationRequest,
   second?: GenericInvocationRequest
-): Effect.Effect<
-  InvocationHandle<Output, Error, Requirements> | InvocationHandle<Output, FluentFiregridError, never>,
-  Error | FluentFiregridError,
-  Requirements | FluentDurableContext
-> {
+) {
   if (second !== undefined) {
-    const request = genericRequest(second)
-    return (first as InvocationBinding<Error, Requirements>).send<Output>(request).pipe(
-      Effect.map((reference) => invocationHandle(first as InvocationBinding<Error, Requirements>, request, reference))
-    )
+    const binding = first as InvocationBinding<FluentFiregridError>
+    return genericSendWithBinding<Output>(binding, second)
   }
   return FluentDurableContext.pipe(
     Effect.flatMap((ctx) => {
@@ -391,18 +391,31 @@ export function genericSend<Output, Error = unknown, Requirements = never>(
   )
 }
 
-export function attach<Output, Error = unknown, Requirements = never>(
-  binding: InvocationBinding<Error, Requirements>,
+const genericSendWithBinding = <Output>(
+  binding: InvocationBinding<FluentFiregridError>,
+  request: GenericInvocationRequest
+): Effect.Effect<InvocationHandle<Output, FluentFiregridError, never>, FluentFiregridError> => {
+  const callRequest = genericRequest(request)
+  return binding.send<Output>(callRequest).pipe(
+    Effect.map((reference) => invocationHandle(binding, callRequest, reference))
+  )
+}
+
+export function attach<Output>(
+  binding: InvocationBinding<FluentFiregridError>,
   reference: AttachableReference<Output>
-): Effect.Effect<Output, Error, Requirements>
+): Effect.Effect<Output, FluentFiregridError>
 export function attach<Output>(
   reference: AttachableReference<Output>
 ): Effect.Effect<Output, FluentFiregridError, FluentDurableContext>
-export function attach<Output, Error = unknown, Requirements = never>(
-  first: InvocationBinding<Error, Requirements> | AttachableReference<Output>,
+export function attach<Output>(
+  first: InvocationBinding<FluentFiregridError> | AttachableReference<Output>,
   second?: AttachableReference<Output>
-): Effect.Effect<Output, Error | FluentFiregridError, Requirements | FluentDurableContext> {
-  if (second !== undefined) return invocation(first as InvocationBinding<Error, Requirements>, second).attach()
+) {
+  if (second !== undefined) {
+    const binding = first as InvocationBinding<FluentFiregridError>
+    return attachWithBinding<Output>(binding, second)
+  }
   return FluentDurableContext.pipe(
     Effect.flatMap((ctx) =>
       ctx.binding === undefined
@@ -411,6 +424,11 @@ export function attach<Output, Error = unknown, Requirements = never>(
     )
   )
 }
+
+const attachWithBinding = <Output>(
+  binding: InvocationBinding<FluentFiregridError>,
+  reference: AttachableReference<Output>
+): Effect.Effect<Output, FluentFiregridError> => invocation(binding, reference).attach()
 
 const bindInvocationBinding = (mode: ClientMode) =>
 <

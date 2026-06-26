@@ -19,6 +19,7 @@ import {
 import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
 import * as Option from "effect/Option"
+import * as Random from "effect/Random"
 import * as Stream from "effect/Stream"
 
 import {
@@ -341,8 +342,7 @@ export const createS2ObjectRuntimeBinding = (
 
 export const delayedStartStreamName = (
   config: Pick<S2ObjectRuntimeBindingConfig, "namespace">
-): string =>
-  `${sanitize(config.namespace ?? "default")}/delayed-starts`
+): string => `${sanitize(config.namespace ?? "default")}/delayed-starts`
 
 export const objectInvocationStreamName = (
   config: Pick<S2ObjectRuntimeBindingConfig, "namespace">,
@@ -689,7 +689,8 @@ const drainGenericDelayedStarts = (
       if (nextInvocationId === undefined) return { started }
       const accepted = projection.accepted.get(nextInvocationId)
       if (accepted === undefined) return { started }
-      const ownerId = `delayed-start:${nextInvocationId}:${Math.random().toString(36).slice(2)}`
+      const random = yield* Random.next
+      const ownerId = `delayed-start:${nextInvocationId}:${random.toString(36).slice(2)}`
       const claim = yield* appendDelayedStartEvent(
         runtime,
         streamName,
@@ -761,7 +762,8 @@ const waitForDelayedStartCompletion = <Output>(
           }
           default: {
             return yield* new FluentFiregridError({
-              message: `delayed fluent invocation ${request.name}.${request.handler} could not be attached: ${result.value.kind}`
+              message:
+                `delayed fluent invocation ${request.name}.${request.handler} could not be attached: ${result.value.kind}`
             })
           }
         }
@@ -775,12 +777,16 @@ const readDelayedStartCompletion = <Output>(
   host: FluentRuntimeHost,
   request: CallRequest,
   invocationId: string
-): Effect.Effect<Option.Option<Output>, unknown> => {
+): Effect.Effect<Option.Option<Output>, FluentFiregridError> => {
   const store = delayedStartHostStore(host)
   if (store === undefined) return Effect.succeed(Option.none())
   return Effect.tryPromise({
     try: () => store.loadExecution(invocationId),
-    catch: (cause) => cause
+    catch: (cause) =>
+      new FluentFiregridError({
+        cause,
+        message: `failed to read delayed fluent invocation ${request.name}.${request.handler}`
+      })
   }).pipe(
     Effect.flatMap((execution) => {
       if (execution?.run.status === "finished") {
@@ -810,7 +816,7 @@ const startDelayedRequest = (
   host: FluentRuntimeHost,
   request: CallRequest,
   now: number
-): Effect.Effect<RuntimeRunResult, unknown> =>
+): Effect.Effect<RuntimeRunResult, FluentFiregridError> =>
   Effect.tryPromise({
     try: () =>
       host.runtime.startRun({
@@ -822,7 +828,11 @@ const startDelayedRequest = (
         runId: request.runId!,
         workflowId: `${request.kind}:${request.name}:${request.handler}`
       }),
-    catch: (cause) => cause
+    catch: (cause) =>
+      new FluentFiregridError({
+        cause,
+        message: `failed to start delayed fluent invocation ${request.name}.${request.handler}`
+      })
   })
 
 const waitForCompletion = (
@@ -981,7 +991,11 @@ const drain = (
             runId: accepted.runId,
             workflowId: `${request.kind}:${request.name}:${accepted.handler}`
           }),
-        catch: (cause) => cause
+        catch: (cause) =>
+          new FluentFiregridError({
+            cause,
+            message: `failed to start object invocation ${request.name}.${accepted.handler}`
+          })
       }).pipe(Effect.exit)
       if (result._tag === "Failure") {
         yield* appendTerminalEvent(runtime, streamName, ownerId, nextCallId, {

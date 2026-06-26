@@ -1,10 +1,5 @@
 import { createS2WorkflowRuntimeHost } from "@firegrid/tanstack-workflow-s2"
-import {
-  bindFluentDefinitions,
-  run,
-  sendServiceClient,
-  service
-} from "@firegrid/fluent-firegrid"
+import { bindFluentDefinitions, run, sendServiceClient, service } from "@firegrid/fluent-firegrid"
 import { createS2ObjectRuntimeBinding } from "@firegrid/fluent-firegrid-s2"
 import * as Effect from "effect/Effect"
 

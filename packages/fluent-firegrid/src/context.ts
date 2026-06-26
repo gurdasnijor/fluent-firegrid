@@ -29,7 +29,7 @@ export interface StateIndexWaitBackendOptions extends StateWaitBackendOptions {
   readonly vars: Readonly<Record<string, unknown>>
 }
 
-export interface SignalOperationIdentityInput {
+interface SignalOperationIdentityInput {
   readonly kind: "awakeable" | "workflowEvent"
   readonly name: string
 }
@@ -124,7 +124,7 @@ export interface FluentDurableContextService {
 }
 
 export class FluentDurableContext extends Context.Service<FluentDurableContext, FluentDurableContextService>()(
-  "@firegrid/fluent-firegrid/FluentDurableContext"
+  "@firegrid/fluent-firegrid/context/FluentDurableContext"
 ) {}
 
 export interface TanStackWorkflowContext {

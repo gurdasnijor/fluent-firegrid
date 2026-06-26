@@ -154,25 +154,25 @@ export const workflowEvent = <T = unknown>(
     })
   )
 
-export function resolveAwakeable<T, Error = unknown, Requirements = never>(
-  binding: ExternalSignalBinding<Error, Requirements>,
+export function resolveAwakeable<T>(
+  binding: ExternalSignalBinding<FluentFiregridError>,
   id: string,
   value: T,
   options?: AwakeableResolveOptions
-): Effect.Effect<ExternalSignalDelivery, Error | FluentFiregridError, Requirements>
+): Effect.Effect<ExternalSignalDelivery, FluentFiregridError>
 export function resolveAwakeable<T>(
   id: string,
   value: T,
   options?: AwakeableResolveOptions
 ): Effect.Effect<ExternalSignalDelivery, FluentFiregridError, FluentDurableContext>
-export function resolveAwakeable<T, Error = unknown, Requirements = never>(
-  first: ExternalSignalBinding<Error, Requirements> | string,
+export function resolveAwakeable<T>(
+  first: ExternalSignalBinding<FluentFiregridError> | string,
   second: string | T,
   third?: T | AwakeableResolveOptions,
   fourth?: AwakeableResolveOptions
-): Effect.Effect<ExternalSignalDelivery, Error | FluentFiregridError, Requirements | FluentDurableContext> {
+) {
   if (typeof first !== "string") {
-    return deliverAwakeable(first, second as string, { _tag: "AwakeableResolved", value: third as T }, fourth)
+    return resolveAwakeableWithBinding(first, second as string, third as T, fourth)
   }
   return FluentDurableContext.pipe(
     Effect.flatMap((ctx) =>
@@ -188,25 +188,33 @@ export function resolveAwakeable<T, Error = unknown, Requirements = never>(
   )
 }
 
-export function rejectAwakeable<Error = unknown, Requirements = never>(
-  binding: ExternalSignalBinding<Error, Requirements>,
+const resolveAwakeableWithBinding = <T>(
+  binding: ExternalSignalBinding<FluentFiregridError>,
+  id: string,
+  value: T,
+  options?: AwakeableResolveOptions
+): Effect.Effect<ExternalSignalDelivery, FluentFiregridError> =>
+  deliverAwakeable(binding, id, { _tag: "AwakeableResolved", value }, options)
+
+export function rejectAwakeable(
+  binding: ExternalSignalBinding<FluentFiregridError>,
   id: string,
   reason: unknown,
   options?: AwakeableRejectOptions
-): Effect.Effect<ExternalSignalDelivery, Error | FluentFiregridError, Requirements>
+): Effect.Effect<ExternalSignalDelivery, FluentFiregridError>
 export function rejectAwakeable(
   id: string,
   reason: unknown,
   options?: AwakeableRejectOptions
 ): Effect.Effect<ExternalSignalDelivery, FluentFiregridError, FluentDurableContext>
-export function rejectAwakeable<Error = unknown, Requirements = never>(
-  first: ExternalSignalBinding<Error, Requirements> | string,
+export function rejectAwakeable(
+  first: ExternalSignalBinding<FluentFiregridError> | string,
   second: string | unknown,
   third?: unknown | AwakeableRejectOptions,
   fourth?: AwakeableRejectOptions
-): Effect.Effect<ExternalSignalDelivery, Error | FluentFiregridError, Requirements | FluentDurableContext> {
+) {
   if (typeof first !== "string") {
-    return deliverAwakeable(first, second as string, { _tag: "AwakeableRejected", reason: third }, fourth)
+    return rejectAwakeableWithBinding(first, second as string, third, fourth)
   }
   return FluentDurableContext.pipe(
     Effect.flatMap((ctx) =>
@@ -222,25 +230,33 @@ export function rejectAwakeable<Error = unknown, Requirements = never>(
   )
 }
 
-export function resolveWorkflowEvent<T, Error = unknown, Requirements = never>(
-  binding: ExternalSignalBinding<Error, Requirements>,
+const rejectAwakeableWithBinding = (
+  binding: ExternalSignalBinding<FluentFiregridError>,
+  id: string,
+  reason: unknown,
+  options?: AwakeableRejectOptions
+): Effect.Effect<ExternalSignalDelivery, FluentFiregridError> =>
+  deliverAwakeable(binding, id, { _tag: "AwakeableRejected", reason }, options)
+
+export function resolveWorkflowEvent<T>(
+  binding: ExternalSignalBinding<FluentFiregridError>,
   reference: WorkflowEventReference,
   value: T,
   options?: ResolveWorkflowEventOptions
-): Effect.Effect<ExternalSignalDelivery, Error | FluentFiregridError, Requirements>
+): Effect.Effect<ExternalSignalDelivery, FluentFiregridError>
 export function resolveWorkflowEvent<T>(
   reference: WorkflowEventReference,
   value: T,
   options?: ResolveWorkflowEventOptions
 ): Effect.Effect<ExternalSignalDelivery, FluentFiregridError, FluentDurableContext>
-export function resolveWorkflowEvent<T, Error = unknown, Requirements = never>(
-  first: ExternalSignalBinding<Error, Requirements> | WorkflowEventReference,
+export function resolveWorkflowEvent<T>(
+  first: ExternalSignalBinding<FluentFiregridError> | WorkflowEventReference,
   second: WorkflowEventReference | T,
   third?: T | ResolveWorkflowEventOptions,
   fourth?: ResolveWorkflowEventOptions
-): Effect.Effect<ExternalSignalDelivery, Error | FluentFiregridError, Requirements | FluentDurableContext> {
+) {
   if ("deliverSignal" in first) {
-    return deliverWorkflowEvent(first, second as WorkflowEventReference, third as T, fourth)
+    return resolveWorkflowEventWithBinding(first, second as WorkflowEventReference, third as T, fourth)
   }
   return FluentDurableContext.pipe(
     Effect.flatMap((ctx) =>
@@ -255,6 +271,14 @@ export function resolveWorkflowEvent<T, Error = unknown, Requirements = never>(
     )
   )
 }
+
+const resolveWorkflowEventWithBinding = <Payload>(
+  binding: ExternalSignalBinding<FluentFiregridError>,
+  reference: WorkflowEventReference,
+  value: Payload,
+  options?: ResolveWorkflowEventOptions
+): Effect.Effect<ExternalSignalDelivery, FluentFiregridError> =>
+  deliverWorkflowEvent(binding, reference, value, options)
 
 const deliverWorkflowEvent = <Payload, Error, Requirements>(
   binding: ExternalSignalBinding<Error, Requirements>,

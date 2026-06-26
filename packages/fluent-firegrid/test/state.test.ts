@@ -20,6 +20,18 @@ class Item extends Table<Item>("items")({
   value: Schema.Number
 }) {}
 
+const testSleep = Effect.fn("testSleep")(function*() {})
+const testSleepUntil = Effect.fn("testSleepUntil")(function*() {})
+const unusedStep = Effect.fn("unusedStep")(function*() {
+  return yield* new FluentFiregridError({ message: "step not used" })
+})
+const unusedWaitForSignal = Effect.fn("unusedWaitForSignal")(function*() {
+  return yield* new FluentFiregridError({ message: "waitForSignal not used" })
+})
+const testNow = Effect.fn("testNow")(function*() {
+  return 1_000
+})
+
 const testContext = (
   state: ObjectStateBackend,
   stateOperationId: NonNullable<Parameters<typeof FluentDurableContext.of>[0]["stateOperationId"]>
@@ -28,10 +40,10 @@ const testContext = (
     key: "object-1",
     state,
     stateOperationId,
-    sleep: () => Effect.void,
-    sleepUntil: () => Effect.void,
-    step: () => Effect.fail(new FluentFiregridError({ message: "step not used" })),
-    waitForSignal: () => Effect.fail(new FluentFiregridError({ message: "waitForSignal not used" }))
+    sleep: testSleep,
+    sleepUntil: testSleepUntil,
+    step: unusedStep,
+    waitForSignal: unusedWaitForSignal
   })
 
 describe("Table definition", () => {
@@ -142,9 +154,7 @@ describe("state wait predicates", () => {
   })
 
   it("builds CEL predicates from a table-scoped typed field helper", async () => {
-    const predicate = celFor(Item).expr((t) =>
-      t.row.value.greaterThan(2).and(t.old.id.eq("a"))
-    )
+    const predicate = celFor(Item).expr((t) => t.row.value.greaterThan(2).and(t.old.id.eq("a")))
 
     expect(celFor(Item).environment.environmentVersion).toBe("table:items:id:string,value:number")
     expect(predicate).toEqual({
@@ -412,6 +422,14 @@ describe("state(Table)", () => {
       }
       | undefined
     let nextOperation = 0
+    const captureStateWaitSignal = <Payload>(name: string, options?: { readonly id?: string }) =>
+      Effect.sync(() => {
+        capturedSignal = {
+          ...(options?.id === undefined ? {} : { id: options.id }),
+          name
+        }
+        return { id: "a", value: 9 } as Payload
+      })
     const backend: ObjectStateBackend = {
       get: () => Effect.succeed(Option.none()),
       set: () => Effect.void,
@@ -429,19 +447,12 @@ describe("state(Table)", () => {
         FluentDurableContext.of({
           key: "object-1",
           state: backend,
-          now: () => Effect.succeed(1_000),
+          now: testNow,
           stateOperationId: ({ kind, table, key }) => `state-op:${nextOperation++}:${kind}:${table}:${key}`,
-          sleep: () => Effect.void,
-          sleepUntil: () => Effect.void,
-          step: () => Effect.fail(new FluentFiregridError({ message: "step not used" })),
-          waitForSignal: <Payload>(name: string, options?: { readonly deadline?: number; readonly id?: string }) =>
-            Effect.sync(() => {
-              capturedSignal = {
-                ...(options?.id === undefined ? {} : { id: options.id }),
-                name
-              }
-              return { id: "a", value: 9 } as Payload
-            })
+          sleep: testSleep,
+          sleepUntil: testSleepUntil,
+          step: unusedStep,
+          waitForSignal: captureStateWaitSignal
         })
       )
     )
@@ -460,6 +471,8 @@ describe("state(Table)", () => {
       delete: () => Effect.void,
       waitFor: () => Effect.succeed(Option.none())
     }
+    const stateWaitTimeoutSignal = <Payload>() =>
+      Effect.succeed({ _tag: "StateWaitTimedOut", name: "value-ready" } as Payload)
 
     const program = state(Item).waitFor("a", {
       name: "value-ready",
@@ -471,12 +484,12 @@ describe("state(Table)", () => {
         FluentDurableContext.of({
           key: "object-1",
           state: backend,
-          now: () => Effect.succeed(1_000),
+          now: testNow,
           stateOperationId: ({ kind, table, key }) => `state-op:0:${kind}:${table}:${key}`,
-          sleep: () => Effect.void,
-          sleepUntil: () => Effect.void,
-          step: () => Effect.fail(new FluentFiregridError({ message: "step not used" })),
-          waitForSignal: <Payload>() => Effect.succeed({ _tag: "StateWaitTimedOut", name: "value-ready" } as Payload)
+          sleep: testSleep,
+          sleepUntil: testSleepUntil,
+          step: unusedStep,
+          waitForSignal: stateWaitTimeoutSignal
         })
       )
     )

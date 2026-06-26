@@ -5,8 +5,8 @@ export {
   type S2DelayedStartDrainOptions,
   type S2DelayedStartDrainResult,
   type S2FluentDefinitionBindingOptions,
-  type S2ObjectRuntimeBinding,
   s2FluentDefinitionBindingOptions,
+  type S2ObjectRuntimeBinding,
   type S2ObjectRuntimeBindingConfig
 } from "./S2ObjectRuntimeBinding.ts"
 export {

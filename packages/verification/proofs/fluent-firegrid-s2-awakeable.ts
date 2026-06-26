@@ -9,6 +9,7 @@ import {
   workflowIdForHandler
 } from "@firegrid/fluent-firegrid"
 import * as Effect from "effect/Effect"
+import * as Schema from "effect/Schema"
 
 import { proof } from "../src/Proof.ts"
 import { VerificationError } from "../src/VerificationError.ts"
@@ -108,7 +109,7 @@ export default proof("fluent-firegrid-s2.awakeable")
             "approved"
           ).pipe(
             Effect.mapError((cause) =>
-              cause instanceof VerificationError
+              Schema.is(VerificationError)(cause)
                 ? cause
                 : new VerificationError({ cause, message: "fluent S2 awakeable resolve failed" })
             )
@@ -119,7 +120,7 @@ export default proof("fluent-firegrid-s2.awakeable")
             "approved"
           ).pipe(
             Effect.mapError((cause) =>
-              cause instanceof VerificationError
+              Schema.is(VerificationError)(cause)
                 ? cause
                 : new VerificationError({ cause, message: "fluent S2 awakeable duplicate resolve failed" })
             )

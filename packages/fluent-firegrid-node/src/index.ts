@@ -22,7 +22,6 @@ import type { WorkflowRegistrationMap } from "@tanstack/workflow-runtime"
 import * as Effect from "effect/Effect"
 // @effect-diagnostics-next-line nodeBuiltinImport:off
 import * as Http from "node:http"
-// @effect-diagnostics-next-line nodeBuiltinImport:off
 import type * as Net from "node:net"
 
 type AnyDefinition = Definition<string, DefinitionKind, Record<string, AnyGeneratorHandler>>

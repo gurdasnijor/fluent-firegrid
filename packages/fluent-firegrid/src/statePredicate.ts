@@ -100,11 +100,9 @@ const celField = (path: string): CelFieldExpression => ({
   notEq: (value) => celNode(`${path} != ${literalText(value)}`)
 })
 
-const expressionText = (input: CelExpressionInput): string =>
-  typeof input === "string" ? input : input.expression
+const expressionText = (input: CelExpressionInput): string => typeof input === "string" ? input : input.expression
 
-const literalText = (value: CelLiteral): string =>
-  typeof value === "string" ? JSON.stringify(value) : String(value)
+const literalText = (value: CelLiteral): string => typeof value === "string" ? JSON.stringify(value) : String(value)
 
 const createCelEnvironment = (): Environment =>
   new Environment({

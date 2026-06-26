@@ -49,18 +49,18 @@ export {
   fluentContextFromTanStack,
   FluentDurableContext,
   type FluentDurableContextService,
-  type StateIndexWaitBackendOptions,
   type ObjectStateBackend,
   type RunAction,
   type RunActionContext,
+  type StateIndexWaitBackendOptions,
   type StateWaitBackendOptions,
   type TanStackWorkflowContext
 } from "./context.ts"
 export {
   type AnyGeneratorHandler,
+  cron,
   type Definition,
   type DefinitionKind,
-  cron,
   every,
   type FluentScheduleDefinition,
   type GeneratorHandler,
@@ -78,9 +78,9 @@ export {
   serdes,
   service,
   type ServiceDefinition,
-  type WorkflowOverlapPolicy,
   workflow,
   type WorkflowDefinition,
+  type WorkflowOverlapPolicy,
   type WorkflowScheduleDefinition,
   type WorkflowScheduleSpec
 } from "./definitions.ts"
@@ -133,13 +133,13 @@ export type {
   CelLiteral,
   CelStatePredicate,
   StateBinding,
+  StateIndexWaitOptions,
   StatePredicate,
   StatePredicateContext,
   StatePredicateEnvironment,
   StatePredicateField,
   StatePredicateFieldType,
-  StateIndexWaitOptions,
+  StateWaitOptions,
   TableCelExpressionBuilder,
-  TableCelFactory,
-  StateWaitOptions
+  TableCelFactory
 } from "./state.ts"

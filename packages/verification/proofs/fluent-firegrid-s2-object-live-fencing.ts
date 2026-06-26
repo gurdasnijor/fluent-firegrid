@@ -1,8 +1,10 @@
 import { objectInvocationStreamName } from "@firegrid/fluent-firegrid-s2"
 import { basin, basins, layer as S2Layer, stream as s2Stream } from "effect-s2"
 import * as Effect from "effect/Effect"
+import * as Fiber from "effect/Fiber"
 import * as Stream from "effect/Stream"
 
+import { requestJson } from "../src/HttpProofClient.ts"
 import { processHost } from "../src/ProcessHost.ts"
 import { proof } from "../src/Proof.ts"
 import { VerificationError } from "../src/VerificationError.ts"
@@ -16,18 +18,6 @@ const portFromTrialId = (trialId: string, salt: string): number => {
   )
   return 45_000 + hash
 }
-
-const requestJson = <A>(url: string, init?: RequestInit): Effect.Effect<A, VerificationError> =>
-  Effect.tryPromise({
-    try: async () => {
-      const response = await fetch(url, init)
-      if (!response.ok) {
-        throw new Error(`request ${url} failed with ${response.status}: ${await response.text()}`)
-      }
-      return await response.json() as A
-    },
-    catch: (cause) => new VerificationError({ cause, message: `fluent object live-fencing request failed: ${url}` })
-  })
 
 type InvocationEvent = {
   readonly _tag: string
@@ -125,14 +115,9 @@ export default proof("fluent-firegrid-s2.object-live-fencing")
             { namespace },
             { key: "counter-1", objectName: "cross-host-counter" }
           )
-          const deposedRequest = yield* Effect.sync(() => {
-            const controller = new AbortController()
-            void fetch(`${hostA}/deposed-add?by=5`, {
-              method: "POST",
-              signal: controller.signal
-            }).catch(() => undefined)
-            return controller
-          })
+          const deposedRequest = yield* requestJson(`${hostA}/deposed-add?by=5`, { method: "POST" }).pipe(
+            Effect.forkDetach
+          )
           const startedCount = yield* waitForDeposedStarted(s2Endpoint, streamName)
 
           yield* requestJson<{ readonly now: number }>(`${hostB}/now?value=3000`, { method: "POST" })
@@ -142,7 +127,7 @@ export default proof("fluent-firegrid-s2.object-live-fencing")
           )
 
           yield* Effect.sleep("1 second")
-          deposedRequest.abort()
+          yield* Fiber.interrupt(deposedRequest)
 
           const loaded = yield* requestJson<{ readonly hostId: string; readonly value: number }>(`${hostB}/value`)
           return {

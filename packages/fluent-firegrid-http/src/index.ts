@@ -31,20 +31,14 @@ export interface AwakeableHttpClient {
   readonly resolve: <T>(id: string, value: T) => Promise<ExternalSignalDelivery>
 }
 
-export class AwakeableHttpClientError extends Error {
-  readonly _tag = "AwakeableHttpClientError"
-  readonly body: unknown
-  readonly status: number
-
-  constructor(options: {
-    readonly body: unknown
-    readonly status: number
-  }) {
-    super(`awakeable HTTP delivery failed with status ${options.status}`)
-    this.body = options.body
-    this.status = options.status
+export class AwakeableHttpClientError extends Schema.TaggedErrorClass<AwakeableHttpClientError>()(
+  "AwakeableHttpClientError",
+  {
+    body: Schema.Unknown,
+    message: Schema.String,
+    status: Schema.Number
   }
-}
+) {}
 
 export const createAwakeableHttpClient = (
   options: AwakeableHttpClientOptions
@@ -58,7 +52,11 @@ export const createAwakeableHttpClient = (
     })
     const payload = await response.json().catch(() => undefined) as unknown
     if (!response.ok) {
-      throw new AwakeableHttpClientError({ body: payload, status: response.status })
+      throw new AwakeableHttpClientError({
+        body: payload,
+        message: `awakeable HTTP delivery failed with status ${response.status}`,
+        status: response.status
+      })
     }
     return payload as ExternalSignalDelivery
   }
@@ -71,7 +69,7 @@ export const createAwakeableHttpClient = (
 export interface FluentHttpHandlerOptions<Error = unknown> {
   readonly binding: InvocationBinding<Error>
   readonly definitions: ReadonlyArray<AnyDefinition>
-  readonly externalSignals?: ExternalSignalBinding<Error>
+  readonly externalSignals?: ExternalSignalBinding<FluentFiregridError>
 }
 
 interface RouteMatch {

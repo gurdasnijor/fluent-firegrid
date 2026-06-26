@@ -148,14 +148,17 @@ const decodeHandlerInput = (
 ): Effect.Effect<unknown, FluentFiregridError> =>
   descriptor?.input === undefined
     ? Effect.succeed(input)
-    : Schema.decodeUnknownEffect(descriptor.input)(input).pipe(
-      Effect.mapError((cause) =>
-        new FluentFiregridError({
-          cause,
-          message: `invalid input for fluent handler ${definition.name}.${handlerName}`
-        })
+    : Schema.decodeUnknownEffect(
+      descriptor.input as unknown as Schema.ConstraintCodec<unknown, unknown, never, never>
+    )(input)
+      .pipe(
+        Effect.mapError((cause) =>
+          new FluentFiregridError({
+            cause,
+            message: `invalid input for fluent handler ${definition.name}.${handlerName}`
+          })
+        )
       )
-    ) as Effect.Effect<unknown, FluentFiregridError>
 
 const decodeHandlerOutput = (
   definition: { readonly name: string },
@@ -165,14 +168,17 @@ const decodeHandlerOutput = (
 ): Effect.Effect<unknown, FluentFiregridError> =>
   descriptor?.output === undefined
     ? Effect.succeed(output)
-    : Schema.decodeUnknownEffect(descriptor.output)(output).pipe(
-      Effect.mapError((cause) =>
-        new FluentFiregridError({
-          cause,
-          message: `invalid output for fluent handler ${definition.name}.${handlerName}`
-        })
+    : Schema.decodeUnknownEffect(
+      descriptor.output as unknown as Schema.ConstraintCodec<unknown, unknown, never, never>
+    )(output)
+      .pipe(
+        Effect.mapError((cause) =>
+          new FluentFiregridError({
+            cause,
+            message: `invalid output for fluent handler ${definition.name}.${handlerName}`
+          })
+        )
       )
-    ) as Effect.Effect<unknown, FluentFiregridError>
 
 export interface FluentRuntimeHost {
   readonly runtime: {
@@ -274,12 +280,10 @@ export const createTanStackRuntimeBinding = (
     send: <Output>(request: CallRequest) => {
       const invocationId = runIdFor(request)
       return start({ ...request, runId: invocationId }).pipe(
-        Effect.map((result) => {
-          return {
-            invocationId,
-            ...(result.run?.output === undefined ? {} : { output: result.run.output as Output })
-          }
-        })
+        Effect.map((result) => ({
+          invocationId,
+          ...(result.run?.output === undefined ? {} : { output: result.run.output as Output })
+        }))
       )
     }
   }

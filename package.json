@@ -26,9 +26,9 @@
   "lint-staged": {
     "*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}": [
       "oxlint --fix",
-      "dprint fmt"
+      "dprint fmt --allow-no-files"
     ],
-    "*.{json,md,yml,yaml}": "dprint fmt"
+    "*.{json,md,yml,yaml}": "dprint fmt --allow-no-files"
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm exec lint-staged && pnpm exec dprint check --fail-fast"

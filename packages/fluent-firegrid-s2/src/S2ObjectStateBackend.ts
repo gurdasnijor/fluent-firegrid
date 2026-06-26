@@ -360,9 +360,9 @@ const readJournaled = (
         return yield* Effect.failCause(result.cause)
       }
     }
-    return yield* Effect.fail(
-      new FluentFiregridError({ message: `S2 object state read journal CAS failed after retries for ${streamName}` })
-    )
+    return yield* new FluentFiregridError({
+      message: `S2 object state read journal CAS failed after retries for ${streamName}`
+    })
   })
 
 const appendChange = (
@@ -391,9 +391,7 @@ const appendChange = (
         return yield* Effect.failCause(result.cause)
       }
     }
-    return yield* Effect.fail(
-      new FluentFiregridError({ message: `S2 object state CAS failed after retries for ${streamName}` })
-    )
+    return yield* new FluentFiregridError({ message: `S2 object state CAS failed after retries for ${streamName}` })
   })
 
 const waitForState = (
@@ -470,7 +468,8 @@ const waitForIndexedState = (
     if (Option.isSome(current)) return current
     if (owner === undefined || options.waitId === undefined) {
       return yield* new FluentFiregridError({
-        message: `S2 object state indexed wait ${options.name} for ${table}:${options.indexKey} requires an object invocation owner`
+        message:
+          `S2 object state indexed wait ${options.name} for ${table}:${options.indexKey} requires an object invocation owner`
       })
     }
     yield* appendStateWaitRegistration(runtime, owner.invocationStreamName, {

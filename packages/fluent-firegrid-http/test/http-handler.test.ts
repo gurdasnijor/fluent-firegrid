@@ -88,16 +88,26 @@ describe("createAwakeableHttpClient", () => {
       fetch: async () => Response.json({ error: "not_found" }, { status: 404 })
     })
 
-    await expect(client.resolve("missing", "ok")).rejects.toMatchObject({
-      _tag: "AwakeableHttpClientError",
-      body: { error: "not_found" },
-      status: 404
-    } satisfies Partial<AwakeableHttpClientError>)
+    await expect(client.resolve("missing", "ok")).rejects.toMatchObject(
+      {
+        _tag: "AwakeableHttpClientError",
+        body: { error: "not_found" },
+        status: 404
+      } satisfies Partial<AwakeableHttpClientError>
+    )
   })
 })
 
 describe("createFluentHttpHandler", () => {
   it("routes awakeable resolve and reject endpoints through external signal bindings", async () => {
+    const testSleep = Effect.fn("testSleep")(function*() {})
+    const testSleepUntil = Effect.fn("testSleepUntil")(function*() {})
+    const unusedStep = Effect.fn("unusedStep")(function*() {
+      return yield* new FluentFiregridError({ message: "step not used" })
+    })
+    const unusedWaitForSignal = Effect.fn("unusedWaitForSignal")(function*() {
+      return yield* new FluentFiregridError({ message: "waitForSignal not used" })
+    })
     const id = await Effect.runPromise(
       awakeable<string>({ name: "review" }).pipe(
         Effect.map((created) => created.id),
@@ -106,10 +116,10 @@ describe("createFluentHttpHandler", () => {
           FluentDurableContext.of({
             runId: "run-1",
             signalOperationId: ({ kind, name }) => `run-1:signal:0:${kind}:${name}`,
-            sleep: () => Effect.void,
-            sleepUntil: () => Effect.void,
-            step: () => Effect.fail(new FluentFiregridError({ message: "step not used" })),
-            waitForSignal: () => Effect.fail(new FluentFiregridError({ message: "waitForSignal not used" }))
+            sleep: testSleep,
+            sleepUntil: testSleepUntil,
+            step: unusedStep,
+            waitForSignal: unusedWaitForSignal
           })
         )
       )

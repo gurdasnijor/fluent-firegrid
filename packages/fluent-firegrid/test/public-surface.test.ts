@@ -7,13 +7,13 @@ import {
   bindFluentDefinitions,
   type CallRequest,
   client,
-  cron,
   createTanStackExternalSignalBinding,
   createTanStackRuntimeBinding,
+  cron,
   every,
   FluentDurableContext,
   type FluentDurableContextService,
-  type FluentFiregridError,
+  FluentFiregridError,
   genericCall,
   genericSend,
   iface,
@@ -25,7 +25,6 @@ import {
   objectSendClient,
   rpc,
   run,
-  type RunAction,
   schedule,
   schemas,
   sendClient,
@@ -41,6 +40,22 @@ import {
   workflowIdForHandler,
   workflowSendClient
 } from "../src/index.ts"
+
+const testSleep = Effect.fn("testSleep")(function*() {})
+const testSleepUntil = Effect.fn("testSleepUntil")(function*() {})
+const unusedStep = Effect.fn("unusedStep")(function*() {
+  return yield* Effect.die("not used")
+})
+const unusedWaitForSignal = Effect.fn("unusedWaitForSignal")(function*() {
+  return yield* Effect.die("not used")
+})
+
+const testStep: FluentDurableContextService["step"] = Effect.fn("testStep")(function*(name, action) {
+  const value = action({ attempt: 1, id: name, signal: new AbortController().signal })
+  return yield* (Effect.isEffect(value)
+    ? value.pipe(Effect.mapError((cause) => new FluentFiregridError({ cause, message: "test step failed" })))
+    : Effect.promise(() => Promise.resolve(value)))
+})
 
 describe("fluent-firegrid public surface", () => {
   it("attaches schema descriptors to direct definitions", () => {
@@ -475,15 +490,10 @@ describe("fluent-firegrid public surface", () => {
     const context = FluentDurableContext.of(
       {
         binding,
-        sleep: () => Effect.void,
-        sleepUntil: () => Effect.void,
-        step: <A>(_name: string, action: RunAction<A>) => {
-          const value = action({ attempt: 1, id: "step", signal: new AbortController().signal })
-          return (Effect.isEffect(value)
-            ? value
-            : Effect.promise(() => Promise.resolve(value))) as Effect.Effect<A, never>
-        },
-        waitForSignal: () => Effect.die("not used")
+        sleep: testSleep,
+        sleepUntil: testSleepUntil,
+        step: testStep,
+        waitForSignal: unusedWaitForSignal
       } satisfies FluentDurableContextService
     )
 
@@ -536,10 +546,10 @@ describe("fluent-firegrid public surface", () => {
     const context = FluentDurableContext.of(
       {
         binding,
-        sleep: () => Effect.void,
-        sleepUntil: () => Effect.void,
-        step: () => Effect.die("not used"),
-        waitForSignal: () => Effect.die("not used")
+        sleep: testSleep,
+        sleepUntil: testSleepUntil,
+        step: unusedStep,
+        waitForSignal: unusedWaitForSignal
       } satisfies FluentDurableContextService
     )
 

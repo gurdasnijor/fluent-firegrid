@@ -1,8 +1,8 @@
 import * as Effect from "effect/Effect"
 
+import { requestJson } from "../src/HttpProofClient.ts"
 import { processHost } from "../src/ProcessHost.ts"
 import { proof } from "../src/Proof.ts"
-import { VerificationError } from "../src/VerificationError.ts"
 
 const workerPath = new URL("../fixtures/tanstack-workflow-s2-host-worker.ts", import.meta.url).pathname
 
@@ -10,18 +10,6 @@ const portFromTrialId = (trialId: string): number => {
   const hash = Array.from(trialId).reduce((current, char) => (current * 31 + char.charCodeAt(0)) % 10_000, 0)
   return 35_000 + hash
 }
-
-const requestJson = <A>(url: string, init?: RequestInit): Effect.Effect<A, VerificationError> =>
-  Effect.tryPromise({
-    try: async () => {
-      const response = await fetch(url, init)
-      if (!response.ok) {
-        throw new Error(`request ${url} failed with ${response.status}: ${await response.text()}`)
-      }
-      return await response.json() as A
-    },
-    catch: (cause) => new VerificationError({ cause, message: `host worker request failed: ${url}` })
-  })
 
 export default proof("tanstack-workflow-s2.host-crash-restart")
   .describedAs(

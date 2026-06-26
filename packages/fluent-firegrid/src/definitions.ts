@@ -48,7 +48,9 @@ export interface FluentScheduleDefinition<
   HandlerName extends keyof Handlers & string = keyof Handlers & string
 > extends Omit<WorkflowScheduleDefinition, "input"> {
   readonly handler: HandlerName
-  readonly input?: HandlerInput<Handlers[HandlerName]> | (() => HandlerInput<Handlers[HandlerName]> | Promise<HandlerInput<Handlers[HandlerName]>>)
+  readonly input?:
+    | HandlerInput<Handlers[HandlerName]>
+    | (() => HandlerInput<Handlers[HandlerName]> | Promise<HandlerInput<Handlers[HandlerName]>>)
 }
 
 export interface Definition<
@@ -142,11 +144,7 @@ const makeDefinition = <
   ...(definition.schedules === undefined ? {} : { schedules: definition.schedules })
 })
 
-export type {
-  WorkflowOverlapPolicy,
-  WorkflowScheduleDefinition,
-  WorkflowScheduleSpec
-}
+export type { WorkflowOverlapPolicy, WorkflowScheduleDefinition, WorkflowScheduleSpec }
 
 export const service = <const Name extends string, const Handlers extends Record<string, AnyGeneratorHandler>>(
   definition: DefinitionConfig<Name, Handlers>

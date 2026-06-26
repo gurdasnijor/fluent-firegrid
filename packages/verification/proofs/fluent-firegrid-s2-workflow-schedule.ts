@@ -1,12 +1,5 @@
 import { createS2WorkflowRuntimeHost } from "@firegrid/tanstack-workflow-s2"
-import {
-  bindFluentDefinitions,
-  every,
-  run,
-  schedule,
-  workflow,
-  workflowIdForHandler
-} from "@firegrid/fluent-firegrid"
+import { bindFluentDefinitions, every, run, schedule, workflow, workflowIdForHandler } from "@firegrid/fluent-firegrid"
 import * as Effect from "effect/Effect"
 
 import { proof } from "../src/Proof.ts"

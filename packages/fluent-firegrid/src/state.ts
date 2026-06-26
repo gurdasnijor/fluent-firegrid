@@ -24,8 +24,8 @@ import {
   type CelExpressionBuilder,
   type CelExpressionInput,
   type CelFieldExpression,
-  validateStatePredicate,
-  type StatePredicate
+  type StatePredicate,
+  validateStatePredicate
 } from "./statePredicate.ts"
 
 const PrimaryKeyAnnotation = "@firegrid/fluent-firegrid/primaryKey"
@@ -291,8 +291,10 @@ const isStateWaitTimedOutPayload = (value: unknown): value is StateWaitTimedOutP
 const stableJson = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`
   if (typeof value === "object" && value !== null) {
-    return `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, nested]) => `${JSON.stringify(key)}:${stableJson(nested)}`).join(",")}}`
+    return `{${
+      Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => `${JSON.stringify(key)}:${stableJson(nested)}`).join(",")
+    }}`
   }
   return JSON.stringify(value)
 }
@@ -300,8 +302,7 @@ const stableJson = (value: unknown): string => {
 export const stateIndexKey = (
   index: ReadonlyArray<string>,
   vars: Readonly<Record<string, unknown>>
-): string =>
-  index.map((field) => `${field}=${stableJson(vars[field])}`).join("&")
+): string => index.map((field) => `${field}=${stableJson(vars[field])}`).join("&")
 
 const primitiveFieldType = (ast: SchemaAST.AST): StatePredicateFieldType => {
   const typeAst = SchemaAST.toType(ast)
@@ -336,8 +337,7 @@ const predicateFieldsFor = (table: AnyTable): Readonly<Record<string, StatePredi
 const predicateEnvironmentVersion = (
   table: string,
   fields: Readonly<Record<string, StatePredicateField>>
-): string =>
-  `table:${table}:${Object.values(fields).map((field) => `${field.name}:${field.type}`).join(",")}`
+): string => `table:${table}:${Object.values(fields).map((field) => `${field.name}:${field.type}`).join(",")}`
 
 export const statePredicateEnvironment = (table: AnyTable): StatePredicateEnvironment => {
   const fields = predicateFieldsFor(table)
@@ -383,11 +383,9 @@ export const validateStatePredicateForEnvironment: (
   )
   if (unknownReferences.length > 0) {
     const formatted = unknownReferences.map(({ field, scope }) => `${scope}.${field}`).join(", ")
-    return yield* Effect.fail(
-      new FluentFiregridError({
-        message: `invalid state wait predicate for table ${environment.table}: unknown field reference ${formatted}`
-      })
-    )
+    return yield* new FluentFiregridError({
+      message: `invalid state wait predicate for table ${environment.table}: unknown field reference ${formatted}`
+    })
   }
 })
 
@@ -417,23 +415,19 @@ const validateStateIndexWait = (
   Effect.gen(function*() {
     const environment = statePredicateEnvironment(table)
     if (options.index.length === 0) {
-      return yield* Effect.fail(new FluentFiregridError({ message: "state.waitFor index waits require at least one index field" }))
+      return yield* new FluentFiregridError({ message: "state.waitFor index waits require at least one index field" })
     }
     const missingFields = options.index.filter((field) => environment.row[field] === undefined)
     if (missingFields.length > 0) {
-      return yield* Effect.fail(
-        new FluentFiregridError({
-          message: `state.waitFor index for table ${table.tableName} references unknown field ${missingFields.join(", ")}`
-        })
-      )
+      return yield* new FluentFiregridError({
+        message: `state.waitFor index for table ${table.tableName} references unknown field ${missingFields.join(", ")}`
+      })
     }
     const missingVars = options.index.filter((field) => options.vars[field] === undefined)
     if (missingVars.length > 0) {
-      return yield* Effect.fail(
-        new FluentFiregridError({
-          message: `state.waitFor index for table ${table.tableName} requires vars for ${missingVars.join(", ")}`
-        })
-      )
+      return yield* new FluentFiregridError({
+        message: `state.waitFor index for table ${table.tableName} requires vars for ${missingVars.join(", ")}`
+      })
     }
     yield* validateStatePredicateForEnvironment(options.where, environment)
     return { environment, indexKey: stateIndexKey(options.index, options.vars) }
@@ -453,11 +447,13 @@ const decodeRowFor = <Tbl extends AnyTable>(
   table: Tbl,
   value: unknown
 ): Effect.Effect<RowOf<Tbl>, FluentFiregridError> =>
-  Schema.decodeUnknownEffect(table.schema as unknown as Schema.Codec<unknown, unknown, never, never>)(value).pipe(
+  Schema.decodeUnknownEffect(table.schema as unknown as Schema.ConstraintCodec<RowOf<Tbl>, unknown, never, never>)(
+    value
+  ).pipe(
     Effect.mapError((cause) =>
       new FluentFiregridError({ cause, message: `failed to decode row for table ${table.tableName}` })
     )
-  ) as Effect.Effect<RowOf<Tbl>, FluentFiregridError>
+  )
 
 const primaryKeyOf = <Tbl extends AnyTable>(
   table: Tbl,
@@ -530,9 +526,7 @@ const waitForKey = <Tbl extends AnyTable>(
   withStateBackend("state.waitFor", (backend, ctx) =>
     Effect.gen(function*() {
       if (backend.waitFor === undefined) {
-        return yield* Effect.fail(
-          new FluentFiregridError({ message: "state.waitFor is not supported by this state backend" })
-        )
+        return yield* new FluentFiregridError({ message: "state.waitFor is not supported by this state backend" })
       }
       const predicateEnvironment = statePredicateEnvironment(table)
       yield* validateStatePredicateForEnvironment(options.when, predicateEnvironment)
@@ -554,7 +548,7 @@ const waitForKey = <Tbl extends AnyTable>(
       }
       const value = yield* ctx.waitForSignal<unknown>(signalName, waitId === undefined ? undefined : { id: waitId })
       if (isStateWaitTimedOutPayload(value)) {
-        return yield* Effect.fail(new FluentFiregridError({ message: `state.waitFor ${options.name} timed out` }))
+        return yield* new FluentFiregridError({ message: `state.waitFor ${options.name} timed out` })
       }
       return yield* decodeRowFor(table, value)
     }))
@@ -566,9 +560,9 @@ const waitForIndex = <Tbl extends AnyTable>(
   withStateBackend("state.waitFor", (backend, ctx) =>
     Effect.gen(function*() {
       if (backend.waitForIndex === undefined) {
-        return yield* Effect.fail(
-          new FluentFiregridError({ message: "state.waitFor index waits are not supported by this state backend" })
-        )
+        return yield* new FluentFiregridError({
+          message: "state.waitFor index waits are not supported by this state backend"
+        })
       }
       const validated = yield* validateStateIndexWait(table, options as StateIndexWaitOptions<unknown>)
       const waitId = ctx.stateOperationId?.({
@@ -596,7 +590,7 @@ const waitForIndex = <Tbl extends AnyTable>(
       }
       const value = yield* ctx.waitForSignal<unknown>(signalName, waitId === undefined ? undefined : { id: waitId })
       if (isStateWaitTimedOutPayload(value)) {
-        return yield* Effect.fail(new FluentFiregridError({ message: `state.waitFor ${options.name} timed out` }))
+        return yield* new FluentFiregridError({ message: `state.waitFor ${options.name} timed out` })
       }
       return yield* decodeRowFor(table, value)
     }))
