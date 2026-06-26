@@ -1,12 +1,19 @@
 # Current Package Structure
 
 This is the checked-in version of the package-structure sketch from the PR #70
-cutover discussion. It describes the production package layout only.
+cutover discussion. It describes the TypeScript `main` production package
+layout only.
+
+Do not use this `packages/*` layout as the target mental model for the
+`eff-sharp` F#/Fable cutover branch. The F#/Fable branch should be organized
+around F# projects and a solution file, not npm workspace packages.
 
 `apps/*` entries are composition examples, ACP process work, and proof harnesses.
 They are intentionally excluded from the production runtime package DAG.
 
 ## Production Directories
+
+Current TypeScript `main` layout:
 
 ```text
 packages/
@@ -55,6 +62,117 @@ packages/
       ChdbClient.ts
       ChdbExporter.ts
 ```
+
+## F#/Fable Cutover Target
+
+For `eff-sharp`, prefer a source-project-first layout. F# project files are the
+real package and dependency boundaries; `package.json` should stay at the root
+unless a concrete JS app/package boundary requires its own npm package.
+
+```text
+fluent-firegrid/
+  Firegrid.slnx
+  global.json
+  nuget.config
+  Directory.Build.props
+  Directory.Packages.props
+
+  src/
+    Firegrid.Log/
+      Firegrid.Log.fsproj
+      S2/
+        Types.fs
+        InternalSdk.fs
+        S2.fs
+
+    Firegrid.Core/
+      Firegrid.Core.fsproj
+      Types.fs
+      Errors.fs
+      Invocation.fs
+      StatePredicates.fs
+
+    Firegrid.Clients/
+      Firegrid.Clients.fsproj
+      Clients.fs
+      Attach.fs
+      GenericInvocation.fs
+
+    Firegrid.Runtime/
+      Firegrid.Runtime.fsproj
+      Types.fs
+      Runtime.fs
+
+    Firegrid.Store/
+      Firegrid.Store.fsproj
+      Types.fs
+      WorkflowLog.fs
+      ObjectState.fs
+      Runtime.fs
+
+    Firegrid.Fluent/
+      Firegrid.Fluent.fsproj
+      Definitions.fs
+      State.fs
+      Run.fs
+
+  tests/
+    Firegrid.Store.Tests/
+      Firegrid.Store.Tests.fsproj
+    Firegrid.Fluent.Tests/
+      Firegrid.Fluent.Tests.fsproj
+
+  apps/
+    NodeHost/
+      NodeHost.fsproj
+
+  package.json
+  pnpm-lock.yaml
+```
+
+F#/Fable cutover rules:
+
+- do not add new F# production code under `packages/log` or `packages/store`;
+- use `src/Firegrid.*/*.fsproj` as the project/package boundary;
+- encode dependencies with `ProjectReference`;
+- keep a root `Firegrid.slnx` or `Firegrid.sln` as the project index;
+- keep root `package.json` for JS/Fable tooling only;
+- write generated Fable JavaScript to `dist/` or `build/` and keep it ignored;
+- declare native npm dependencies such as `@s2-dev/streamstore` through
+  Fable/Femto project metadata, mirroring them in root npm tooling only when
+  the build actually needs it.
+
+Expected F#/Fable project DAG:
+
+```mermaid
+flowchart LR
+
+  fluent["Firegrid.Fluent"]
+  clients["Firegrid.Clients"]
+  store["Firegrid.Store"]
+  runtime["Firegrid.Runtime"]
+  core["Firegrid.Core"]
+  log["Firegrid.Log"]
+
+  fluent --> core
+  fluent --> clients
+  fluent --> runtime
+  clients --> core
+  store --> core
+  store --> runtime
+  store --> log
+  runtime --> core
+```
+
+Important boundary: `Firegrid.Store` must not depend on `Firegrid.Fluent` or a
+client authoring package. Store code can implement low-level invocation/runtime
+contracts from `Firegrid.Core`, but clients and authoring ergonomics sit above
+the store.
+
+`Firegrid.Clients` owns pure invocation clients over a supplied binding:
+call/send clients, attach-by-reference, generic invocation helpers, and typed
+handles. It depends on `Firegrid.Core` only. Ambient Effect/Fable authoring
+ergonomics belong in `Firegrid.Fluent`.
 
 ## Current Package DAG
 
