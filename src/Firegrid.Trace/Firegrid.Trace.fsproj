@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <AssemblyName>Firegrid.Trace</AssemblyName>
+    <RootNamespace>Firegrid.Trace</RootNamespace>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <DefineConstants>$(DefineConstants);FABLE_COMPILER</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="EffSharp" Version="*-*" />
+    <PackageReference Include="Fable.Core" Version="5.1.0" />
+    <PackageReference Include="Fable.Promise" Version="3.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Sdk.fs" />
+    <Compile Include="Ch.fs" />
+    <Compile Include="ChdbExporter.fs" />
+    <Compile Include="ChdbClient.fs" />
+    <Compile Include="Exports.fs" />
+  </ItemGroup>
+
+</Project>

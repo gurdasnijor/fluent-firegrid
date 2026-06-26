@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <AssemblyName>Firegrid.Core</AssemblyName>
+    <RootNamespace>Firegrid.Core</RootNamespace>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <DefineConstants>$(DefineConstants);FABLE_COMPILER</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="EffSharp" Version="*-*" />
+    <PackageReference Include="Fable.Core" Version="5.1.0" />
+    <PackageReference Include="Fable.Promise" Version="3.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Sdk.fs" />
+    <Compile Include="Errors.fs" />
+    <Compile Include="StateDiff.fs" />
+    <Compile Include="Types.fs" />
+    <Compile Include="Result.fs" />
+    <Compile Include="Registry.fs" />
+    <Compile Include="Middleware.fs" />
+    <Compile Include="DefineWorkflow.fs" />
+    <Compile Include="InMemoryRunStore.fs" />
+    <Compile Include="ParseRequest.fs" />
+    <Compile Include="RunWorkflow.fs" />
+    <Compile Include="HandleWebhook.fs" />
+    <Compile Include="Exports.fs" />
+  </ItemGroup>
+
+</Project>

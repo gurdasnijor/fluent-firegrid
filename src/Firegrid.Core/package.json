@@ -1,0 +1,26 @@
+{
+  "name": "@firegrid/core",
+  "version": "0.0.0",
+  "description": "Fable-native Firegrid workflow engine, definitions, middleware and run store.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/Exports.js",
+  "exports": {
+    ".": "./dist/Exports.js"
+  },
+  "files": [
+    "Firegrid.Core.fsproj",
+    "*.fs",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet tool run fable -- Firegrid.Core.fsproj -o dist --optimize --noCache --noRestore",
+    "diagnostics": "echo '@firegrid/core diagnostics are covered by dotnet build'",
+    "lint": "echo '@firegrid/core lint is covered by F# compile'",
+    "test": "pnpm run typecheck",
+    "typecheck": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet build Firegrid.Core.fsproj -v:q"
+  },
+  "dependencies": {
+    "@standard-schema/spec": "1.0.0"
+  }
+}
