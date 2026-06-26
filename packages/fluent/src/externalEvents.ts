@@ -209,8 +209,8 @@ export function rejectAwakeable(
 ): Effect.Effect<ExternalSignalDelivery, FluentFiregridError, FluentDurableContext>
 export function rejectAwakeable(
   first: ExternalSignalBinding<FluentFiregridError> | string,
-  second: string | unknown,
-  third?: unknown | AwakeableRejectOptions,
+  second: unknown,
+  third?: unknown,
   fourth?: AwakeableRejectOptions
 ) {
   if (typeof first !== "string") {

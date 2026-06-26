@@ -8,7 +8,7 @@
 | Date | 2026-06-25 |
 | Package | `@firegrid/fluent` plus S2 object-owner support |
 | Design lineage | table-shaped fluent object state over S2 object-owner storage |
-| Lower runtime | TanStack Workflow over `@firegrid/store` |
+| Lower runtime | TanStack Workflow over `@firegrid/fluent/s2` |
 
 ---
 

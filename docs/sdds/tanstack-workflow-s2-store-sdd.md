@@ -6,8 +6,8 @@
 | --- | --- |
 | Status | Implemented through A-E; active hardening substrate |
 | Date | 2026-06-25 |
-| Package | `@firegrid/store` (working name) |
-| Primary contract | `WorkflowExecutionStore` from `@firegrid/runtime` |
+| Package | `@firegrid/fluent/s2` with `@firegrid/store` as a compatibility package |
+| Primary contract | `WorkflowExecutionStore` from `@firegrid/fluent/runtime` |
 | Local reference | `repos/tanstack-workflow` @ `602cdec439876335168d96f5443c0dc59e4cc436` |
 | Lower dependency | `@firegrid/log` |
 

@@ -1,13 +1,8 @@
 import type * as Effect from "effect/Effect"
 import type * as Schema from "effect/Schema"
 import type { DefinitionKind, HandlerDescriptor, HandlerDescriptors, HandlerInput } from "@firegrid/core"
-import {
-  cron,
-  every,
-  type WorkflowOverlapPolicy,
-  type WorkflowScheduleDefinition,
-  type WorkflowScheduleSpec
-} from "@firegrid/runtime"
+import { cron, every } from "./runtime/define-runtime.ts"
+import type { WorkflowOverlapPolicy, WorkflowScheduleDefinition, WorkflowScheduleSpec } from "./runtime/types.ts"
 
 import type { FluentDurableContext } from "./context.ts"
 

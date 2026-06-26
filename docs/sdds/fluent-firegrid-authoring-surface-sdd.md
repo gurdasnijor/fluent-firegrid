@@ -7,7 +7,7 @@
 | Status | Implemented through transport binding |
 | Date | 2026-06-25 |
 | Package | `@firegrid/fluent`, `@firegrid/fluent/http`, `@firegrid/example-full-stack-service` |
-| Lower runtime | TanStack Workflow over `@firegrid/store` |
+| Lower runtime | TanStack Workflow over `@firegrid/fluent/s2` |
 
 ---
 

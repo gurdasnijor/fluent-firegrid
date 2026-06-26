@@ -1,7 +1,7 @@
 {
   "name": "@firegrid/clients",
   "version": "0.0.0",
-  "description": "Pure Firegrid invocation clients over supplied invocation bindings.",
+  "description": "Compatibility re-export for @firegrid/fluent client helpers.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -23,8 +23,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@firegrid/core": "workspace:*",
-    "effect": "4.0.0-beta.87"
+    "@firegrid/fluent": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

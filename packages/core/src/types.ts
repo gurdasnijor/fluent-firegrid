@@ -348,10 +348,7 @@ export type ReservedCtxFields =
 export type AssertNonReservedExtension<TExt> =
   & keyof TExt
   & ReservedCtxFields extends never ? TExt
-  : `Middleware extension may not shadow reserved ctx field: ${
-    & keyof TExt
-    & ReservedCtxFields
-    & string}`
+  : `Middleware extension may not shadow reserved ctx field: ${Extract<keyof TExt, ReservedCtxFields>}`
 
 /** Full ctx type passed to a handler, including middleware-added
  *  fields. `TExtensions` defaults to `unknown` so the empty-middleware

@@ -6,7 +6,7 @@ import {
   state
 } from "@firegrid/fluent"
 import { primaryKey, Table } from "@firegrid/fluent/state"
-import { createS2ObjectStateBackend } from "@firegrid/store"
+import { createS2ObjectStateBackend } from "@firegrid/fluent/s2"
 import * as Effect from "effect/Effect"
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"

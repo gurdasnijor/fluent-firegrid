@@ -1,4 +1,4 @@
-import { createS2WorkflowRuntimeHost } from "@firegrid/store"
+import { createS2WorkflowRuntimeHost } from "@firegrid/fluent/s2"
 import {
   awakeable,
   bindFluentDefinitions,

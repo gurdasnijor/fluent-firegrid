@@ -1,7 +1,7 @@
 {
   "name": "@firegrid/store",
   "version": "0.0.0",
-  "description": "S2-backed WorkflowExecutionStore for TanStack Workflow.",
+  "description": "Compatibility re-export for @firegrid/fluent S2 runtime helpers.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -24,10 +24,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@firegrid/core": "workspace:*",
-    "@firegrid/log": "workspace:*",
-    "@firegrid/runtime": "workspace:*",
-    "effect": "4.0.0-beta.87"
+    "@firegrid/fluent": "workspace:*"
   },
   "devDependencies": {
     "@effect/language-service": "^0.86.2",

@@ -1,4 +1,4 @@
-import { type RunState, s2WorkflowExecutionStore, type WorkflowEvent } from "@firegrid/store"
+import { type RunState, s2WorkflowExecutionStore, type WorkflowEvent } from "@firegrid/fluent/s2"
 import * as Effect from "effect/Effect"
 
 import { proof } from "../src/Proof.ts"

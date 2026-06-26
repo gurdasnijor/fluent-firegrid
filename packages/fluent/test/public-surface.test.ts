@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect"
 import { describe, expect, expectTypeOf, it } from "vitest"
-import { defineWorkflowRuntime, inMemoryWorkflowExecutionStore } from "@firegrid/runtime"
+import { defineWorkflowRuntime } from "@firegrid/fluent/runtime"
+import { inMemoryWorkflowExecutionStore } from "@firegrid/fluent/testing"
 
 import {
   attach,

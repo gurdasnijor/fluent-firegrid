@@ -1,6 +1,6 @@
 import * as Cause from "effect/Cause"
 import * as Data from "effect/Data"
-import type * as Duration from "effect/Duration"
+import * as Duration from "effect/Duration"
 import * as Effect from "effect/Effect"
 
 import { duration, type DurationLike } from "./clients.ts"
@@ -24,6 +24,9 @@ const isDurationLikeObject = (input: TimeoutDuration): input is Exclude<Duration
 const normalizeTimeoutDuration = (input: TimeoutDuration): Duration.Input =>
   isDurationLikeObject(input) ? duration(input) : input as Duration.Input
 
+const describeTimeoutDuration = (input: TimeoutDuration): string =>
+  Duration.format(Duration.fromInputUnsafe(normalizeTimeoutDuration(input)))
+
 export const orTimeout =
   (input: TimeoutDuration) => <A, E, R>(self: Effect.Effect<A, E, R>): Effect.Effect<A, E | FluentTimeoutError, R> =>
     self.pipe(
@@ -33,8 +36,8 @@ export const orTimeout =
           ? new FluentTimeoutError({
             cause,
             duration: input,
-            message: `operation timed out after ${isDurationLikeObject(input) ? `${duration(input)}ms` : String(input)}`
+            message: `operation timed out after ${describeTimeoutDuration(input)}`
           })
-          : cause as E
+          : cause
       )
     )

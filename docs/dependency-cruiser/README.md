@@ -2,6 +2,10 @@
 
 Generated from `.dependency-cruiser.cjs` on 2026-06-25.
 
+Note: the package boundaries are currently being consolidated under
+`@firegrid/fluent`. The SVG and JSON artifacts in this directory should be
+regenerated after that conversion settles.
+
 These diagrams show the production package graph only. Proofs and examples live
 under `apps/` and are intentionally excluded from the runtime diagrams.
 
@@ -20,8 +24,8 @@ The package-only dependency-cruiser report currently includes:
 | [`production-packages.svg`](production-packages.svg) | Production packages collapsed by package. Use this to spot surprising package-level edges. |
 | [`core-focus.svg`](core-focus.svg) | `@firegrid/core` neighborhood. This should remain the lowest shared contract package. |
 | [`fluent-focus.svg`](fluent-focus.svg) | `@firegrid/fluent` neighborhood. Use this to catch the authoring surface drifting into concrete stores, log substrate, or trace sinks. |
-| [`runtime-focus.svg`](runtime-focus.svg) | `@firegrid/runtime` neighborhood. This should depend on core and stay store-agnostic. |
-| [`store-focus.svg`](store-focus.svg) | `@firegrid/store` neighborhood. Use this to keep S2-backed storage/binding concerns below fluent/runtime contracts. |
+| [`runtime-focus.svg`](runtime-focus.svg) | Legacy `@firegrid/runtime` compatibility neighborhood. Runtime implementation now lives under `@firegrid/fluent/runtime`. |
+| [`store-focus.svg`](store-focus.svg) | Legacy `@firegrid/store` compatibility neighborhood. S2 runtime implementation now lives under `@firegrid/fluent/s2`. |
 
 The `.dot` files are the Graphviz source for the SVGs. `production-packages.mmd`
 is a Mermaid version of the package-level graph. `dependency-cruiser-report.json`

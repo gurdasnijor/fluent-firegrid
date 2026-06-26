@@ -8,5 +8,8 @@ export interface UserConfig {
 export interface EffectSchemaPlugin {
   readonly Config: any
   readonly Handler: (args: { readonly plugin: any }) => void
-  readonly Instance: any & { readonly imports: EffectSchemaImports }
+  readonly Instance: {
+    readonly imports: EffectSchemaImports
+    readonly [key: string]: any
+  }
 }

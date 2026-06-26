@@ -2,7 +2,9 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignoreIssues": {
     "packages/clients/src/index.ts": ["duplicates"],
-    "packages/fluent/src/clients.ts": ["duplicates"]
+    "packages/fluent/src/clients/base.ts": ["duplicates"],
+    "packages/fluent/src/clients.ts": ["duplicates"],
+    "packages/fluent/src/runtime/types.ts": ["types"]
   },
   "workspaces": {
     "packages/core": {

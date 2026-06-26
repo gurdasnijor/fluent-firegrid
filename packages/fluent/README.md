@@ -64,8 +64,8 @@ const result = yield* handle.attach()
 ```
 
 This package does not implement a second durable engine. `run` lowers to
-TanStack `ctx.step`, `sleep` lowers to TanStack sleep primitives, and hosting is
-provided by `@firegrid/store`. `waitForSignal` lowers to
+TanStack `ctx.step`, `sleep` lowers to TanStack sleep primitives, and S2 hosting
+is exposed through `@firegrid/fluent/s2`. `waitForSignal` lowers to
 TanStack `ctx.waitForEvent`.
 
 Transport-specific serving belongs in a separate binding package or process

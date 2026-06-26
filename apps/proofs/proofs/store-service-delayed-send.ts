@@ -1,5 +1,5 @@
 import { bindFluentDefinitions, run, sendServiceClient, service } from "@firegrid/fluent"
-import { createS2ObjectRuntimeBinding, createS2WorkflowRuntimeHost } from "@firegrid/store"
+import { createS2ObjectRuntimeBinding, createS2WorkflowRuntimeHost } from "@firegrid/fluent/s2"
 import * as Effect from "effect/Effect"
 
 import { proof } from "../src/Proof.ts"

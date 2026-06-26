@@ -1,7 +1,7 @@
 # @firegrid/clients
 
-Pure invocation clients over a supplied `InvocationBinding`.
+Compatibility package for the Fluent client helpers.
 
-This package contains caller-side helpers only. It must not depend on
-`@firegrid/fluent`, `@firegrid/store`, `@firegrid/runtime`, or substrate
-packages.
+The implementation now lives under `@firegrid/fluent/clients` while the package
+boundary is being consolidated. Prefer importing client helpers from
+`@firegrid/fluent` or `@firegrid/fluent/clients` in first-party code.

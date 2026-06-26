@@ -60,20 +60,20 @@ module.exports = {
       to: { path: "^packages/(?!core/)[^/]+/" },
     },
     {
-      name: "runtime-only-to-core",
+      name: "runtime-compat-only-to-fluent",
       severity: "error",
       comment:
-        "@firegrid/runtime may depend on @firegrid/core, but not fluent authoring, stores, substrates, trace, or apps.",
+        "@firegrid/runtime is currently a compatibility package and should only re-export from @firegrid/fluent/runtime.",
       from: { path: "^packages/runtime/src/" },
-      to: { path: "^packages/(?!core/|runtime/)[^/]+/" },
+      to: { path: "^packages/(?!fluent/|runtime/)[^/]+/" },
     },
     {
-      name: "clients-only-to-core",
+      name: "clients-compat-only-to-fluent",
       severity: "error",
       comment:
-        "@firegrid/clients is a pure invocation-client package. It may depend on @firegrid/core, but not fluent authoring, runtime, stores, substrates, trace, or apps.",
+        "@firegrid/clients is currently a compatibility package and should only re-export from @firegrid/fluent/clients.",
       from: { path: "^packages/clients/src/" },
-      to: { path: "^packages/(?!core/|clients/)[^/]+/" },
+      to: { path: "^packages/(?!fluent/|clients/)[^/]+/" },
     },
     {
       name: "log-not-to-product-packages",
@@ -92,20 +92,20 @@ module.exports = {
       to: { path: "^packages/(?!trace/)[^/]+/" },
     },
     {
-      name: "fluent-not-to-store-log-trace-or-apps",
+      name: "fluent-not-to-compat-trace-or-apps",
       severity: "error",
       comment:
-        "@firegrid/fluent is the authoring surface. Keep concrete stores, raw log substrate, trace sinks, and apps below it.",
+        "@firegrid/fluent is the product package. Runtime and S2 adapters live inside it; keep compatibility packages, trace sinks, and apps out.",
       from: { path: "^packages/fluent/src/" },
-      to: { path: "^packages/(?:store|log|trace)/|^apps/" },
+      to: { path: "^packages/(?:clients|runtime|store|trace)/|^apps/" },
     },
     {
-      name: "store-not-to-trace-or-apps",
+      name: "store-compat-only-to-fluent",
       severity: "error",
       comment:
-        "@firegrid/store is the production S2-backed store/binding. It may use core/runtime contracts and @firegrid/log, but must not import fluent authoring, clients, trace sinks, or apps.",
+        "@firegrid/store is currently a compatibility package and should only re-export from @firegrid/fluent/s2.",
       from: { path: "^packages/store/src/" },
-      to: { path: "^packages/(?:fluent|clients|trace)/|^apps/" },
+      to: { path: "^packages/(?!fluent/|store/)[^/]+/|^apps/" },
     },
     {
       name: "proof-runtime-not-to-proof-registration",

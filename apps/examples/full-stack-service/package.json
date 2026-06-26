@@ -30,9 +30,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@firegrid/fluent": "workspace:*",
-    "@firegrid/store": "workspace:*",
-    "@firegrid/runtime": "workspace:*"
+    "@firegrid/fluent": "workspace:*"
   },
   "devDependencies": {
     "@effect/language-service": "^0.86.2",

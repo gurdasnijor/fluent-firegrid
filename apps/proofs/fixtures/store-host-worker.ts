@@ -1,5 +1,5 @@
-import { createWorkflow } from "@firegrid/runtime"
-import { createS2WorkflowRuntimeHost } from "@firegrid/store"
+import { createWorkflow } from "@firegrid/fluent/runtime"
+import { createS2WorkflowRuntimeHost } from "@firegrid/fluent/s2"
 import * as http from "node:http"
 
 const runId = "crash-sleep:run-1"
