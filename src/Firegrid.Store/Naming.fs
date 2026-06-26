@@ -1,4 +1,4 @@
-namespace Firegrid.FluentFiregrid.S2
+namespace Firegrid.Store
 
 [<RequireQualifiedAccess>]
 module Naming =
@@ -23,3 +23,15 @@ module Naming =
         $"{sanitize ns}/obj/{sanitize address.ObjectName}/{sanitize address.Key}/invocations"
 
     let delayedStartStreamName (ns: string) : string = $"{sanitize ns}/delayed-starts"
+
+    let runEventsStreamName (ns: string) (runId: RunId) : string =
+        $"{sanitize ns}.runs.{sanitize runId}.events"
+
+    let runMetaStreamName (ns: string) (runId: RunId) : string =
+        $"{sanitize ns}.runs.{sanitize runId}.meta"
+
+    let runIndexStreamName (ns: string) : string = $"{sanitize ns}.runs.index"
+
+    let timersStreamName (ns: string) : string = $"{sanitize ns}.timers"
+
+    let schedulesStreamName (ns: string) : string = $"{sanitize ns}.schedules"

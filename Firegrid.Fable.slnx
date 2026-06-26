@@ -1,9 +1,8 @@
 <Solution>
-  <Folder Name="/packages/" />
-  <Folder Name="/packages/log/">
-    <Project Path="packages/log/Effect.S2.fsproj" />
+  <Folder Name="/src/Firegrid.Log/">
+    <Project Path="src/Firegrid.Log/Firegrid.Log.fsproj" />
   </Folder>
-  <Folder Name="/packages/store/">
-    <Project Path="packages/store/FluentFiregrid.S2.fsproj" />
+  <Folder Name="/src/Firegrid.Store/">
+    <Project Path="src/Firegrid.Store/Firegrid.Store.fsproj" />
   </Folder>
 </Solution>

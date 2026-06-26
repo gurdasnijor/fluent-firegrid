@@ -1,6 +1,7 @@
-namespace Firegrid.FluentFiregrid.S2
+namespace Firegrid.Store
 
 open Effect
+open Firegrid.Log
 
 type S2ObjectStateBackendConfig =
     { S2Endpoint: string
@@ -29,3 +30,34 @@ type S2StateRead =
     { Address: S2ObjectStateAddress
       FromSeqNum: float option
       MaxRecords: int option }
+
+type RunId = string
+
+type WorkflowEvent = obj
+
+type EventEnvelope =
+    { EventIndex: float
+      Event: WorkflowEvent }
+
+type AppendEventsArgs =
+    { RunId: RunId
+      ExpectedNextIndex: float
+      Events: WorkflowEvent list }
+
+type AppendEventsResult = { NextIndex: float }
+
+type ReadEventsArgs =
+    { RunId: RunId
+      FromIndex: float option }
+
+type StoredWorkflowEvent =
+    { RunId: RunId
+      EventIndex: float
+      Event: WorkflowEvent
+      EventType: string
+      StepId: string option
+      CreatedAt: float }
+
+type ReadJsonRecordsResult<'A> =
+    { NextSeqNum: float
+      Records: 'A list }

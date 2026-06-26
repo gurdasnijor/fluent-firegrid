@@ -1,5 +1,6 @@
-namespace Effect
+namespace Firegrid.Log
 
+open Effect
 open Fable.Core
 open Fable.Core.JsInterop
 
@@ -128,14 +129,14 @@ module S2 =
 
     let private rawAppendRecord (record: S2AppendRecord) : S2Sdk.RawAppendRecord =
         match record with
-        | StringRecord r ->
+        | S2AppendRecord.StringRecord r ->
             [ Some("body" ==> r.Body)
               Some("headers" ==> rawHeaders r.Headers)
               boxDateOption "timestamp" r.Timestamp ]
             |> List.choose id
             |> createObj
             |> S2Sdk.stringRecord
-        | BytesRecord r ->
+        | S2AppendRecord.BytesRecord r ->
             [ Some("body" ==> r.Body)
               Some("headers" ==> rawBytesHeaders r.Headers)
               boxDateOption "timestamp" r.Timestamp ]
@@ -215,8 +216,8 @@ module S2 =
 
     let private recordBody (raw: obj) (format: S2ReadFormat) : S2RecordBody =
         match format with
-        | ReadString -> StringBody(S2Sdk.prop<string> raw "body")
-        | ReadBytes -> BytesBody(S2Sdk.prop<byte[]> raw "body")
+        | ReadString -> S2RecordBody.StringBody(S2Sdk.prop<string> raw "body")
+        | ReadBytes -> S2RecordBody.BytesBody(S2Sdk.prop<byte[]> raw "body")
 
     let private recordHeaders (raw: obj) (format: S2ReadFormat) : S2RecordHeader list =
         let headers = S2Sdk.prop<obj> raw "headers" |> S2Sdk.arrayFrom<obj>
@@ -227,8 +228,8 @@ module S2 =
             let second = S2Sdk.prop<obj> pair "1"
 
             match format with
-            | ReadString -> StringHeader(S2Sdk.stringValue first, S2Sdk.stringValue second)
-            | ReadBytes -> BytesHeader(unbox<byte[]> first, unbox<byte[]> second))
+            | ReadString -> S2RecordHeader.StringHeader(S2Sdk.stringValue first, S2Sdk.stringValue second)
+            | ReadBytes -> S2RecordHeader.BytesHeader(unbox<byte[]> first, unbox<byte[]> second))
         |> Array.toList
 
     let private readRecord (format: S2ReadFormat) (raw: obj) : S2ReadRecord =
@@ -268,25 +269,25 @@ module S2 =
     module AppendRecord =
 
         let string (body: string) : S2AppendRecord =
-            StringRecord
+            S2AppendRecord.StringRecord
                 { Body = body
                   Headers = []
                   Timestamp = None }
 
         let stringWith (body: string) (headers: (string * string) list) (timestamp: DateTime option) : S2AppendRecord =
-            StringRecord
+            S2AppendRecord.StringRecord
                 { Body = body
                   Headers = headers
                   Timestamp = timestamp }
 
         let bytes (body: byte[]) : S2AppendRecord =
-            BytesRecord
+            S2AppendRecord.BytesRecord
                 { Body = body
                   Headers = []
                   Timestamp = None }
 
         let bytesWith (body: byte[]) (headers: (byte[] * byte[]) list) (timestamp: DateTime option) : S2AppendRecord =
-            BytesRecord
+            S2AppendRecord.BytesRecord
                 { Body = body
                   Headers = headers
                   Timestamp = timestamp }
@@ -303,6 +304,11 @@ module S2 =
                         |> Array.map basinInfo
                         |> Array.toList
                       HasMore = S2Sdk.prop<bool> raw "hasMore" }))
+
+        let ensure (basinName: string) : Effect<unit, S2Error, Context> =
+            withClient (fun client ->
+                let args = createObj [ "basin" ==> basinName ]
+                tryPromise (fun () -> S2Sdk.ensureBasin client.Raw args S2Sdk.undefinedObj) (fun _ -> ()))
 
     [<RequireQualifiedAccess>]
     module Streams =
@@ -329,6 +335,12 @@ module S2 =
                     |> createObj
 
                 tryPromise (fun () -> S2Sdk.createStream basin args (requestOptions request.RequestOptions)) streamInfo)
+
+        let ensure (target: S2StreamRef) : Effect<unit, S2Error, Context> =
+            withClient (fun client ->
+                let basin = S2Sdk.basin client.Raw target.Basin
+                let args = createObj [ "stream" ==> target.Stream ]
+                tryPromise (fun () -> S2Sdk.ensureStream basin args S2Sdk.undefinedObj) (fun _ -> ()))
 
         let delete (target: S2StreamRef) : Effect<unit, S2Error, Context> =
             withClient (fun client ->

@@ -3,23 +3,23 @@
 Effect-native durable execution and fluent authoring over S2.
 
 This repo no longer carries legacy durable-runtime experiments in `packages/*`.
-Production work should land in one of the package lanes below. If a package is
+Production work should land in one of the source lanes below. If a lane is
 not listed here, do not add it without also updating this map and the relevant
 SDD.
 
-## Production Packages
+## Production Lanes
 
-- `@firegrid/log` — Effect wrapper around the S2 client/substrate.
+- `Firegrid.Log` — EffSharp wrapper around the S2 client/substrate.
 - `@firegrid/core` — shared durable workflow contract, primitive types, and
   run-store interfaces.
 - `@firegrid/runtime` — durable workflow runtime, schedule materialization, and
   in-memory store implementation.
-- `@firegrid/store` — S2-backed workflow execution store plus host
+- `Firegrid.Store` — S2-backed workflow execution store plus host
   recovery/sweep helpers.
 - `@firegrid/fluent` — Restate-like Effect-native authoring surface:
   definitions, descriptor contracts, clients, durable primitives, and virtual
   object state authoring.
-- `@firegrid/store` — S2-backed fluent object/state runtime
+- `Firegrid.Store` — S2-backed fluent object/state runtime
   binding.
 - `@firegrid/fluent/http` — framework-neutral HTTP
   `Request -> Response` transport binding for fluent definitions.
@@ -41,7 +41,7 @@ pnpm run proofs
 ```
 
 This starts real `s2 lite` and process-host fixtures, then verifies the current
-`@firegrid/log`, store, runtime, and fluent object surfaces from workload results plus
+log, store, runtime, and fluent object surfaces from workload results plus
 OTel/chDB trace evidence.
 
 ## Cleanup Policy

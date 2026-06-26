@@ -2,8 +2,8 @@
 
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
-    <AssemblyName>Effect.S2</AssemblyName>
-    <RootNamespace>Effect.S2</RootNamespace>
+    <AssemblyName>Firegrid.Store</AssemblyName>
+    <RootNamespace>Firegrid.Store</RootNamespace>
     <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
     <DefineConstants>$(DefineConstants);FABLE_COMPILER</DefineConstants>
   </PropertyGroup>
@@ -15,9 +15,17 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="src/Effect.S2/Types.fs" />
-    <Compile Include="src/Effect.S2/InternalSdk.fs" />
-    <Compile Include="src/Effect.S2/S2.fs" />
+    <ProjectReference Include="../Firegrid.Log/Firegrid.Log.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Types.fs" />
+    <Compile Include="JsJson.fs" />
+    <Compile Include="Naming.fs" />
+    <Compile Include="Runtime.fs" />
+    <Compile Include="ObjectState.fs" />
+    <Compile Include="WorkflowLog.fs" />
+    <Compile Include="Exports.fs" />
   </ItemGroup>
 
 </Project>
