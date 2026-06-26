@@ -1,5 +1,5 @@
-import { createWorkflow, defineWorkflowRuntime } from "@firegrid/runtime"
-import { s2WorkflowExecutionStore } from "@firegrid/store"
+import { createWorkflow, defineWorkflowRuntime } from "@firegrid/fluent/runtime"
+import { s2WorkflowExecutionStore } from "@firegrid/fluent/s2"
 import * as Effect from "effect/Effect"
 
 import { proof } from "../src/Proof.ts"

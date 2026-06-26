@@ -1,5 +1,5 @@
-import { createWorkflow, every } from "@firegrid/runtime"
-import { createS2WorkflowRuntimeHost } from "@firegrid/store"
+import { createWorkflow, every } from "@firegrid/fluent/runtime"
+import { createS2WorkflowRuntimeHost } from "@firegrid/fluent/s2"
 import * as Effect from "effect/Effect"
 
 import { proof } from "../src/Proof.ts"

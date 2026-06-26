@@ -6,7 +6,7 @@
 | --- | --- |
 | Status | Finish-line backlog |
 | Date | 2026-06-25 |
-| Package focus | `@firegrid/fluent`, `@firegrid/fluent/http`, `@firegrid/example-full-stack-service`, `@firegrid/store` |
+| Package focus | `@firegrid/fluent`, `@firegrid/fluent/http`, `@firegrid/fluent/s2`, `@firegrid/example-full-stack-service` |
 | Foundation | Current `apps/proofs` proof registry is good enough for the substrate layer |
 
 ---

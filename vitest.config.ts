@@ -2,8 +2,12 @@ import path from "node:path"
 import { defineConfig, defineProject } from "vitest/config"
 
 const alias = [
+  { find: "@firegrid/fluent/clients", replacement: path.resolve(__dirname, "./packages/fluent/src/clients/index.ts") },
   { find: "@firegrid/fluent/http", replacement: path.resolve(__dirname, "./packages/fluent/src/http.ts") },
+  { find: "@firegrid/fluent/runtime", replacement: path.resolve(__dirname, "./packages/fluent/src/runtime/index.ts") },
+  { find: "@firegrid/fluent/s2", replacement: path.resolve(__dirname, "./packages/fluent/src/adapters/s2/index.ts") },
   { find: "@firegrid/fluent/state", replacement: path.resolve(__dirname, "./packages/fluent/src/state.ts") },
+  { find: "@firegrid/fluent/testing", replacement: path.resolve(__dirname, "./packages/fluent/src/testing/index.ts") },
   {
     find: "@firegrid/core/statePredicate",
     replacement: path.resolve(__dirname, "./packages/core/src/statePredicate.ts")

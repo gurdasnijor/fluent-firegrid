@@ -1,4 +1,4 @@
-import { getS2ObjectStateValue, objectStateStreamName } from "@firegrid/store"
+import { getS2ObjectStateValue, objectStateStreamName } from "@firegrid/fluent/s2"
 import * as Effect from "effect/Effect"
 import * as Fiber from "effect/Fiber"
 import * as Option from "effect/Option"

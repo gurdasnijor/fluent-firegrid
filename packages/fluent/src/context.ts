@@ -5,7 +5,7 @@ import type {
   StepContext,
   StepOptions,
   WaitForEventOptions
-} from "@firegrid/runtime"
+} from "./runtime/index.ts"
 import type { InvocationBinding, ObjectStateBackend } from "@firegrid/core"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"

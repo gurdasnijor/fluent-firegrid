@@ -196,14 +196,11 @@ flowchart LR
   log["@firegrid/log"]
   trace["@firegrid/trace"]
 
-  fluent --> runtime
-  fluent --> clients
   fluent --> core
-  clients --> core
-  runtime --> core
-  store --> core
-  store --> log
-  store --> runtime
+  fluent --> log
+  clients --> fluent
+  runtime --> fluent
+  store --> fluent
 ```
 
 Packages with no Firegrid package dependencies:
@@ -214,9 +211,11 @@ Packages with no Firegrid package dependencies:
 
 Forbidden production edges:
 
-- `@firegrid/store` must not depend on `@firegrid/fluent`.
-- `@firegrid/store` must not depend on `@firegrid/clients`.
-- `@firegrid/clients` must not depend on anything except `@firegrid/core`.
+- `@firegrid/core` must not depend on any other Firegrid package.
+- `@firegrid/log` and `@firegrid/trace` must not depend on product packages.
+- `@firegrid/clients`, `@firegrid/runtime`, and `@firegrid/store` are
+  compatibility packages and should only re-export from `@firegrid/fluent`
+  subpaths.
 
 ## Source-Level Shape
 

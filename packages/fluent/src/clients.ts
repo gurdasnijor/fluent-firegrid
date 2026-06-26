@@ -1,4 +1,4 @@
-import * as Clients from "@firegrid/clients"
+import * as Clients from "./clients/base.ts"
 import type {
   AnyGeneratorHandler,
   AttachableReference,
@@ -13,7 +13,7 @@ import type {
   InvocationOptions,
   ObjectBindingClientFactory,
   ObjectClientFor
-} from "@firegrid/clients"
+} from "./clients/base.ts"
 import * as Effect from "effect/Effect"
 
 import { FluentDurableContext } from "./context.ts"
@@ -34,7 +34,7 @@ export type {
   SendOptions,
   SendReference,
   SendRequest
-} from "@firegrid/clients"
+} from "./clients/base.ts"
 
 export const duration = Clients.duration
 export const invocation = Clients.invocation

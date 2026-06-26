@@ -1,4 +1,9 @@
-import { LogConflictError, s2WorkflowExecutionStore, type SerializedError, type WorkflowEvent } from "@firegrid/store"
+import {
+  LogConflictError,
+  s2WorkflowExecutionStore,
+  type SerializedError,
+  type WorkflowEvent
+} from "@firegrid/fluent/s2"
 import * as Effect from "effect/Effect"
 
 import { proof } from "../src/Proof.ts"

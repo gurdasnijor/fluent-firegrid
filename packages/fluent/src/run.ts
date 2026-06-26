@@ -1,4 +1,4 @@
-import type { SleepOptions, StepOptions, WaitForEventOptions } from "@firegrid/runtime"
+import type { SleepOptions, StepOptions, WaitForEventOptions } from "./runtime/index.ts"
 import * as Effect from "effect/Effect"
 
 import { FluentDurableContext, type RunAction } from "./context.ts"

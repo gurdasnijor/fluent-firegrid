@@ -1,7 +1,7 @@
 {
   "name": "@firegrid/runtime",
   "version": "0.0.1",
-  "description": "Vendored TanStack Workflow runtime.",
+  "description": "Compatibility re-export for @firegrid/fluent runtime helpers.",
   "license": "MIT",
   "type": "module",
   "main": "./src/index.ts",
@@ -24,7 +24,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@firegrid/core": "workspace:*"
+    "@firegrid/fluent": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

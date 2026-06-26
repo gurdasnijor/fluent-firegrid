@@ -1,4 +1,4 @@
-import { objectInvocationStreamName } from "@firegrid/store"
+import { objectInvocationStreamName } from "@firegrid/fluent/s2"
 import { basin, basins, layer as S2Layer, stream as s2Stream } from "@firegrid/log"
 import * as Effect from "effect/Effect"
 import * as Fiber from "effect/Fiber"

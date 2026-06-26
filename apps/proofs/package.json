@@ -31,8 +31,6 @@
     "@effect/platform-node": "4.0.0-beta.87",
     "@firegrid/fluent": "workspace:*",
     "@firegrid/log": "workspace:*",
-    "@firegrid/runtime": "workspace:*",
-    "@firegrid/store": "workspace:*",
     "@firegrid/trace": "workspace:*",
     "@opentelemetry/api-logs": "^0.208.0",
     "@opentelemetry/resources": "^2.8.0",

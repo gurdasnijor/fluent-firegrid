@@ -72,12 +72,6 @@ importers:
       '@firegrid/fluent':
         specifier: workspace:*
         version: link:../../../packages/fluent
-      '@firegrid/runtime':
-        specifier: workspace:*
-        version: link:../../../packages/runtime
-      '@firegrid/store':
-        specifier: workspace:*
-        version: link:../../../packages/store
     devDependencies:
       '@effect/language-service':
         specifier: ^0.86.2
@@ -109,12 +103,6 @@ importers:
       '@firegrid/log':
         specifier: workspace:*
         version: link:../../packages/log
-      '@firegrid/runtime':
-        specifier: workspace:*
-        version: link:../../packages/runtime
-      '@firegrid/store':
-        specifier: workspace:*
-        version: link:../../packages/store
       '@firegrid/trace':
         specifier: workspace:*
         version: link:../../packages/trace
@@ -158,12 +146,9 @@ importers:
 
   packages/clients:
     dependencies:
-      '@firegrid/core':
+      '@firegrid/fluent':
         specifier: workspace:*
-        version: link:../core
-      effect:
-        specifier: 4.0.0-beta.87
-        version: 4.0.0-beta.87
+        version: link:../fluent
     devDependencies:
       typescript:
         specifier: ^5.7.0
@@ -196,15 +181,12 @@ importers:
 
   packages/fluent:
     dependencies:
-      '@firegrid/clients':
-        specifier: workspace:*
-        version: link:../clients
       '@firegrid/core':
         specifier: workspace:*
         version: link:../core
-      '@firegrid/runtime':
+      '@firegrid/log':
         specifier: workspace:*
-        version: link:../runtime
+        version: link:../log
       effect:
         specifier: 4.0.0-beta.87
         version: 4.0.0-beta.87
@@ -249,9 +231,9 @@ importers:
 
   packages/runtime:
     dependencies:
-      '@firegrid/core':
+      '@firegrid/fluent':
         specifier: workspace:*
-        version: link:../core
+        version: link:../fluent
     devDependencies:
       '@types/node':
         specifier: ^22.10.0
@@ -265,18 +247,9 @@ importers:
 
   packages/store:
     dependencies:
-      '@firegrid/core':
+      '@firegrid/fluent':
         specifier: workspace:*
-        version: link:../core
-      '@firegrid/log':
-        specifier: workspace:*
-        version: link:../log
-      '@firegrid/runtime':
-        specifier: workspace:*
-        version: link:../runtime
-      effect:
-        specifier: 4.0.0-beta.87
-        version: 4.0.0-beta.87
+        version: link:../fluent
     devDependencies:
       '@effect/language-service':
         specifier: ^0.86.2

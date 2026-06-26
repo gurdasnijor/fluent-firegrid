@@ -1,15 +1,17 @@
 /* oxlint-disable effect/restricted-syntax -- This host is a Promise-based TanStack Workflow runtime boundary. */
+import { defineWorkflowRuntime } from "../../runtime/define-runtime.ts"
 import {
-  defineWorkflowRuntime,
   type MaterializedWorkflowSchedule,
   materializeWorkflowSchedules,
-  type MaterializeWorkflowSchedulesOptions,
-  type WorkflowRegistrationMap,
-  type WorkflowRuntimeDefinition,
-  type WorkflowRuntimeRunResult,
-  type WorkflowRuntimeSweepArgs,
-  type WorkflowRuntimeSweepResult
-} from "@firegrid/runtime"
+  type MaterializeWorkflowSchedulesOptions
+} from "../../runtime/schedule-materializer.ts"
+import type {
+  WorkflowRegistrationMap,
+  WorkflowRuntimeDefinition,
+  WorkflowRuntimeRunResult,
+  WorkflowRuntimeSweepArgs,
+  WorkflowRuntimeSweepResult
+} from "../../runtime/types.ts"
 
 import { s2WorkflowExecutionStore, type S2WorkflowExecutionStoreConfig } from "./s2WorkflowExecutionStore.ts"
 import type { RunClaim, WorkflowExecutionStore } from "./types.ts"

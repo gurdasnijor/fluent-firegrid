@@ -1,4 +1,4 @@
-export { LogConflictError } from "@firegrid/runtime"
+export { LogConflictError } from "../../runtime/index.ts"
 export type {
   ApprovalResult,
   DeleteReason,
@@ -8,7 +8,7 @@ export type {
   SignalDelivery,
   WorkflowEvent,
   WorkflowMetadata
-} from "@firegrid/runtime"
+} from "../../runtime/index.ts"
 export type {
   AppendEventsArgs,
   AppendEventsResult,
@@ -47,4 +47,4 @@ export type {
   WorkflowOverlapPolicy,
   WorkflowScheduleSpec,
   WorkflowVersion
-} from "@firegrid/runtime"
+} from "../../runtime/index.ts"

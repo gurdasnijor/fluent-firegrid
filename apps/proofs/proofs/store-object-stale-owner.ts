@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect"
 import * as Fiber from "effect/Fiber"
 import * as Stream from "effect/Stream"
 
-import { objectInvocationStreamName } from "@firegrid/store"
+import { objectInvocationStreamName } from "@firegrid/fluent/s2"
 
 import { requestJson } from "../src/HttpProofClient.ts"
 import { processHost } from "../src/ProcessHost.ts"

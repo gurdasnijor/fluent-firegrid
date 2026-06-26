@@ -1,4 +1,4 @@
-import { s2WorkflowExecutionStore } from "@firegrid/store"
+import { s2WorkflowExecutionStore } from "@firegrid/fluent/s2"
 import * as Effect from "effect/Effect"
 
 import { proof } from "../src/Proof.ts"

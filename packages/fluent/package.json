@@ -18,6 +18,22 @@
     "./http": {
       "types": "./src/http.ts",
       "default": "./src/http.ts"
+    },
+    "./clients": {
+      "types": "./src/clients/index.ts",
+      "default": "./src/clients/index.ts"
+    },
+    "./runtime": {
+      "types": "./src/runtime/index.ts",
+      "default": "./src/runtime/index.ts"
+    },
+    "./s2": {
+      "types": "./src/adapters/s2/index.ts",
+      "default": "./src/adapters/s2/index.ts"
+    },
+    "./testing": {
+      "types": "./src/testing/index.ts",
+      "default": "./src/testing/index.ts"
     }
   },
   "files": [
@@ -29,15 +45,14 @@
   },
   "scripts": {
     "build": "tsc",
-    "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
+    "diagnostics": "effect-language-service diagnostics --project tsconfig.diagnostics.json --strict",
     "lint": "oxlint -f unix --config ../../.oxlintrc.json .",
     "test": "vitest run --root ../.. --project fluent --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@firegrid/clients": "workspace:*",
     "@firegrid/core": "workspace:*",
-    "@firegrid/runtime": "workspace:*",
+    "@firegrid/log": "workspace:*",
     "effect": "4.0.0-beta.87"
   },
   "devDependencies": {

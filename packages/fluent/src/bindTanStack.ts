@@ -1,12 +1,12 @@
 /* oxlint-disable effect/restricted-syntax -- This module bridges fluent Effect handlers into TanStack's Promise-based workflow handler boundary. */
 import {
   createTanStackRuntimeBinding,
+  createWorkflow,
   type FluentRuntimeHost,
   type FluentWorkflowInput,
   type InvocationBinding
 } from "@firegrid/core"
-import { createWorkflow } from "@firegrid/runtime"
-import type { WorkflowRegistrationMap, WorkflowScheduleDefinition } from "@firegrid/runtime"
+import type { WorkflowRegistrationMap, WorkflowScheduleDefinition } from "./runtime/types.ts"
 import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 

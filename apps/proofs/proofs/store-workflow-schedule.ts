@@ -1,4 +1,4 @@
-import { createS2WorkflowRuntimeHost } from "@firegrid/store"
+import { createS2WorkflowRuntimeHost } from "@firegrid/fluent/s2"
 import { bindFluentDefinitions, every, run, schedule, workflow, workflowIdForHandler } from "@firegrid/fluent"
 import * as Effect from "effect/Effect"
 

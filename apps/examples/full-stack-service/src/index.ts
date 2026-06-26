@@ -14,8 +14,8 @@ import {
   type S2WorkflowRuntimeConfig,
   type S2WorkflowRuntimeHost,
   type S2WorkflowRuntimeHostLoopArgs
-} from "@firegrid/store"
-import type { WorkflowRegistrationMap } from "@firegrid/runtime"
+} from "@firegrid/fluent/s2"
+import type { WorkflowRegistrationMap } from "@firegrid/fluent/runtime"
 import * as Effect from "effect/Effect"
 // @effect-diagnostics-next-line nodeBuiltinImport:off
 import * as Http from "node:http"
