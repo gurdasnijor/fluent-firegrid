@@ -1,0 +1,34 @@
+strict digraph "dependency-cruiser output"{
+    rankdir="LR" splines="true" overlap="false" nodesep="0.16" ranksep="0.18" fontname="Helvetica-bold" fontsize="9" style="rounded,bold,filled" fillcolor="#ffffff" compound="true"
+    node [shape="box" style="rounded, filled" height="0.2" color="black" fillcolor="#ffffcc" fontcolor="black" fontname="Helvetica" fontsize="9"]
+    edge [arrowhead="normal" arrowsize="0.6" penwidth="2.0" color="#00000033" fontname="Helvetica" fontsize="9"]
+
+    subgraph "cluster_packages" {label="packages" "packages/effect-s2" [label=<effect-s2> tooltip="effect-s2" URL="packages/effect-s2" shape="box3d"] }
+    subgraph "cluster_packages" {label="packages" "packages/fluent-acp-process" [label=<fluent-acp-process> tooltip="fluent-acp-process" URL="packages/fluent-acp-process" shape="box3d"] }
+    subgraph "cluster_packages" {label="packages" "packages/fluent-firegrid" [label=<fluent-firegrid> tooltip="fluent-firegrid" URL="packages/fluent-firegrid" shape="box3d"] }
+    "packages/fluent-firegrid" -> "packages/tanstack-workflow-core"
+    "packages/fluent-firegrid" -> "packages/tanstack-workflow-runtime"
+    subgraph "cluster_packages" {label="packages" "packages/fluent-firegrid-http" [label=<fluent-firegrid-http> tooltip="fluent-firegrid-http" URL="packages/fluent-firegrid-http" shape="box3d"] }
+    subgraph "cluster_packages" {label="packages" "packages/fluent-firegrid-node" [label=<fluent-firegrid-node> tooltip="fluent-firegrid-node" URL="packages/fluent-firegrid-node" shape="box3d"] }
+    "packages/fluent-firegrid-node" -> "packages/fluent-firegrid"
+    "packages/fluent-firegrid-node" -> "packages/fluent-firegrid-http"
+    "packages/fluent-firegrid-node" -> "packages/fluent-firegrid-s2"
+    "packages/fluent-firegrid-node" -> "packages/tanstack-workflow-s2"
+    subgraph "cluster_packages" {label="packages" "packages/fluent-firegrid-s2" [label=<fluent-firegrid-s2> tooltip="fluent-firegrid-s2" URL="packages/fluent-firegrid-s2" shape="box3d"] }
+    "packages/fluent-firegrid-s2" -> "packages/fluent-firegrid"
+    "packages/fluent-firegrid-s2" -> "packages/effect-s2"
+    subgraph "cluster_packages" {label="packages" "packages/observability" [label=<observability> tooltip="observability" URL="packages/observability" shape="box3d"] }
+    subgraph "cluster_packages" {label="packages" "packages/tanstack-workflow-core" [label=<tanstack-workflow-core> tooltip="tanstack-workflow-core" URL="packages/tanstack-workflow-core" shape="box3d"] }
+    subgraph "cluster_packages" {label="packages" "packages/tanstack-workflow-runtime" [label=<tanstack-workflow-runtime> tooltip="tanstack-workflow-runtime" URL="packages/tanstack-workflow-runtime" fillcolor="#ccffcc" shape="box3d"] }
+    "packages/tanstack-workflow-runtime" -> "packages/tanstack-workflow-core"
+    subgraph "cluster_packages" {label="packages" "packages/tanstack-workflow-s2" [label=<tanstack-workflow-s2> tooltip="tanstack-workflow-s2" URL="packages/tanstack-workflow-s2" shape="box3d"] }
+    "packages/tanstack-workflow-s2" -> "packages/effect-s2"
+    "packages/tanstack-workflow-s2" -> "packages/tanstack-workflow-runtime"
+    "packages/tanstack-workflow-s2" -> "packages/tanstack-workflow-core" [arrowhead="inv"]
+    subgraph "cluster_packages" {label="packages" "packages/verification" [label=<verification> tooltip="verification" URL="packages/verification" shape="box3d"] }
+    "packages/verification" -> "packages/effect-s2"
+    "packages/verification" -> "packages/fluent-firegrid"
+    "packages/verification" -> "packages/fluent-firegrid-s2"
+    "packages/verification" -> "packages/tanstack-workflow-s2"
+    "packages/verification" -> "packages/observability"
+}

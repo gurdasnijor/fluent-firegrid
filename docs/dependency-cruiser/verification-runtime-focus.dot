@@ -1,0 +1,112 @@
+strict digraph "dependency-cruiser output"{
+    rankdir="LR" splines="true" overlap="false" nodesep="0.16" ranksep="0.18" fontname="Helvetica-bold" fontsize="9" style="rounded,bold,filled" fillcolor="#ffffff" compound="true"
+    node [shape="box" style="rounded, filled" height="0.2" color="black" fillcolor="#ffffcc" fontcolor="black" fontname="Helvetica" fontsize="9"]
+    edge [arrowhead="normal" arrowsize="0.6" penwidth="2.0" color="#00000033" fontname="Helvetica" fontsize="9"]
+
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/effect-s2" {label="effect-s2" subgraph "cluster_packages/effect-s2/src" {label="src" "packages/effect-s2/src/S2Client.ts" [label=<S2Client.ts> tooltip="S2Client.ts" URL="packages/effect-s2/src/S2Client.ts" fillcolor="#ddfeff"] } } }
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/effect-s2" {label="effect-s2" subgraph "cluster_packages/effect-s2/src" {label="src" "packages/effect-s2/src/index.ts" [label=<index.ts> tooltip="index.ts" URL="packages/effect-s2/src/index.ts" fillcolor="#ddfeff"] } } }
+    "packages/effect-s2/src/index.ts" -> "packages/effect-s2/src/S2Client.ts" [arrowhead="inv"]
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/observability" {label="observability" subgraph "cluster_packages/observability/src" {label="src" "packages/observability/src/ChdbClient.ts" [label=<ChdbClient.ts> tooltip="ChdbClient.ts" URL="packages/observability/src/ChdbClient.ts" fillcolor="#ddfeff"] } } }
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/observability" {label="observability" subgraph "cluster_packages/observability/src" {label="src" "packages/observability/src/ChdbExporter.ts" [label=<ChdbExporter.ts> tooltip="ChdbExporter.ts" URL="packages/observability/src/ChdbExporter.ts" fillcolor="#ddfeff"] } } }
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/observability" {label="observability" subgraph "cluster_packages/observability/src" {label="src" "packages/observability/src/index.ts" [label=<index.ts> tooltip="index.ts" URL="packages/observability/src/index.ts" fillcolor="#ddfeff"] } } }
+    "packages/observability/src/index.ts" -> "packages/observability/src/ChdbClient.ts" [arrowhead="inv"]
+    "packages/observability/src/index.ts" -> "packages/observability/src/ChdbExporter.ts" [arrowhead="inv"]
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/proofs" {label="proofs" "packages/verification/proofs/effect-s2-capability-a.ts" [label=<effect-s2-capability-a.ts> tooltip="effect-s2-capability-a.ts" URL="packages/verification/proofs/effect-s2-capability-a.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/proofs/effect-s2-capability-a.ts" -> "packages/verification/src/Proof.ts"
+    "packages/verification/proofs/effect-s2-capability-a.ts" -> "packages/effect-s2/src/index.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/proofs" {label="proofs" "packages/verification/proofs/fluent-firegrid-s2-object-cross-host.ts" [label=<fluent-firegrid-s2-object-cross-host.ts> tooltip="fluent-firegrid-s2-object-cross-host.ts" URL="packages/verification/proofs/fluent-firegrid-s2-object-cross-host.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/proofs/fluent-firegrid-s2-object-cross-host.ts" -> "packages/verification/src/HttpProofClient.ts"
+    "packages/verification/proofs/fluent-firegrid-s2-object-cross-host.ts" -> "packages/verification/src/ProcessHost.ts"
+    "packages/verification/proofs/fluent-firegrid-s2-object-cross-host.ts" -> "packages/verification/src/Proof.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/proofs" {label="proofs" "packages/verification/proofs/fluent-firegrid-s2-object-delayed-send.ts" [label=<fluent-firegrid-s2-object-delayed-send.ts> tooltip="fluent-firegrid-s2-object-delayed-send.ts" URL="packages/verification/proofs/fluent-firegrid-s2-object-delayed-send.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/proofs/fluent-firegrid-s2-object-delayed-send.ts" -> "packages/verification/src/Proof.ts"
+    "packages/verification/proofs/fluent-firegrid-s2-object-delayed-send.ts" -> "packages/verification/src/VerificationError.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/proofs" {label="proofs" "packages/verification/proofs/fluent-firegrid-s2-object-handles.ts" [label=<fluent-firegrid-s2-object-handles.ts> tooltip="fluent-firegrid-s2-object-handles.ts" URL="packages/verification/proofs/fluent-firegrid-s2-object-handles.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/proofs/fluent-firegrid-s2-object-handles.ts" -> "packages/verification/src/HttpProofClient.ts"
+    "packages/verification/proofs/fluent-firegrid-s2-object-handles.ts" -> "packages/verification/src/ProcessHost.ts"
+    "packages/verification/proofs/fluent-firegrid-s2-object-handles.ts" -> "packages/verification/src/Proof.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/proofs" {label="proofs" "packages/verification/proofs/fluent-firegrid-s2-object-index-wait.ts" [label=<fluent-firegrid-s2-object-index-wait.ts> tooltip="fluent-firegrid-s2-object-index-wait.ts" URL="packages/verification/proofs/fluent-firegrid-s2-object-index-wait.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/proofs/fluent-firegrid-s2-object-index-wait.ts" -> "packages/verification/src/Proof.ts"
+    "packages/verification/proofs/fluent-firegrid-s2-object-index-wait.ts" -> "packages/verification/src/VerificationError.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/proofs" {label="proofs" "packages/verification/proofs/fluent-firegrid-s2-object-live-fencing.ts" [label=<fluent-firegrid-s2-object-live-fencing.ts> tooltip="fluent-firegrid-s2-object-live-fencing.ts" URL="packages/verification/proofs/fluent-firegrid-s2-object-live-fencing.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/proofs/fluent-firegrid-s2-object-live-fencing.ts" -> "packages/verification/src/HttpProofClient.ts"
+    "packages/verification/proofs/fluent-firegrid-s2-object-live-fencing.ts" -> "packages/verification/src/ProcessHost.ts"
+    "packages/verification/proofs/fluent-firegrid-s2-object-live-fencing.ts" -> "packages/verification/src/Proof.ts"
+    "packages/verification/proofs/fluent-firegrid-s2-object-live-fencing.ts" -> "packages/verification/src/VerificationError.ts"
+    "packages/verification/proofs/fluent-firegrid-s2-object-live-fencing.ts" -> "packages/effect-s2/src/index.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/proofs" {label="proofs" "packages/verification/proofs/fluent-firegrid-s2-object-replay-state.ts" [label=<fluent-firegrid-s2-object-replay-state.ts> tooltip="fluent-firegrid-s2-object-replay-state.ts" URL="packages/verification/proofs/fluent-firegrid-s2-object-replay-state.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/proofs/fluent-firegrid-s2-object-replay-state.ts" -> "packages/verification/src/HttpProofClient.ts"
+    "packages/verification/proofs/fluent-firegrid-s2-object-replay-state.ts" -> "packages/verification/src/ProcessHost.ts"
+    "packages/verification/proofs/fluent-firegrid-s2-object-replay-state.ts" -> "packages/verification/src/Proof.ts"
+    "packages/verification/proofs/fluent-firegrid-s2-object-replay-state.ts" -> "packages/verification/src/VerificationError.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/proofs" {label="proofs" "packages/verification/proofs/fluent-firegrid-s2-object-serialization.ts" [label=<fluent-firegrid-s2-object-serialization.ts> tooltip="fluent-firegrid-s2-object-serialization.ts" URL="packages/verification/proofs/fluent-firegrid-s2-object-serialization.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/proofs/fluent-firegrid-s2-object-serialization.ts" -> "packages/verification/src/Proof.ts"
+    "packages/verification/proofs/fluent-firegrid-s2-object-serialization.ts" -> "packages/verification/src/VerificationError.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/proofs" {label="proofs" "packages/verification/proofs/fluent-firegrid-s2-object-stale-owner.ts" [label=<fluent-firegrid-s2-object-stale-owner.ts> tooltip="fluent-firegrid-s2-object-stale-owner.ts" URL="packages/verification/proofs/fluent-firegrid-s2-object-stale-owner.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/proofs/fluent-firegrid-s2-object-stale-owner.ts" -> "packages/verification/src/HttpProofClient.ts"
+    "packages/verification/proofs/fluent-firegrid-s2-object-stale-owner.ts" -> "packages/verification/src/ProcessHost.ts"
+    "packages/verification/proofs/fluent-firegrid-s2-object-stale-owner.ts" -> "packages/verification/src/Proof.ts"
+    "packages/verification/proofs/fluent-firegrid-s2-object-stale-owner.ts" -> "packages/verification/src/VerificationError.ts"
+    "packages/verification/proofs/fluent-firegrid-s2-object-stale-owner.ts" -> "packages/effect-s2/src/index.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/proofs" {label="proofs" "packages/verification/proofs/fluent-firegrid-s2-object-state-wait.ts" [label=<fluent-firegrid-s2-object-state-wait.ts> tooltip="fluent-firegrid-s2-object-state-wait.ts" URL="packages/verification/proofs/fluent-firegrid-s2-object-state-wait.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/proofs/fluent-firegrid-s2-object-state-wait.ts" -> "packages/verification/src/Proof.ts"
+    "packages/verification/proofs/fluent-firegrid-s2-object-state-wait.ts" -> "packages/verification/src/VerificationError.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/proofs" {label="proofs" "packages/verification/proofs/fluent-firegrid-s2-object-state.ts" [label=<fluent-firegrid-s2-object-state.ts> tooltip="fluent-firegrid-s2-object-state.ts" URL="packages/verification/proofs/fluent-firegrid-s2-object-state.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/proofs/fluent-firegrid-s2-object-state.ts" -> "packages/verification/src/Proof.ts"
+    "packages/verification/proofs/fluent-firegrid-s2-object-state.ts" -> "packages/verification/src/VerificationError.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/proofs" {label="proofs" "packages/verification/proofs/main.ts" [label=<main.ts> tooltip="main.ts" URL="packages/verification/proofs/main.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/proofs/main.ts" -> "packages/verification/src/CliApp.ts"
+    "packages/verification/proofs/main.ts" -> "packages/verification/proofs/effect-s2-capability-a.ts"
+    "packages/verification/proofs/main.ts" -> "packages/verification/proofs/fluent-firegrid-s2-object-cross-host.ts"
+    "packages/verification/proofs/main.ts" -> "packages/verification/proofs/fluent-firegrid-s2-object-delayed-send.ts"
+    "packages/verification/proofs/main.ts" -> "packages/verification/proofs/fluent-firegrid-s2-object-handles.ts"
+    "packages/verification/proofs/main.ts" -> "packages/verification/proofs/fluent-firegrid-s2-object-index-wait.ts"
+    "packages/verification/proofs/main.ts" -> "packages/verification/proofs/fluent-firegrid-s2-object-live-fencing.ts"
+    "packages/verification/proofs/main.ts" -> "packages/verification/proofs/fluent-firegrid-s2-object-replay-state.ts"
+    "packages/verification/proofs/main.ts" -> "packages/verification/proofs/fluent-firegrid-s2-object-serialization.ts"
+    "packages/verification/proofs/main.ts" -> "packages/verification/proofs/fluent-firegrid-s2-object-stale-owner.ts"
+    "packages/verification/proofs/main.ts" -> "packages/verification/proofs/fluent-firegrid-s2-object-state-wait.ts"
+    "packages/verification/proofs/main.ts" -> "packages/verification/proofs/fluent-firegrid-s2-object-state.ts"
+    "packages/verification/proofs/main.ts" -> "packages/verification/proofs/tanstack-workflow-s2-host-crash-restart.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/proofs" {label="proofs" "packages/verification/proofs/tanstack-workflow-s2-host-crash-restart.ts" [label=<tanstack-workflow-s2-host-crash-restart.ts> tooltip="tanstack-workflow-s2-host-crash-restart.ts" URL="packages/verification/proofs/tanstack-workflow-s2-host-crash-restart.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/proofs/tanstack-workflow-s2-host-crash-restart.ts" -> "packages/verification/src/HttpProofClient.ts"
+    "packages/verification/proofs/tanstack-workflow-s2-host-crash-restart.ts" -> "packages/verification/src/ProcessHost.ts"
+    "packages/verification/proofs/tanstack-workflow-s2-host-crash-restart.ts" -> "packages/verification/src/Proof.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/src" {label="src" "packages/verification/src/CliApp.ts" [label=<CliApp.ts> tooltip="CliApp.ts" URL="packages/verification/src/CliApp.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/src/CliApp.ts" -> "packages/verification/src/Proof.ts"
+    "packages/verification/src/CliApp.ts" -> "packages/verification/src/TraceRuntime.ts"
+    "packages/verification/src/CliApp.ts" -> "packages/verification/src/VerificationError.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/src" {label="src" "packages/verification/src/HttpProofClient.ts" [label=<HttpProofClient.ts> tooltip="HttpProofClient.ts" URL="packages/verification/src/HttpProofClient.ts" fillcolor="#ddfeff"] } } }
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/src" {label="src" "packages/verification/src/ProcessHost.ts" [label=<ProcessHost.ts> tooltip="ProcessHost.ts" URL="packages/verification/src/ProcessHost.ts" fillcolor="#ddfeff"] } } }
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/src" {label="src" "packages/verification/src/Proof.ts" [label=<Proof.ts> tooltip="Proof.ts" URL="packages/verification/src/Proof.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/src/Proof.ts" -> "packages/verification/src/Property.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/src" {label="src" "packages/verification/src/Property.ts" [label=<Property.ts> tooltip="Property.ts" URL="packages/verification/src/Property.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/src/Property.ts" -> "packages/verification/src/VerificationError.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/src" {label="src" "packages/verification/src/Report.ts" [label=<Report.ts> tooltip="Report.ts" URL="packages/verification/src/Report.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/src/Report.ts" -> "packages/verification/src/TraceViews.ts"
+    "packages/verification/src/Report.ts" -> "packages/verification/src/VerificationError.ts"
+    "packages/verification/src/Report.ts" -> "packages/observability/src/index.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/src" {label="src" "packages/verification/src/S2LiteSupervisor.ts" [label=<S2LiteSupervisor.ts> tooltip="S2LiteSupervisor.ts" URL="packages/verification/src/S2LiteSupervisor.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/src/S2LiteSupervisor.ts" -> "packages/verification/src/VerificationError.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/src" {label="src" "packages/verification/src/S2Runtime.ts" [label=<S2Runtime.ts> tooltip="S2Runtime.ts" URL="packages/verification/src/S2Runtime.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/src/S2Runtime.ts" -> "packages/verification/src/VerificationError.ts"
+    "packages/verification/src/S2Runtime.ts" -> "packages/effect-s2/src/index.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/src" {label="src" "packages/verification/src/TraceProof.ts" [label=<TraceProof.ts> tooltip="TraceProof.ts" URL="packages/verification/src/TraceProof.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/src/TraceProof.ts" -> "packages/verification/src/TraceViews.ts"
+    "packages/verification/src/TraceProof.ts" -> "packages/verification/src/VerificationError.ts"
+    "packages/verification/src/TraceProof.ts" -> "packages/observability/src/index.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/src" {label="src" "packages/verification/src/TraceRuntime.ts" [label=<TraceRuntime.ts> tooltip="TraceRuntime.ts" URL="packages/verification/src/TraceRuntime.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/src/TraceRuntime.ts" -> "packages/verification/src/Property.ts"
+    "packages/verification/src/TraceRuntime.ts" -> "packages/verification/src/TraceViews.ts"
+    "packages/verification/src/TraceRuntime.ts" -> "packages/verification/src/VerificationError.ts"
+    "packages/verification/src/TraceRuntime.ts" -> "packages/observability/src/index.ts"
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/src" {label="src" "packages/verification/src/TraceViews.ts" [label=<TraceViews.ts> tooltip="TraceViews.ts" URL="packages/verification/src/TraceViews.ts" fillcolor="#ddfeff"] } } }
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/src" {label="src" "packages/verification/src/VerificationError.ts" [label=<VerificationError.ts> tooltip="VerificationError.ts" URL="packages/verification/src/VerificationError.ts" fillcolor="#ddfeff"] } } }
+    subgraph "cluster_packages" {label="packages" subgraph "cluster_packages/verification" {label="verification" subgraph "cluster_packages/verification/src" {label="src" "packages/verification/src/index.ts" [label=<index.ts> tooltip="index.ts" URL="packages/verification/src/index.ts" fillcolor="#ddfeff"] } } }
+    "packages/verification/src/index.ts" -> "packages/verification/src/ProcessHost.ts" [arrowhead="inv"]
+    "packages/verification/src/index.ts" -> "packages/verification/src/Proof.ts" [arrowhead="inv"]
+    "packages/verification/src/index.ts" -> "packages/verification/src/Property.ts" [arrowhead="inv"]
+    "packages/verification/src/index.ts" -> "packages/verification/src/TraceProof.ts" [arrowhead="inv"]
+    "packages/verification/src/index.ts" -> "packages/verification/src/TraceRuntime.ts" [arrowhead="inv"]
+    "packages/verification/src/index.ts" -> "packages/verification/src/VerificationError.ts" [arrowhead="inv"]
+}
