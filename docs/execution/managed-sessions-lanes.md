@@ -35,10 +35,13 @@ Ground rules:
   shortcuts, deep imports, or proof-only branches in production code.
 - **Stay in lane.** Do not modify another lane's modules or proofs. Shared
   contracts change only through an architect gate (below).
-- **Module placement** follows the package-boundary principle (stable seams
-  inside existing packages first; promotion later). Propose placement in the WP
-  PR description; substrate-level work goes beside `src/Firegrid.Log` /
-  `src/Firegrid.Store`, product surface in `packages/fluent`.
+- **Module placement and language** follow the two-zone rule in
+  [`../canon/architecture/fluent/language-and-targets.md`](../canon/architecture/fluent/language-and-targets.md):
+  lanes P/A/B/C are F# in `src/` (sans-IO core rule; Target Surfaces are F#
+  signatures with DU-typed errors); lanes D/E are TS (Effect shapes per
+  `LLMS.md`). Cross zones only via the kernel protocol or the single
+  Fable-emitted package seam. Within a zone, stable seams inside existing
+  packages first; promotion later.
 - **Docs travel with code.** If your WP changes a contract, update the SDD's
   Implemented Assets section and (Lane F) the conformance page in the same PR.
 - **Frozen paths stay frozen.** No new features on the TanStack lowering.
@@ -77,15 +80,18 @@ Everything else is lane-owner discretion.
 
 | WP | Lane | Title | SDD ref | Deps | Status | Owner | PR |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| A1 | A | Checkpointed fold: snapshot record + rebuild | MS-C1 | — | open | — | — |
+| P1 | P | Port eff-firegrid `src/S2` (later rev); supersede `Firegrid.Log/S2` scaffold | canon: language-and-targets | — | open | — | — |
+| P2 | P | Port `SubjectHistory`/`StateView`/`KvStore` + their F# proofs | canon: language-and-targets | P1 | open | — | — |
+| P3 | P | Port `Foundation/Durable` kernel + F# proofs; audit sans-IO core/shell split | canon: language-and-targets | P2 | open | — | — |
+| A1 | A | Checkpointed fold: snapshot record + rebuild | MS-C1 | P2 | open | — | — |
 | A2 | A | Checkpoint-race + trim-safety proofs | MS-C1 | A1 | open | — | — |
-| A3 | A | TS StateView (eventual/strong reads) + proof | MS-C4 | — | open | — | — |
+| A3 | A | StateView strong/eventual reads exposed at the seam + proof | MS-C4 | P2 | open | — | — |
 | A4 | A | Session history fold + thread-index projection + proofs | MS-C4 | A1, B1 | open | — | — |
-| B1 | B | Turn stream module: naming, fenced append, terminal+close, attach | MS-C2 | — | open | — | — |
+| B1 | B | Turn stream module: naming, fenced append, terminal+close, attach | MS-C2 | P2 | open | — | — |
 | B2 | B | Turn attach / crash-terminal / idempotent-create proofs | MS-C2 | B1 | open | — | — |
 | B3 | B | Lifecycle authority: claim, durable cancel, timeouts + proofs | MS-C5 | B1 | open | — | — |
 | B4 | B | Fenced native-resume-artifact store + proof | MS-C5 | B1 | open | — | — |
-| C1 | C | Shard wake stream + tailed router with durable cursor | MS-C3 | — | open | — | — |
+| C1 | C | Shard wake stream + tailed router with durable cursor | MS-C3 | P1 | open | — | — |
 | C2 | C | Folded timer index; latency + single-claim + exactly-once proofs | MS-C3 | C1 | open | — | — |
 | D1 | D | L1 vocabulary decision record + schema (**gate G2**) | MS-C6 | — | open | — | — |
 | D2 | D | Adapter contract + fixture-replay proof harness | MS-C6 | D1 | open | — | — |
@@ -100,6 +106,16 @@ Everything else is lane-owner discretion.
 | F3 | F | Resolve `fireline` profile-suffix naming before D-lane cites it | RFC | — | open | — | — |
 
 ## Lanes
+
+### Lane P — Ports (language-and-targets decision)
+
+Port the proven eff-firegrid F# assets into `src/` per the dispositions table
+in the decision record: S2 client (later rev), `SubjectHistory`/`StateView`/
+`KvStore`, then the `Foundation/Durable` kernel, each with its F# proofs. P3
+includes the sans-IO audit: pure semantics separated from I/O shells, ambient
+clock/randomness lifted to parameters. Ports are refactors of proven code —
+behavior changes are out of scope; anything that looks like a redesign
+escalates (G1/G6).
 
 ### Lane A — State Kernel (MS-C1, MS-C4)
 
@@ -163,6 +179,8 @@ Changes to any of these require gate G1:
 
 ## Suggested Parallel Start
 
-Five agents can start today without contention: A1, A3, B1 (architect reviews
-its schema early — it unblocks the most), C1, F1. D1 starts as soon as gate G2
-is decided. E1 starts when B2 is green.
+Start with the ports: P1 immediately, P2 behind it (they are refactors of
+proven code — the safest warm-up for the F# zone), with F1 and D1's decision
+record (gate G2) in parallel. A1/A3/B1 open when P2 lands; C1 when P1 lands;
+E1 when B2 is green. B1's schema gets early architect review — it unblocks the
+most.

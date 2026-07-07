@@ -107,13 +107,19 @@ named), RFC invariants touched, and the consumer milestone it unblocks. Proof
 names follow the house registry pattern in `apps/proofs`.
 
 **Target Surface convention (gate G6).** Each capability carries a Target
-Surface subsection — module placement, exported types and signatures (Effect
-shapes per `LLMS.md`: `Context.Service`, typed tagged errors, `Stream` for
-sequences), and the laws the surface obeys. The surface is written and
+Surface subsection — module placement, exported types and signatures, and the
+laws the surface obeys. Surface language follows the two-zone rule in
+[`../canon/architecture/fluent/language-and-targets.md`](../canon/architecture/fluent/language-and-targets.md):
+platform capabilities (C1–C5) are F# signatures (modules, DU-typed errors,
+sans-IO core), while TS-facing surfaces (the C6 adapter contract and the client
+seam) use Effect shapes per `LLMS.md`. The surface is written and
 architect-approved *before* proofs or implementation; proofs import only the
 public surface. Signatures below are directional — the implementing WP refines
 them under G6, and the merged PR updates this document to match. MS-C2 is
-written out as the exemplar; the first WP of each other capability supplies its
+written out as the exemplar (in TS notation for readability; WP B1 re-expresses
+it in F# — `DurableLog` is eff-firegrid's proven `SubjectHistory` plus
+seal/terminal and fenced-producer semantics, so B1 extends the P2 port rather
+than starting fresh); the first WP of each other capability supplies its
 section at the same altitude.
 
 ### MS-C1 — Checkpoint + Trim
