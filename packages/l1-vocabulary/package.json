@@ -1,0 +1,28 @@
+{
+  "name": "@firegrid/l1-vocabulary",
+  "version": "0.0.0",
+  "description": "L1 observation vocabulary (interface I2): an ACP session/update superset with additive, ignorable firegrid/ extensions, plus an Effect-free decoder and canonical base fold.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./fixtures/*": "./fixtures/*"
+  },
+  "files": [
+    "src",
+    "fixtures"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {},
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.10.0"
+  }
+}
