@@ -24,7 +24,7 @@ type WakeReason =
 [<RequireQualifiedAccess>]
 type Intent =
     | SetTimer of TimerId * dueAt: Timestamp
-    | Send of target: ActorAddress * payload: Payload
+    | Send of target: ActorAddress * message: MailboxMessage
     | Execute of EffectId * payload: Payload
 
 type StoredRecord<'record> =

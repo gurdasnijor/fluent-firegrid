@@ -87,7 +87,7 @@ type WakeReason = MailboxReady | TimerFired of TimerId * Timestamp | ChildTermin
 
 type Intent =                                 // requests TO the shell
     | SetTimer of TimerId * dueAt: Timestamp
-    | Send of target: ActorAddress * payload  // the only cross-actor channel; shell stamps envelope provenance
+    | Send of target: ActorAddress * MailboxMessage // the only cross-actor channel; shell stamps envelope provenance
     | Execute of EffectId * payload           // claim-first external effect
 
 type Decision<'state, 'record, 'terminal> =

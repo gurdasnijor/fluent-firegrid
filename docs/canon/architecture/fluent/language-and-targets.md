@@ -285,7 +285,7 @@ the later B/A/C lanes bind to. It does not introduce a separate actor
 framework, resident process model, or actor-to-actor call primitive.
 
 Provenance is stamped by the shell, not by handler code. A handler may request
-`Intent.Send(target, payload)`; the shell records the intent, derives the
+`Intent.Send(target, message)`; the shell records the intent, derives the
 outbound mailbox `Source` and `SourceSeqNum` from that committed intent
 record's identity, and then appends the stamped envelope to the target mailbox.
 Handlers never fabricate mailbox provenance.
@@ -304,7 +304,7 @@ type WakeReason =
 
 type Intent =
     | SetTimer of TimerId * dueAt: Timestamp
-    | Send of target: ActorAddress * payload: Payload
+    | Send of target: ActorAddress * message: MailboxMessage
     | Execute of EffectId * payload: Payload
 
 type StoredRecord<'record> =

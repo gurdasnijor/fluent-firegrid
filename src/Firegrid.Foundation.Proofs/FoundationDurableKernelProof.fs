@@ -166,7 +166,8 @@ module FoundationDurableKernelProof =
                         | _ -> "unexpected"
                   OnAdmitted =
                     fun state admitted ->
-                        let intent = Intent.Send({ Segments = [ "target" ] }, admitted.Message)
+                        let message = RaiseSignal("proof", admitted.Message)
+                        let intent = Intent.Send({ Segments = [ "target" ] }, message)
 
                         { State = "handled:" + state
                           Append = [ Applied admitted.Message; ShellIntent intent ]
@@ -243,7 +244,7 @@ module FoundationDurableKernelProof =
                 committedIntents
                 |> Seq.exists (fun committed ->
                     match committed.Intent with
-                    | Intent.Send(target, payload) -> target.Segments = [ "target" ] && payload = "payload"
+                    | Intent.Send(target, message) -> target.Segments = [ "target" ] && message = RaiseSignal("proof", "payload")
                     | _ -> false)
 
             let commitIndex = calls |> Seq.tryFindIndex ((=) "commit")
@@ -262,7 +263,7 @@ module FoundationDurableKernelProof =
                 committedIntents
                 |> Seq.forall (fun committed ->
                     match committed.Intent with
-                    | Intent.Send(_, payload) -> payload = "payload"
+                    | Intent.Send(_, message) -> message = RaiseSignal("proof", "payload")
                     | _ -> true)
 
             let deposedCalls = ResizeArray<string>()
