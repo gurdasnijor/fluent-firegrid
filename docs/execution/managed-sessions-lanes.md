@@ -86,7 +86,7 @@ Everything else is lane-owner discretion.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | P1 | P | Port eff-firegrid `src/S2` (later rev); supersede `Firegrid.Log/S2` scaffold | canon: language-and-targets | — | done | Codex | #81 |
 | P2 | P | Port `SubjectHistory`/`StateView`/`KvStore` + their F# proofs | canon: language-and-targets | P1 | done | Codex | #82 |
-| P3 | P | Port `Foundation/Durable` kernel + F# proofs; audit sans-IO core/shell split | canon: language-and-targets | P2 | open | — | — |
+| P3 | P | Port `Foundation/Durable` kernel + F# proofs; audit sans-IO core/shell split | canon: language-and-targets | P2 | done | Codex | #91 |
 | P4 | P | Fable→TS emission + idiomatic TS facade for `Firegrid.Log`; re-point substrate proofs from `upstream-sdk` to `firegrid-log` driver | canon: language-and-targets | P1, F4 | done | Codex | #87 |
 | P5 | P | Remove EffSharp from `Firegrid.Log`/`Store`/`Foundation.Proofs`; delete private NuGet feed | canon: language-and-targets | P4 | done | Codex | #89 |
 | A1 | A | Checkpointed fold: snapshot record + rebuild | MS-C1 | P2 | in-review | Claude | #93 |
