@@ -10,6 +10,7 @@ ages at a different speed.
 | SDD | [`sdds/`](./sdds/) | Fast-moving; frozen or deleted when superseded. | Package-local design plans and implementation scaffolding. |
 | Guides | [`guides/`](./guides/) | User-facing; updated with product behavior. | How-to material for current workflows. |
 | Requirements | [`requirements/`](./requirements/) | Consumer-driven; traced to proofs or RFC invariants. | Falsifiable product or stress-test requirements. |
+| Execution | [`execution/`](./execution/) | Living ledgers; edited as work is claimed and lands. | Lane/work-packet tracking for an active SDD; agents claim and update rows. |
 
 ## Status Header
 

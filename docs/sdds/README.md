@@ -12,6 +12,10 @@ changes.
 
 ## Active Path
 
+- [`managed-sessions-agent-ui-sdd.md`](./managed-sessions-agent-ui-sdd.md) —
+  managed-session (reconstruction-model) kernel with agent-ui as the first
+  production user; work ledger in
+  [`../execution/managed-sessions-lanes.md`](../execution/managed-sessions-lanes.md).
 - [`fluent-firegrid-authoring-surface-sdd.md`](./fluent-firegrid-authoring-surface-sdd.md) —
   Restate-like Effect-native definitions, clients, and transport-neutral
   bindings.
