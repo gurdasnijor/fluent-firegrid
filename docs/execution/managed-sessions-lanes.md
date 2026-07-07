@@ -94,7 +94,7 @@ Everything else is lane-owner discretion.
 | A1 | A | Checkpointed fold: snapshot record + rebuild | MS-C1 | P2 | done | Claude (A lane) | #96 |
 | A2 | A | Checkpoint-race + trim-safety proofs | MS-C1 | A1 | done | Claude (A lane) | #101 |
 | A3 | A | StateView strong/eventual reads exposed at the seam + proof | MS-C4 | P2 | done | Claude (A lane) | #108, #111 |
-| A4 | A | Session history fold + thread-index projection + proofs | MS-C4 | A1, B1 | in-progress | Claude (A lane) | — |
+| A4 | A | Session history fold + thread-index projection + proofs | MS-C4 | A1, B1 | surface-approved | Claude (A lane) | #112 |
 | B1 | B | `Authority` protocol module (I5) + `DurableLog` (SubjectHistory + Authority + seal) + turn binding — surface (G6/G1 approved) | MS-C2 | P2 | done | Claude (B lane) | #92, #98 |
 | B2 | B | Turn attach / crash-terminal / idempotent-create proofs | MS-C2 | B1 | done | Claude (B lane) | #100 |
 | B3 | B | Lifecycle authority: claim, durable cancel, timeouts + proofs | MS-C5 | B1 | done | Claude (B lane) | #103, #106 |
