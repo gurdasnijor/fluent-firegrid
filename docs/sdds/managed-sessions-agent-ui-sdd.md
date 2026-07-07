@@ -587,6 +587,166 @@ C2 + C3, replacing agent-ui's in-memory `activeRuns` map. Cancel is a durable
 control fact any process can append; the producer observes it and terminates the
 turn; timeouts are kernel obligations, not process-local timers.
 
+Target Surface (F# — WP B4; the *resume-artifact-store slice* of MS-C5; gate
+G6):
+
+MS-C5 has two WPs. This section is **WP B4's slice only** — the fenced
+native-resume-artifact store and its `session.resume-artifact-fenced`
+obligation. The lifecycle-authority slice (session single-writer, durable
+cancel, idle/max-duration timeouts, and the three `session.lifecycle-*`
+obligations) is **WP B3's** Target Surface, supplied separately at the same
+altitude; the two are independent (both depend on B1's I5 only).
+
+The store is a **per-session fenced register** of the harness-native resume
+artifact — the "Native resume artifact" of the Vocabulary section: harness-owned
+resume state (e.g. a Claude session id) durably kept by the kernel, *fenced per
+session*. It is a domain binding of B1's `Authority` (I5, PR #98) in the
+FencedOwner regime: only the live session writer stores or replaces the artifact,
+and a different identity deposes the prior writer by epoch increment — so a
+deposed writer's `store` fails `Deposed`, exactly the DurableLog `Deposed` /
+`store.object-live-fencing` law applied to the resume register. This is the
+executable close of agent-ui's last-writer-wins session-store race: a stale
+process can no longer clobber the live writer's artifact.
+
+**Read-side pairing with `firegrid/native` (cited, not redefined).** The artifact
+is an opaque `Payload` plus metadata whose fields mirror D1's `firegrid/native`
+L1 extension (I2) — `Harness`, `NativeType`, `Payload` — so a harness adapter
+(WP D3) reads the fenced artifact to re-hydrate the harness and surfaces the same
+native fact to the UI as a `firegrid/native` record. This store holds the durable,
+fenced *source* of that state; it does **not** redefine the L1 vocabulary (see
+[`../canon/architecture/fluent/l1-observation-vocabulary.md`](../canon/architecture/fluent/l1-observation-vocabulary.md),
+§`firegrid/native`). The `Payload` is opaque to the store — never parsed.
+
+**Fence binding.** The register's subject is session-derived
+(`sessions/{sessionId}/resume`, never random) and its epoch rotates on takeover,
+so the fence is genuinely *per session*. Coordinating this claim with B3's
+session/lifecycle claim (one identity claiming both, deposed together on takeover)
+is lifecycle policy layered above, **not a mechanism here** — mirroring
+DurableLog's "AlreadyLive rejection is lifecycle policy (MS-C5), not a mechanism."
+
+```fsharp
+// namespace Firegrid.Store — domain binding of Authority (I5); native-resume
+// concern, session-scoped. open Firegrid.Foundation; open Firegrid.Foundation.SubjectHistory
+// Deps passed in (sans-IO shell): S2.Basin. No EffSharp.
+
+/// The harness-native resume payload plus its metadata — the durable, fenced
+/// source of the `firegrid/native` (I2) facts a harness adapter surfaces on the
+/// read side. Holds the artifact; does NOT redefine the L1 vocabulary.
+type ResumeArtifact =
+    { Harness: string             // emitting harness id — pairs with firegrid/native.harness
+      NativeType: string option   // pairs with firegrid/native.nativeType
+      Payload: string             // opaque resume blob (e.g. a Claude session id); never parsed
+      Turn: Turn.TurnId option }  // provenance: the turn whose completion produced it, if known
+
+module ResumeArtifactStore =
+    /// A fenced writer over one session's resume register — wraps an
+    /// `Authority.Holder` (FencedOwner, I5). Only the live holder stores; a
+    /// different identity deposes it (epoch increment). Abstract.
+    type Writer                                 // abstract; wraps Authority.Holder<ResumeArtifact>
+
+    [<RequireQualifiedAccess>]
+    type OpenError = Failed of S2Errors.S2Failure
+    [<RequireQualifiedAccess>]
+    type StoreError =
+        | Deposed                              // a newer epoch took the session's write authority
+        | Failed of S2Errors.S2Failure
+    [<RequireQualifiedAccess>]
+    type ReadError = Failed of S2Errors.S2Failure
+
+    /// Derived (never random) subject for a session's resume register:
+    /// `sessions/{sessionId}/resume`. Consumers pass `SessionId`, not names.
+    val subject : Turn.SessionId -> SubjectId
+
+    /// Claim the fenced writer for a session under `holderId` (`Authority.claim`
+    /// bound to the resume subject): the same identity re-attaches idempotently;
+    /// a different identity rotates the fence to `epoch + 1` and deposes the prior
+    /// writer. Claim is the sole deposal mechanism.
+    val openWriter :
+        S2.Basin -> Turn.SessionId -> Authority.HolderId -> Async<Result<Writer, OpenError>>
+
+    /// Store (replace) the current artifact under the writer's fence
+    /// (`Authority.commit`). Last-store-under-fence-wins. A deposed writer fails
+    /// `Deposed` — it may compute but cannot commit.
+    val store : Writer -> ResumeArtifact -> Async<Result<unit, StoreError>>
+
+    /// Read the current artifact — authority-free (readers need no claim). `None`
+    /// when the session has never stored one.
+    val read : S2.Basin -> Turn.SessionId -> Async<Result<ResumeArtifact option, ReadError>>
+```
+
+Ergonomic sample (the consumer test — usable with no proof-harness knowledge):
+
+```fsharp
+// Writer (the session's live holder): claim the fenced register, store the
+// harness's resume artifact after a turn. A deposed writer's store fails.
+match! ResumeArtifactStore.openWriter basin session holderId with
+| Ok writer ->
+    let artifact =
+        { Harness = "claude-agent-sdk"
+          NativeType = Some "resume"
+          Payload = claudeSessionId          // opaque to the store
+          Turn = Some turnId }
+    match! ResumeArtifactStore.store writer artifact with
+    | Ok () -> ()
+    | Error ResumeArtifactStore.StoreError.Deposed -> ()      // a newer writer took over
+    | Error (ResumeArtifactStore.StoreError.Failed _) -> ()
+| Error _ -> ()
+
+// Resume side (authority-free): read the current artifact to re-hydrate the
+// harness; `None` on a session that has never produced one.
+match! ResumeArtifactStore.read basin session with
+| Ok (Some artifact) -> resumeHarness artifact.Harness artifact.Payload
+| Ok None -> startFresh ()
+| Error _ -> ()
+```
+
+Laws (stated here; proven by WP B4's `session.resume-artifact-fenced` proof):
+
+- **Fenced single-writer store** (`session.resume-artifact-fenced`). At most one
+  live writer per session (per epoch); a deposed writer's `store` fails `Deposed`
+  — it computes but cannot commit. Extends the `store.object-live-fencing`
+  lineage (DurableLog's `Deposed` law) to the session resume register, closing
+  agent-ui's last-writer-wins session-store race: a stale process cannot clobber
+  the live writer's artifact.
+- **Idempotent claim / takeover.** `openWriter session holderId` while `holderId`
+  holds the current epoch re-attaches to the same writer (idempotent per epoch);
+  a different identity rotates to `epoch + 1` and deposes the prior writer.
+  Inherits `Authority`'s idempotent-claim law; `openWriter` (claim) is the sole
+  deposal mechanism.
+- **Last-store-wins read.** `read` returns the artifact of the latest successful
+  `store`, or `None` before the first. Reads are authority-free — a reader needs
+  no claim (matches DurableLog `attach`; per the canon, readers never need
+  authority).
+- **Opaque payload; native pairing, not redefinition.** The store never parses
+  `Payload`; `Harness`/`NativeType`/`Payload` are the durable, fenced source of
+  the `firegrid/native` (I2) facts a harness adapter (D3) surfaces on read — the
+  store consumes that vocabulary's shape, it does not redefine it.
+- **No leaks.** Consumers never see fence tokens, seq nums, or the interleaved
+  fence records; the derived subject is deterministic by design.
+
+Scope guard (both directions): the resume register is a *fenced last-write-wins
+cell* (the register shape) — not a log the consumer tails, not a fold; it exposes
+the current artifact, no history. Superseded-artifact compaction (trim/retention
+behind the latest) is deferred, recorded, and out of B4 scope (mirrors the MS-C1
+sidecar-compaction deferral). `Authority` (I5) is consumed verbatim — FencedOwner
+`claim`/`commit`, no new methods, **no I5 shape change, so G1 is not re-opened**;
+a resume operation `Authority` lacks would be gate G1/G6, not a method grown here.
+Sans-IO split: subject derivation, the artifact JSON codec, and latest-record
+selection are the pure core; `openWriter`/`store`/`read` are the I/O shells over
+the injected `S2.Basin`.
+
+Validation Gates (F#-zone, G6 — per
+[`fsharp-fable-effsharp-evaluation-sdd.md`](./fsharp-fable-effsharp-evaluation-sdd.md)):
+
+- **Native shapes, EffSharp-free.** `Async` + `Result` + DU errors + a
+  `ResumeArtifact` record + a private JSON codec (`JsJson`, as `Turn` uses) — no
+  EffSharp (per the 2026-07-06 deprecation), so the package-level EffSharp
+  decision is "none, nothing new introduced."
+- **Ergonomic sample** above passes the consumer test.
+- **Emitted-TS sample + Fable build check** ride P4's Fable→TS facade; the surface
+  is Fable-safe by construction — its JSON codec uses the same `JsJson` surface
+  `Turn` already emits, adding no BCL-only API beyond `Authority`/`SubjectHistory`.
+
 Proof obligations:
 
 - `session.lifecycle-single-writer` — two concurrent starts for the same
