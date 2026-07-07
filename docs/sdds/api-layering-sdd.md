@@ -82,8 +82,8 @@ section is what prevents the audit findings from recurring.
 | L1p | **Platform kernel** (domain-free F#): orchestrations (`Durable<'a>`, `durable { }`, `Workflow.*`, `Stepper` replay), entities (Processor/Mailbox/Handler), activities, durable timers + wake path, Authority, DurableLog, Checkpoint, StateReads/projections | Platform developers, proofs, L1a | Evaluation SDD (F# API doctrine) | Good — proven; **anonymous and unexposed** |
 | L1a | **Applications in F#** (domain modules over L1p): today, *sessions* (`Turn`, `SessionLifecycle`, `SessionHistory`) | Application developers, proofs | Same F# doctrine; **never inside platform namespaces** | Good code, wrong placement (lives inside `Firegrid.Store` beside the kernel) |
 | L2 | Emitted seam (Fable emission + `Exports.fs`) | **Exactly one consumer: L3.** Not a public API. | Complete and mechanical: everything L3 needs, nothing more; `Async` is acceptable here | **Nearly empty — the gap** |
-| L3 | Consumer facades (TS packages a developer imports): **`@firegrid/durable`** (the platform: define activities, author/start/signal orchestrations, entity ops) and **`@firegrid/sessions`** (application #1) | Any TS developer; agent-ui | This SDD: Promise-first, human names, quickstart-able, Effect-free | **Both missing; events package misnamed** |
-| L4 | Adapters & end applications (`claude-adapter`, agent-ui) | Harness implementors; end users | D2 adapter contract; app SDDs | Adapter good; app blocked on L3 |
+| L3 | **The platform facade, singular: `@firegrid/durable`** — activities, orchestrations, entities, durable timers/signals, plus the stream-native primitives this platform legitimately owns (sealed durable logs with attach, checkpointed projections/reads) | Any TS developer | This SDD: Promise-first, human names, quickstart-able, Effect-free | **Missing — the engine exists at L1p unexposed** |
+| L4 | Applications & adapters: **agent sessions (a reference application over L3, not a platform package)**, `claude-adapter`, agent-ui | App developers; harness implementors; end users | Platform ships zero domain nouns (the Restate/DF/Pulsar precedent); apps own their vocabulary | Adapter good; sessions currently mis-homed as kernel-resident F#; app blocked on L3 |
 
 **Binding rules (in force on ratification):**
 
@@ -111,8 +111,8 @@ not "which spec section ratified it?".
 | Current | Target | Rationale |
 | --- | --- | --- |
 | `@firegrid/l1-vocabulary` | `@firegrid/session-events` | It is the typed vocabulary of session update events (an ACP superset) a UI decodes and folds. "L1" and "vocabulary" are ledger-speak. |
-| *(none)* | `@firegrid/durable` | **The platform facade** — activities, orchestrations, entities, timers over S2. The engine exists at L1p; the package does not. S8. |
-| *(none)* | `@firegrid/sessions` | The application-#1 facade for the session domain. Does not exist today. Defined below. |
+| *(none)* | `@firegrid/durable` | **The platform facade — the only `@firegrid/*` L3 package.** Activities, orchestrations, entities, timers/signals, durable-log attach, projections over S2. The engine exists at L1p; the package does not. |
+| *(planned `@firegrid/sessions` — cancelled)* | agent-sessions **reference application** | The platform ships no domain nouns (Restate has no "session"; neither do we). Sessions are the reference app built *on* `@firegrid/durable`; its scenarios double as the platform's integration acceptance corpus. Lives app-side (examples/ or with agent-ui), never as a platform package. |
 | `@firegrid/harness-adapter` | *(keep name)* | Audience is harness implementors; the name is already in their vocabulary. Description rewritten consumer-first (spec refs move to the end). |
 | `@firegrid/claude-adapter` | *(keep name)* | Same. |
 | `@firegrid/log` (empty stub) | *(absorbed)* | Delete the stub; the store seam supersedes P4's intent. If a standalone log facade is ever needed it gets its own surface stop. |
@@ -142,68 +142,77 @@ Concretely:
 
 ### L2 — seam completeness (`Exports.fs`)
 
-The seam must export, as mechanical pass-throughs (Fable `Async` is fine here;
-L3 converts):
+The seam exports what the **platform facade** needs, as mechanical
+pass-throughs (Fable `Async` is fine here; L3 converts), demand-driven by
+greening the platform corpus:
 
-- `SessionLifecycle`: `start`, `append`, `complete`, `cancel`, `drive`,
-  `logSubject`, `inboxSubject`, the `Timeouts`/`EndCause`/`Progress` types.
-- `DurableLog`/`Turn`: `create`/attach/read cursors with `Turn.codec` and
-  `Turn.address` — the byte-faithful attach path (chunks then terminal).
-- `SessionHistory` (when A4 impl lands): `Turns.make`, `rebuild`,
-  `checkpoint`, `startReader`, `readEventual`/`readLatest`.
-- `Checkpoint`: `latest`, `resumeFrom` (already consumed internally; exported
-  for L3's cold-start path).
-- Existing `StateReads` exports stay.
-- The wake path is **not** exported: it is kernel plumbing (L1), not consumer
-  API. Posting wakes from TS is off-contract until a consumer demands it
-  (surface stop then).
+- Orchestrations: `Durable`/`durable { }` program values, `Workflow.*`,
+  `Stepper` drive/replay, host/registry entry points, signal raising.
+- Entities: Processor/Mailbox drive + admission (the virtual-object regime).
+- Activities: registration + completion plumbing.
+- `DurableLog` (domain-free): create/append/seal/attach — the byte-faithful
+  sealed-log path (chunks then terminal). `Turn` is application vocabulary
+  and is NOT a seam mandate.
+- `Checkpoint` (`latest`, `resumeFrom`) and `StateReads` (existing exports
+  stay) — the projection/read primitives.
+- Application modules (`SessionLifecycle`, `Turn`, `SessionHistory`) are
+  exported only if and when the reference application demands them during
+  greening — never as platform API.
+- The wake path is **not** exported: platform plumbing. Posting wakes from TS
+  is off-contract until a consumer demands it (surface stop then).
 
-### L3 — `@firegrid/sessions` (application-#1 facade; **G6 surface stop**)
-
-(The platform facade `@firegrid/durable` is S8's deliverable; its target
-shape is specified in the platform SDD, not here — this section covers only
-the sessions application facade.)
+### L3 — `@firegrid/durable` (the platform facade; **G6 surface stop**)
 
 Promise-first, tagged-union errors, `AsyncIterable` for streams, zero S2 or
-codec assembly required of the consumer. Target shape (signatures indicative;
-the surface stop refines them):
+codec assembly required of the consumer. Its target shape is specified by the
+platform SDD + red corpus (T1); its scope is the DF trio **plus** the
+stream-native primitives this platform owns: define/register activities,
+author/start/signal/query orchestrations (`ctx.call/all/waitForSignal/
+sleepUntil/any/currentTime` mirroring the F# `durable { }` CE), keyed entity
+operations, durable-log create/append/seal/**attach**, and checkpointed
+projections/reads. Error doctrine: every kernel DU error surfaces as a tagged
+union (`{ _tag: "Deposed" } | …`), never thrown strings; genuinely
+exceptional transport failures may throw.
+
+### L4 — agent sessions: the reference application (not a platform package)
+
+The platform ships **zero domain nouns** — Restate has no first-class
+"session" and neither do we. Sessions are the reference application built on
+`@firegrid/durable`, owned app-side (an `examples/` app in this repo, later
+migrating toward agent-ui's home). Indicatively, in platform vocabulary:
 
 ```ts
-import { FiregridClient } from "@firegrid/sessions"
+import { DurableClient } from "@firegrid/durable"
+// Application code below — "session"/"turn" are THIS APP's words, not the platform's.
 
-const client = await FiregridClient.connect({ basin })       // one connect call
-const session = client.session("sess-123")                   // address, not I/O
+const client = await DurableClient.connect({ basin })
+const session = client.entity("session", "sess-123")      // keyed entity (virtual object)
 
-// Single-writer start (idempotent per holder; AlreadyLive is a typed error).
-const turn = await session.startTurn("turn-1", {
-  holder: "api-pod-7",
-  timeouts: { idleMs: 60_000, maxMs: 900_000 },
-})
-await turn.append({ text: "…" })                              // Deposed is a typed error
-await turn.complete()
+await session.send("startTurn", { turnId: "turn-1", holder: "api-pod-7" })
+await session.send("cancel", { turnId: "turn-1" })         // cancel = just a command
 
-// Durable cancel from ANY process — no authority required.
-await session.cancel("turn-1", { source: "ui", seq: 1 })
-
-// Attach from anywhere: byte-identical prefix, live tail, then terminal.
-for await (const event of session.attach("turn-1")) {
-  // event: { kind: "chunk", … } | { kind: "terminal", terminal, cause? }
+// Turn output is a sealed durable log; attach is a PLATFORM primitive:
+for await (const ev of client.logs.attach(["sessions", "sess-123", "turns", "turn-1"])) {
+  // ev: { kind: "chunk", … } | { kind: "terminal", … }
 }
 
-// History / thread index (A4 projection; strong or eventual).
-const history = await session.history({ read: "eventual" })   // lag exposed as data
+const history = await client.projections.read(historyProjection, { read: "eventual" })
 ```
 
-Error doctrine: every kernel DU error surfaces as a tagged union
-(`{ _tag: "Deposed" } | { _tag: "AlreadyLive"; turnId } | …`), never thrown
-strings; genuinely exceptional transport failures may throw.
+Consequences:
 
-**Definition of done for the facade includes the E1 dry-run sample:** the
-agent-ui attach path — start → append → cancel from a second "process" →
-attach observes chunks then a durable `cancelled` terminal — written in ≤ 30
-lines of consumer TS in a version-controlled `samples/` directory, compiled,
-type-checked, and *executed* in CI. This sample is the consumer test made
-artifact.
+- **The E1 dry-run scenarios become the platform's integration acceptance
+  corpus** (T2): they are written against `@firegrid/durable`'s public
+  surface plus thin app code. Anywhere greening them requires reaching
+  *around* the platform, that is a platform gap → a new platform WP. The
+  reference app is how the platform proves itself.
+- The wave's F# session modules (`Turn`, `SessionLifecycle`,
+  `SessionHistory`) are re-labeled L1a **application code that predates the
+  platform surface** — kept working for continuity, progressively
+  re-expressed over the platform facade as the loop demands, never exported
+  as platform API.
+- D-lane packages (`session-events` vocabulary, harness adapters) are
+  application-ecosystem packages (L4) and keep their plan unchanged.
 
 ### L3 — `@firegrid/session-events` (rename of `l1-vocabulary`)
 
@@ -261,9 +270,15 @@ work hoping surfaces emerge. Mechanics:
 | T-WP | Deliverable | Absorbs | Gate |
 | --- | --- | --- | --- |
 | T0 | Ratchet infrastructure: manifest runner, strict-xpass target suite in CI | — | None (mechanical) |
-| T1 | `@firegrid/sessions` surface package + red corpus (E1 dry-run scenarios: start/append/cancel-from-second-process/attach byte-faithful/terminals/history-with-lag; tagged-union errors) | S3, S4 | **Human ratifies corpus** |
-| T2 | `@firegrid/durable` surface package + red corpus (DF acceptance laws through the facade: replay determinism across host kill, fan-out/fan-in, WhenAny, signals, durable timers across restart, entity serialization) + platform SDD as prose companion | S8 | **Human ratifies corpus + SDD** |
+| T1 | **`@firegrid/durable` surface package + red corpus + platform SDD** (DF acceptance laws through the facade: replay determinism across host kill, fan-out/fan-in, WhenAny, signals, durable timers across restart, entity serialization, log attach, projections) | S8 | **Human ratifies corpus + SDD** |
+| T2 | **Agent-sessions reference app red corpus, written against `@firegrid/durable`** (the E1 scenarios: start/cancel-from-second-process/attach byte-faithful/terminals-with-cause/history-with-lag). Greening gaps found here become platform WPs — this corpus is the platform's integration acceptance. | S3, S4 (recast app-side) | **Human ratifies corpus** |
 | T3 | Plain-TS adapter contract surface + red fixture-replay conformance corpus | S7 | **Human ratifies corpus** |
+
+The platform corpus (T1) is authored and ratified **first**; the sessions
+scenarios (T2) are then written in its vocabulary. This costs the E-lane path
+one design cycle relative to sessions-first and is the deliberate trade: the
+platform surface is the load-bearing contract, and its first application must
+consume it, not bypass it.
 
 S2 (seam), S5 (renames), S6 (doctrine edits), S9 (re-placement) execute as
 demanded by or alongside the T-rows. Green-making WPs are cut per corpus once
@@ -300,13 +315,14 @@ proven at L1p**; what is missing is its name, its seam exports, and its
 facade. The corrected picture:
 
 ```
-        L4   agent-ui (E-lane)         other apps / services
-                 │                            │
-        L3   @firegrid/sessions        @firegrid/durable
-             (application #1 facade)   (THE PLATFORM facade: activities,
-                 │                      orchestrations, entities, timers)
-                 │                            │
-        L2   emitted seam (Exports.fs) ───────┘
+        L4   agent-sessions reference app ─── agent-ui      other apps
+             (app code: "session"/"turn" are its words)        │
+                 │                                             │
+        L3   @firegrid/durable — THE platform facade, singular:
+             activities · orchestrations · entities · timers/signals
+             · durable-log attach · checkpointed projections
+                 │
+        L2   emitted seam (Exports.fs)
                  │
         L1a  applications (F#): sessions (Turn, SessionLifecycle,
              SessionHistory) — first domain expressed on the platform
