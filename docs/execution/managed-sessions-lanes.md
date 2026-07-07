@@ -109,7 +109,7 @@ Everything else is lane-owner discretion.
 | F1 | F | Conformance bridge: number existing invariants ↔ green proofs | RFC | — | done | Codex | #83 |
 | F2 | F | Per-capability invariant additions (rolling, one PR per capability) | RFC | F1 | open | — | — |
 | F3 | F | Resolve `fireline` profile-suffix naming before D-lane cites it | RFC | — | open | — | — |
-| F4 | F | CI runs both proof suites as blocking checks (`apps/proofs` TS + `Firegrid.Foundation.Proofs` F#); conformance evidence flips to ci-green | SDD binding rule | — | in-review | Codex | — |
+| F4 | F | CI runs both proof suites as blocking checks (`apps/proofs` TS + `Firegrid.Foundation.Proofs` F#); conformance evidence flips to ci-green | SDD binding rule | — | in-review | Codex | #86 |
 
 ## Lanes
 
