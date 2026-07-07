@@ -752,11 +752,14 @@ stream + tailed router + durable cursor, not the timer index or these proofs):
   batch). Dispatch is at-least-once with an idempotent drive, so a due timer fires
   effectively exactly once across a router restart; a not-yet-posted timer
   survives unfired.
-- **Poison tolerance.** Because any process may post, an undecodable record is
-  *consumed and skipped* — the cursor advances past it and its subject degrades to
-  the sweep — so one malformed pointer cannot head-of-line-block a shard. This is
-  the degraded-mode contract applied per-record: a lost wake costs latency, never
-  correctness.
+- **Poison tolerance** (`wake.timer-exactly-once`, C2). Because any process may
+  post, an undecodable record is *consumed and skipped* — the cursor advances past
+  it and its subject degrades to the sweep — so one malformed pointer cannot
+  head-of-line-block a shard. This is the degraded-mode contract applied
+  per-record: a lost wake costs latency, never correctness. The proof extends
+  `wake.timer-exactly-once` to pin it: a poison record is consumed, the cursor
+  passes it, subsequent wakes still dispatch, and a router restart does not
+  re-wedge on it.
 - **Tail latency, no poll** (`wake.tail-latency`, C2). `tick` blocks-with-wait on
   the shard tail (`openCursorWithWait`), so an appended wake reaches its claimed
   handler within a bound *asserted from trace evidence in the proof* (bound
@@ -784,7 +787,13 @@ binding, not a new fence idiom or a second drive loop. Wakes never become the
 sole correctness path — the sweep stays the floor. (Deferred, recorded: the shard
 stream's consumed prefix grows unbounded; its trimming rides A-lane
 checkpoint+trim behind the router's committed cursor later — the A1
-sidecar-compaction precedent — and is out of C1 scope.)
+sidecar-compaction precedent — and is out of C1 scope.) (Deferred, recorded:
+poison skips are **silent** in C1 (`WakeRouter` discards the decode error and
+maps the record to `None`), so systematic poison — e.g. codec version skew from a
+newer poster — would degrade a whole shard to sweep-floor latency with no signal
+beyond forensic trace reading. An observability seam (skip count / structured
+log) is deferred, revisited at C2 or first operational need — the silent
+degradation is a recorded decision, not an accident.)
 
 Validation Gates (F#-zone, G6 — per
 [`fsharp-fable-effsharp-evaluation-sdd.md`](./fsharp-fable-effsharp-evaluation-sdd.md)):
