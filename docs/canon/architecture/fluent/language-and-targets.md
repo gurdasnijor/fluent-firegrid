@@ -46,10 +46,10 @@ public-exports rule in `AGENTS.md`.
 
 ## P3 Target Surface: `Foundation/Durable` Kernel
 
-Status: G6 surface sketch for architect review. Do not port the
-`Foundation/Durable` implementation or proofs until this section is approved.
-If the architect treats the Processor signatures below as a cross-lane
-interface, this review also gates that G1 decision before implementation.
+Status: G6/G1 approved 2026-07-07 for implementation. The Processor signatures
+below are the cross-lane G1 shape; B1, C1, and A-lane work build against them
+as-is, and any implementation-forced change comes back through architect
+review.
 
 P3 ports the proven eff-firegrid durable kernel as the F#-native seed for the
 actor composition in
@@ -80,6 +80,14 @@ The durable authoring core is a small, replayable program representation plus a
 builder. The program type remains opaque enough that callers construct values
 through `Durable`/`Workflow` helpers rather than by depending on union cases
 unless a proof explicitly targets replay semantics.
+
+P3 deliberately preserves the donor kernel's positional `OpId` replay model:
+operation ids are assigned by durable-program position, including source-order
+fan-out. This is sound for the sequential `durable {}` CE port and keeps P3 in
+the "ports are refactors" lane. It is a recorded deviation from the keyed
+replay direction in the canon lineage: code evolution can invalidate in-flight
+histories. Re-open this decision when the authoring surface becomes product or
+when cross-implementation history compatibility is claimed.
 
 ```fsharp
 namespace Firegrid.Store.Foundation.Durable
@@ -276,6 +284,12 @@ P3 ports the proven host loop mechanics and expresses the pure handler boundary
 the later B/A/C lanes bind to. It does not introduce a separate actor
 framework, resident process model, or actor-to-actor call primitive.
 
+Provenance is stamped by the shell, not by handler code. A handler may request
+`Intent.Send(target, payload)`; the shell records the intent, derives the
+outbound mailbox `Source` and `SourceSeqNum` from that committed intent
+record's identity, and then appends the stamped envelope to the target mailbox.
+Handlers never fabricate mailbox provenance.
+
 ```fsharp
 type ActorAddress = { Segments: string list }
 type TimerId = TimerId of string
@@ -290,7 +304,7 @@ type WakeReason =
 
 type Intent =
     | SetTimer of TimerId * dueAt: Timestamp
-    | Send of target: ActorAddress * MailboxEnvelope
+    | Send of target: ActorAddress * payload: Payload
     | Execute of EffectId * payload: Payload
 
 type StoredRecord<'record> =
@@ -351,6 +365,8 @@ their approved interfaces.
 The donor durable runtime is retained as a proof/dev harness around the kernel,
 not as the future product API for managed sessions. It is useful for proving
 the ported CE, mailbox admission, activity/timer dispatch, and host tick laws.
+`Processor.drive` is the only production drive loop; any future workflow
+binding is a `Handler` over it, never a second coordination loop.
 
 ```fsharp
 type DurableRuntimeOptions =
