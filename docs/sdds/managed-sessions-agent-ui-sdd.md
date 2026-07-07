@@ -698,7 +698,9 @@ export class L1Sink extends Context.Service<L1Sink, {
   readonly emit: (record: L1StreamRecord) => Effect.Effect<void, EmitError>
 }>()("@firegrid/harness-adapter/L1Sink") {}
 
-// Durable-tool mediation — present only for a `gateable` adapter. Pause at a
+// Durable-tool mediation. Provided at a *gateable* adapter's layer construction
+// (a dependency of its `Layer`), never in `drive`'s R — so an observe-only
+// adapter, whose layer has no `ToolGate`, literally cannot obtain one. Pause at a
 // Firegrid-mediated tool call; the kernel commits the L2 intent/result and
 // returns the committed result to feed back to the harness. Resume serves the
 // recorded result, never re-executes (execution-models Model B). L2 authority is
@@ -720,16 +722,28 @@ export interface CommittedToolResult {
 // ── The adapter service (I/O shell) ───────────────────────────────────────
 export interface ResumePoint {
   readonly artifact: NativeResumeArtifact   // prior harness resume state
-  readonly observedThrough: number          // the L1 append Version already durable (I1)
+  // EXCLUSIVE upper bound (house convention — same boundary class as C1 R3 and
+  // D1's fold): the I1 Version below which L1 facts are already durable. Resume
+  // emits the suffix FROM `observedThrough` onward (facts at Version >=
+  // observedThrough); the fact AT observedThrough is the first not-yet-durable one.
+  readonly observedThrough: number
 }
 export interface DriveInput {
-  readonly prompt: L1StreamRecord           // the user turn (a mailbox send lowered to L1)
+  // The user turn: a NON-EMPTY sequence of `user_message_chunk`s that share one
+  // `messageId`. Plural because L1ChunkBody.content is a single content block per
+  // chunk (ACP; see packages/l1-vocabulary), so a multi-block prompt
+  // (text + image + resource) needs several records — a singular record cannot
+  // express it, and widening the arity after ratification would be G1.
+  readonly prompt: readonly [L1StreamRecord, ...ReadonlyArray<L1StreamRecord>]
   readonly resume?: ResumePoint             // present iff continuing an existing turn/session
 }
 export type L1Terminal =
   | { readonly _tag: "completed" }
-  | { readonly _tag: "cancelled" }          // durable cancel observed (an ordinary mailbox message)
+  | { readonly _tag: "cancelled" }          // a cancel was observed and the turn ended
   | { readonly _tag: "failed"; readonly reason: string }
+// This contract fixes only the terminal *representation*. How a cancel reaches a
+// running `drive` is B3's MS-C5 surface to define (cancel is a mailbox send, per
+// canon) — deliberately not pinned here.
 export interface DriveOutcome {
   readonly artifact: NativeResumeArtifact    // updated resume state for the kernel to persist (B4-fenced)
   readonly terminal: L1Terminal
@@ -737,12 +751,14 @@ export interface DriveOutcome {
 
 export class HarnessAdapter extends Context.Service<HarnessAdapter, {
   readonly capabilities: HarnessCapabilities
-  // Drive one turn to terminal: lower harness traffic to L1 via `L1Sink.emit`,
-  // mediate durable tools via `ToolGate` (gateable only), and produce the updated
-  // resume artifact. The harness process is a scoped resource.
+  // Drive one turn to terminal: lower harness traffic to L1 via `L1Sink.emit` and
+  // produce the updated resume artifact. `ToolGate` is deliberately NOT in `drive`'s
+  // R — a gateable adapter closes over it at layer construction; an observe-only
+  // adapter's layer never depends on it, so it *cannot* mediate. The posture is
+  // enforced by the types, not by prose. The harness process is a scoped resource.
   readonly drive: (
     input: DriveInput
-  ) => Effect.Effect<DriveOutcome, DriveError, L1Sink | ToolGate | Scope.Scope>
+  ) => Effect.Effect<DriveOutcome, DriveError, L1Sink | Scope.Scope>
 }>()("@firegrid/harness-adapter/HarnessAdapter") {}
 
 // ── Typed errors ──────────────────────────────────────────────────────────
@@ -770,6 +786,8 @@ drives the pure core, with no live process):
 const runTurn = Effect.fn("runTurn")(function*(input: DriveInput) {
   const adapter = yield* HarnessAdapter
   const outcome = yield* adapter.drive(input)          // emits L1 under the fence
+  // Illustrative only — `ResumeArtifactStore` names B4's API and is pending B4
+  // ratification (MS-C5); shown here to place the seam, not to fix its shape.
   yield* ResumeArtifactStore.put(outcome.artifact)     // B4 (MS-C5), fenced per session
   return outcome.terminal
 })
@@ -803,15 +821,17 @@ Laws (stated here; proven by WP D2/D3 after approval):
   (`harness.fixture-replay`). All nondeterminism lives in the harness process,
   behind the I/O shell.
 - **Resume suppresses, never repeats.** Given a `ResumePoint`, `drive` re-enters
-  via the native artifact and emits only facts after `observedThrough`:
+  via the native artifact and emits the suffix from `observedThrough` onward
+  (facts at Version >= `observedThrough`, the exclusive-upper-bound convention):
   already-observed L1 facts are not re-emitted and already-observed side effects
   are not re-executed — gateable durable tools are served their recorded L2 result
   and fed back; observe-only harness-native side effects are suppressed by native
   resume (`harness.resume-suppression`).
 - **Interception posture is declared and honored.** A `gateable` adapter may call
   `ToolGate.mediate` (durable, transactional results, replay-served on resume) for
-  Firegrid-registered tools; an `observe-only` adapter MUST NOT — its
-  harness-native side effects are at-least-once-observed but not
+  Firegrid-registered tools; an `observe-only` adapter *cannot* — its layer
+  provides no `ToolGate`, so the prohibition is a type-level property, not prose.
+  Its harness-native side effects are at-least-once-observed but not
   Firegrid-transactional, and the contract says so. The posture is a static
   per-adapter declaration, not a per-call surprise.
 - **Subagent output is parent-scoped.** Subagent activity lowers to
@@ -822,7 +842,9 @@ Laws (stated here; proven by WP D2/D3 after approval):
 - **Resume artifact is opaque and fenced elsewhere.** The adapter
   produces/consumes `NativeResumeArtifact` as an opaque, harness-versioned blob;
   its durable, fenced per-session storage is B4 (MS-C5), referenced here, never
-  re-implemented.
+  re-implemented. **D2 owns the TS-side `NativeResumeArtifact` shape; B4's F#
+  store is generic over an opaque serialized payload plus `(harness, version)`
+  metadata and must not redefine the artifact.**
 
 Scope guard (both directions): the adapter owns protocol→L1 lowering and
 resume-artifact production; it does not own durability, L2/authority,
