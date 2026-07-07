@@ -1,24 +1,76 @@
 import { AppendInput, AppendRecord, SeqNumMismatchError } from "@s2-dev/streamstore"
+import * as FiregridLog from "@firegrid/log"
 import * as Effect from "effect/Effect"
 import * as Stream from "effect/Stream"
 
 import { proof } from "../src/Proof.ts"
 
-const journal = [
-  AppendRecord.string({ body: "step-1:ok", headers: [["durable.record.type", "StepCompleted"]] }),
-  AppendRecord.string({ body: "input-cursor:1", headers: [["durable.record.type", "CheckpointAdvanced"]] })
-]
+type ProofAppendInput = { readonly records?: ReadonlyArray<unknown> }
+type ProofAppendOptions = { readonly matchSeqNum?: number; readonly fencingToken?: string }
+type ProofAppendRecordFactory = {
+  readonly string: (input: {
+    readonly body: string
+    readonly headers?: ReadonlyArray<readonly [string, string]>
+    readonly timestamp?: number | Date
+  }) => unknown
+}
+
+interface CapabilityADriver {
+  readonly proofPrefix: string
+  readonly propertyPrefix: string
+  readonly runtimeDriver: "upstream-sdk" | "firegrid-log"
+  readonly spanPrefix: string
+  readonly AppendInput: {
+    readonly create: (records: ReadonlyArray<unknown>, options?: ProofAppendOptions) => ProofAppendInput
+  }
+  readonly AppendRecord: ProofAppendRecordFactory
+  readonly SeqNumMismatchError: abstract new (...args: any[]) => { readonly expectedSeqNum: number }
+}
+
+const upstreamSdkDriver: CapabilityADriver = {
+  proofPrefix: "effect-s2",
+  propertyPrefix: "effect-s2",
+  runtimeDriver: "upstream-sdk",
+  spanPrefix: "effect-s2",
+  AppendInput: {
+    create: (records, options) => AppendInput.create(records as Parameters<typeof AppendInput.create>[0], options)
+  },
+  AppendRecord: {
+    string: (input) => AppendRecord.string(input as Parameters<typeof AppendRecord.string>[0])
+  },
+  SeqNumMismatchError
+}
+
+const firegridLogDriver: CapabilityADriver = {
+  proofPrefix: "firegrid-log",
+  propertyPrefix: "firegrid-log",
+  runtimeDriver: "firegrid-log",
+  spanPrefix: "firegrid-log",
+  AppendInput: {
+    create: (records, options) => FiregridLog.AppendInput.create(records as FiregridLog.AppendRecord[], options)
+  },
+  AppendRecord: {
+    string: (input) => FiregridLog.AppendRecord.string(input as Parameters<typeof FiregridLog.AppendRecord.string>[0])
+  },
+  SeqNumMismatchError: FiregridLog.SeqNumMismatchError
+}
 
 const journalTypes = ["StepCompleted", "CheckpointAdvanced"]
 
-export default proof("effect-s2.capability-a.atomic-replay")
+const atomicReplayProof = (driver: CapabilityADriver) => {
+const journal = [
+  driver.AppendRecord.string({ body: "step-1:ok", headers: [["durable.record.type", "StepCompleted"]] }),
+  driver.AppendRecord.string({ body: "input-cursor:1", headers: [["durable.record.type", "CheckpointAdvanced"]] })
+]
+
+return proof(`${driver.proofPrefix}.capability-a.atomic-replay`)
   .describedAs(
     "Proves the Capability A @firegrid/log substrate: atomic StepCompleted + checkpoint append under matchSeqNum, stale replay rejected by SeqNumMismatchError, and replay reads only the original batch."
   )
   .spec(({ property, trialId }) => {
     const streamName = `invocation-${trialId}`
-    return property("capability-a.effect-s2.atomic-replay-proof")
-      .s2Lite({ persistence: "local-root" })
+    return property(`capability-a.${driver.propertyPrefix}.atomic-replay-proof`)
+      .s2Lite({ persistence: "local-root", driver: driver.runtimeDriver })
       .workload(({ s2 }) =>
         Effect.gen(function*() {
           const stream = yield* s2.stream({ basin: "capability-a-proof", stream: streamName })
@@ -27,15 +79,16 @@ export default proof("effect-s2.capability-a.atomic-replay")
           const matchSeqNum = initialTail.tail.seqNum
 
           const commitAck = yield* stream.append(
-            AppendInput.create(journal, { matchSeqNum })
+            driver.AppendInput.create(journal, { matchSeqNum })
           )
 
           const staleReplayError = yield* stream.append(
-            AppendInput.create(journal, { matchSeqNum })
+            driver.AppendInput.create(journal, { matchSeqNum })
           ).pipe(
             Effect.flip,
             Effect.filterOrFail(
-              (error): error is SeqNumMismatchError => error instanceof SeqNumMismatchError,
+              (error): error is { readonly expectedSeqNum: number } =>
+                error instanceof driver.SeqNumMismatchError,
               (error) => error
             )
           )
@@ -48,7 +101,8 @@ export default proof("effect-s2.capability-a.atomic-replay")
             Effect.map((records) =>
               Array.from(
                 records,
-                (record) => record.headers.find(([key]) => key === "durable.record.type")?.[1] ?? ""
+                (record) =>
+                  record.headers.find(([key]: readonly [string, string]) => key === "durable.record.type")?.[1] ?? ""
               )
             )
           )
@@ -74,7 +128,7 @@ export default proof("effect-s2.capability-a.atomic-replay")
           "atomic-commit-observed",
           `
           SELECT countIf(
-            SpanName = 'effect-s2.append'
+            SpanName = '${driver.spanPrefix}.append'
             AND SpanAttributes['s2.operation.status'] = 'ok'
             AND SpanAttributes['s2.append.record_count'] = '2'
           ) >= 1 AS ok
@@ -85,7 +139,7 @@ export default proof("effect-s2.capability-a.atomic-replay")
           "stale-replay-rejected-by-seqnum",
           `
           SELECT countIf(
-            SpanName = 'effect-s2.append'
+            SpanName = '${driver.spanPrefix}.append'
             AND SpanAttributes['s2.operation.status'] = 'error'
             AND SpanAttributes['s2.error.kind'] = 'SeqNumMismatchError'
             AND SpanAttributes['s2.error.code'] = 'APPEND_CONDITION_FAILED'
@@ -98,9 +152,16 @@ export default proof("effect-s2.capability-a.atomic-replay")
         traceSql(
           "replay-read-used-production-s2-span",
           `
-          SELECT countIf(SpanName = 'effect-s2.read-session') >= 1 AS ok
+          SELECT countIf(SpanName = '${driver.spanPrefix}.read-session') >= 1 AS ok
           FROM trial_spans
         `
         )
       ])
   })
+}
+
+export const effectS2CapabilityAProof = atomicReplayProof(upstreamSdkDriver)
+
+export const firegridLogCapabilityAProof = atomicReplayProof(firegridLogDriver)
+
+export default effectS2CapabilityAProof

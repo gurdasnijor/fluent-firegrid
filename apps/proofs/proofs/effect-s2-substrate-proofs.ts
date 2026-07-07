@@ -4,6 +4,7 @@ import {
   FencingTokenMismatchError,
   SeqNumMismatchError
 } from "@s2-dev/streamstore"
+import * as FiregridLog from "@firegrid/log"
 import * as Effect from "effect/Effect"
 import * as Stream from "effect/Stream"
 
@@ -14,7 +15,64 @@ import type { TraceProof } from "../src/TraceProof.ts"
 
 type ProofCheck<A> = Check<A> | TraceProof
 
+type ProofAppendInput = { readonly records?: ReadonlyArray<unknown> }
+type ProofAppendOptions = { readonly matchSeqNum?: number; readonly fencingToken?: string }
+type ProofAppendRecordFactory = {
+  readonly string: (input: {
+    readonly body: string
+    readonly headers?: ReadonlyArray<readonly [string, string]>
+    readonly timestamp?: number | Date
+  }) => unknown
+  readonly fence: (token: string) => unknown
+}
+
+interface S2ProofDriver {
+  readonly proofPrefix: string
+  readonly propertyPrefix: string
+  readonly runtimeDriver: "upstream-sdk" | "firegrid-log"
+  readonly spanPrefix: string
+  readonly AppendInput: {
+    readonly create: (records: ReadonlyArray<unknown>, options?: ProofAppendOptions) => ProofAppendInput
+  }
+  readonly AppendRecord: ProofAppendRecordFactory
+  readonly SeqNumMismatchError: abstract new (...args: any[]) => { readonly expectedSeqNum: number }
+  readonly FencingTokenMismatchError: abstract new (...args: any[]) => { readonly expectedFencingToken: string }
+}
+
+const upstreamSdkDriver: S2ProofDriver = {
+  proofPrefix: "effect-s2",
+  propertyPrefix: "effect-s2",
+  runtimeDriver: "upstream-sdk",
+  spanPrefix: "effect-s2",
+  AppendInput: {
+    create: (records, options) => AppendInput.create(records as Parameters<typeof AppendInput.create>[0], options)
+  },
+  AppendRecord: {
+    string: (input) => AppendRecord.string(input as Parameters<typeof AppendRecord.string>[0]),
+    fence: AppendRecord.fence
+  },
+  SeqNumMismatchError,
+  FencingTokenMismatchError
+}
+
+const firegridLogDriver: S2ProofDriver = {
+  proofPrefix: "firegrid-log",
+  propertyPrefix: "firegrid-log",
+  runtimeDriver: "firegrid-log",
+  spanPrefix: "firegrid-log",
+  AppendInput: {
+    create: (records, options) => FiregridLog.AppendInput.create(records as FiregridLog.AppendRecord[], options)
+  },
+  AppendRecord: {
+    string: (input) => FiregridLog.AppendRecord.string(input as Parameters<typeof FiregridLog.AppendRecord.string>[0]),
+    fence: FiregridLog.AppendRecord.fence
+  },
+  SeqNumMismatchError: FiregridLog.SeqNumMismatchError,
+  FencingTokenMismatchError: FiregridLog.FencingTokenMismatchError
+}
+
 interface StreamProofConfig<A> {
+  readonly driver: S2ProofDriver
   readonly name: string
   readonly description: string
   readonly propertyName: string
@@ -30,7 +88,7 @@ const streamProof = <A>(config: StreamProofConfig<A>): Proof<A> =>
     .spec(({ property, trialId }) => {
       const streamName = `${config.streamPrefix}-${trialId}`
       return property(config.propertyName)
-        .s2Lite({ persistence: "local-root" })
+        .s2Lite({ persistence: "local-root", driver: config.driver.runtimeDriver })
         .workload(({ s2 }) =>
           Effect.gen(function*() {
             const stream = yield* s2.stream({ basin: config.basin, stream: streamName })
@@ -40,23 +98,25 @@ const streamProof = <A>(config: StreamProofConfig<A>): Proof<A> =>
         .verify(config.verify)
     })
 
+const makeS2SubstrateProofs = (driver: S2ProofDriver) => {
 const readAfterAppendRecords = [
-  AppendRecord.string({ body: "step-1" }),
-  AppendRecord.string({ body: "step-2" }),
-  AppendRecord.string({ body: "checkpoint" })
+  driver.AppendRecord.string({ body: "step-1" }),
+  driver.AppendRecord.string({ body: "step-2" }),
+  driver.AppendRecord.string({ body: "checkpoint" })
 ]
 
 const readAfterAppendProof = streamProof({
-  name: "effect-s2.capability-a.read-after-append",
+  driver,
+  name: `${driver.proofPrefix}.capability-a.read-after-append`,
   description:
     "Proves the S2 substrate visibility guarantee Capability A relies on: after an acknowledged append, check-tail advances and read-session returns the full batch in order.",
-  propertyName: "capability-a.effect-s2.read-after-append-proof",
+  propertyName: `capability-a.${driver.propertyPrefix}.read-after-append-proof`,
   basin: "capability-a-proof",
   streamPrefix: "read-after-append",
   run: (stream) =>
     Effect.gen(function*() {
       const initialTail = yield* stream.checkTail()
-      const ack = yield* stream.append(AppendInput.create(readAfterAppendRecords, {
+      const ack = yield* stream.append(driver.AppendInput.create(readAfterAppendRecords, {
         matchSeqNum: initialTail.tail.seqNum
       }))
       const afterAppendTail = yield* stream.checkTail()
@@ -86,7 +146,7 @@ const readAfterAppendProof = streamProof({
       "append-batch-observed",
       `
       SELECT countIf(
-        SpanName = 'effect-s2.append'
+        SpanName = '${driver.spanPrefix}.append'
         AND SpanAttributes['s2.operation.status'] = 'ok'
         AND SpanAttributes['s2.append.record_count'] = '3'
       ) = 1 AS ok
@@ -96,8 +156,8 @@ const readAfterAppendProof = streamProof({
     traceSql(
       "read-after-append-used-production-spans",
       `
-      SELECT countIf(SpanName = 'effect-s2.check-tail') >= 2
-        AND countIf(SpanName = 'effect-s2.read-session') >= 1 AS ok
+      SELECT countIf(SpanName = '${driver.spanPrefix}.check-tail') >= 2
+        AND countIf(SpanName = '${driver.spanPrefix}.read-session') >= 1 AS ok
       FROM trial_spans
     `
     )
@@ -105,26 +165,27 @@ const readAfterAppendProof = streamProof({
 })
 
 const cursorFoldProof = streamProof({
-  name: "effect-s2.capability-a.cursor-fold",
+  driver,
+  name: `${driver.proofPrefix}.capability-a.cursor-fold`,
   description:
     "Proves the restart primitive Capability A needs: folding from a persisted cursor reads exactly the records at or after that cursor, in stream order.",
-  propertyName: "capability-a.effect-s2.cursor-fold-proof",
+  propertyName: `capability-a.${driver.propertyPrefix}.cursor-fold-proof`,
   basin: "capability-a-proof",
   streamPrefix: "cursor-fold",
   run: (stream) =>
     Effect.gen(function*() {
       const initialTail = yield* stream.checkTail()
       const prefixAck = yield* stream.append(
-        AppendInput.create([
-          AppendRecord.string({ body: "already-folded-0" }),
-          AppendRecord.string({ body: "already-folded-1" })
+        driver.AppendInput.create([
+          driver.AppendRecord.string({ body: "already-folded-0" }),
+          driver.AppendRecord.string({ body: "already-folded-1" })
         ], { matchSeqNum: initialTail.tail.seqNum })
       )
       const restartCursor = prefixAck.end.seqNum
       const suffixAck = yield* stream.append(
-        AppendInput.create([
-          AppendRecord.string({ body: "after-cursor-0" }),
-          AppendRecord.string({ body: "after-cursor-1" })
+        driver.AppendInput.create([
+          driver.AppendRecord.string({ body: "after-cursor-0" }),
+          driver.AppendRecord.string({ body: "after-cursor-1" })
         ], { matchSeqNum: restartCursor })
       )
       const foldedAfterCursor = yield* stream.readSession({
@@ -160,9 +221,9 @@ const cursorFoldProof = streamProof({
     traceSql(
       "cursor-fold-read-observed",
       `
-      SELECT countIf(SpanName = 'effect-s2.read-session') >= 1
+      SELECT countIf(SpanName = '${driver.spanPrefix}.read-session') >= 1
         AND countIf(
-          SpanName = 'effect-s2.append'
+          SpanName = '${driver.spanPrefix}.append'
           AND SpanAttributes['s2.operation.status'] = 'ok'
           AND SpanAttributes['s2.append.record_count'] = '2'
         ) = 2 AS ok
@@ -173,10 +234,11 @@ const cursorFoldProof = streamProof({
 })
 
 const matchSeqNumContentionProof = streamProof({
-  name: "effect-s2.capability-b.match-seq-num-contention",
+  driver,
+  name: `${driver.proofPrefix}.capability-b.match-seq-num-contention`,
   description:
     "Proves the conditional-append contention primitive Capability B uses for single-writer state: two appends at the same tail cannot both commit.",
-  propertyName: "capability-b.effect-s2.match-seq-num-contention-proof",
+  propertyName: `capability-b.${driver.propertyPrefix}.match-seq-num-contention-proof`,
   basin: "capability-b-proof",
   streamPrefix: "match-seq-num-contention",
   run: (stream) =>
@@ -184,14 +246,15 @@ const matchSeqNumContentionProof = streamProof({
       const initialTail = yield* stream.checkTail()
       const matchSeqNum = initialTail.tail.seqNum
       const winner = yield* stream.append(
-        AppendInput.create([AppendRecord.string({ body: "winner" })], { matchSeqNum })
+        driver.AppendInput.create([driver.AppendRecord.string({ body: "winner" })], { matchSeqNum })
       )
       const loser = yield* stream.append(
-        AppendInput.create([AppendRecord.string({ body: "loser" })], { matchSeqNum })
+        driver.AppendInput.create([driver.AppendRecord.string({ body: "loser" })], { matchSeqNum })
       ).pipe(
         Effect.flip,
         Effect.filterOrFail(
-          (error): error is SeqNumMismatchError => error instanceof SeqNumMismatchError,
+          (error): error is { readonly expectedSeqNum: number } =>
+            error instanceof driver.SeqNumMismatchError,
           (error) => error
         )
       )
@@ -222,7 +285,7 @@ const matchSeqNumContentionProof = streamProof({
       "stale-conditional-append-rejected",
       `
       SELECT countIf(
-        SpanName = 'effect-s2.append'
+        SpanName = '${driver.spanPrefix}.append'
         AND SpanAttributes['s2.operation.status'] = 'error'
         AND SpanAttributes['s2.error.kind'] = 'SeqNumMismatchError'
         AND SpanAttributes['s2.error.code'] = 'APPEND_CONDITION_FAILED'
@@ -236,36 +299,38 @@ const matchSeqNumContentionProof = streamProof({
 })
 
 const fenceSemanticsProof = streamProof({
-  name: "effect-s2.capability-b.fence-semantics",
+  driver,
+  name: `${driver.proofPrefix}.capability-b.fence-semantics`,
   description:
     "Proves the cooperative S2 fencing semantics Capability B relies on: the correct token writes, a stale token is rejected, and an unfenced write is not protected.",
-  propertyName: "capability-b.effect-s2.fence-semantics-proof",
+  propertyName: `capability-b.${driver.propertyPrefix}.fence-semantics-proof`,
   basin: "capability-b-proof",
   streamPrefix: "fence-semantics",
   run: (stream) =>
     Effect.gen(function*() {
       const ownerToken = "owner-a"
-      const fenceAck = yield* stream.append(AppendInput.create([AppendRecord.fence(ownerToken)]))
+      const fenceAck = yield* stream.append(driver.AppendInput.create([driver.AppendRecord.fence(ownerToken)]))
       const guardedAck = yield* stream.append(
-        AppendInput.create(
-          [AppendRecord.string({ body: "guarded-owner-write" })],
+        driver.AppendInput.create(
+          [driver.AppendRecord.string({ body: "guarded-owner-write" })],
           { fencingToken: ownerToken }
         )
       )
       const staleTokenError = yield* stream.append(
-        AppendInput.create(
-          [AppendRecord.string({ body: "stale-owner-write" })],
+        driver.AppendInput.create(
+          [driver.AppendRecord.string({ body: "stale-owner-write" })],
           { fencingToken: "owner-b" }
         )
       ).pipe(
         Effect.flip,
         Effect.filterOrFail(
-          (error): error is FencingTokenMismatchError => error instanceof FencingTokenMismatchError,
+          (error): error is { readonly expectedFencingToken: string } =>
+            error instanceof driver.FencingTokenMismatchError,
           (error) => error
         )
       )
       const unfencedAck = yield* stream.append(
-        AppendInput.create([AppendRecord.string({ body: "unfenced-write" })])
+        driver.AppendInput.create([driver.AppendRecord.string({ body: "unfenced-write" })])
       )
       const dataRecords = yield* stream.readSession({
         start: { from: { seqNum: 0 } },
@@ -296,7 +361,7 @@ const fenceSemanticsProof = streamProof({
       "stale-fencing-token-rejected",
       `
       SELECT countIf(
-        SpanName = 'effect-s2.append'
+        SpanName = '${driver.spanPrefix}.append'
         AND SpanAttributes['s2.operation.status'] = 'error'
         AND SpanAttributes['s2.error.kind'] = 'FencingTokenMismatchError'
         AND SpanAttributes['s2.error.code'] = 'APPEND_CONDITION_FAILED'
@@ -310,7 +375,7 @@ const fenceSemanticsProof = streamProof({
       "cooperative-fence-allowed-unfenced-write",
       `
       SELECT countIf(
-        SpanName = 'effect-s2.append'
+        SpanName = '${driver.spanPrefix}.append'
         AND SpanAttributes['s2.operation.status'] = 'ok'
       ) = 3 AS ok
       FROM trial_spans
@@ -319,9 +384,14 @@ const fenceSemanticsProof = streamProof({
   ]
 })
 
-export const effectS2SubstrateProofs = [
+return [
   readAfterAppendProof,
   cursorFoldProof,
   matchSeqNumContentionProof,
   fenceSemanticsProof
 ] as const
+}
+
+export const effectS2SubstrateProofs = makeS2SubstrateProofs(upstreamSdkDriver)
+
+export const firegridLogSubstrateProofs = makeS2SubstrateProofs(firegridLogDriver)

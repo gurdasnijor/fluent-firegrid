@@ -1,4 +1,5 @@
 import { S2 } from "@s2-dev/streamstore"
+import { makeFiregridLog } from "@firegrid/log"
 import * as Effect from "effect/Effect"
 import * as Stream from "effect/Stream"
 
@@ -20,6 +21,8 @@ export interface S2Runtime {
   readonly endpoint: string | undefined
   readonly stream: (input: S2StreamInput) => Effect.Effect<StreamApi, VerificationError>
 }
+
+export type S2RuntimeDriver = "upstream-sdk" | "firegrid-log"
 
 const makeClient = (endpoint: string) =>
   new S2({
@@ -80,19 +83,19 @@ const promiseEffect = <A>(thunk: () => PromiseLike<A>): Effect.Effect<A, unknown
     catch: (cause) => cause
   })
 
-const makeStreamApi = (stream: any): StreamApi => ({
+const makeStreamApi = (spanPrefix: string, stream: any): StreamApi => ({
   append: (input) =>
     traced(
-      "effect-s2.append",
+      `${spanPrefix}.append`,
       promiseEffect(() => stream.append(input)),
       { "s2.append.record_count": String(input.records?.length ?? 0) }
     ),
   checkTail: () =>
-    traced("effect-s2.check-tail", promiseEffect(() => stream.checkTail())),
+    traced(`${spanPrefix}.check-tail`, promiseEffect(() => stream.checkTail())),
   readSession: (input) =>
     Stream.fromIterableEffect(
       traced(
-        "effect-s2.read-session",
+        `${spanPrefix}.read-session`,
         promiseEffect(async() => {
           const records: Array<unknown> = []
           const session = await stream.readSession(input)
@@ -105,26 +108,63 @@ const makeStreamApi = (stream: any): StreamApi => ({
     )
 })
 
-export const makeS2Runtime = (endpoint: string | undefined): S2Runtime => ({
+const makeUpstreamStream = (
+  endpoint: string,
+  input: S2StreamInput
+): Effect.Effect<StreamApi, VerificationError> =>
+  Effect.gen(function*() {
+    const client = makeClient(endpoint)
+    const basin = client.basin(input.basin)
+    if (input.ensure ?? true) {
+      yield* Effect.tryPromise({
+        try: () => client.basins.ensure({ basin: input.basin }),
+        catch: s2Error(`failed to ensure basin ${input.basin}`)
+      })
+      yield* Effect.tryPromise({
+        try: () => basin.streams.ensure({ stream: input.stream }),
+        catch: s2Error(`failed to ensure stream ${input.stream}`)
+      })
+    }
+    return makeStreamApi("effect-s2", basin.stream(input.stream))
+  })
+
+const makeFiregridLogStream = (
+  endpoint: string,
+  input: S2StreamInput
+): Effect.Effect<StreamApi, VerificationError> =>
+  Effect.gen(function*() {
+    const client = yield* Effect.tryPromise({
+      try: () =>
+        makeFiregridLog({
+          accessToken: "s2_access_token",
+          endpoint
+        }),
+      catch: s2Error("failed to create Firegrid.Log client")
+    })
+    if (input.ensure ?? true) {
+      yield* Effect.tryPromise({
+        try: () => client.ensureBasin(input.basin),
+        catch: s2Error(`failed to ensure basin ${input.basin}`)
+      })
+      yield* Effect.tryPromise({
+        try: () => client.ensureStream({ basin: input.basin, stream: input.stream }),
+        catch: s2Error(`failed to ensure stream ${input.stream}`)
+      })
+    }
+    return makeStreamApi("firegrid-log", client.stream({ basin: input.basin, stream: input.stream }))
+  })
+
+export const makeS2Runtime = (
+  endpoint: string | undefined,
+  driver: S2RuntimeDriver = "upstream-sdk"
+): S2Runtime => ({
   endpoint,
   stream: (input) => {
     if (endpoint === undefined) {
       return new VerificationError({ message: "property does not have s2Lite configured" })
     }
-    return Effect.gen(function*() {
-      const client = makeClient(endpoint)
-      const basin = client.basin(input.basin)
-      if (input.ensure ?? true) {
-        yield* Effect.tryPromise({
-          try: () => client.basins.ensure({ basin: input.basin }),
-          catch: s2Error(`failed to ensure basin ${input.basin}`)
-        })
-        yield* Effect.tryPromise({
-          try: () => basin.streams.ensure({ stream: input.stream }),
-          catch: s2Error(`failed to ensure stream ${input.stream}`)
-        })
-      }
-      return makeStreamApi(basin.stream(input.stream))
-    })
+    return driver === "firegrid-log"
+      ? makeFiregridLogStream(endpoint, input)
+      : makeUpstreamStream(endpoint, input)
   }
 })

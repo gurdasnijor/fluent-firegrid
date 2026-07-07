@@ -12,7 +12,7 @@ import * as Random from "effect/Random"
 
 import { makeProcessHostFaults, startProcessHosts } from "./ProcessHost.ts"
 import { spanSummary, writeTrialReport, type WrittenTrialReport } from "./Report.ts"
-import { makeS2Runtime, type S2Runtime } from "./S2Runtime.ts"
+import { makeS2Runtime, type S2Runtime, type S2RuntimeDriver } from "./S2Runtime.ts"
 import { type S2LiteConfig, S2LiteSupervisor } from "./S2LiteSupervisor.ts"
 import { runTraceProof, traceOperation, type TraceOperationMatch, type TraceProof, traceSql } from "./TraceProof.ts"
 import { VerificationError } from "./VerificationError.ts"
@@ -118,6 +118,7 @@ type VerificationCollection<A> = ReadonlyArray<Verification<A>> | Record<string,
 type VerificationFactory<A> = (verifiers: Verifiers<A>) => VerificationCollection<A>
 
 export interface S2LiteSpec {
+  readonly driver?: S2RuntimeDriver
   readonly persistence: "local-root"
 }
 
@@ -403,7 +404,7 @@ export const runProperty = Effect.fn("runProperty")(function*<A>(
         supervisedHosts.size === 0 ? defaultFaults : makeProcessHostFaults(supervisedHosts, runtime)
       )
       const hosts = hostsFromFaults(faults)
-      const s2 = makeS2Runtime(s2Endpoint)
+      const s2 = makeS2Runtime(s2Endpoint, spec.s2Lite?.driver)
       const result = yield* Effect.exit(
         spec.workload({
           faults,
