@@ -957,9 +957,9 @@ Validation Gates (F#-zone, G6 — per
   `Exports.fs` Fable seam; the surface is Fable-safe by construction (it adds no
   BCL-only API beyond what `StateView` already emits).
 
-RFC invariant reserved for A3: **INV-033** (strong/eventual read contract),
-added to the conformance bridge with the implementation + proof PR (not this
-docs-only surface PR).
+RFC invariant reserved for A3: **INV-034** (strong/eventual read contract; the
+originally-reserved INV-033 was reassigned to C2), added to the conformance
+bridge with the implementation + proof PR (this one).
 
 Proof obligations:
 
@@ -1903,6 +1903,18 @@ merged / LOC deleted.
   batch reads with `IgnoreCommandRecords` (public S2 API, no surface change)
   rather than `SubjectHistory.foldTo`, which would decode the trim marker. F2
   conformance rows INV-018/019/020 added. Still deferred: sidecar compaction.
+- **A3 (MS-C4) — read model shipped + proof green (WP A3).**
+  `Firegrid.Foundation.StateReads` (`src/Firegrid.Store/Foundation/StateReads.fs`)
+  exposes the P2 `StateView` fold as strong (`readLatest`, `readThrough v`) vs
+  eventual (`readEventual`) reads, re-exported at the `@firegrid/store` seam via
+  `Exports.fs`. `readThrough` is the approved fast path (local snapshot when
+  `AppliedTail >= v`, else one fallback `read Strong`). Consumes P2's
+  `StateView`/`SubjectHistory` unchanged (no G1). Proof
+  `state.stateview-strong-read` green: a strong read observes a *second host's*
+  acknowledged append; an eventual read is a monotonic prefix (never ahead of
+  strong) that catches up. Conformance row INV-034. Session history fold +
+  thread-index (`session.history-fold`, `session.projection-lag-observable`)
+  remain A4.
 - **B1 / MS-C2 (I5 + I1) — modules shipped (WP B1-IMPL).** `Authority`
   (`src/Firegrid.Store/Foundation/Authority.fs`), `DurableLog`
   (`src/Firegrid.Store/Foundation/DurableLog.fs`), and the `Turn` binding
