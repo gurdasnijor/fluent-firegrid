@@ -44,6 +44,32 @@ No other deep imports across zones. TS proofs driving an F# kernel are
 structurally black-box, which mechanically enforces the proofs-consume-only-
 public-exports rule in `AGENTS.md`.
 
+## EffSharp Is Deprecated
+
+Ruled 2026-07-06. EffSharp was a bridge library built while the mental model
+was still TS-Effect; the F# API doctrine's own conclusion — F# natively covers
+most of what Effect gives TypeScript — applies to the bridge itself. It is also
+the sole reason for the private GitHub Packages NuGet feed and its recurring
+local-auth friction.
+
+- **No new EffSharp.** New F# code uses native shapes: `Result` + DUs for
+  errors, `Async`/`task`/`promise` CEs at shells, records/parameters for
+  dependencies, and the pull-cursor pattern (`readCursor`/`tryNext`/`close`)
+  for stream consumption — the shape the eff-firegrid foundational design
+  already proved without EffSharp.
+- **Removal is WP P5**: strip EffSharp from `Firegrid.Log`, `Firegrid.Store`,
+  and `Firegrid.Foundation.Proofs`, then delete the private NuGet feed from
+  `nuget.config`. The CI-green proof suites gate the refactor.
+- **P3 lands EffSharp-free from the start** (the eff-firegrid durable kernel is
+  `Async`-based already).
+- **Not affected:** the TS zone's use of the Effect library. EffSharp (F#-side
+  Effect port) and Effect (TS library) are different dependencies; the P4
+  facade and proof harness remain Effect-native TS per the recorded deviation.
+
+The distinction that matters at the Fable boundary: F# exports consumed by the
+seam are Promise-shaped (doctrine rule), and the TS facade wraps them in
+Effect. Nothing at the seam requires an effect system on the F# side.
+
 ## The Sans-IO Core Rule
 
 Kernel *semantics* are pure F# modules: `fold : State -> Record -> State`,
