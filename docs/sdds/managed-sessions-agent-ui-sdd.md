@@ -633,7 +633,9 @@ module WakeShard =
     /// Branch-free, no BigInt, no BCL hashing (never `Object.GetHashCode`) — so it
     /// is bit-identical across the .NET host and P4's Fable→TS emit. Same subject →
     /// same shard for a fixed `Count`. No existing `src/` helper to cite; C1
-    /// introduces this pinned function as part of I3.
+    /// introduces this pinned function as part of I3. (Total-function guard: a
+    /// `Count < 1` is clamped to 1 so the modulus is never zero; a valid
+    /// deployment has `Count >= 1`, where the guard never changes a result.)
     val shardOf : ShardConfig -> ActorAddress -> ShardId
     /// I3 — derived (never random) shard-stream subject: `"{ns}/wake/{shardId}"`.
     val shardSubject : ShardConfig -> ShardId -> SubjectHistory.SubjectId
@@ -653,10 +655,11 @@ module WakeShard =
 module WakeRouter =
     /// The consumed prefix of this router's shard stream as an EXCLUSIVE upper
     /// bound (the house `Version` convention): `NextSeq` is the next sequence to
-    /// dispatch — every `Seq < NextSeq` is already dispatched, so a fresh router
-    /// resumes AT `NextSeq` and re-dispatches nothing. Committed as a fenced record
-    /// on the router's own cursor log (the `MailboxCheckpoint` pattern), folded on
-    /// claim to resume tailing — no resident memory, no re-drive of the prefix.
+    /// consume — every `Seq < NextSeq` is already consumed (dispatched or skipped),
+    /// so a fresh router resumes AT `NextSeq` and re-dispatches nothing. Committed
+    /// as a fenced record on the router's own cursor log (the `MailboxCheckpoint`
+    /// pattern), recovered on claim from a bounded tail window — no resident
+    /// memory, no re-drive of the prefix.
     type Cursor = { Shard: WakeShard.ShardId; NextSeq: SubjectHistory.Seq }
 
     /// The drive dependency (sans-IO seam): "ensure subject S is claimed and
@@ -672,18 +675,20 @@ module WakeRouter =
         | ClaimFailed of Authority.ClaimError
         | Deposed of by: Authority.Epoch        // a newer epoch took the shard; step aside
         | ReadFailed of S2Errors.S2Failure
-        | DecodeFailed of seqNum: int64 * error: string
         | DriveFailed of ActorAddress * error: string
         | CursorCommitFailed of S2Errors.S2Failure
 
-    /// Pure decision core (sans-IO): given the current cursor and a batch of wake
-    /// records read from the shard tail, produce the ordered dispatch list and the
-    /// advanced cursor. Deterministic — no clock, no I/O. Skips `Seq < NextSeq`
-    /// STRICTLY (already dispatched); the advanced cursor's `NextSeq` is the last
-    /// dispatched `Seq + 1` (exclusive upper bound). C2's `wake.timer-exactly-once`
-    /// pins this boundary.
+    /// Pure decision core (sans-IO): given the current cursor and the batch of
+    /// records scanned off the shard tail (`None` = an undecodable pointer),
+    /// produce the ordered dispatch list and the advanced cursor. Deterministic —
+    /// no clock, no I/O. Dispatches only decodable records at `Seq >= NextSeq`
+    /// (strict dedup); an undecodable record is *consumed and skipped* — its
+    /// subject degrades to the sweep — so a single poison pointer (any process may
+    /// post) cannot wedge the shard. The advanced cursor's `NextSeq` is the last
+    /// SCANNED `Seq + 1` (exclusive upper bound over the whole consumed prefix,
+    /// decodable or not). C2's `wake.timer-exactly-once` pins this boundary.
     val plan :
-        Cursor -> batch: (SubjectHistory.Seq * WakeRecord) list
+        Cursor -> scanned: (SubjectHistory.Seq * WakeRecord option) list
             -> dispatch: (ActorAddress * WakeReason) list * next: Cursor
 
     /// One claimed tick: claim the shard (FencedOwner), fold the cursor, read the
@@ -741,11 +746,20 @@ stream + tailed router + durable cursor, not the timer index or these proofs):
 - **Durable cursor / effectively-exactly-once dispatch**
   (`wake.timer-exactly-once`, C2). The cursor is a fenced checkpoint with
   `NextSeq` an exclusive upper bound; `plan` skips `Seq < NextSeq` strictly and
-  advances `NextSeq` to the last dispatched `Seq + 1`. A restart resumes from the
-  committed cursor — undispatched wakes are not dropped and dispatched wakes are
-  not re-flooded (bounded replay of at most the in-flight batch). Dispatch is
-  at-least-once with an idempotent drive, so a due timer fires effectively
-  exactly once across a router restart; a not-yet-posted timer survives unfired.
+  advances `NextSeq` to the last *scanned* `Seq + 1` (the whole consumed prefix).
+  A restart resumes from the committed cursor — unconsumed wakes are not dropped
+  and consumed wakes are not re-flooded (bounded replay of at most the in-flight
+  batch). Dispatch is at-least-once with an idempotent drive, so a due timer fires
+  effectively exactly once across a router restart; a not-yet-posted timer
+  survives unfired.
+- **Poison tolerance** (`wake.timer-exactly-once`, C2). Because any process may
+  post, an undecodable record is *consumed and skipped* — the cursor advances past
+  it and its subject degrades to the sweep — so one malformed pointer cannot
+  head-of-line-block a shard. This is the degraded-mode contract applied
+  per-record: a lost wake costs latency, never correctness. The proof extends
+  `wake.timer-exactly-once` to pin it: a poison record is consumed, the cursor
+  passes it, subsequent wakes still dispatch, and a router restart does not
+  re-wedge on it.
 - **Tail latency, no poll** (`wake.tail-latency`, C2). `tick` blocks-with-wait on
   the shard tail (`openCursorWithWait`), so an appended wake reaches its claimed
   handler within a bound *asserted from trace evidence in the proof* (bound
@@ -773,7 +787,13 @@ binding, not a new fence idiom or a second drive loop. Wakes never become the
 sole correctness path — the sweep stays the floor. (Deferred, recorded: the shard
 stream's consumed prefix grows unbounded; its trimming rides A-lane
 checkpoint+trim behind the router's committed cursor later — the A1
-sidecar-compaction precedent — and is out of C1 scope.)
+sidecar-compaction precedent — and is out of C1 scope.) (Deferred, recorded:
+poison skips are **silent** in C1 (`WakeRouter` discards the decode error and
+maps the record to `None`), so systematic poison — e.g. codec version skew from a
+newer poster — would degrade a whole shard to sweep-floor latency with no signal
+beyond forensic trace reading. An observability seam (skip count / structured
+log) is deferred, revisited at C2 or first operational need — the silent
+degradation is a recorded decision, not an accident.)
 
 Validation Gates (F#-zone, G6 — per
 [`fsharp-fable-effsharp-evaluation-sdd.md`](./fsharp-fable-effsharp-evaluation-sdd.md)):
@@ -1810,6 +1830,27 @@ merged / LOC deleted.
   `apps/proofs` over the D1 seed corpus. Conformance rows INV-021/022/023 added.
   The side-effect-non-re-execution half of resume-suppression, subagent scoping,
   and usage/cost lowering land with the WP D3 Claude adapter.
+- **C1 / MS-C3 (I3) — wake path shipped (WP C1).** `WakeShard`
+  (`src/Firegrid.Store/Foundation/Durable/WakeShard.fs`) and `WakeRouter`
+  (`.../WakeRouter.fs`) implement the MS-C3 Target Surface: the I3 wake-record
+  schema (`WakeRecord = { Subject; Reason }`, a pointer reusing the kernel
+  `WakeReason` — not a parallel vocabulary), pinned deterministic sharding
+  (`shardOf` = FNV-1a-32 over UTF-8 of `String.concat "/" Segments`, read
+  unsigned `mod Count`; verified against canonical vectors, Fable-safe via
+  `Math.imul`/`TextEncoder`), `shardSubject`/`subjectShard`/`post` (open-append
+  shard mailbox that never seals), and the tail-driven router: leadership through
+  `Authority.claim` (FencedOwner, I5 — never a private fence), a fenced durable
+  cursor on the router's own log recovered from a bounded tail window (`NextSeq`
+  exclusive upper bound; pure `plan` skips `Seq < NextSeq` strictly and advances
+  over the whole consumed prefix, so an undecodable poison pointer is skipped —
+  degraded to the sweep — instead of wedging the shard), `openCursorWithWait`
+  tailing with safe cursor close, drive-before-commit so a deposal leaves only
+  idempotent re-drives, and an injected sans-IO `Drive` seam. F#-native,
+  EffSharp-free, Fable-safe (JS + TS emit green). Degraded mode preserved: the
+  sweeps stay the correctness floor. Deferred to WP C2: the folded timer index
+  and the three `wake.*` proofs (`wake.tail-latency`, `wake.single-claim`,
+  `wake.timer-exactly-once`); shard-stream retention rides A-lane
+  checkpoint+trim.
 
 ## Acceptance Criteria
 
