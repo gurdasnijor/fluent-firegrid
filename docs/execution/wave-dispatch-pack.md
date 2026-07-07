@@ -47,16 +47,15 @@ implement, and you never modify contract docs (canon/SDD/RFC) yourself.
 - Monitor by checking tab output and `gh pr checks` / `gh pr view`; workers
   post handoff summaries on their PRs.
 
-### State at handoff (2026-07-07)
+### State at handoff (2026-07-07, updated post-merge of #91–#94)
 
 | Item | Action for coordinator |
 | --- | --- |
-| PR #91 (P3 impl, CI-green, architect-approved) | Merge immediately |
-| PR #92 (B1 surface, approved w/ 2 required changes in architect comment) | Dispatch B1-IMPL prompt to the B lane (worktree `b1-authority-durablelog-surface` still exists); verify the two fixes are folded, then merge and continue |
-| PR #93 (A1 surface, approved w/ 1 required change) | Same pattern — A lane |
-| PR #94 (F3 rename, in-review) | Verify docs-only + CI-green → merge |
-| C1, D1 | Unclaimed — dispatch fresh |
-| PRs #72, #73, #68 | Stale pre-commitment codex work — propose closure to the human; do not close unilaterally |
+| PRs #91 (P3 impl), #92 (B1 surface), #93 (A1 surface), #94 (F3) | All merged — no action. The architect's required changes **and** suggestions were folded before merge (commits `f535a29`, `9b339ba`); the B1 and A1 surfaces are ratified exactly as they read in the SDD today. Ledger reconciled: B1/A1 → `surface-approved`, F3/P3 → `done`. |
+| B1-IMPL | Dispatch now. Prior worktrees are gone (laptop restart) — create a fresh worktree per the convention; the session is fresh, so the worker re-reads the merged MS-C2 Target Surface as ground truth. |
+| A1-IMPL | Same — fresh A-lane worktree/session against the merged MS-C1 surface. |
+| C1, D1 | Unclaimed — dispatch fresh. C1 STOPS at its I3 surface commit for architect review; D1 has no surface stop (G2 already decided). |
+| PRs #72, #73, #68 | Still open — close per standing ruling 2 (closure authorized; one-line comment linking the superseding artifact). |
 
 ### Per-WP loop
 
@@ -105,11 +104,11 @@ your recommendation.
 
 | WP | Needs | Surface review by architect? | Notes |
 | --- | --- | --- | --- |
-| B1-IMPL | #92 fixes | No (ratified once fixes folded) | Wraps P3's fence mechanics — never a parallel impl |
+| B1-IMPL | — (surface ratified, #92 merged) | No | Wraps P3's fence mechanics — never a parallel impl |
 | B2 | B1-IMPL | No — proofs only | Obligations verbatim from SDD MS-C2 |
 | B3 | B1-IMPL | **Yes — surface stop** | Lifecycle = session-actor policy; cancel is a mailbox send |
 | B4 | B1-IMPL | **Yes — surface stop** | Fenced resume-artifact store |
-| A1-IMPL | #93 fix | No | Monotonicity law folded |
+| A1-IMPL | — (surface ratified, #93 merged) | No | Monotonicity law already in surface |
 | A2 | A1-IMPL | No — proofs only | Drive commit through `Authority.admit` once I5 lands |
 | A3 | A1-IMPL | **Yes — light** | StateView reads at the P4 seam |
 | A4 | A1, B1 | **Yes — surface stop** | Session-history fold + thread index |
@@ -145,23 +144,25 @@ your recommendation.
 > recommended action. If you hit any gate G1–G6, stop and report — do not
 > proceed.
 
-### B1-IMPL — Authority + DurableLog implementation (warm B session)
+### B1-IMPL — Authority + DurableLog implementation (B-lane session)
 
-> Your B1 surface (PR #92) is architect-approved with two required changes —
-> fold them into the surface first, exactly as specified in the architect's PR
-> comment: (1) `Authority.claim` takes a `HolderId`; same holder on the current
-> epoch returns the same `Holder` (idempotent), a different holder rotates to
-> epoch+1 (takeover). (2) State the create-on-live-address law: same holder →
-> idempotent re-attach; different holder → takeover under a new epoch;
-> AlreadyLive rejection is MS-C5 lifecycle policy, never log mechanism. Also
-> consider the two suggestions (pin `next`'s blocking/tail semantics — 
-> recommended: block with wait per `openCursorWithWait`; carry Basin/Codec in
-> `Holder`/`Producer`). Then implement in `src/Firegrid.Store/Foundation/`:
-> `Authority` wraps the fence/claim mechanics the P3 port landed (PR #91) —
-> compose, never duplicate. `DurableLog` = SubjectHistory + Authority + seal;
-> `Turn` binding with zero methods. F#-native, EffSharp-free, Fable-safe.
-> No proofs in this PR — B2 follows in this same session. Ledger: B1 →
-> in-review with your PR, then done on merge.
+> Your task is the implementation of the B1 surface. That surface (PR #92) is
+> merged and ratified — the architect's two required changes and both
+> suggestions are already folded into the SDD's MS-C2 Target Surface:
+> idempotent `claim` keyed by `HolderId` (same holder on the current epoch
+> returns the same `Holder`; a different holder rotates to epoch+1 and takes
+> over); the create-on-live-address law (same holder → idempotent re-attach,
+> different holder → takeover under a new epoch; AlreadyLive rejection is
+> MS-C5 lifecycle policy, never log mechanism); `next` blocks-with-wait per
+> the `openCursorWithWait` idiom; Basin/Codec carried in `Holder`/`Producer`.
+> Re-read that section as ground truth and implement it exactly — any shape
+> change re-opens G1: stop and escalate. Implement in
+> `src/Firegrid.Store/Foundation/`: `Authority` wraps the fence/claim
+> mechanics the P3 port landed (PR #91) — compose, never duplicate.
+> `DurableLog` = SubjectHistory + Authority + seal; `Turn` binding with zero
+> methods. F#-native, EffSharp-free, Fable-safe. No proofs in this PR — B2
+> follows in this same session. Ledger: B1 → in-review with your PR, then
+> done on merge.
 
 ### B2 — Turn-stream proofs (same B session, after B1-IMPL merges)
 
@@ -176,17 +177,21 @@ your recommendation.
 > through the public `DurableLog`/`Turn` surface. Add conformance rows mapping
 > each proof to its invariant (F2 travels with your PR).
 
-### A1-IMPL — Checkpoint implementation (warm A session)
+### A1-IMPL — Checkpoint implementation (A-lane session)
 
-> Your A1 surface (PR #93) is architect-approved with one required change —
-> fold it first: the monotonicity law plus a `Regressed` case in
-> `CommitFailure` (`commit` rejects `snapshot.AsOf <= latest.AsOf`). Note the
-> two suggestions (record that sidecar compaction is deferred; A2 must drive
-> commit through `Authority.admit` once I5 lands). Then implement
-> `Firegrid.Foundation.Checkpoint` in `src/Firegrid.Store/Foundation/` per the
-> ratified surface, and add the `state.checkpoint-rebuild-equivalence` proof
-> (fold-from-checkpoint ≡ fold-from-zero, including across a host restart).
-> A2 follows in this same session.
+> Your task is the implementation of the A1 surface. That surface (PR #93) is
+> merged and ratified — the architect's required change is already folded into
+> the SDD's MS-C1 Target Surface: the monotonic-snapshots law with a
+> `Regressed of requested * latest` case in `CommitFailure` (`commit` rejects
+> `snapshot.AsOf <= latest.AsOf`). The surface also records that sidecar
+> compaction is deferred (out of A1 scope) and that A2 must drive `commit`
+> through `Authority.admit` now that I5 is ratified. Re-read that section as
+> ground truth and implement it exactly — any shape change re-opens G1: stop
+> and escalate. Implement `Firegrid.Foundation.Checkpoint` in
+> `src/Firegrid.Store/Foundation/` per the ratified surface, and add the
+> `state.checkpoint-rebuild-equivalence` proof (fold-from-checkpoint ≡
+> fold-from-zero, including across a host restart). A2 follows in this same
+> session.
 
 ### A2 — Checkpoint race + trim proofs (same A session)
 

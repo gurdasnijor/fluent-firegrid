@@ -91,11 +91,11 @@ Everything else is lane-owner discretion.
 | P3 | P | Port `Foundation/Durable` kernel + F# proofs; audit sans-IO core/shell split | canon: language-and-targets | P2 | done | Codex | #91 |
 | P4 | P | Fable→TS emission + idiomatic TS facade for `Firegrid.Log`; re-point substrate proofs from `upstream-sdk` to `firegrid-log` driver | canon: language-and-targets | P1, F4 | done | Codex | #87 |
 | P5 | P | Remove EffSharp from `Firegrid.Log`/`Store`/`Foundation.Proofs`; delete private NuGet feed | canon: language-and-targets | P4 | done | Codex | #89 |
-| A1 | A | Checkpointed fold: snapshot record + rebuild | MS-C1 | P2 | in-review | Claude | #93 |
+| A1 | A | Checkpointed fold: snapshot record + rebuild | MS-C1 | P2 | surface-approved | Claude | #93 |
 | A2 | A | Checkpoint-race + trim-safety proofs | MS-C1 | A1 | open | — | — |
 | A3 | A | StateView strong/eventual reads exposed at the seam + proof | MS-C4 | P2 | open | — | — |
 | A4 | A | Session history fold + thread-index projection + proofs | MS-C4 | A1, B1 | open | — | — |
-| B1 | B | `Authority` protocol module (I5) + `DurableLog` (SubjectHistory + Authority + seal) + turn binding — surface (G6/G1 approved) | MS-C2 | P2 | done | Claude | #92 |
+| B1 | B | `Authority` protocol module (I5) + `DurableLog` (SubjectHistory + Authority + seal) + turn binding — surface (G6/G1 approved) | MS-C2 | P2 | surface-approved | Claude | #92 |
 | B2 | B | Turn attach / crash-terminal / idempotent-create proofs | MS-C2 | B1 | open | — | — |
 | B3 | B | Lifecycle authority: claim, durable cancel, timeouts + proofs | MS-C5 | B1 | open | — | — |
 | B4 | B | Fenced native-resume-artifact store + proof | MS-C5 | B1 | open | — | — |
@@ -111,7 +111,7 @@ Everything else is lane-owner discretion.
 | E5 | E | agent-ui M5: soak week + second-harness smoke | MS-M5 | E4, C2 | open | — | — |
 | F1 | F | Conformance bridge: number existing invariants ↔ green proofs | RFC | — | done | Codex | #83 |
 | F2 | F | Per-capability invariant additions (rolling, one PR per capability) | RFC | F1 | open | — | — |
-| F3 | F | Resolve `fireline` profile-suffix naming before D-lane cites it | RFC | — | in-review | Claude | #94 |
+| F3 | F | Resolve `fireline` profile-suffix naming before D-lane cites it | RFC | — | done | Claude | #94 |
 | F4 | F | CI runs both proof suites as blocking checks (`apps/proofs` TS + `Firegrid.Foundation.Proofs` F#); conformance evidence flips to ci-green | SDD binding rule | — | done | Codex | #86 |
 
 ## Lanes
