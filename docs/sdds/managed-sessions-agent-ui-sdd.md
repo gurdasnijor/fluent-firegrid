@@ -590,10 +590,16 @@ turn; timeouts are kernel obligations, not process-local timers.
 MS-C5 is delivered by two WPs: **B3** (this surface — session claim /
 single-writer start, durable cancel, and durable timeouts) and **B4** (the
 fenced native-resume-artifact store, a sibling module whose
-`session.resume-artifact-fenced` obligation and surface refinement land with B4,
-grounded on the session fence this surface establishes).
+`session.resume-artifact-fenced` obligation and surface refinement land with B4).
+B3 and B4 share the **MS-C5 claim convention**: One session holder identity
+claims both the session log and the resume register; a takeover `start` claims
+the resume register before any re-hydration read, so a stale writer's late
+`store` is fenced out before it can fork harness state. (B4 binds its own
+register fence at `sessions/{s}/resume`; the two fences share the holder
+identity, not one fence — this convention, not "grounded on B3's fence.")
 
-Target Surface (F# — WP B3; gate G6 + G1 sign-off pending):
+Target Surface (F# — WP B3; G6 approved with required changes folded; G1 fork
+decided — keep I1 unchanged, 2026-07-07):
 
 Lifecycle is a **session-actor policy** layered on B1's `Authority` (**I5**) and
 `DurableLog`/`Turn` (**I1**), per
@@ -630,10 +636,18 @@ call it without holding the session, and it is **not** a bespoke control
 channel. The holder admits it on its next `drive` (provenance-deduped) and seals
 the live turn; a resend folds once.
 
+**How the cancel reaches a running adapter** (the sentence D2's #99 R4 defers to
+this surface). The holder seals the turn on admitting the cancel; a concurrently
+running producer/adapter then observes cancellation as a `Deposed`/sealed append
+failure on its **next emit** — D2's `EmitError.deposed|sealed` law: it computed
+output but could not commit it. An in-process host **may** additionally interrupt
+the adapter fiber as an *optimization* (to stop wasted work sooner), never as the
+mechanism — the durable seal, not fiber interruption, is what terminates the turn.
+
 **Durable timeouts, no baked-in clock.** A deadline is a function of the durable
 fold (turn `startedAt`; last-chunk time on the turn stream), so any host
 **re-arms** it on claim — it survives restart and is not a process-local timer.
-The fire is delivered as a `Wake.TimerFired` by the kernel wake path, whose
+The fire is delivered as a `WakeReason.TimerFired` by the kernel wake path, whose
 concrete wake-record + shard naming is **I3** (C1, PR #95, under architect
 review) — cited here and consumed abstractly; MS-C5 does **not** depend on I3's
 shape. In MS-C3's degraded sweep/poll mode the same deadline is recomputed, so
@@ -644,13 +658,21 @@ correctness never hinges on tail wakes. Time enters the pure core only as
 // namespace Firegrid.Store — session-actor lifecycle POLICY over the generic
 // Authority (I5), DurableLog/Turn (I1), and the kernel timer/wake path (I3, C1).
 // open Firegrid.Foundation            // Authority, DurableLog, SubjectHistory
+// open Firegrid.Store.Foundation.Durable  // WakeReason, TimerId, Timestamp — the
+//   kernel wake vocabulary (I3/C1); consumed here, NOT re-minted (one vocabulary).
 // Deps passed in (sans-IO shell): S2.Basin + the I1 Turn codec. No EffSharp.
 
 module SessionLifecycle =
-    /// Wall-clock ms, passed in as data (never read ambiently) — the sans-IO
-    /// rule. Aligns with the Processor's `Timestamp` and the wake vocabulary (I3).
-    type Timestamp = int64
-    type TimerId = TimerId of string
+    // ---- Kernel wake vocabulary (consumed, NOT re-minted) -----------------
+    // `Timestamp`, `TimerId`, and `WakeReason` are the kernel's, from
+    // `Foundation/Durable/Processor.fs` — this surface consumes them so C1's
+    // router (`Drive : ActorAddress -> WakeReason -> …`) drives a session with
+    // no mapping shim between lanes. Time still enters the pure core only as
+    // `now: Timestamp` data (the sans-IO rule); it is never read ambiently.
+    //   type Timestamp   = int64
+    //   type TimerId     = TimerId of string
+    //   type WakeReason  = MailboxReady | TimerFired of TimerId * Timestamp
+    //                    | ChildTerminal of SubjectId
 
     // ---- Derived addresses (never random) ---------------------------------
     /// Session authoritative log (FencedOwner, I5): the durable `activeRuns`.
@@ -669,15 +691,24 @@ module SessionLifecycle =
     // ---- Session-log schema (L2 coordination facts; holder-only) ----------
     /// Why a turn ended, recorded on the SESSION log. The turn stream's terminal
     /// stays the I1 `TurnTerminal` unchanged — cancel and both timeouts map it to
-    /// `TurnTerminal.Cancelled`; the distinct CAUSE is this L2 fact. (Gate note: a
-    /// first-class `TurnTerminal.TimedOut` would change I1 — G1; deferred to the
-    /// architect, see Laws.)
+    /// `TurnTerminal.Cancelled`; the distinct CAUSE is this L2 fact. (G1 fork
+    /// DECIDED — keep I1 unchanged, no first-class `TurnTerminal.TimedOut`; see the
+    /// gate-boundary note below for the G6 rationale.)
     type EndCause =
         | Done                          // producer completed normally
         | Failed of reason: string
         | Cancelled                     // external cancel (mailbox send)
         | IdleTimeout
         | MaxDurationTimeout
+    /// Exhaustive `EndCause → TurnTerminal` mapping (the turn-stream terminal),
+    /// so the collapse is stated, not implied:
+    ///   Done               → TurnTerminal.Completed
+    ///   Failed reason      → TurnTerminal.Failed reason
+    ///   Cancelled          → TurnTerminal.Cancelled
+    ///   IdleTimeout        → TurnTerminal.Cancelled
+    ///   MaxDurationTimeout → TurnTerminal.Cancelled
+    /// The three abnormal-stop causes collapse to `Cancelled` on the turn stream;
+    /// `EndCause` preserves the distinction losslessly on the session log.
     /// Session-log record schema (I5-fenced; only the holder appends).
     type LifecycleFact =
         | TurnStarted of Turn.TurnId * startedAt: Timestamp
@@ -696,27 +727,39 @@ module SessionLifecycle =
     /// The live turn, if any — the durable `activeRuns` answer for this session.
     val liveTurn : State -> Turn.TurnId option
 
-    /// A wake the holder must act on. `TimerFired` is delivered by the kernel
-    /// wake path as an I3 wake-record (C1) — consumed abstractly here.
-    type Wake =
-        | InboxReady
-        | TimerFired of TimerId * firedAt: Timestamp
+    // A wake the holder must act on is the kernel `WakeReason` (above), NOT a
+    // private DU: `MailboxReady` admits the inbox; `TimerFired` re-checks the
+    // durable deadlines; `ChildTerminal` is `noop` here by policy (B3 has no
+    // child subjects — reserved for later composition). `WakeReason.TimerFired`
+    // carries the timer's delivery timestamp, but the processing-time fact
+    // `onWake` decides on is the separate `now: Timestamp` (see below).
     /// The decision as data (not the effect): seal the live turn, append session
-    /// facts, (re)arm / disarm durable timers.
+    /// facts, (re)arm / disarm durable timers. `Arm` lowers to the kernel
+    /// `Intent.SetTimer`; `Disarm` is **advisory** — the kernel `Intent` is
+    /// `SetTimer | Send | Execute` with no cancel-timer, so a stale/late fire is
+    /// already `noop`-guarded by the pure core (`onWake` seals only when `now`
+    /// passes the deadline). If a first-class cancel-timer intent is ever wanted,
+    /// that is Lane-P coordination (like the InboxFold note), not a mechanism B3
+    /// mints here.
     type Outcome =
         { Seal:   (Turn.TurnId * TurnTerminal) option
           Append: LifecycleFact list
           Arm:    (TimerId * dueAt: Timestamp) list
-          Disarm: TimerId list }
+          Disarm: TimerId list }         // advisory — see note above
     val noop : Outcome
 
     /// Pure: state + admitted command + `now` → outcome. `Cancel` of the live
     /// turn seals it `Cancelled`; `Cancel` of a non-live / already-ended turn is
     /// `noop` — idempotent.
     val onCommand : Timeouts -> State -> now: Timestamp -> Sent -> Outcome
-    /// Pure: state + timer wake → outcome. An idle/max timer fired past its
-    /// deadline seals the live turn; a not-yet-due / stale fire is `noop`.
-    val onWake    : Timeouts -> State -> Wake -> Outcome
+    /// Pure: state + `now` + kernel wake → outcome. `now: Timestamp` is the
+    /// processing-time fact the law depends on (`WakeReason.TimerFired`'s own
+    /// timestamp is only the delivery's claim, and `TurnEnded.endedAt` has no
+    /// other source) — symmetric with `onCommand`. An idle/max timer whose
+    /// deadline `now` has passed seals the live turn; a not-yet-due / stale
+    /// `TimerFired`, a `MailboxReady` with nothing to admit, or a `ChildTerminal`
+    /// is `noop`.
+    val onWake    : Timeouts -> State -> now: Timestamp -> WakeReason -> Outcome
 
     // ---- Shell: start / cancel / drive (Async; composes I5 + I1) -----------
     [<RequireQualifiedAccess>]
@@ -772,10 +815,12 @@ module SessionLifecycle =
 
     /// One holder drive tick: admit the inbox (provenance-deduped), apply the pure
     /// `onCommand`/`onWake` decisions (seal the turn, append facts, (re)arm timers)
-    /// under the session fence. `wake` carries a `TimerFired` (I3) or `InboxReady`.
-    /// Sealing under a rotated fence surfaces `Deposed`.
+    /// under the session fence. `wake` is the kernel `WakeReason` (`MailboxReady`
+    /// admits the inbox; `TimerFired` re-checks deadlines; `ChildTerminal` is
+    /// `noop`), so C1's router (`Drive : ActorAddress -> WakeReason -> …`) drives a
+    /// session with no shim. Sealing under a rotated fence surfaces `Deposed`.
     val drive :
-        LiveTurn -> Wake -> now: Timestamp -> Async<Result<Progress, DriveError>>
+        LiveTurn -> WakeReason -> now: Timestamp -> Async<Result<Progress, DriveError>>
 ```
 
 Ergonomic sample (the consumer test — usable with no proof-harness knowledge):
@@ -793,8 +838,9 @@ match! SessionLifecycle.start basin timeouts session turnId holderId now with
 // Any OTHER process cancels durably — a mailbox send, no session authority held:
 let! _ = SessionLifecycle.cancel basin session turnId "api-pod-7" 0L
 
-// The holder observes the cancel on its next drive and seals the turn:
-match! SessionLifecycle.drive live SessionLifecycle.Wake.InboxReady now with
+// The holder observes the cancel on its next drive and seals the turn.
+// The wake is the kernel `WakeReason` (Foundation/Durable), not a private DU:
+match! SessionLifecycle.drive live Durable.WakeReason.MailboxReady now with
 | Ok (SessionLifecycle.Progress.Ended SessionLifecycle.EndCause.Cancelled) -> ()  // durable Cancelled
 | Ok (SessionLifecycle.Progress.Deposed) -> ()                 // a newer host took over
 | _ -> ()
@@ -831,16 +877,27 @@ Laws (stated here; proven by WP B3):
 - **No leaks.** Consumers never see S2 stream names, fence tokens, seq nums, or
   the inbox address.
 
-Gate-boundary notes (raised here for the G6 sign-off, **not** taken in this WP):
+Gate-boundary notes (the first is now **decided** by the G6 ruling and recorded
+here for the record; the rest are raised for sign-off, **not** taken in this WP):
 
-- **Turn terminal for timeouts (potential G1 on I1).** This surface maps cancel
-  *and* both timeouts onto the existing `TurnTerminal.Cancelled`, recording the
-  distinct cause only as an L2 `EndCause` on the session log — so I1 (the `Turn`
-  schema, B1) is **unchanged**. If the architect prefers a first-class
-  `TurnTerminal.TimedOut` on the turn stream, that is a G1 change to I1 and is
-  flagged here for decision, not made unilaterally.
+- **Turn terminal for timeouts — G1 fork DECIDED: keep I1 unchanged** (architect
+  G6 ruling, 2026-07-07). This surface maps cancel *and* both timeouts onto the
+  existing `TurnTerminal.Cancelled`, recording the distinct cause only as an L2
+  `EndCause` on the session log — so I1 (the `Turn` schema, B1) is **unchanged**.
+  The alternative, a first-class `TurnTerminal.TimedOut` on the turn stream, was
+  weighed and declined. Rationale of record: (1) **no turn-stream reader behaves
+  differently by cause** — at that altitude the operative fact is "no more output,
+  not a normal completion"; (2) the **cause of record lives on the session log**,
+  which A4's history fold projects, so history/UI get `IdleTimeout` vs `Cancelled`
+  without touching I1; (3) D2's adapter contract **freezes `L1Terminal` as
+  `completed | cancelled | failed`**, so a first-class `TimedOut` would force a
+  *simultaneous* G1 on I1 **and** a change to that contract; (4) **I1 is ratified,
+  implemented, and proven** (B2's three green proofs), and no consumer requires the
+  distinction at turn altitude to reopen it; (5) the decision is **reversible
+  additively later** — `EndCause` remains the durable source of truth, so a future
+  first-class terminal would be a mechanical, additive migration.
 - **I3 dependency (cited, not depended-on).** Timer-wake delivery is I3's
-  wake-record + shard naming (C1, PR #95). MS-C5 consumes `Wake.TimerFired`
+  wake-record + shard naming (C1, PR #95). MS-C5 consumes `WakeReason.TimerFired`
   abstractly and re-arms deadlines from the fold, so it neither depends on I3's
   concrete shape nor blocks on PR #95. If wiring lifecycle wakes later needs an
   I3 shape change, that is a G1 on I3 — escalated separately.
