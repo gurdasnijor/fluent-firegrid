@@ -1,6 +1,5 @@
 namespace Firegrid.Store
 
-open Effect
 open Firegrid.Log
 open Fable.Core.JsInterop
 
@@ -29,10 +28,10 @@ module WorkflowLog =
           StepId = eventStepId envelope.Event
           CreatedAt = eventCreatedAt envelope.Event }
 
-    let private jsonRecord (value: obj) (headers: (string * string) list) : S2AppendRecord =
-        S2.AppendRecord.stringWith (JsJson.stringify value) headers None
+    let private jsonRecord (value: obj) (headers: (string * string) list) : S2.Record =
+        S2.Record.textWith headers (JsJson.stringify value)
 
-    let ensureRunEventStream (runtime: S2Runtime) (runId: RunId) : Effect<S2StreamRef, S2Error, unit> =
+    let ensureRunEventStream (runtime: S2Runtime) (runId: RunId) : Async<S2StreamRef> =
         Runtime.ensureStream runtime (eventsStreamName runtime runId)
 
     let appendJsonFact
@@ -41,55 +40,51 @@ module WorkflowLog =
         (fact: obj)
         (headers: (string * string) list)
         (matchSeqNum: float option)
-        : Effect<S2AppendAck, S2Error, unit> =
-        effect {
-            let! target = Runtime.ensureStreamContext runtime streamName
+        : Async<S2.AppendAck> =
+        async {
+            let! target = Runtime.ensureStream runtime streamName
+            let stream = Runtime.stream runtime target
 
             return!
-                S2.Stream.appendRecords
-                    target
+                stream
+                |> S2.appendWith
+                    { S2.AppendOptions.none with
+                        MatchSeqNum = matchSeqNum |> Option.map int64 }
                     [ jsonRecord fact headers ]
-                    (Some
-                        { S2AppendOptions.Empty with
-                            MatchSeqNum = matchSeqNum })
         }
-        |> Runtime.provide runtime
 
     let readJsonRecords<'A>
         (runtime: S2Runtime)
         (streamName: string)
         (fromSeqNum: float)
-        : Effect<ReadJsonRecordsResult<'A>, S2Error, unit> =
-        effect {
-            let! target = Runtime.ensureStreamContext runtime streamName
-            let! tail = S2.Stream.tail target
+        : Async<ReadJsonRecordsResult<'A>> =
+        async {
+            let! target = Runtime.ensureStream runtime streamName
+            let stream = Runtime.stream runtime target
+            let! tail = S2.checkTail stream
+            let fromSeqNum = int64 fromSeqNum
 
             if tail.SeqNum <= fromSeqNum then
-                return { NextSeqNum = tail.SeqNum; Records = [] }
+                return { NextSeqNum = float tail.SeqNum; Records = [] }
             else
                 let count = int (tail.SeqNum - fromSeqNum)
 
-                let! batch =
-                    S2.Stream.readStrings
-                        target
-                        (Some(S2ReadStart.FromSeqNum fromSeqNum))
-                        (Some
-                            { S2ReadStop.Empty with
-                                Limits = Some { S2ReadLimits.Empty with Count = Some count } })
+                let! records =
+                    stream
+                    |> S2.readWith
+                        { S2.ReadOptions.empty with
+                            Start = Some(S2.FromSeqNum fromSeqNum)
+                            Count = Some count }
 
                 let records =
-                    batch.Records
-                    |> List.choose (fun record ->
-                        match record.Body with
-                        | S2RecordBody.StringBody body -> Some(JsJson.parse body : 'A)
-                        | S2RecordBody.BytesBody _ -> None)
+                    records
+                    |> List.map (fun record -> JsJson.parse record.Body : 'A)
 
-                return { NextSeqNum = tail.SeqNum; Records = records }
+                return { NextSeqNum = float tail.SeqNum; Records = records }
         }
-        |> Runtime.provide runtime
 
-    let appendEvents (runtime: S2Runtime) (args: AppendEventsArgs) : Effect<AppendEventsResult, S2Error, unit> =
-        effect {
+    let appendEvents (runtime: S2Runtime) (args: AppendEventsArgs) : Async<AppendEventsResult> =
+        async {
             let streamName = eventsStreamName runtime args.RunId
 
             let envelopes =
@@ -108,20 +103,26 @@ module WorkflowLog =
                           "tanstack.workflow.event_type", eventType envelope.Event
                           "tanstack.workflow.step_id", envelope.Event |> eventStepId |> Option.defaultValue "" ])
 
-            let! target = Runtime.ensureStreamContext runtime streamName
+            let! target = Runtime.ensureStream runtime streamName
+            let stream = Runtime.stream runtime target
 
             let! ack =
-                S2.Stream.appendRecords
-                    target
+                stream
+                |> S2.appendWith
+                    { S2.AppendOptions.none with
+                        MatchSeqNum = Some(int64 args.ExpectedNextIndex) }
                     records
-                    (Some
-                        { S2AppendOptions.Empty with
-                            MatchSeqNum = Some args.ExpectedNextIndex })
 
-            return { NextIndex = ack.End.SeqNum }
+            return { NextIndex = float ack.End.SeqNum }
         }
-        |> Runtime.provide runtime
 
-    let readEvents (runtime: S2Runtime) (args: ReadEventsArgs) : Effect<StoredWorkflowEvent list, S2Error, unit> =
-        readJsonRecords<EventEnvelope> runtime (eventsStreamName runtime args.RunId) (args.FromIndex |> Option.defaultValue 0.0)
-        |> Effect.map (fun result -> result.Records |> List.map (storedWorkflowEvent args.RunId))
+    let readEvents (runtime: S2Runtime) (args: ReadEventsArgs) : Async<StoredWorkflowEvent list> =
+        async {
+            let! result =
+                readJsonRecords<EventEnvelope>
+                    runtime
+                    (eventsStreamName runtime args.RunId)
+                    (args.FromIndex |> Option.defaultValue 0.0)
+
+            return result.Records |> List.map (storedWorkflowEvent args.RunId)
+        }

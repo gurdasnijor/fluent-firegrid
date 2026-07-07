@@ -1,6 +1,5 @@
 namespace Firegrid.Store
 
-open Effect
 open Firegrid.Log
 
 [<RequireQualifiedAccess>]
@@ -10,32 +9,30 @@ module Runtime =
         let accessToken = config.AccessToken |> Option.defaultValue "s2_access_token"
 
         let s2Config =
-            S2.configWithEndpoint accessToken config.S2Endpoint
+            { S2.ConnectOptions.create accessToken with
+                AccountEndpoint = Some config.S2Endpoint
+                BasinEndpoint = Some config.S2Endpoint }
 
         { Basin = config.Basin |> Option.defaultValue "fluent-firegrid"
           Namespace = config.Namespace |> Option.defaultValue "default"
-          Layer = S2.layer s2Config }
-
-    let provide (runtime: S2Runtime) (effect: Effect<'A, S2Error, Context>) : Effect<'A, S2Error, unit> =
-        Layer.provide runtime.Layer effect
+          Client = S2.connectWith s2Config }
 
     let streamTarget (runtime: S2Runtime) (streamName: string) : S2StreamRef =
-        S2.streamRef runtime.Basin streamName
+        { Basin = runtime.Basin; Stream = streamName }
 
-    let ensureTargetContext (_runtime: S2Runtime) (target: S2StreamRef) : Effect<S2StreamRef, S2Error, Context> =
-        effect {
-            do! S2.Basins.ensure target.Basin
-            do! S2.Streams.ensure target
+    let basin (runtime: S2Runtime) : S2.Basin =
+        runtime.Client |> S2.basin runtime.Basin
+
+    let stream (runtime: S2Runtime) (target: S2StreamRef) : S2.Stream =
+        runtime.Client |> S2.basin target.Basin |> S2.stream target.Stream
+
+    let ensureTarget (runtime: S2Runtime) (target: S2StreamRef) : Async<S2StreamRef> =
+        async {
+            let basin = runtime.Client |> S2.basin target.Basin
+            do! runtime.Client |> S2.ensureBasin target.Basin |> Async.Ignore
+            do! basin |> S2.ensureStream target.Stream
             return target
         }
 
-    let ensureStreamContext (runtime: S2Runtime) (streamName: string) : Effect<S2StreamRef, S2Error, Context> =
-        ensureTargetContext runtime (streamTarget runtime streamName)
-
-    let ensureTarget (runtime: S2Runtime) (target: S2StreamRef) : Effect<unit, S2Error, unit> =
-        ensureTargetContext runtime target
-        |> Effect.map (fun _ -> ())
-        |> provide runtime
-
-    let ensureStream (runtime: S2Runtime) (streamName: string) : Effect<S2StreamRef, S2Error, unit> =
-        ensureStreamContext runtime streamName |> provide runtime
+    let ensureStream (runtime: S2Runtime) (streamName: string) : Async<S2StreamRef> =
+        ensureTarget runtime (streamTarget runtime streamName)

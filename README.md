@@ -9,7 +9,7 @@ SDD.
 
 ## Production Lanes
 
-- `Firegrid.Log` — EffSharp wrapper around the S2 client/substrate.
+- `Firegrid.Log` — Fable-native wrapper around the S2 client/substrate.
 - `@firegrid/core` — shared durable workflow contract, primitive types, and
   run-store interfaces.
 - `@firegrid/runtime` — durable workflow runtime, schedule materialization, and

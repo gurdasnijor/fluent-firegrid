@@ -1,6 +1,6 @@
 # Firegrid.Log
 
-Fable-native EffSharp bindings for S2 durable streams.
+Fable-native bindings for S2 durable streams.
 
 This package is authored in F# and compiled with Fable. Generated JavaScript is
 the runtime artifact and is intentionally outside the repository TypeScript
@@ -11,14 +11,16 @@ records for precise S2 SDK operations and ergonomic helpers for common stream
 workflows:
 
 ```fsharp
-open Effect
 open Firegrid.Log
 
 let program =
-    effect {
-        let target = S2.streamRef "firegrid" "orders"
-        let! _ = S2.Stream.appendString target """{"type":"OrderPlaced"}""" None
-        let! tail = S2.Stream.tail target
+    async {
+        let client = S2.connect "s2_access_token"
+        let basin = client |> S2.basin "firegrid"
+        do! basin |> S2.ensureStream "orders"
+        let stream = basin |> S2.stream "orders"
+        let! _ = stream |> S2.appendStrings [ """{"type":"OrderPlaced"}""" ]
+        let! tail = stream |> S2.checkTail
         return tail.SeqNum
     }
 ```

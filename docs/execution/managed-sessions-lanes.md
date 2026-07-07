@@ -47,28 +47,6 @@ Ground rules:
 - **Frozen paths stay frozen.** No new features on the TanStack lowering.
 - Verify with the repo root `pnpm preflight` plus the proof runner for your new
   proofs.
-- **Local EffSharp restore.** If `dotnet restore` or `pnpm check` fails locally
-  with a GitHub Packages 401 for `EffSharp`, CI credentials are not the issue
-  under test. Use a temporary NuGet config that adds the cached local
-  `EffSharp` package directory plus `nuget.org`, and keep that config out of
-  commits:
-
-  ```sh
-  tmpcfg=$(mktemp /tmp/firegrid-nuget.XXXXXX)
-  printf '%s\n' \
-    '<?xml version="1.0" encoding="utf-8"?>' \
-    '<configuration>' \
-    '  <packageSources>' \
-    '    <clear />' \
-    '    <add key="local-effsharp" value="/Users/gnijor/gurdasnijor/fluent-firegrid/.nuget/packages/effsharp/0.0.1-alpha.1" />' \
-    '    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />' \
-    '  </packageSources>' \
-    '</configuration>' \
-    > "$tmpcfg"
-  NUGET_CONFIG="$tmpcfg" NUGET_PACKAGES=/Users/gnijor/gurdasnijor/fluent-firegrid/.nuget/packages pnpm check
-  rm -f "$tmpcfg"
-  ```
-
 ## Claim Protocol
 
 Claim a WP by editing the ledger row (Owner + Status: `in-progress`) in a small
@@ -110,7 +88,7 @@ Everything else is lane-owner discretion.
 | P2 | P | Port `SubjectHistory`/`StateView`/`KvStore` + their F# proofs | canon: language-and-targets | P1 | done | Codex | #82 |
 | P3 | P | Port `Foundation/Durable` kernel + F# proofs; audit sans-IO core/shell split | canon: language-and-targets | P2 | open | — | — |
 | P4 | P | Fable→TS emission + idiomatic TS facade for `Firegrid.Log`; re-point substrate proofs from `upstream-sdk` to `firegrid-log` driver | canon: language-and-targets | P1, F4 | done | Codex | #87 |
-| P5 | P | Remove EffSharp from `Firegrid.Log`/`Store`/`Foundation.Proofs`; delete private NuGet feed | canon: language-and-targets | P4 | open | — | — |
+| P5 | P | Remove EffSharp from `Firegrid.Log`/`Store`/`Foundation.Proofs`; delete private NuGet feed | canon: language-and-targets | P4 | done | Codex | #89 |
 | A1 | A | Checkpointed fold: snapshot record + rebuild | MS-C1 | P2 | open | — | — |
 | A2 | A | Checkpoint-race + trim-safety proofs | MS-C1 | A1 | open | — | — |
 | A3 | A | StateView strong/eventual reads exposed at the seam + proof | MS-C4 | P2 | open | — | — |

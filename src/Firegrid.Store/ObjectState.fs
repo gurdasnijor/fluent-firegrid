@@ -1,6 +1,5 @@
 namespace Firegrid.Store
 
-open Effect
 open Firegrid.Log
 
 [<RequireQualifiedAccess>]
@@ -15,24 +14,28 @@ module S2ObjectState =
     let target (runtime: S2Runtime) (address: S2ObjectStateAddress) : S2StreamRef =
         Runtime.streamTarget runtime (streamName runtime address)
 
-    let appendEventJson (runtime: S2Runtime) (append: S2StateAppend) : Effect<S2AppendAck, S2Error, unit> =
-        S2.Stream.appendJsonString (target runtime append.Address) append.BodyJson append.MatchSeqNum
-        |> Runtime.provide runtime
+    let appendEventJson (runtime: S2Runtime) (append: S2StateAppend) : Async<S2.AppendAck> =
+        async {
+            let stream = Runtime.stream runtime (target runtime append.Address)
 
-    let readEventJson (runtime: S2Runtime) (read: S2StateRead) : Effect<string list, S2Error, unit> =
-        let stop =
-            read.MaxRecords
-            |> Option.map (fun count ->
-                { S2ReadStop.Empty with
-                    Limits = Some { S2ReadLimits.Empty with Count = Some count } })
+            return!
+                stream
+                |> S2.appendWith
+                    { S2.AppendOptions.none with
+                        MatchSeqNum = append.MatchSeqNum |> Option.map int64 }
+                    [ S2.Record.text append.BodyJson ]
+        }
 
-        let start = read.FromSeqNum |> Option.map S2ReadStart.FromSeqNum
+    let readEventJson (runtime: S2Runtime) (read: S2StateRead) : Async<string list> =
+        async {
+            let stream = Runtime.stream runtime (target runtime read.Address)
+            let start = read.FromSeqNum |> Option.map (int64 >> S2.FromSeqNum)
 
-        S2.Stream.readStrings (target runtime read.Address) start stop
-        |> Effect.map (fun batch ->
-            batch.Records
-            |> List.choose (fun record ->
-                match record.Body with
-                | S2RecordBody.StringBody body -> Some body
-                | S2RecordBody.BytesBody _ -> None))
-        |> Runtime.provide runtime
+            let options =
+                { S2.ReadOptions.empty with
+                    Start = start
+                    Count = read.MaxRecords }
+
+            let! records = stream |> S2.readWith options
+            return records |> List.map (fun record -> record.Body)
+        }
