@@ -1,8 +1,14 @@
 # SDD: `@firegrid/log` — an Effect-native client for S2 (durable streams)
 
+Doc-Class: SDD
+Status: frozen
+Date: 2026-07-07
+Owner: Firegrid Architecture
+Substrate: S2
+
 | | |
 |---|---|
-| **Status** | Draft for implementation |
+| **Status** | Frozen historical plan; superseded by `src/Firegrid.Log` |
 | **Date** | 2026-06-15 |
 | **Target stack** | `effect@beta` (smol / v4 API), TypeScript (strict), Node + Bun + Deno runtimes |
 | **Wraps** | `@s2-dev/streamstore` (S2 official TS SDK, ≥ 0.22.x) |

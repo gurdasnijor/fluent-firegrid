@@ -1,8 +1,14 @@
 # Fluent Execution Models
 
-Doc-Class: internal-contract
+Doc-Class: canon
 Status: active
+Date: 2026-07-07
 Owner: Firegrid Architecture
+Substrate: idealized
+
+> S2 status: replay vs. reconstruction remains the target model split, but the
+> wake/claim/ack language below is idealized. Current S2 host coordination is
+> cooperative and proof-driven; see [`s2-substrate.md`](s2-substrate.md).
 
 Fluent has two execution models over one Durable Streams coordination core.
 They share wake delivery, claim/ack/release, producer fencing, CEL predicates,
@@ -198,8 +204,9 @@ of rebuilding a workflow database beside it.
 
 ## Read Next
 
-- [`substrate-protocol.md`](substrate-protocol.md): the Durable Streams operation
-  sequences shared by both execution models.
+- [`s2-substrate.md`](s2-substrate.md): the current S2 operation mapping.
+- [`substrate-protocol.md`](substrate-protocol.md): the superseded idealized
+  Durable Streams operation sequences shared by both execution models.
 - [`harness-io.md`](harness-io.md): the reconstruction side of managed sessions.
 - [`README.md`](README.md): the top-level provider, package, and responsibility
   map.

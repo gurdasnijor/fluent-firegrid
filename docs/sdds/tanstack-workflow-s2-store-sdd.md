@@ -1,12 +1,18 @@
 # SDD: TanStack Workflow S2 Store
 
+Doc-Class: SDD
+Status: frozen
+Date: 2026-07-07
+Owner: Firegrid Architecture
+Substrate: S2
+
 ### S2-backed `WorkflowExecutionStore` for TanStack Workflow
 
 |   |   |
 | --- | --- |
-| Status | Implemented through A-E; active hardening substrate |
+| Status | Frozen scaffolding; accurate for the TanStack/S2 store but not the build target |
 | Date | 2026-06-25 |
-| Package | `@firegrid/fluent/s2` |
+| Package | Historical `@firegrid/fluent/s2`; current S2 package boundary is `@firegrid/store` / `Firegrid.Store` |
 | Primary contract | `WorkflowExecutionStore` from `@firegrid/fluent/runtime` |
 | Local reference | `repos/tanstack-workflow` @ `602cdec439876335168d96f5443c0dc59e4cc436` |
 | Lower dependency | `@firegrid/log` |

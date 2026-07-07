@@ -1,12 +1,18 @@
 # SDD: Fluent Firegrid Finish Line
 
+Doc-Class: SDD
+Status: active
+Date: 2026-07-07
+Owner: Firegrid Architecture
+Substrate: S2
+
 ### Remaining Restate-like ergonomics above the proven substrate
 
 |   |   |
 | --- | --- |
 | Status | Finish-line backlog |
 | Date | 2026-06-25 |
-| Package focus | `@firegrid/fluent`, `@firegrid/fluent/http`, `@firegrid/fluent/s2`, `@firegrid/example-full-stack-service` |
+| Package focus | `@firegrid/fluent`, `@firegrid/fluent/http`, `@firegrid/store`, `@firegrid/runtime`, `@firegrid/example-full-stack-service` |
 | Foundation | Current `apps/proofs` proof registry is good enough for the substrate layer |
 
 ---
@@ -15,13 +21,14 @@
 
 The foundational runtime and verification work is complete enough to stop
 expanding proof-only packages. The next work should close product and authoring
-surface gaps against the Restate TypeScript experience.
+surface gaps while moving the runtime substrate toward the native EffSharp/S2
+kernel described in the canon.
 
 Do not reopen a parallel durable-function engine. Continue building above:
 
-- TanStack Workflow runtime over S2;
+- EffSharp/S2 store and runtime kernel;
 - fluent generator handlers yielding `Effect`;
-- S2 object owner/runtime binding;
+- S2 object owner/runtime binding through `@firegrid/store` / `Firegrid.Store`;
 - table-shaped virtual object state;
 - transport-neutral HTTP binding;
 - Node server binding.
@@ -37,8 +44,9 @@ Implemented and passing:
 - descriptor-first `iface` / `implement`;
 - direct `service`, `workflow`, and `object` definitions;
 - generator handlers where yielded values are `Effect`s;
-- durable `run`, `sleep`, `sleepUntil`, and `waitForSignal` lowering to the
-  TanStack/S2 runtime;
+- durable `run`, `sleep`, `sleepUntil`, and `waitForSignal` behavior currently
+  proven through the TanStack/S2 scaffolding and targeted for the native
+  EffSharp/S2 runtime kernel;
 - typed service/workflow/object call clients;
 - typed send clients returning durable `InvocationHandle`s with `attach()`;
 - S2-backed virtual object state with table/materialization semantics;

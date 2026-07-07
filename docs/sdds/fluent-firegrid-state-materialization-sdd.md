@@ -1,5 +1,11 @@
 # SDD: Fluent Firegrid State And Materialization
 
+Doc-Class: SDD
+Status: active
+Date: 2026-07-07
+Owner: Firegrid Architecture
+Substrate: S2
+
 ### Table-shaped durable state for virtual objects
 
 |   |   |
@@ -8,7 +14,7 @@
 | Date | 2026-06-25 |
 | Package | `@firegrid/fluent` plus S2 object-owner support |
 | Design lineage | table-shaped fluent object state over S2 object-owner storage |
-| Lower runtime | TanStack Workflow over `@firegrid/fluent/s2` |
+| Lower runtime | Historical TanStack Workflow over `@firegrid/fluent/s2`; current S2 substrate boundary is `@firegrid/store` / `Firegrid.Store` |
 
 ---
 

@@ -1,10 +1,16 @@
 # SDD: Package Boundary Consolidation
 
+Doc-Class: SDD
+Status: frozen
+Date: 2026-07-07
+Owner: Firegrid Architecture
+Substrate: S2
+
 ### Re-centering package boundaries around iteration instead of early extraction
 
 |   |   |
 | --- | --- |
-| Status | Implemented; greenfield compatibility shims removed |
+| Status | Frozen historical consolidation; superseded by the EffSharp package layout |
 | Date | 2026-06-26 |
 | Package focus | `@firegrid/core`, `@firegrid/fluent`, `@firegrid/log`, `@firegrid/trace` |
 

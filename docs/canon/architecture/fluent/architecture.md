@@ -1,14 +1,21 @@
 # Fluent Architecture
 
-Doc-Class: internal-contract
+Doc-Class: canon
 Status: active
 Date: 2026-06-05
 Owner: Firegrid Architecture
+Substrate: idealized
+
+> S2 status: this page is the idealized fluent architecture reference. The
+> current EffSharp/S2 substrate has no named consumers, native claim/ack leases,
+> webhook wake, or substrate-side wait matching. See
+> [`s2-substrate.md`](s2-substrate.md) for the implemented lowering and proof
+> map.
 
 This is the canonical high-level architecture reference for the fluent Firegrid
 workstream. It defines package boundaries, process ownership, durable stream
 read/write ownership, and schema ownership. The execution-focused design details
-remain in `docs/sdds/fluent-sdd.md`.
+remain in the active SDDs under `docs/sdds/`.
 
 ## Document Shape
 
@@ -28,15 +35,16 @@ at an actor, a stream write, a wake, or a schema and know which package owns it.
 ## Architecture Doc Set
 
 Detailed role diagrams live beside this document under
-`docs/cannon/architecture/fluent/`:
+`docs/canon/architecture/fluent/`:
 
 - [`README.md`](README.md) is the doc-set index.
 - [`execution-models.md`](execution-models.md) defines the
   replay-vs-reconstruction split: authored procedures resume by replay; managed
   sessions resume by reconstruction over the same coordination core.
-- [`substrate-protocol.md`](substrate-protocol.md) owns the
-  Durable Streams operation sequences for wake, wait, timer, child, attach, fork,
-  and TTL.
+- [`s2-substrate.md`](s2-substrate.md) owns the current S2 substrate mapping.
+- [`substrate-protocol.md`](substrate-protocol.md) preserves the superseded
+  idealized Durable Streams operation sequences for wake, wait, timer, child,
+  attach, fork, and TTL.
 - [`harness-io.md`](harness-io.md) is the harness I/O role map:
   ACP downstream client, ACP editor-facing conductor, future native/cloud
   adapters, and Effect AI `LanguageModel` fronted work.
