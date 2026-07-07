@@ -24,6 +24,7 @@ module Program =
           FoundationStateViewProof.proof
           FoundationKvStoreProof.proof
           FoundationCheckpointProof.proof
+          FoundationCheckpointTrimSafetyProof.proof
           FoundationDurableKernelProof.proof
           FoundationTurnStreamProof.proof ]
 
