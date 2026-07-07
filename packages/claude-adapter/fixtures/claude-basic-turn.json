@@ -1,0 +1,10 @@
+{
+  "name": "claude-basic-turn",
+  "description": "A system init, a thinking + text assistant turn, and a result carrying usage.",
+  "notes": "Top-level assistant text folds to the assistant message; thinking to the separate thought list; the result lowers to firegrid/usage. system/init lowers to firegrid/native.",
+  "events": [
+    { "type": "system", "subtype": "init", "session_id": "sess_1", "model": "claude-opus-4-8", "cwd": "/repo", "permissionMode": "default" },
+    { "type": "assistant", "parent_tool_use_id": null, "session_id": "sess_1", "message": { "id": "msg_1", "role": "assistant", "model": "claude-opus-4-8", "content": [ { "type": "thinking", "thinking": "Let me summarize the repo." }, { "type": "text", "text": "Here is the summary." } ] } },
+    { "type": "result", "subtype": "success", "session_id": "sess_1", "total_cost_usd": 0.0021, "usage": { "input_tokens": 100, "output_tokens": 25, "cache_read_input_tokens": 40 } }
+  ]
+}

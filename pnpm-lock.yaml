@@ -51,6 +51,9 @@ importers:
       '@effect/platform-node':
         specifier: 4.0.0-beta.87
         version: 4.0.0-beta.87(effect@4.0.0-beta.87)(ioredis@5.11.1)
+      '@firegrid/claude-adapter':
+        specifier: workspace:*
+        version: link:../../packages/claude-adapter
       '@firegrid/fluent':
         specifier: workspace:*
         version: link:../../packages/fluent
@@ -97,6 +100,22 @@ importers:
       tsx:
         specifier: ^4.21.0
         version: 4.23.0
+
+  packages/claude-adapter:
+    dependencies:
+      '@firegrid/harness-adapter':
+        specifier: workspace:*
+        version: link:../harness-adapter
+      '@firegrid/l1-vocabulary':
+        specifier: workspace:*
+        version: link:../l1-vocabulary
+      effect:
+        specifier: 4.0.0-beta.87
+        version: 4.0.0-beta.87
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.0
 
   packages/core:
     dependencies:
