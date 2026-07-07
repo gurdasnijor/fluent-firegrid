@@ -23,6 +23,7 @@ module Program =
         [ FoundationSubjectHistoryProof.proof
           FoundationStateViewProof.proof
           FoundationStateReadsProof.proof
+          FoundationSessionHistoryProof.proof
           FoundationKvStoreProof.proof
           FoundationCheckpointProof.proof
           FoundationCheckpointTrimSafetyProof.proof

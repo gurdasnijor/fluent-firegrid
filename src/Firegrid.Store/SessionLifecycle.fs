@@ -213,7 +213,10 @@ module SessionLifecycle =
         | "max" -> Ok MaxDurationTimeout
         | other -> Error(sprintf "unknown end cause '%s'" other)
 
-    let private lifecycleCodec: SubjectHistory.Codec<LifecycleFact> =
+    /// The I6 session-log fact codec. Public so A4's `SessionHistory` fold can
+    /// decode `sessions/{s}/log` (authorized under G1 by the A4 #112 FULL review;
+    /// consumer = A4's history fold, writer = this holder).
+    let lifecycleCodec: SubjectHistory.Codec<LifecycleFact> =
         { Encode =
             fun fact ->
                 match fact with

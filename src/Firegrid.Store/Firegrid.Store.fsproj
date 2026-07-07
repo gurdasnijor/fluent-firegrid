@@ -48,6 +48,7 @@
     <Compile Include="Foundation/Durable/Runtime.fs" />
     <Compile Include="Foundation/Durable/App.fs" />
     <Compile Include="SessionLifecycle.fs" />
+    <Compile Include="SessionHistory.fs" />
     <Compile Include="ResumeArtifactStore.fs" />
     <Compile Include="Runtime.fs" />
     <Compile Include="ObjectState.fs" />
