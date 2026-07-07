@@ -18,13 +18,16 @@
     "proofs",
     "README.md"
   ],
-  "scripts": {},
+  "scripts": {
+    "proofs": "pnpm --dir ../../src/Firegrid.Log build && tsx proofs/main.ts proof run all --report-dir ../../.verification-reports/apps-proofs"
+  },
   "dependencies": {
     "@effect/opentelemetry": "4.0.0-beta.87",
     "@effect/platform-node": "4.0.0-beta.87",
     "@firegrid/fluent": "workspace:*",
     "@firegrid/log": "workspace:*",
     "@firegrid/trace": "workspace:*",
+    "@s2-dev/streamstore": "0.24.1",
     "@opentelemetry/api-logs": "^0.208.0",
     "@opentelemetry/resources": "^2.8.0",
     "@opentelemetry/sdk-logs": "^0.208.0",
@@ -34,6 +37,7 @@
     "effect": "4.0.0-beta.87"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0"
+    "@types/node": "^22.10.0",
+    "tsx": "^4.21.0"
   }
 }

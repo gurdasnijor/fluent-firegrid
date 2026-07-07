@@ -48,17 +48,18 @@ exists as a proven production surface, not only as canon.
 
 ## Current State
 
-**Proven** (green in `apps/proofs`):
+**Proven** (green in CI):
 
 - Substrate capabilities: read-after-append visibility, cursor-fold restart,
-  matchSeqNum contention, cooperative fence semantics.
-- Coordination: leases (claim / live-reject / stale-takeover), live deposed-owner
-  fencing across two processes, host crash-restart recovery.
-- Temporal: durable timers and schedules with sweep semantics; racing sweepers
-  start exactly one run.
-- Execution (replay model): journaled steps not re-executed, awakeables resolved
-  by a recreated host, object state replay without double-apply, per-key
-  serialization across hosts, delayed sends, send handles with cross-host attach.
+  matchSeqNum contention, cooperative fence semantics in `apps/proofs`.
+- Foundation behavior: subject history, `StateView`, and `KvStore` properties in
+  `Firegrid.Foundation.Proofs`.
+
+**Historical proof references** (checked in but not active conformance evidence):
+
+- Coordination/runtime/object proof files under `apps/proofs/proofs/store-*`.
+  They still describe useful obligations, but they target retired or moved TS
+  package surfaces and must be rehomed before any capability cites them as green.
 
 **Running unproven** (agent-ui, e2e-verified 2026-07-05 but outside any proof
 harness): deterministic per-turn stream ids; mid-stream client-disconnect

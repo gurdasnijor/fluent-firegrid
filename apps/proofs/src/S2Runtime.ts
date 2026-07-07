@@ -1,5 +1,6 @@
-import { basin, basins, layer as S2Layer, type S2Error, stream as s2Stream, type StreamApi } from "@firegrid/log"
+import { S2 } from "@s2-dev/streamstore"
 import * as Effect from "effect/Effect"
+import * as Stream from "effect/Stream"
 
 import { VerificationError } from "./VerificationError.ts"
 
@@ -9,13 +10,19 @@ interface S2StreamInput {
   readonly ensure?: boolean
 }
 
+export interface StreamApi {
+  readonly append: (input: { readonly records?: ReadonlyArray<unknown> }) => Effect.Effect<any, unknown>
+  readonly checkTail: () => Effect.Effect<any, unknown>
+  readonly readSession: (input: unknown) => Stream.Stream<any, unknown>
+}
+
 export interface S2Runtime {
   readonly endpoint: string | undefined
   readonly stream: (input: S2StreamInput) => Effect.Effect<StreamApi, VerificationError>
 }
 
-const s2Layer = (endpoint: string) =>
-  S2Layer({
+const makeClient = (endpoint: string) =>
+  new S2({
     accessToken: "s2_access_token",
     endpoints: {
       account: endpoint,
@@ -24,7 +31,79 @@ const s2Layer = (endpoint: string) =>
     retry: { maxAttempts: 1 }
   })
 
-const s2Error = (message: string) => (cause: S2Error): VerificationError => new VerificationError({ message, cause })
+const s2Error = (message: string) => (cause: unknown): VerificationError => new VerificationError({ message, cause })
+
+const errorAttributes = (cause: unknown): Record<string, string> => {
+  if (typeof cause !== "object" || cause === null) {
+    return { "s2.error.kind": typeof cause }
+  }
+  const record = cause as Record<string, unknown>
+  return {
+    "s2.error.kind": cause.constructor.name,
+    ...("code" in record ? { "s2.error.code": String(record.code) } : {}),
+    ...("status" in record ? { "s2.error.status": String(record.status) } : {}),
+    ...("expectedSeqNum" in record ? { "s2.error.expected_seq_num": String(record.expectedSeqNum) } : {}),
+    ...("expectedFencingToken" in record ? { "s2.error.expected_fencing_token": String(record.expectedFencingToken) } : {})
+  }
+}
+
+const traced = <A>(
+  span: string,
+  effect: Effect.Effect<A, unknown>,
+  attributes: Record<string, string> = {}
+): Effect.Effect<A, unknown> =>
+  effect.pipe(
+    Effect.tap(() =>
+      Effect.annotateCurrentSpan({
+        ...attributes,
+        "s2.operation.status": "ok"
+      })
+    ),
+    Effect.tapError((cause) =>
+      Effect.annotateCurrentSpan({
+        ...attributes,
+        ...errorAttributes(cause),
+        "s2.operation.status": "error"
+      })
+    ),
+    Effect.withSpan(span, {
+      attributes: {
+        ...attributes,
+        "s2.operation.status": "running"
+      }
+    })
+  )
+
+const promiseEffect = <A>(thunk: () => PromiseLike<A>): Effect.Effect<A, unknown> =>
+  Effect.tryPromise({
+    try: thunk,
+    catch: (cause) => cause
+  })
+
+const makeStreamApi = (stream: any): StreamApi => ({
+  append: (input) =>
+    traced(
+      "effect-s2.append",
+      promiseEffect(() => stream.append(input)),
+      { "s2.append.record_count": String(input.records?.length ?? 0) }
+    ),
+  checkTail: () =>
+    traced("effect-s2.check-tail", promiseEffect(() => stream.checkTail())),
+  readSession: (input) =>
+    Stream.fromIterableEffect(
+      traced(
+        "effect-s2.read-session",
+        promiseEffect(async() => {
+          const records: Array<unknown> = []
+          const session = await stream.readSession(input)
+          for await (const record of session) {
+            records.push(record)
+          }
+          return records
+        })
+      )
+    )
+})
 
 export const makeS2Runtime = (endpoint: string | undefined): S2Runtime => ({
   endpoint,
@@ -33,20 +112,19 @@ export const makeS2Runtime = (endpoint: string | undefined): S2Runtime => ({
       return new VerificationError({ message: "property does not have s2Lite configured" })
     }
     return Effect.gen(function*() {
+      const client = makeClient(endpoint)
+      const basin = client.basin(input.basin)
       if (input.ensure ?? true) {
-        yield* basins.ensure({ basin: input.basin }).pipe(
-          Effect.mapError(s2Error(`failed to ensure basin ${input.basin}`))
-        )
-        const basinApi = yield* basin(input.basin).pipe(
-          Effect.mapError(s2Error(`failed to open basin ${input.basin}`))
-        )
-        yield* basinApi.streams.ensure({ stream: input.stream }).pipe(
-          Effect.mapError(s2Error(`failed to ensure stream ${input.stream}`))
-        )
+        yield* Effect.tryPromise({
+          try: () => client.basins.ensure({ basin: input.basin }),
+          catch: s2Error(`failed to ensure basin ${input.basin}`)
+        })
+        yield* Effect.tryPromise({
+          try: () => basin.streams.ensure({ stream: input.stream }),
+          catch: s2Error(`failed to ensure stream ${input.stream}`)
+        })
       }
-      return yield* s2Stream(input.basin, input.stream).pipe(
-        Effect.mapError(s2Error(`failed to open stream ${input.basin}/${input.stream}`))
-      )
-    }).pipe(Effect.provide(s2Layer(endpoint)))
+      return makeStreamApi(basin.stream(input.stream))
+    })
   }
 })
