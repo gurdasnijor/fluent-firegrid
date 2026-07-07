@@ -1,6 +1,7 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
 
 import { runCli } from "../src/CliApp.ts"
+import { claudeFixtureReplayProof, claudeSubagentScopingProof, claudeUsageFactsProof } from "./claude-adapter.ts"
 import { effectS2CapabilityAProof, firegridLogCapabilityAProof } from "./effect-s2-capability-a.ts"
 import { effectS2SubstrateProofs, firegridLogSubstrateProofs } from "./effect-s2-substrate-proofs.ts"
 import { harnessFixtureReplayProof, harnessResumeSuppressionProof } from "./harness-fixture-replay.ts"
@@ -13,7 +14,10 @@ const proofs = [
   ...firegridLogSubstrateProofs,
   l1VocabularyConformanceProof,
   harnessFixtureReplayProof,
-  harnessResumeSuppressionProof
+  harnessResumeSuppressionProof,
+  claudeSubagentScopingProof,
+  claudeFixtureReplayProof,
+  claudeUsageFactsProof
 ] as const
 
 NodeRuntime.runMain(runCli(proofs))

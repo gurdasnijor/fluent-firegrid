@@ -1851,6 +1851,20 @@ merged / LOC deleted.
   and the three `wake.*` proofs (`wake.tail-latency`, `wake.single-claim`,
   `wake.timer-exactly-once`); shard-stream retention rides A-lane
   checkpoint+trim.
+- **MS-C6 / WP D3 — Claude Agent SDK adapter.** Shipped `@firegrid/claude-adapter`
+  (`packages/claude-adapter`): a concrete `HarnessAdapter` over the D2 contract
+  that lowers Claude Agent SDK transcripts into L1 records (I2). The pure
+  Effect-free `claudeLowering` covers the two agent-ui defects — **subagent
+  scoping** (`parent_tool_use_id` output → `tool_call_update` content on the parent
+  Task tool call + an ignorable `firegrid/subagent`, never top-level text) and
+  **usage/cost facts** (`result` usage + `total_cost_usd` → `firegrid/usage`). The
+  SDK message shape is modeled locally (Effect-free `ClaudeEvent`) so the lowering
+  is deterministic and the proofs run in CI without an API key; a gateable live
+  variant driving the real SDK `query()` through `ToolGate` is future E4 work over
+  the same lowering. Proofs `harness.subagent-scoping`, `harness.claude.fixture-replay`,
+  and `harness.claude.usage-facts` green in `apps/proofs` over recorded Claude
+  transcript fixtures. Conformance rows INV-027/028/029 added. Consumes I2 and the
+  D2 contract unchanged (no G1). MS-C6 complete; unblocks MS-M4.
 
 ## Acceptance Criteria
 

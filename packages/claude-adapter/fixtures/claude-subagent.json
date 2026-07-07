@@ -1,0 +1,14 @@
+{
+  "name": "claude-subagent",
+  "description": "A Task tool spawns a subagent; the subagent's output carries parent_tool_use_id and folds under the parent Task tool call.",
+  "notes": "Subagent text, its nested tool_use, and its tool_result all lower to tool_call_update on the parent (toolu_task); firegrid/subagent is emitted once and is ignorable. Top-level assistant text excludes all subagent output.",
+  "events": [
+    { "type": "system", "subtype": "init", "session_id": "sess_3", "model": "claude-opus-4-8" },
+    { "type": "assistant", "parent_tool_use_id": null, "session_id": "sess_3", "message": { "id": "msg_1", "role": "assistant", "model": "claude-opus-4-8", "content": [ { "type": "text", "text": "Delegating research." }, { "type": "tool_use", "id": "toolu_task", "name": "Task", "input": { "prompt": "research the repo" } } ] } },
+    { "type": "assistant", "parent_tool_use_id": "toolu_task", "session_id": "sess_3", "message": { "id": "msg_sub1", "role": "assistant", "model": "claude-sonnet-5", "content": [ { "type": "text", "text": "Subagent: found 3 files." }, { "type": "tool_use", "id": "toolu_sub_read", "name": "Read", "input": { "path": "a.ts" } } ] } },
+    { "type": "user", "parent_tool_use_id": "toolu_task", "session_id": "sess_3", "message": { "role": "user", "content": [ { "type": "tool_result", "tool_use_id": "toolu_sub_read", "content": "Subagent: file contents" } ] } },
+    { "type": "user", "parent_tool_use_id": null, "session_id": "sess_3", "message": { "role": "user", "content": [ { "type": "tool_result", "tool_use_id": "toolu_task", "content": "Research complete: 3 files." } ] } },
+    { "type": "assistant", "parent_tool_use_id": null, "session_id": "sess_3", "message": { "id": "msg_2", "role": "assistant", "content": [ { "type": "text", "text": " The research is done." } ] } },
+    { "type": "result", "subtype": "success", "session_id": "sess_3", "total_cost_usd": 0.01, "usage": { "input_tokens": 500, "output_tokens": 120, "cache_creation_input_tokens": 60 } }
+  ]
+}

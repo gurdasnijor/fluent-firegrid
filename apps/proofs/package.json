@@ -24,6 +24,7 @@
   "dependencies": {
     "@effect/opentelemetry": "4.0.0-beta.87",
     "@effect/platform-node": "4.0.0-beta.87",
+    "@firegrid/claude-adapter": "workspace:*",
     "@firegrid/fluent": "workspace:*",
     "@firegrid/harness-adapter": "workspace:*",
     "@firegrid/l1-vocabulary": "workspace:*",
