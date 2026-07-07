@@ -145,6 +145,8 @@ replay` instead of replaying from `Seq 0`. It is one generic F# module,
 (A1 depends on P2 only). Snapshots live on a **derived sidecar subject**
 (`checkpointSubject source`, never a random name) so trimming the source never
 drops a snapshot, and the snapshot log is itself an ordinary open-CAS log.
+(Deferred, recorded: the sidecar itself grows unbounded — its compaction, by
+trim-behind-latest or S2 retention on the snapshot log, is out of A1 scope.)
 
 **Version is the exclusive upper bound** (the P2 convention, non-negotiable): a
 `Snapshot.AsOf` is the source `Version` its `State` has folded *through* — the
@@ -157,8 +159,9 @@ the checkpoint writer is a *bare authority* (Open/CAS regime of `Authority`, I5)
 no mailbox: two writers `commit` at the observed sidecar tail and a conditional
 append decides one winner. A1 grounds `commit` directly on the P2
 `SubjectHistory.appendExpected` (open-CAS); when I5 (B1) lands, `commit` is an
-`Authority.admit` instance over the sidecar subject with no surface change — A2's
-`state.checkpoint-race` proof consumes that protocol. Coordinate with B1, do not
+`Authority.admit` instance over the sidecar subject with no surface change — and
+A2's `state.checkpoint-race` proof must drive `commit` through that
+`Authority.admit` protocol, not a private CAS path. Coordinate with B1, do not
 re-implement the fence/CAS mechanics.
 
 ```fsharp
@@ -187,6 +190,7 @@ module Checkpoint =
     [<RequireQualifiedAccess>]
     type CommitFailure<'state> =
         | Raced of AppendConflict<Snapshot<'state>>  // open-CAS: another checkpointer took the slot
+        | Regressed of requested: Version * latest: Version  // AsOf <= latest committed AsOf (stale state)
         | Failed of S2Errors.S2Failure
     [<RequireQualifiedAccess>]
     type TrimFailure =
@@ -215,7 +219,9 @@ module Checkpoint =
     val rebuild : Fold<'record, 'state> -> Async<'state * Version>
 
     /// Commit a snapshot to the sidecar under open-CAS at its observed tail.
-    /// Two racing writers: exactly one wins; the loser gets `Raced`.
+    /// Two racing writers: exactly one wins; the loser gets `Raced`. Snapshots
+    /// are monotonic: rejects `Regressed` when `snapshot.AsOf <= latest.AsOf`
+    /// (a slow checkpointer cannot overwrite `latest` with stale state).
     val commit :
         Fold<'record, 'state> -> Snapshot<'state> -> Async<Result<Version, CommitFailure<'state>>>
 
@@ -243,7 +249,8 @@ match! Checkpoint.checkpoint fold with
     // snap.State reflects every source record with Seq < snap.AsOf.
     let! _ = Checkpoint.trim fold snap.AsOf   // trim source behind the snapshot
     ()
-| Error (Checkpoint.CommitFailure.Raced _) -> ()   // lost the election; re-read latest
+| Error (Checkpoint.CommitFailure.Raced _) -> ()      // lost the election; re-read latest
+| Error (Checkpoint.CommitFailure.Regressed _) -> ()  // stale state; latest already ahead
 | Error (Checkpoint.CommitFailure.Failed _) -> ()
 ```
 
@@ -258,6 +265,12 @@ Laws (stated here; A1 proves rebuild-equivalence, A2 proves race + trim-safety):
 - **Checkpoint race** (`state.checkpoint-race`, A2). Two `commit`s at the same
   observed sidecar tail: exactly one wins (open-CAS single-winner); the loser
   gets `Raced`, its snapshot rejected, never interleaved.
+- **Monotonic snapshots** (A2, with `checkpoint-race`). Committed snapshots are
+  monotonic in `AsOf`: `commit` rejects `Regressed` when
+  `snapshot.AsOf <= latest.AsOf` (absent a snapshot, `latest = Version 0`). A
+  slow checkpointer that wins a CAS slot with stale state therefore cannot
+  regress `latest` — keeping `rebuild` suffixes minimal and `trim`'s high-water
+  guard reading the true latest `AsOf`.
 - **Trim safety** (`state.trim-safety`, A2). `trim upTo` never advances past the
   latest committed snapshot's `AsOf` (else `AheadOfCheckpoint`); a reader
   starting at the trim floor still rebuilds equivalent state, because the
