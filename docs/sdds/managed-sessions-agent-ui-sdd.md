@@ -828,14 +828,148 @@ TypeScript-surface `StateView` per the KV-demo pattern (fold + `AppliedTail`;
 eventual reads local; strong reads via check-tail barrier), session history as a
 C1-checkpointed fold, and the thread-index projection.
 
+Target Surface (F# — WP A3; gate G6 — light architect review pending):
+
+This is the **read half** of MS-C4: exposing the P2-ported
+`Firegrid.Foundation.StateView` fold as a linearizable **strong** vs lagging
+**eventual** read model at the `@firegrid/store` **P4 seam** (the single
+Fable-emitted store package — its `dist/Exports.js` entry), so agent-ui reads
+session state Promise-first without touching S2. It is one generic, domain-free
+F# module, `StateReads`, in `src/Firegrid.Store/Foundation/StateReads.fs`, and it
+**consumes P2's `StateView` (`start`/`read Eventual|Strong`/`stop`) and
+`SubjectHistory` as-is** — no shape change to either P2 module (that would be
+**G1**). It invents no schema and no new S2 access; the version convention is
+P2's.
+
+**Version is the exclusive upper bound** (the P2 convention, non-negotiable):
+`ViewState.AppliedTail` is the source `Version` the local fold has applied
+*through* — the snapshot reflects every record with `Seq < AppliedTail`, and a
+strong read *through* `v` reflects every record with `Seq < v`. `AppliedTail`
+makes projection staleness **data** (the `tail − AppliedTail` gap is readable),
+never a hidden lag.
+
+**Reads need no authority.** A reader only folds; per the actor model, readers
+never claim or fence (I5 is a writer concern). Two readers over one subject are
+independent — the strong-read linearizability comes from the S2 check-tail
+barrier, not from a lease.
+
+```fsharp
+// namespace Firegrid.Foundation — generic linearizable-read exposure over the
+// P2 StateView. open Firegrid.Log; open Firegrid.Foundation
+// Deps passed in (sans-IO shell): S2.Basin + the source Codec. No EffSharp.
+// Re-exported at the @firegrid/store seam via Exports.fs (P4 Fable emission);
+// the emitted TS rides the store's existing seam — no BCL-only API added.
+
+module StateReads =
+    // Read-model shapes are reused from P2 unchanged (no new schema):
+    //   type ReadConsistency = Eventual | Strong                 // StateView
+    //   type ViewState<'state> = { State: 'state                 // StateView
+    //                              AppliedTail: Version }         //   (exclusive UB)
+
+    /// A live read handle over a subject's fold — the P2 `StateView`, resident
+    /// and tailing. Abstract at the seam: the consumer never sees the pump,
+    /// cursor, stream name, or seq nums.
+    type Reader<'record, 'state> = StateView<'record, 'state>
+
+    /// Start a reader over `source`, folding from `recoverFrom` with `initial` +
+    /// `apply`. Thin over `StateView.start`.
+    val start :
+        S2.Basin -> Codec<'record> -> source: SubjectId -> recoverFrom: Seq
+            -> initial: 'state -> apply: ('state -> StoredRecord<'record> -> 'state)
+            -> Async<Reader<'record, 'state>>
+
+    /// Eventual read: the local applied snapshot — a monotonic prefix that never
+    /// regresses across successive reads and may lag the committed tail.
+    /// `ViewState.AppliedTail` exposes exactly how far it has folded.
+    val readEventual : Reader<'record, 'state> -> Async<ViewState<'state>>
+
+    /// Strong read *through a requested version* (linearizable, read-your-writes):
+    /// resolves once the reader has applied through `through` (`AppliedTail >=
+    /// through`), returning a snapshot reflecting every commit with `Seq <
+    /// through`. A writer passes the `Version` its own append returned to observe
+    /// its own write; any commit acknowledged before `through` is observed.
+    val readThrough : through: Version -> Reader<'record, 'state> -> Async<ViewState<'state>>
+
+    /// Strong read at the current committed tail: takes the subject's checked
+    /// tail (check-tail barrier) as the requested version, then `readThrough`.
+    /// Observes every commit acknowledged before the read — including a *second
+    /// host's* acknowledged append. Thin over `StateView.read Strong`.
+    val readLatest : Reader<'record, 'state> -> Async<ViewState<'state>>
+
+    /// Stop the reader and release its cursor. Thin over `StateView.stop`.
+    val stop : Reader<'record, 'state> -> Async<unit>
+```
+
+Ergonomic sample (the consumer test — usable with no proof-harness knowledge):
+
+```fsharp
+// A resident read model over a session-state subject.
+let! reader = StateReads.start basin codec source (Seq 0L) initial apply
+
+// Eventual: fast, local, may lag — and says how far it has folded.
+let! e = StateReads.readEventual reader
+// e.State reflects every record with Seq < e.AppliedTail.
+
+// Strong at the tail: observes every commit acknowledged before now, including
+// one a different host just appended.
+let! s = StateReads.readLatest reader
+
+// Read-your-writes: a writer that appended and got back Version v observes its
+// own write (and everything before it) without racing the pump.
+let! mine = StateReads.readThrough v reader
+```
+
+Laws (stated here; A3 proves the strong/eventual read law):
+
+- **Strong reads observe commits through the requested version**
+  (`state.stateview-strong-read`, A3). `readThrough v` returns a `ViewState` with
+  `AppliedTail >= v` whose `State` reflects every source record with `Seq < v`;
+  `readLatest` uses the checked tail as `v`, so a strong read issued after a
+  *second host's* acknowledged append observes that append. Linearizable /
+  read-your-writes. `through` must be a committed version (one returned by an
+  acknowledged append, or <= a checked tail); behavior for a version beyond the
+  committed tail is out of contract.
+- **Eventual reads are a monotonic prefix.** `readEventual` returns the local
+  applied snapshot: `AppliedTail` never regresses across successive reads on one
+  reader, and `State` reflects exactly the records with `Seq < AppliedTail`. It
+  may lag `readLatest`; the lag is observable as `tail − AppliedTail` data, never
+  hidden.
+- **No P2 change, no new authority.** `StateReads` is a combinator over P2's
+  public `StateView`/`SubjectHistory` surface; it adds no schema, no S2 access
+  beyond a check-tail, and no claim/fence (readers never need authority).
+- **No leaks.** Consumers never see the pump, cursor, S2 stream names, or seq
+  nums — only `State` + `AppliedTail`.
+
+Scope guard: A3 is the **read exposure only**. Session history as a C1
+checkpointed fold and the thread-index projection (`session.history-fold`,
+`session.projection-lag-observable`) are **A4**, layered on this same reader; A3
+neither materializes history nor mints a projection algebra.
+
+Validation Gates (F#-zone, G6 — per
+[`fsharp-fable-effsharp-evaluation-sdd.md`](./fsharp-fable-effsharp-evaluation-sdd.md)):
+
+- **Native shapes, EffSharp-free.** `Async` + `Result`-free reads (reads either
+  return `ViewState` or raise, matching P2's `read`) + P2's DU `ReadConsistency`
+  + `Codec` records — no EffSharp; the package-level EffSharp decision is "none,
+  nothing new."
+- **Ergonomic sample** above passes the consumer test.
+- **Emitted-TS sample + Fable build check** ride the store's existing
+  `Exports.fs` Fable seam; the surface is Fable-safe by construction (it adds no
+  BCL-only API beyond what `StateView` already emits).
+
+RFC invariant reserved for A3: **INV-033** (strong/eventual read contract),
+added to the conformance bridge with the implementation + proof PR (not this
+docs-only surface PR).
+
 Proof obligations:
 
-- `state.stateview-strong-read` — a strong read issued after a second host's
-  acknowledged append observes that append; an eventual read may not.
-- `session.history-fold` — session history materialized from L1/L2 facts equals
-  the same fold replayed from zero; checkpointing does not change the result.
-- `session.projection-lag-observable` — projection staleness is exposed as data
-  (applied tail vs. checked tail), not hidden.
+- `state.stateview-strong-read` (**A3**) — a strong read issued after a second
+  host's acknowledged append observes that append; an eventual read may not.
+- `session.history-fold` (**A4**) — session history materialized from L1/L2 facts
+  equals the same fold replayed from zero; checkpointing does not change the
+  result.
+- `session.projection-lag-observable` (**A4**) — projection staleness is exposed
+  as data (applied tail vs. checked tail), not hidden.
 
 RFC invariants: projection/read-model contract (projections are rebuildable,
 never alternate truth).
