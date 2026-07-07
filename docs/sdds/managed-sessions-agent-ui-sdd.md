@@ -743,6 +743,25 @@ stream + tailed router + durable cursor, not the timer index or these proofs):
   loser is `Deposed` and can neither dispatch nor advance the cursor. It observes
   the claim, not the work — the `store-object-live-fencing` lineage applied to a
   shard.
+  > **⚠️ Open question — C2, pending architect ruling (STOP).** The merged C1
+  > `WakeRouter.cycle` drives the batch *before* its fenced cursor commit
+  > (drive-then-commit — a deposal at commit leaves only idempotent re-drives), so
+  > a not-yet-aware deposed router performs one **idempotent re-drive (dispatch)**
+  > before its commit fails `Deposed`. The impl therefore guarantees the loser
+  > cannot **advance the cursor** (the single-writer durable authority), not that
+  > it cannot **dispatch** — so this law's "can neither dispatch" overreaches, and
+  > conflicts with the canon's own *"a stale holder may compute but cannot commit"*
+  > (driving is computing). **Option A** (recommended, docs-only): reword to "the
+  > loser cannot advance the cursor; dispatch is at-least-once with an idempotent
+  > drive, so a deposed holder may perform at most one harmless redundant re-drive"
+  > — `wake.single-claim` asserts single-writer-on-the-cursor + `Deposed` loser +
+  > idempotent-drive harmlessness; no code change; aligns with the canon/Restate.
+  > **Option B** (code change to merged C1): re-architect `cycle` to
+  > intent-before-effect (fenced dispatch-intent commit → dispatch → ack cursor) so
+  > a deposed holder fails the fenced gate before dispatching; literally satisfies
+  > "cannot dispatch" but adds an intent/ack split and re-opens C1, and buys no
+  > correctness (the drive is idempotent). C2 is STOPPED on `wake.single-claim`
+  > pending this ruling.
 - **Durable cursor / effectively-exactly-once dispatch**
   (`wake.timer-exactly-once`, C2). The cursor is a fenced checkpoint with
   `NextSeq` an exclusive upper bound; `plan` skips `Seq < NextSeq` strictly and
