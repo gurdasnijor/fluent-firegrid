@@ -1806,7 +1806,32 @@ merged / LOC deleted.
   on real `s2Lite`, driven through the public surface only; the deposed-producer
   proof extends B2's two-host live-fencing technique. Conformance rows
   INV-021/022/023 added. B4's `session.resume-artifact-fenced` is the sibling MS-C5
-  obligation, still open.
+  obligation, now shipped (WP B4, below).
+- **B4 / MS-C5 — fenced native-resume-artifact store shipped + proof green (WP B4).**
+  `ResumeArtifactStore` (`src/Firegrid.Store/ResumeArtifactStore.fs`) implements the
+  MS-C5 Target Surface exactly: a **domain binding of B1's `Authority`** (I5,
+  FencedOwner) over a per-session resume register (`sessions/{s}/resume`, derived,
+  never random) — **no second authority**. `openWriter` = `Authority.claim`
+  (the sole deposal mechanism; `ClaimError` passes through under `OpenError.Claim`,
+  no narrowing), `store` = `Authority.commit` (last-store-under-fence-wins; a
+  deposed writer fails `Deposed`), `read` = an authority-free tailing reader that
+  selects the latest *artifact* text record and skips the interleaved `Authority`
+  fence rotations (S2 command records, via `IgnoreCommandRecords`), so a bare
+  takeover never shadows the current artifact. `ResumeArtifact` carries the folded
+  `Version: int64` and round-trips D2's `NativeResumeArtifact` (#99)
+  `harness`/`version`/`payload` field-for-field (`Payload` opaque, never parsed).
+  Sans-IO split (subject derivation + JSON codec + latest-record selection pure;
+  `Async` shells over the injected `S2.Basin`), EffSharp-free, Fable-safe (the
+  `JsJson` codec `Turn` already emits; JS + TS emit green). Proof
+  `session.resume-artifact-fenced` in `FoundationResumeArtifactProof.fs` green on
+  real `s2Lite`, driven through the public surface only: a deposed writer's `store`
+  fails `Deposed`, and the **claim-then-read** interleaving is pinned — a resuming
+  holder that `openWriter`s (rotating the epoch) before its re-hydration `read`
+  fences a stale writer's late `store`, so the
+  stale-store-after-new-holder-read-without-claim fork is impossible (contrast
+  proven positively: an authority-free read alone does not rotate the epoch).
+  Conformance row INV-030 added (INV-029 was consumed by WP D3's usage-facts row in
+  the interim — the reserved id block advanced to the next free number).
 - **MS-C6 / WP D1 — L1 observation vocabulary (I2).** Shipped
   `@firegrid/l1-vocabulary` (`packages/l1-vocabulary`): the ACP `session/update`
   superset schema, Effect-free decoder, and canonical `foldTurn` base fold, with
