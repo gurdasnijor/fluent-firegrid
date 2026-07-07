@@ -87,7 +87,7 @@ type WakeReason = MailboxReady | TimerFired of TimerId * Timestamp | ChildTermin
 
 type Intent =                                 // requests TO the shell
     | SetTimer of TimerId * dueAt: Timestamp
-    | Send of target: ActorAddress * Envelope // the only cross-actor channel
+    | Send of target: ActorAddress * payload  // the only cross-actor channel; shell stamps envelope provenance
     | Execute of EffectId * payload           // claim-first external effect
 
 type Decision<'state, 'record, 'terminal> =
@@ -103,8 +103,8 @@ type Handler<'state, 'msg, 'record, 'terminal> =
       OnWake: 'state -> WakeReason -> Decision<'state, 'record, 'terminal> }
 
 module Processor =
-    val drive : DriveEnv -> ActorAddress -> Handler<'s,'m,'r,'t> -> Async<DriveOutcome>
-    // DriveOutcome = Idle | Sealed of 't | Deposed of Epoch | Failed of DriveError
+    val drive : DriveEnv -> ActorAddress -> Handler<'s,'m,'r,'t> -> Async<DriveOutcome<'t>>
+    // DriveOutcome = Idle | Advanced | Sealed of 't | Deposed of expectedFence | Failed of DriveError
 ```
 
 The drive tick and its invariants:
@@ -125,7 +125,8 @@ The drive tick and its invariants:
 I/O contract: inputs are mailbox envelopes (open-append), wake events
 (delivered as mailbox messages by the kernel), and the actor's own log
 (rebuild). Outputs are fenced appends to its own log, sends to other actors'
-mailboxes, and intent-recorded external effects. Readers (attach, folds,
+mailboxes with provenance stamped by the shell from committed intent identity,
+and intent-recorded external effects. Readers (attach, folds,
 tables) never need authority. There is no actor-to-actor call primitive — a
 reply is a send keyed by execution id.
 
