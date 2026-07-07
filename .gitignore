@@ -4,6 +4,7 @@ bin/
 obj/
 build/
 dist/
+dist-ts/
 coverage/
 .jscpd-report/
 .turbo/
