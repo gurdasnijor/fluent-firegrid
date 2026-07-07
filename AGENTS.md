@@ -23,8 +23,10 @@ This repo is two-zone by rule — see
   pull-cursors for streams (EffSharp is deprecated; see the canon decision
   record).
 - **TypeScript owns TS-ecosystem edges** (proof harness, harness adapters,
-  client SDK). Cross zones only via the kernel protocol or the single
-  Fable-emitted package seam — never deep imports.
+  client SDK). Public TS surfaces are Promise-first; Effect (TS) is the proof
+  harness's internal idiom and appears elsewhere only as thin optional wrapper
+  modules. Cross zones only via the kernel protocol or the single Fable-emitted
+  package seam — never deep imports.
 
 ## Effect Code
 

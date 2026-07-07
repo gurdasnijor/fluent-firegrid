@@ -62,13 +62,21 @@ local-auth friction.
   `nuget.config`. The CI-green proof suites gate the refactor.
 - **P3 lands EffSharp-free from the start** (the eff-firegrid durable kernel is
   `Async`-based already).
-- **Not affected:** the TS zone's use of the Effect library. EffSharp (F#-side
-  Effect port) and Effect (TS library) are different dependencies; the P4
-  facade and proof harness remain Effect-native TS per the recorded deviation.
+- **Distinct from Effect (TS).** EffSharp (F#-side Effect port) and Effect
+  (TS library) are different dependencies. Effect's justified TS footprint is
+  narrow: it is the proof harness's internal idiom (structured concurrency,
+  fault injection, scoped cleanup, OTel weave — verification infrastructure
+  that never ships to consumers) plus optional thin wrapper modules. It is not
+  the default idiom for public TS surfaces.
 
-The distinction that matters at the Fable boundary: F# exports consumed by the
-seam are Promise-shaped (doctrine rule), and the TS facade wraps them in
-Effect. Nothing at the seam requires an effect system on the F# side.
+The layering at the Fable boundary: generated exports are Promise-shaped
+(doctrine rule); the public facade is **Promise-first** (plain types, `Error`
+subclasses, async iterables) because the first production consumer (agent-ui)
+and future TS hosts are Promise-native; Effect consumers get a thin wrapper
+submodule (e.g. `@firegrid/log/effect`). Wrapping promises in Effect is
+trivial; the reverse requires embedding a runtime — which is why Promise-first
+is the only ordering where the secondary idiom stays thin. Nothing at the seam
+requires an effect system on either side.
 
 ## The Sans-IO Core Rule
 
