@@ -136,6 +136,33 @@ effectful handler that drives an external harness but still writes only under
 the processor's fence, emitting L1 facts as its `Append`). The processor
 unifies coordination; execution strategy is the pluggable part.
 
+## Relation to Restate's Command Processor
+
+The Processor tracks Restate's partition state-machine loop closely, with the
+broker outsourced: S2 plays Bifrost (ordered durable appends + fencing, bought
+not built). In both systems the broker is the *ordering* authority while the
+epoch-fenced leader/holder is the *semantic* authority — commands in the log
+are proposals; the holder's application decides what they mean. Bifrost log ↔
+mailbox; partition leader ↔ claim holder; command application ↔
+`Handler → Decision`; partition store ↔ checkpointed folds; actions/outbox ↔
+`Intents`/`Send`; followers ↔ authority-free readers.
+
+The load-bearing difference: **Restate fuses mailbox and authoritative log; we
+split them.** Restate's state machine is strictly deterministic, so decisions
+are implicit — any replica re-derives state by re-applying commands. Our
+headline executor (a managed session driving an external model harness) is
+non-deterministic, so decisions must be *recorded*: proposals land in the
+mailbox, the holder's decisions land on the actor's own log as facts. This is
+the replay-vs-reconstruction spine expressed as storage layout —
+deterministic-only systems may fuse the logs; systems hosting non-deterministic
+executors must split them.
+
+Smaller deltas: Restate's fixed partitions force RocksDB indexing, a shard
+manager, and rebalancing — per-entity S2 streams dissolve those into naming
+and claiming (hence our non-goals). Restate leaders are resident and tail
+their logs; our actors are non-resident and claimed on wake — the latency gap
+the wake path (MS-C3) closes.
+
 ## Consequences for the Ledger
 
 - **B1** delivers the `Authority` protocol module as its generic core
