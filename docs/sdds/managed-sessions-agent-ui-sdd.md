@@ -204,9 +204,13 @@ module Authority =
     type Epoch = Epoch of int64
     /// Substrate fence token (the epoch's encoding). Opaque — never seen by consumers.
     type Fence                                 // abstract
-    /// A live claim, bound to one epoch's fence. Only the holder commits or seals.
-    type Holder                                // abstract; carries Subject + Epoch + Fence
-    val epoch : Holder -> Epoch
+    /// Identity of a would-be holder (worker/process). Same identity re-attaches;
+    /// a different identity takes over. (encore-ds `insertOrGet` shape.)
+    type HolderId = HolderId of string
+    /// A live claim, bound to one epoch's fence — carries its Basin + Codec, so
+    /// commit/seal take no extra args. Only the holder commits or seals.
+    type Holder<'record>                        // abstract; Basin + Codec + Subject + Epoch + Fence
+    val epoch : Holder<'record> -> Epoch
 
     [<RequireQualifiedAccess>]
     type ClaimError =
@@ -223,13 +227,15 @@ module Authority =
         | Failed of S2Errors.S2Failure
 
     // FencedOwner regime — exactly one live holder.
-    /// Rotate the fence to a fresh epoch (deposing any prior holder); idempotent
-    /// per epoch. Fails `Sealed` if the subject is already terminal.
-    val claim  : S2.Basin -> SubjectId -> Async<Result<Holder, ClaimError>>
+    /// Claim the subject under `holderId`: returns the existing holder if it
+    /// already holds the current epoch (idempotent), else rotates the fence to
+    /// `epoch + 1` and takes over. `claim` is the sole deposal mechanism; fails
+    /// `Sealed` if the subject is already terminal.
+    val claim  : S2.Basin -> Codec<'r> -> SubjectId -> HolderId -> Async<Result<Holder<'r>, ClaimError>>
     /// Fenced append of domain records under the holder's epoch.
-    val commit : S2.Basin -> Codec<'r> -> Holder -> 'r list -> Async<Result<Version, CommitError>>
+    val commit : Holder<'r> -> 'r list -> Async<Result<Version, CommitError>>
     /// Append the terminal record and extinguish authority (first-terminal-wins).
-    val seal   : S2.Basin -> Codec<'r> -> Holder -> 'r -> Async<Result<unit, CommitError>>
+    val seal   : Holder<'r> -> 'r -> Async<Result<unit, CommitError>>
 
     // Open regime — leaderless single-winner CAS (checkpoint election, dedupe
     // claims, admission records). Thin naming over `SubjectHistory.appendExpected`.
@@ -243,7 +249,7 @@ module DurableLog =
     type Codec<'chunk, 'terminal> =
         { Chunk: SubjectHistory.Codec<'chunk>
           Terminal: SubjectHistory.Codec<'terminal> }
-    type Producer<'chunk, 'terminal>           // abstract; holds an Authority.Holder
+    type Producer<'chunk, 'terminal>           // abstract; wraps an Authority.Holder over a chunk|terminal codec
     type Attachment<'chunk, 'terminal>         // abstract; a reader, no authority needed
 
     [<RequireQualifiedAccess>]
@@ -253,15 +259,18 @@ module DurableLog =
     [<RequireQualifiedAccess>]
     type AttachError = NotFound | Failed of S2Errors.S2Failure
 
-    /// Idempotent by address: a retried create for a live address attaches to the
-    /// existing log under a fresh epoch rather than forking a second stream.
-    val create : S2.Basin -> Codec<'c,'t> -> Address -> Async<Result<Producer<'c,'t>, CreateError>>
+    /// `create` = `Authority.claim` under `holderId`, bound to the address: the
+    /// same identity re-attaches to the live log; a different identity takes it
+    /// over under a new epoch (never forks a second stream). AlreadyLive
+    /// rejection is lifecycle policy (MS-C5), not a mechanism here.
+    val create : S2.Basin -> Codec<'c,'t> -> Address -> Authority.HolderId -> Async<Result<Producer<'c,'t>, CreateError>>
     val append : Producer<'c,'t> -> 'c -> Async<Result<unit, AppendError>>
     val seal   : Producer<'c,'t> -> 't -> Async<Result<unit, AppendError>>
 
     val attach : S2.Basin -> Codec<'c,'t> -> Address -> Async<Result<Attachment<'c,'t>, AttachError>>
-    /// Pull-cursor (canon stream idiom): `Ok (Some c)` per chunk, `Ok None` at the
-    /// terminal. No EffSharp; mirrors `SubjectHistory` cursor reads.
+    /// Pull-cursor (canon stream idiom): blocks-with-wait until the next chunk or
+    /// the seal arrives (the `SubjectHistory.openCursorWithWait` idiom), yielding
+    /// `Ok (Some c)` per chunk and `Ok None` at the terminal. No EffSharp.
     val next     : Attachment<'c,'t> -> Async<Result<'c option, AttachError>>
     /// Resolves once the log is sealed: the terminal record's body.
     val terminal : Attachment<'c,'t> -> Async<Result<'t, AttachError>>
@@ -280,8 +289,9 @@ module Turn =
 Ergonomic sample (the consumer test — usable with no proof-harness knowledge):
 
 ```fsharp
-// Producer: claim → append → seal. `create` is idempotent by address.
-match! DurableLog.create basin Turn.codec (Turn.address s t) with
+// Producer: claim → append → seal. Same holderId re-attaches; a different one
+// takes over. `create` is idempotent per identity.
+match! DurableLog.create basin Turn.codec (Turn.address s t) holderId with
 | Ok producer ->
     let! _ = DurableLog.append producer chunk    // Error AppendError.Deposed if fenced out
     let! _ = DurableLog.seal producer terminal
@@ -305,11 +315,23 @@ Laws (stated here; proven by WP B2 at the generic level):
 - **Fenced single-writer.** At most one holder per epoch; a deposed holder's
   `commit`/`append` fails `Deposed` — it computes but cannot commit
   (`store-object-live-fencing` lineage).
-- **Idempotent claim.** Re-claiming an epoch you already hold returns the same
-  holder; two `create` calls for one address yield one durable log.
+- **Idempotent claim.** `claim subject holderId` while `holderId` still holds
+  the current epoch returns the same `Holder` (idempotent per epoch); a
+  different `holderId` rotates to `epoch + 1` and takes over — the
+  `insertOrGet({subject}/{epoch}, holderId)` shape. `claim` is the sole deposal
+  mechanism.
+- **Create is claim-by-identity.** `create address holderId` on a live address
+  re-attaches for the same identity and takes over (new epoch) for a different
+  one — so two creates for one address yield one durable log, never a fork. An
+  `AlreadyLive` *rejection* is lifecycle policy (MS-C5), never a log mechanism;
+  `session.turn-idempotent-create` is a same-identity re-attach, not a
+  second-create no-op.
 - **Seal is terminal.** First-valid-terminal wins; `commit`/`append`/`seal`
   after seal fail `Sealed`; `attach` after seal replays the full prefix then
   yields the terminal.
+- **Attach tails with wait.** `next` blocks until the next chunk or the seal,
+  then yields `Ok None` at the terminal (the `openCursorWithWait` idiom) — B2's
+  attach proof pins the observed prefix + terminal against this.
 - **Open regime is single-winner.** `admit`/`claim` at an observed tail yields
   exactly one winner; the losers observe the conflict, not the work.
 - **No leaks.** Consumers never see S2 stream names, fence tokens, or seq nums.
