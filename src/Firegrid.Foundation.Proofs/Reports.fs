@@ -1,0 +1,145 @@
+namespace Firegrid.Foundation.Proofs
+
+open Fable.Core
+open Fable.Core.JsInterop
+
+module Reports =
+    let private fs: obj = importAll "node:fs"
+    let private path: obj = importAll "node:path"
+
+    [<Emit("$0.mkdirSync($1, { recursive: true })")>]
+    let private mkdirp (_fs: obj) (_path: string) : unit = jsNative
+
+    [<Emit("$0.writeFileSync($1, $2, 'utf8')")>]
+    let private writeFile (_fs: obj) (_path: string) (_content: string) : unit = jsNative
+
+    [<Emit("$0.readFileSync($1, 'utf8')")>]
+    let private readFile (_fs: obj) (_path: string) : string = jsNative
+
+    [<Emit("$0.appendFileSync($1, $2, 'utf8')")>]
+    let private appendFile (_fs: obj) (_path: string) (_content: string) : unit = jsNative
+
+    [<Emit("$0.join(...$1)")>]
+    let private joinPath (_path: obj) (_parts: string array) : string = jsNative
+
+    [<Emit("$0.dirname($1)")>]
+    let private dirname (_path: obj) (_value: string) : string = jsNative
+
+    [<Emit("JSON.stringify($0)")>]
+    let private stringify (_value: obj) : string = jsNative
+
+    [<Emit("JSON.parse($0)")>]
+    let private parseJson (_value: string) : obj = jsNative
+
+    [<Emit("Date.now()")>]
+    let nowMillis () : float = jsNative
+
+    let join parts = joinPath path (parts |> List.toArray)
+
+    let ensureDir dir = mkdirp fs dir
+
+    let write path content = writeFile fs path content
+
+    let append path content = appendFile fs path content
+
+    let json value = stringify value
+
+    let trialId prefix =
+        sprintf "%s-%d" prefix (int64 (nowMillis ()))
+
+    let traceStore root trialId =
+        let trialRoot = join [ root; trialId ]
+        let tracesRoot = join [ trialRoot; "traces" ]
+        ensureDir tracesRoot
+
+        { TrialId = trialId
+          Root = trialRoot
+          SpansJsonl = join [ tracesRoot; "spans.jsonl" ] }
+
+    let emitSpan (store: TraceStore) name attributes =
+        async {
+            let row =
+                createObj
+                    [ "trial_id" ==> store.TrialId
+                      "service_name" ==> "eff-firegrid-proof-runner"
+                      "host_id" ==> null
+                      "trace_id" ==> ""
+                      "span_id" ==> ""
+                      "parent_span_id" ==> null
+                      "name" ==> name
+                      "kind" ==> "INTERNAL"
+                      "status_code" ==> "OK"
+                      "status_message" ==> null
+                      "start_unix_nanos" ==> string (int64 (nowMillis ()) * 1000000L)
+                      "end_unix_nanos" ==> string (int64 (nowMillis ()) * 1000000L)
+                      "attributes" ==> createObj [ for (key, value) in attributes -> key ==> value ]
+                      "events" ==> [||] ]
+
+            append store.SpansJsonl (json row + "\n")
+        }
+
+    let writePropertyReport (report: PropertyReport) =
+        let faultEvents (faults: FaultEvent list) =
+            faults
+            |> List.map (fun fault ->
+                createObj
+                    [ "faultId" ==> fault.FaultId
+                      "kind" ==> fault.Kind
+                      "target" ==> fault.Target
+                      "signal" ==> Option.toObj fault.Signal
+                      "accepted"
+                      ==> match fault.Accepted with
+                          | Some accepted -> box accepted
+                          | None -> null
+                      "operationIndex" ==> fault.OperationIndex ])
+            |> List.toArray
+
+        let checks =
+            report.Checks
+            |> List.map (fun check ->
+                createObj
+                    [ "name" ==> check.Name
+                      "passed" ==> check.Passed
+                      "message" ==> Option.toObj check.Message ])
+            |> List.toArray
+
+        let negativeControls =
+            report.NegativeControls
+            |> List.map (fun control ->
+                createObj
+                    [ "name" ==> control.Name
+                      "passed" ==> control.Passed
+                      "expectedFailure" ==> Option.toObj control.ExpectedFailure
+                      "failedChecks" ==> List.toArray control.FailedChecks
+                      "faults" ==> faultEvents control.Faults
+                      "message" ==> Option.toObj control.Message ])
+            |> List.toArray
+
+        let body =
+            createObj
+                [ "proof" ==> report.ProofName
+                  "property" ==> report.PropertyName
+                  "trialId" ==> report.TrialId
+                  "status" ==> if report.Passed then "passed" else "failed"
+                  "workloadFailed" ==> report.WorkloadFailed
+                  "faults" ==> faultEvents report.Faults
+                  "checks" ==> checks
+                  "negativeControls" ==> negativeControls
+                  "replayCommand" ==> report.ReplayCommand
+                  "reportPath" ==> report.ReportPath ]
+
+        ensureDir (dirname path report.ReportPath)
+        write report.ReportPath (json body + "\n")
+
+    let readReplaySpec reportPath =
+        let report = readFile fs reportPath |> parseJson
+        let proofName: string = report?proof
+        let propertyName: string = report?property
+        let trialId: string = report?trialId
+        let replayCommand: string = report?replayCommand
+
+        { ReportPath = reportPath
+          ProofName = proofName
+          PropertyName = propertyName
+          TrialId = trialId
+          ReplayCommand = replayCommand }

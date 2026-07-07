@@ -1,0 +1,18 @@
+{
+  "name": "@firegrid/foundation-proofs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet tool run fable -- Firegrid.Foundation.Proofs.fsproj -o dist --optimize --noCache --noRestore",
+    "diagnostics": "echo '@firegrid/foundation-proofs diagnostics are covered by F# compile'",
+    "lint": "echo '@firegrid/foundation-proofs lint is covered by F# compile'",
+    "test": "pnpm run typecheck",
+    "typecheck": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet build Firegrid.Foundation.Proofs.fsproj -v:q"
+  },
+  "dependencies": {
+    "@firegrid/store": "workspace:*",
+    "@s2-dev/streamstore": "0.24.1",
+    "chdb": "^3.1.0"
+  }
+}
