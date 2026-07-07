@@ -548,6 +548,247 @@ wake streams, a `readSession`-tailed router with a durable cursor, and a folded
 timer index in front of the existing sweep semantics. Sweeps remain as the
 degraded-mode contract and their proofs stay green.
 
+Decision (made here): a wake record is a **pointer, never a payload** — it names
+the subject to drive and *why* (`WakeReason`), and nothing else. The triggering
+message, timer payload, or child terminal already lives durably on the subject's
+own mailbox/log; the shard stream carries no state a reader would otherwise miss.
+Consequence: losing every wake on a shard degrades *latency* to the sweep floor,
+never *correctness* — the router is an accelerator in front of the sweep, not a
+new source of truth. Alternative (wake carries the message body, so a drive skips
+re-reading the mailbox) rejected: it forks state across two logs and makes the
+wake path correctness-load-bearing.
+
+Decision (made here): leadership is the `Authority` **FencedOwner** regime (I5,
+WP B1) applied to the shard subject — exactly one live router per shard, deposal
+by epoch increment. C1 does **not** invent a shard-lease or a third fence idiom;
+the router's `claim` is an `Authority.claim` instance, and the durable cursor is
+the `Mailbox` fenced-checkpoint pattern (P3's `MailboxCheckpoint` lineage), not a
+bespoke offset store.
+
+Target Surface (F# — WP C1; gate G6 + G1 sign-off pending):
+
+The wake path is the actor reading of MS-C3 from
+[`../canon/architecture/fluent/authority-and-actors.md`](../canon/architecture/fluent/authority-and-actors.md):
+**a wake shard is a shard-granularity mailbox, and the router is its actor — its
+mailbox IS the shard stream.** It factors into two generic F# modules in the
+durable-kernel package, co-located with and composed from the P3-ported
+`Processor`/`Mailbox` and the B1 `Authority` protocol (I5), reusing the kernel's
+one pointer vocabulary (`ActorAddress`, `WakeReason`) rather than minting a
+parallel one:
+
+- **`WakeShard`** — the frozen cross-lane interface **I3**: the wake-record
+  schema (`{ Subject; Reason }`) and the deterministic shard naming
+  (`subject → shard → stream`). Consumed by B3 (lifecycle wakes) and future
+  temporal features; changing the record schema *or* the naming scheme is a G1
+  gate.
+- **`WakeRouter`** — the tail-driven actor: claim the shard (FencedOwner), tail
+  the stream with wait, dispatch each fresh wake to its target exactly once, and
+  advance a fenced durable cursor. A binding/combinator over
+  `Authority` + `Mailbox` + `Processor`, not a new drive loop.
+
+C1 depends on P1 only (ledger). This is a **sequencing** rule, not a fence
+fallback: C1's implementation builds the **pure core** immediately (`WakeShard`,
+`codec`, `shardOf`, `plan` — none of which touch `Authority`); the **shell**
+(`tick`/`run`) compiles only once B1's `Authority` implementation is merged.
+(B1-IMPL is now merged to `main`, so the shell is unblocked — but this remains
+the documented rule.) The router **never** ships a raw-fence variant: if B1 were
+ever unmerged when the shell is ready, C1 pauses and reports rather than
+re-introducing the parallel fence idiom this surface bans. C2's
+`wake.single-claim` election drives through `Authority.claim` (FencedOwner),
+exactly as A1/A2 route checkpoint election through `Authority.admit`.
+
+```fsharp
+// namespace Firegrid.Store.Foundation.Durable — the actor kernel (Processor/Mailbox lineage).
+// open Firegrid.Foundation                     // SubjectHistory (P2), Authority (I5, B1)
+// Reuses the kernel's pointer vocabulary: ActorAddress, WakeReason (Processor.fs).
+// Deps passed in (sans-IO shell): S2.Basin + Authority + the Mailbox cursor pattern. No EffSharp.
+
+module WakeShard =
+    /// I3 — a shard identifier: 0 <= id < Count. Shards partition the subject
+    /// space so exactly one router tails each shard's stream.
+    type ShardId = ShardId of int
+    /// I3 — fixed deployment parameter: how many shard streams exist under a
+    /// namespace. Resharding (changing Count) is a canon non-goal (no rebalancing
+    /// protocol); a Count change is an operational migration, out of C1 scope.
+    type ShardConfig = { Namespace: string; Count: int }
+
+    /// I3 — the wake record: a POINTER, never a payload. `Subject` is the actor to
+    /// drive; `Reason` is why. Reason reuses the kernel `WakeReason`
+    /// (MailboxReady | TimerFired | ChildTerminal) so there is ONE wake
+    /// vocabulary, not two. Changing this shape is a G1 gate.
+    type WakeRecord = { Subject: ActorAddress; Reason: WakeReason }
+
+    /// Codec for the shard stream. Records are open-appended by any poster. The
+    /// shard stream NEVER seals — it is an open-append mailbox forever, with no
+    /// terminal record; do not import B1 `DurableLog`'s seal semantics onto the
+    /// wake path by analogy (a wake shard has no lifecycle end).
+    val codec : SubjectHistory.Codec<WakeRecord>
+
+    /// I3 — stable, deployment-independent mapping subject → shard. Pinned in full
+    /// so any later change is a visible G1 reshard, never a silent one:
+    ///   key   = UTF-8 bytes of `String.concat "/" subject.Segments`
+    ///   hash  = FNV-1a, 32-bit, read UNSIGNED (offset basis 2166136261u,
+    ///           prime 16777619u, each step `(h ^^^ byte) * prime` wrapping mod 2^32)
+    ///   shard = ShardId (int (hash % uint32 Count))
+    /// Branch-free, no BigInt, no BCL hashing (never `Object.GetHashCode`) — so it
+    /// is bit-identical across the .NET host and P4's Fable→TS emit. Same subject →
+    /// same shard for a fixed `Count`. No existing `src/` helper to cite; C1
+    /// introduces this pinned function as part of I3.
+    val shardOf : ShardConfig -> ActorAddress -> ShardId
+    /// I3 — derived (never random) shard-stream subject: `"{ns}/wake/{shardId}"`.
+    val shardSubject : ShardConfig -> ShardId -> SubjectHistory.SubjectId
+    /// Convenience: the shard stream a subject's wakes land on (`shardOf` then
+    /// `shardSubject`).
+    val subjectShard : ShardConfig -> ActorAddress -> SubjectHistory.SubjectId
+
+    /// Post a wake for `subject`: open-append the pointer to its shard stream (the
+    /// router's mailbox). ANY process may post — the shard stream is an
+    /// open-append mailbox; delivery to the target is the router's job. Dedupe is
+    /// the router's cursor + idempotent drive, not the poster's concern; N posts
+    /// for one subject cost at most N idempotent drives.
+    val post :
+        S2.Basin -> ShardConfig -> subject: ActorAddress -> WakeReason
+            -> Async<Result<unit, S2Errors.S2Failure>>
+
+module WakeRouter =
+    /// The consumed prefix of this router's shard stream as an EXCLUSIVE upper
+    /// bound (the house `Version` convention): `NextSeq` is the next sequence to
+    /// dispatch — every `Seq < NextSeq` is already dispatched, so a fresh router
+    /// resumes AT `NextSeq` and re-dispatches nothing. Committed as a fenced record
+    /// on the router's own cursor log (the `MailboxCheckpoint` pattern), folded on
+    /// claim to resume tailing — no resident memory, no re-drive of the prefix.
+    type Cursor = { Shard: WakeShard.ShardId; NextSeq: SubjectHistory.Seq }
+
+    /// The drive dependency (sans-IO seam): "ensure subject S is claimed and
+    /// ticked for reason R." The router core decides WHICH subjects to dispatch
+    /// and in what order; the shell performs the drive (a `Processor` tick on the
+    /// target). Injected so the core stays pure/deterministic and C2's proofs can
+    /// substitute a recording driver. The drive is idempotent by the target's own
+    /// claim: driving an already-current subject is a no-op tick.
+    type Drive = ActorAddress -> WakeReason -> Async<Result<unit, string>>
+
+    [<RequireQualifiedAccess>]
+    type RouterError =
+        | ClaimFailed of Authority.ClaimError
+        | Deposed of by: Authority.Epoch        // a newer epoch took the shard; step aside
+        | ReadFailed of S2Errors.S2Failure
+        | DecodeFailed of seqNum: int64 * error: string
+        | DriveFailed of ActorAddress * error: string
+        | CursorCommitFailed of S2Errors.S2Failure
+
+    /// Pure decision core (sans-IO): given the current cursor and a batch of wake
+    /// records read from the shard tail, produce the ordered dispatch list and the
+    /// advanced cursor. Deterministic — no clock, no I/O. Skips `Seq < NextSeq`
+    /// STRICTLY (already dispatched); the advanced cursor's `NextSeq` is the last
+    /// dispatched `Seq + 1` (exclusive upper bound). C2's `wake.timer-exactly-once`
+    /// pins this boundary.
+    val plan :
+        Cursor -> batch: (SubjectHistory.Seq * WakeRecord) list
+            -> dispatch: (ActorAddress * WakeReason) list * next: Cursor
+
+    /// One claimed tick: claim the shard (FencedOwner), fold the cursor, read the
+    /// shard tail with wait, `plan` the fresh dispatches, drive each, then commit
+    /// the advanced cursor under the fence. Blocks-with-wait for the next wake (the
+    /// `SubjectHistory.openCursorWithWait` idiom) so an appended wake reaches
+    /// dispatch without a poll interval. Returns `Deposed` if a newer epoch rotated
+    /// the fence at commit — the deposed router computed but could not advance.
+    val tick :
+        S2.Basin -> ShardConfig -> WakeShard.ShardId -> Authority.HolderId -> Drive
+            -> Async<Result<Cursor, RouterError>>
+
+    /// Run the router loop until deposed or the async is cancelled: claim once,
+    /// then `tick` continuously, tailing the stream. Degraded mode: if no router
+    /// runs a shard, the existing sweep still drives the work — wakes accelerate,
+    /// sweeps guarantee (the liveness invariant: at least one live host per shard;
+    /// no substrate push).
+    val run :
+        S2.Basin -> ShardConfig -> WakeShard.ShardId -> Authority.HolderId -> Drive
+            -> Async<Result<unit, RouterError>>
+```
+
+Ergonomic sample (the consumer test — usable with no proof-harness knowledge):
+
+```fsharp
+// Producer side (e.g. B3 lifecycle): post a wake — a pointer, not a payload.
+// Any process may post; the subject's mailbox/log already holds the real state.
+let! _ = WakeShard.post basin shardCfg subject WakeReason.MailboxReady
+
+// Router side: `drive` claims + ticks the target actor (supplied by the host;
+// idempotent, so a replayed dispatch is a harmless no-op tick).
+let drive : WakeRouter.Drive =
+    fun target reason -> driveSubjectActor basin target reason
+
+// Run the shard the subject maps to. One live router per shard (FencedOwner).
+match! WakeRouter.run basin shardCfg (WakeShard.shardOf shardCfg subject) holderId drive with
+| Ok () -> ()                                        // ran until cancelled
+| Error (WakeRouter.RouterError.Deposed _) -> ()     // a newer epoch owns the shard; step aside
+| Error _ -> ()                                      // transient; the sweep still covers the work
+```
+
+Laws (stated here; all three proofs land in **WP C2** — C1 ships the shard
+stream + tailed router + durable cursor, not the timer index or these proofs):
+
+- **Wake is a pointer, not a payload.** A `WakeRecord` carries only
+  `Subject + Reason`; the triggering state stays on the subject's own
+  mailbox/log. A drive re-reads that state, so a wake never duplicates truth and
+  redundant wakes coalesce (N wakes → at most N idempotent drives, each observing
+  all pending state).
+- **Single live router per shard** (`wake.single-claim`, C2). Two routers tailing
+  one shard: `Authority.claim` (FencedOwner) yields exactly one live holder; the
+  loser is `Deposed` and can neither dispatch nor advance the cursor. It observes
+  the claim, not the work — the `store-object-live-fencing` lineage applied to a
+  shard.
+- **Durable cursor / effectively-exactly-once dispatch**
+  (`wake.timer-exactly-once`, C2). The cursor is a fenced checkpoint with
+  `NextSeq` an exclusive upper bound; `plan` skips `Seq < NextSeq` strictly and
+  advances `NextSeq` to the last dispatched `Seq + 1`. A restart resumes from the
+  committed cursor — undispatched wakes are not dropped and dispatched wakes are
+  not re-flooded (bounded replay of at most the in-flight batch). Dispatch is
+  at-least-once with an idempotent drive, so a due timer fires effectively
+  exactly once across a router restart; a not-yet-posted timer survives unfired.
+- **Tail latency, no poll** (`wake.tail-latency`, C2). `tick` blocks-with-wait on
+  the shard tail (`openCursorWithWait`), so an appended wake reaches its claimed
+  handler within a bound *asserted from trace evidence in the proof* (bound
+  recorded there, not in prose).
+- **Degraded mode is the sweep.** No live router for a shard ⇒ work still drives
+  via the existing sweep (`store-runtime-timer-sweep`,
+  `store-runtime-schedule-sweep` stay green). Wakes are a latency accelerator in
+  front of the sweep, never its replacement; the RFC liveness statement (≥1 live
+  host per shard; no substrate push) is the floor.
+- **Deterministic sharding.** `shardOf` is the pinned FNV-1a-32 over the UTF-8
+  address key, mod `Count` (above); same subject → same shard for a fixed
+  `Count`, bit-identical on .NET and Fable→TS. Resharding is a canon non-goal.
+- **No leaks.** Consumers see `ActorAddress` / `WakeReason` / `ShardId` — never S2
+  stream names, fence tokens, seq nums, or the cursor subject.
+
+Scope guard (both directions): C1 delivers the **shard wake stream + tailed
+router + durable cursor** only. The **folded timer index** (what decides *when* a
+`TimerFired` wake is posted) and the three named proofs are **WP C2** — C1 posts
+and routes timer wakes but does not build the wheel. No shard manager, no
+rebalancing, no resident actor processes, no location directory, no distributed
+liveness clock (the canon non-goals) — `Count` is a fixed deployment parameter,
+addressing is naming, activation is claiming. The router reuses `Authority` (I5)
+leadership, the `Mailbox` fenced cursor, and the `Processor` drive; it is a
+binding, not a new fence idiom or a second drive loop. Wakes never become the
+sole correctness path — the sweep stays the floor. (Deferred, recorded: the shard
+stream's consumed prefix grows unbounded; its trimming rides A-lane
+checkpoint+trim behind the router's committed cursor later — the A1
+sidecar-compaction precedent — and is out of C1 scope.)
+
+Validation Gates (F#-zone, G6 — per
+[`fsharp-fable-effsharp-evaluation-sdd.md`](./fsharp-fable-effsharp-evaluation-sdd.md)):
+
+- **Native shapes, EffSharp-free.** `Async` + `Result` + DU errors + `Codec`
+  records + a pure `plan`/`shardOf` core — no EffSharp (per the 2026-07-06
+  deprecation), so the package-level EffSharp decision is "none, nothing new."
+- **Ergonomic sample** above passes the consumer test — a host wires `post` and a
+  `Drive`, with no proof-harness knowledge.
+- **Works-without-EffSharp** is inherent (nothing introduced). **Emitted-TS
+  sample + Fable build check** ride P4's Fable→TS facade; the surface is
+  Fable-safe by construction — `shardOf` is a content hash (no BCL-only
+  `GetHashCode`), and it adds no API beyond what `SubjectHistory`/`Mailbox`
+  already emit.
+
 Proof obligations:
 
 - `wake.tail-latency` — an appended wake reaches its claimed handler within a
