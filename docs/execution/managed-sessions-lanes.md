@@ -99,7 +99,7 @@ Everything else is lane-owner discretion.
 | B2 | B | Turn attach / crash-terminal / idempotent-create proofs | MS-C2 | B1 | open | — | — |
 | B3 | B | Lifecycle authority: claim, durable cancel, timeouts + proofs | MS-C5 | B1 | open | — | — |
 | B4 | B | Fenced native-resume-artifact store + proof | MS-C5 | B1 | open | — | — |
-| C1 | C | Shard wake stream + tailed router with durable cursor | MS-C3 | P1 | open | — | — |
+| C1 | C | Shard wake stream + tailed router with durable cursor | MS-C3 | P1 | in-progress | Claude (C lane) | — |
 | C2 | C | Folded timer index; latency + single-claim + exactly-once proofs | MS-C3 | C1 | open | — | — |
 | D1 | D | L1 vocabulary decision record + schema (**gate G2**) | MS-C6 | — | open | — | — |
 | D2 | D | Adapter contract + fixture-replay proof harness | MS-C6 | D1 | open | — | — |
