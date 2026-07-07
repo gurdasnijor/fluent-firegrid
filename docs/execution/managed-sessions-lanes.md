@@ -93,7 +93,7 @@ Everything else is lane-owner discretion.
 | A2 | A | Checkpoint-race + trim-safety proofs | MS-C1 | A1 | open | — | — |
 | A3 | A | StateView strong/eventual reads exposed at the seam + proof | MS-C4 | P2 | open | — | — |
 | A4 | A | Session history fold + thread-index projection + proofs | MS-C4 | A1, B1 | open | — | — |
-| B1 | B | Turn stream module: naming, fenced append, terminal+close, attach | MS-C2 | P2 | open | — | — |
+| B1 | B | `Authority` protocol module (I5) + `DurableLog` (SubjectHistory + Authority + seal) + turn binding | MS-C2 | P2 | open | — | — |
 | B2 | B | Turn attach / crash-terminal / idempotent-create proofs | MS-C2 | B1 | open | — | — |
 | B3 | B | Lifecycle authority: claim, durable cancel, timeouts + proofs | MS-C5 | B1 | open | — | — |
 | B4 | B | Fenced native-resume-artifact store + proof | MS-C5 | B1 | open | — | — |
@@ -141,9 +141,14 @@ non-negotiable convention).
 
 ### Lane B — Turn Streams + Lifecycle (MS-C2, MS-C5)
 
-The managed-session storage and authority primitives. B1 defines the
-turn-stream record schema and naming — this is cross-lane interface I1, so its
-PR needs architect sign-off (G1) before B2–B4 and Lane E build on it. The
+The managed-session storage and authority primitives, per the actor
+composition in
+[`../canon/architecture/fluent/authority-and-actors.md`](../canon/architecture/fluent/authority-and-actors.md):
+B1's generic core is the `Authority` protocol (I5) — claim, epoch deposal,
+seal — with `DurableLog` as SubjectHistory + Authority + seal and Turn as a
+pure binding. B1 defines both I5 and the turn-stream schema (I1), so its
+surface PR needs architect sign-off (G1) before B2–B4 and Lane E build on it.
+Cancel in B3 is a mailbox send, not a bespoke control channel. The
 deposed-producer proof should extend the technique in
 `store-object-live-fencing.ts` (two process hosts, real kill).
 
@@ -181,6 +186,10 @@ so. F1 is high-leverage and unblocked today.
 
 Changes to any of these require gate G1:
 
+- **I5 — `Authority` protocol** (B1). Claim/epoch-deposal/seal over a subject;
+  consumed by B3 (lifecycle), C1 (router leadership), A2 (checkpoint
+  election). See
+  [`../canon/architecture/fluent/authority-and-actors.md`](../canon/architecture/fluent/authority-and-actors.md).
 - **I1 — Generic `DurableLog` surface + Turn binding schema** (B1). The
   generic sealed-log API and the turn address/chunk/terminal schemas bound to
   it. Consumed by Lanes A (history fold), D (adapter emits into turns), E

@@ -166,7 +166,12 @@ record schema reserves the reference shape now.
 Target Surface (exemplar — refined by WP B1 under gate G6):
 
 The generic primitive is the *stream half* of the table/stream duality — a
-sealed, single-writer, schema-coded durable log. Turn is a domain **binding**
+sealed, single-writer, schema-coded durable log. Its authority mechanics
+(claim, epoch deposal, seal) are a separate generic module, `Authority`
+(interface I5), per
+[`../canon/architecture/fluent/authority-and-actors.md`](../canon/architecture/fluent/authority-and-actors.md) —
+B3, C1, and A2 consume the same protocol instead of hand-rolling fence/CAS
+usage per lane. Turn is a domain **binding**
 of it (an address scheme plus chunk/terminal schemas), not a new API. The
 *table half* is Lane A's checkpointed fold/`StateView` (prior art:
 firegrid's `effect-durable-operators` `DurableTable` — collections with
