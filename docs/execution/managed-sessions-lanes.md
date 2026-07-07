@@ -101,7 +101,7 @@ Everything else is lane-owner discretion.
 | E3 | E | agent-ui M3: history/threads as projections (**gate G4**) | MS-M3 | A2, A4, E2 | open | — | — |
 | E4 | E | agent-ui M4: event loop becomes adapter (**gate G4**) | MS-M4 | D3, E3 | open | — | — |
 | E5 | E | agent-ui M5: soak week + second-harness smoke | MS-M5 | E4, C2 | open | — | — |
-| F1 | F | Conformance bridge: number existing invariants ↔ green proofs | RFC | — | open | — | — |
+| F1 | F | Conformance bridge: number existing invariants ↔ green proofs | RFC | — | in-progress | Codex | — |
 | F2 | F | Per-capability invariant additions (rolling, one PR per capability) | RFC | F1 | open | — | — |
 | F3 | F | Resolve `fireline` profile-suffix naming before D-lane cites it | RFC | — | open | — | — |
 
