@@ -42,6 +42,7 @@
     <Compile Include="Foundation/Durable/Processor.fs" />
     <Compile Include="Foundation/Durable/WakeShard.fs" />
     <Compile Include="Foundation/Durable/WakeRouter.fs" />
+    <Compile Include="Foundation/Durable/TimerIndex.fs" />
     <Compile Include="Foundation/Durable/TimerAdapter.fs" />
     <Compile Include="Foundation/Durable/Host.fs" />
     <Compile Include="Foundation/Durable/Runtime.fs" />

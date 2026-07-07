@@ -739,10 +739,18 @@ stream + tailed router + durable cursor, not the timer index or these proofs):
   redundant wakes coalesce (N wakes → at most N idempotent drives, each observing
   all pending state).
 - **Single live router per shard** (`wake.single-claim`, C2). Two routers tailing
-  one shard: `Authority.claim` (FencedOwner) yields exactly one live holder; the
-  loser is `Deposed` and can neither dispatch nor advance the cursor. It observes
-  the claim, not the work — the `store-object-live-fencing` lineage applied to a
-  shard.
+  one shard: `Authority.claim` (FencedOwner) yields exactly one live holder;
+  **exactly one router advances the cursor** — the single-writer durable
+  authority. The loser's fenced cursor commit fails `Deposed`, so it **cannot
+  advance the cursor**. Dispatch is **at-least-once with an idempotent drive**: a
+  not-yet-aware deposed holder may perform at most one **harmless redundant
+  re-drive** before its fenced commit reveals the deposal — harmless because the
+  target's own claim makes a re-drive a no-op tick (the canon's *"a stale holder
+  may compute but cannot commit"*). The `store-object-live-fencing` lineage
+  applied to a shard's durable cursor. *(Reworded from "can neither dispatch nor
+  advance the cursor" — architect-approved C2 Option A, PR #110: the merged C1
+  router is drive-then-commit, so the guarantee is single-writer on the cursor +
+  idempotent-at-least-once dispatch, not "no dispatch by a deposed holder.")*
 - **Durable cursor / effectively-exactly-once dispatch**
   (`wake.timer-exactly-once`, C2). The cursor is a fenced checkpoint with
   `NextSeq` an exclusive upper bound; `plan` skips `Seq < NextSeq` strictly and
@@ -813,8 +821,11 @@ Proof obligations:
 
 - `wake.tail-latency` — an appended wake reaches its claimed handler within a
   bound asserted from trace evidence (bound recorded in the proof, not prose).
-- `wake.single-claim` — two routers tailing the same shard: exactly one claims
-  a given wake; the loser observes the claim, not the work.
+- `wake.single-claim` — two routers tailing the same shard: exactly one advances
+  the cursor (the single-writer durable authority) via `Authority.claim`; the
+  loser's fenced commit fails `Deposed`. Dispatch is at-least-once with an
+  idempotent drive, so a deposed holder's at-most-one redundant re-drive is
+  harmless.
 - `wake.timer-exactly-once` — a due timer fires exactly once across a router
   restart; a not-yet-due timer survives the restart unfired.
 
@@ -2022,6 +2033,28 @@ merged / LOC deleted.
   and the three `wake.*` proofs (`wake.tail-latency`, `wake.single-claim`,
   `wake.timer-exactly-once`); shard-stream retention rides A-lane
   checkpoint+trim.
+- **C2 / MS-C3 — folded timer index + wake.* proofs (WP C2).** Shipped
+  `TimerIndex` (`src/Firegrid.Store/Foundation/Durable/TimerIndex.fs`): a durable
+  open-append timer log (`Armed`/`Fired`) whose pure fold (`apply`/`pending`/`due`)
+  materialises the pending set; `fireDue now` posts a `TimerFired` wake for each
+  due timer **through the public `WakeShard.post`** (no deep imports) and records
+  it `Fired`. Firing is at-least-once with the router's idempotent drive; a
+  not-yet-due timer is left armed; `now` is passed in as data (sans-IO). The three
+  MS-C3 proof obligations are green in `Firegrid.Foundation.Proofs`
+  (`FoundationWakePathProof.fs`, proof `wake.path`), driven entirely through the
+  public `WakeShard`/`WakeRouter`/`TimerIndex` surface with the injected `Drive`
+  seam as the observability hook: `wake.tail-latency` (post→dispatch within a
+  recorded `<=3000ms` bound emitted as trace evidence), `wake.single-claim` (two
+  S2 clients over one `s2Lite`; a rival router takes over mid-drive so the first's
+  fenced cursor commit fails `Deposed` — exactly one advances the cursor; both
+  drove the one wake, the deposed holder's re-drive idempotent — the approved
+  Option A law, PR #110), and `wake.timer-exactly-once` (a due timer fires once
+  across a router restart; a not-yet-due timer survives unfired; a poison record
+  is consumed and skipped — cursor passes it, later wakes dispatch, restart neither
+  re-dispatches nor re-wedges; a wake at the committed cursor survives a restart
+  undropped and a poison at that boundary recovers — the last-scanned+1 exclusive
+  upper bound). Conformance rows INV-031/032/033 added (INV-030 taken by B4).
+  MS-C3 complete; unblocks MS-M5 timer/approval features.
 - **MS-C6 / WP D3 — Claude Agent SDK adapter.** Shipped `@firegrid/claude-adapter`
   (`packages/claude-adapter`): a concrete `HarnessAdapter` over the D2 contract
   that lowers Claude Agent SDK transcripts into L1 records (I2). The pure
