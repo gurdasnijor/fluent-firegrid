@@ -92,7 +92,7 @@ Everything else is lane-owner discretion.
 | P4 | P | Fable→TS emission + idiomatic TS facade for `Firegrid.Log`; re-point substrate proofs from `upstream-sdk` to `firegrid-log` driver | canon: language-and-targets | P1, F4 | done | Codex | #87 |
 | P5 | P | Remove EffSharp from `Firegrid.Log`/`Store`/`Foundation.Proofs`; delete private NuGet feed | canon: language-and-targets | P4 | done | Codex | #89 |
 | A1 | A | Checkpointed fold: snapshot record + rebuild | MS-C1 | P2 | done | Claude (A lane) | #96 |
-| A2 | A | Checkpoint-race + trim-safety proofs | MS-C1 | A1 | in-progress | Claude (A lane) | — |
+| A2 | A | Checkpoint-race + trim-safety proofs | MS-C1 | A1 | in-review | Claude (A lane) | #101 |
 | A3 | A | StateView strong/eventual reads exposed at the seam + proof | MS-C4 | P2 | open | — | — |
 | A4 | A | Session history fold + thread-index projection + proofs | MS-C4 | A1, B1 | open | — | — |
 | B1 | B | `Authority` protocol module (I5) + `DurableLog` (SubjectHistory + Authority + seal) + turn binding — surface (G6/G1 approved) | MS-C2 | P2 | done | Claude (B lane) | #92, #98 |
