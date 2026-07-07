@@ -61,8 +61,9 @@ Escalate to the architect (do not proceed) when a WP requires:
 
 - G1 — Changing a cross-lane interface (below) or any record schema another
   lane consumes.
-- G2 — The MS-C6 L1 vocabulary decision (Lane D start; default position is an
-  ACP session-update superset — confirm before building on it).
+- G2 — **Decided 2026-07-06**: L1 vocabulary is an ACP session-update
+  superset — see the decision record in the SDD's MS-C6 section. Deviations
+  from it re-open the gate.
 - G3 — Adding or weakening an RFC invariant.
 - G4 — Any agent-ui production deploy (Lane E milestones; flag-gated with a
   revert path, per SDD).
@@ -81,7 +82,7 @@ Everything else is lane-owner discretion.
 | WP | Lane | Title | SDD ref | Deps | Status | Owner | PR |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | P1 | P | Port eff-firegrid `src/S2` (later rev); supersede `Firegrid.Log/S2` scaffold | canon: language-and-targets | — | done | Codex | #81 |
-| P2 | P | Port `SubjectHistory`/`StateView`/`KvStore` + their F# proofs | canon: language-and-targets | P1 | in-review | Codex | #82 |
+| P2 | P | Port `SubjectHistory`/`StateView`/`KvStore` + their F# proofs | canon: language-and-targets | P1 | done | Codex | #82 |
 | P3 | P | Port `Foundation/Durable` kernel + F# proofs; audit sans-IO core/shell split | canon: language-and-targets | P2 | open | — | — |
 | A1 | A | Checkpointed fold: snapshot record + rebuild | MS-C1 | P2 | open | — | — |
 | A2 | A | Checkpoint-race + trim-safety proofs | MS-C1 | A1 | open | — | — |
@@ -101,9 +102,10 @@ Everything else is lane-owner discretion.
 | E3 | E | agent-ui M3: history/threads as projections (**gate G4**) | MS-M3 | A2, A4, E2 | open | — | — |
 | E4 | E | agent-ui M4: event loop becomes adapter (**gate G4**) | MS-M4 | D3, E3 | open | — | — |
 | E5 | E | agent-ui M5: soak week + second-harness smoke | MS-M5 | E4, C2 | open | — | — |
-| F1 | F | Conformance bridge: number existing invariants ↔ green proofs | RFC | — | in-review | Codex | #83 |
+| F1 | F | Conformance bridge: number existing invariants ↔ green proofs | RFC | — | done | Codex | #83 |
 | F2 | F | Per-capability invariant additions (rolling, one PR per capability) | RFC | F1 | open | — | — |
 | F3 | F | Resolve `fireline` profile-suffix naming before D-lane cites it | RFC | — | open | — | — |
+| F4 | F | CI runs both proof suites as blocking checks (`apps/proofs` TS + `Firegrid.Foundation.Proofs` F#); conformance evidence flips to ci-green | SDD binding rule | — | open | — | — |
 
 ## Lanes
 
