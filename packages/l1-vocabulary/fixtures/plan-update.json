@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "name": "plan-update",
+  "description": "A plan emitted then revised; the later plan replaces the earlier one.",
+  "notes": "plan is last-write-wins in the base fold.",
+  "records": [
+    { "sessionUpdate": "agent_message_chunk", "messageId": "a1", "content": { "type": "text", "text": "Here's my plan." } },
+    { "sessionUpdate": "plan", "entries": [ { "content": "Explore", "priority": "high", "status": "in_progress" }, { "content": "Implement", "priority": "medium", "status": "pending" } ] },
+    { "sessionUpdate": "plan", "entries": [ { "content": "Explore", "priority": "high", "status": "completed" }, { "content": "Implement", "priority": "medium", "status": "in_progress" } ] }
+  ]
+}

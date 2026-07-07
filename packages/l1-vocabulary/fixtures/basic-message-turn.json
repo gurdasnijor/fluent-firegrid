@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "name": "basic-message-turn",
+  "description": "A prompt, an interleaved thought, and a streamed assistant reply — the minimal message/thought fold.",
+  "notes": "Two agent_message_chunk records share messageId a1 and concatenate into one assistant message; the thought chunk folds into the separate thought list, never into message text.",
+  "records": [
+    { "sessionUpdate": "user_message_chunk", "messageId": "u1", "content": { "type": "text", "text": "Summarize the repo." } },
+    { "sessionUpdate": "agent_thought_chunk", "messageId": "t1", "content": { "type": "text", "text": "Let me think " } },
+    { "sessionUpdate": "agent_thought_chunk", "messageId": "t1", "content": { "type": "text", "text": "about the structure." } },
+    { "sessionUpdate": "agent_message_chunk", "messageId": "a1", "content": { "type": "text", "text": "Here is a summary: " } },
+    { "sessionUpdate": "agent_message_chunk", "messageId": "a1", "content": { "type": "text", "text": "the repo has two zones." } }
+  ]
+}

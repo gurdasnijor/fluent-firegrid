@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "name": "tool-call-lifecycle",
+  "description": "A tool call progressing pending -> in_progress -> completed via tool_call_update, merged by toolCallId.",
+  "notes": "The three records for call_1 fold into a single tool call whose latest status wins and whose content accumulates.",
+  "records": [
+    { "sessionUpdate": "agent_message_chunk", "messageId": "a1", "content": { "type": "text", "text": "Reading the file now." } },
+    { "sessionUpdate": "tool_call", "toolCallId": "call_1", "title": "Read config", "kind": "read", "status": "pending", "rawInput": { "path": "config.toml" } },
+    { "sessionUpdate": "tool_call_update", "toolCallId": "call_1", "status": "in_progress" },
+    { "sessionUpdate": "tool_call_update", "toolCallId": "call_1", "status": "completed", "content": [ { "type": "content", "content": { "type": "text", "text": "port=8080" } } ], "rawOutput": { "port": 8080 } }
+  ]
+}

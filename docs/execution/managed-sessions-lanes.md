@@ -101,7 +101,7 @@ Everything else is lane-owner discretion.
 | B4 | B | Fenced native-resume-artifact store + proof | MS-C5 | B1 | open | — | — |
 | C1 | C | Shard wake stream + tailed router with durable cursor | MS-C3 | P1 | open | — | — |
 | C2 | C | Folded timer index; latency + single-claim + exactly-once proofs | MS-C3 | C1 | open | — | — |
-| D1 | D | L1 vocabulary decision record + schema (**gate G2**) | MS-C6 | — | open | — | — |
+| D1 | D | L1 vocabulary decision record + schema (**gate G2**) | MS-C6 | — | done | Claude (D lane) | #97 |
 | D2 | D | Adapter contract + fixture-replay proof harness | MS-C6 | D1 | open | — | — |
 | D3 | D | Claude Agent SDK adapter (subagent scoping, usage facts) + proofs | MS-C6 | D2 | open | — | — |
 | E1 | E | agent-ui M1: attach replaces resumable store (**gate G4**) | MS-M1 | B2 | open | — | — |

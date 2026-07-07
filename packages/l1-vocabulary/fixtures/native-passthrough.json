@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "name": "native-passthrough",
+  "description": "A firegrid/native passthrough record and a foreign (non-base ACP) variant interleaved with base records.",
+  "notes": "firegrid/native carries harness-specific data; available_commands_update is a real ACP variant outside the G2 base set and classifies as foreign. Both are preserved verbatim and ignored by the base fold, demonstrating forward-compatibility.",
+  "records": [
+    { "sessionUpdate": "agent_message_chunk", "messageId": "a1", "content": { "type": "text", "text": "Working." } },
+    { "sessionUpdate": "firegrid/native", "harness": "claude-agent-sdk", "nativeType": "system_init", "payload": { "cwd": "/repo", "permissionMode": "default" } },
+    { "sessionUpdate": "available_commands_update", "availableCommands": [ { "name": "help", "description": "show help" } ] },
+    { "sessionUpdate": "agent_message_chunk", "messageId": "a1", "content": { "type": "text", "text": " Done." } }
+  ]
+}

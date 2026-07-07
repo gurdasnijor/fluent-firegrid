@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "name": "subagent-scoping",
+  "description": "A Task tool spawns a subagent; subagent output folds under the parent tool call, never into top-level assistant text.",
+  "notes": "Subagent chunks arrive as tool_call_update content on parentToolCallId call_task, so the base fold attributes them to the parent without reading firegrid/subagent. The firegrid/subagent record is enrichment (subagentId, label, model) and is ignorable-by-default.",
+  "records": [
+    { "sessionUpdate": "agent_message_chunk", "messageId": "a1", "content": { "type": "text", "text": "Delegating research to a subagent." } },
+    { "sessionUpdate": "tool_call", "toolCallId": "call_task", "title": "Task: research", "kind": "other", "status": "in_progress" },
+    { "sessionUpdate": "firegrid/subagent", "parentToolCallId": "call_task", "subagentId": "sub_1", "label": "researcher", "model": "claude-sonnet-5" },
+    { "sessionUpdate": "tool_call_update", "toolCallId": "call_task", "content": [ { "type": "content", "content": { "type": "text", "text": "Subagent: found 3 relevant files." } } ] },
+    { "sessionUpdate": "tool_call_update", "toolCallId": "call_task", "status": "completed", "content": [ { "type": "content", "content": { "type": "text", "text": "Subagent: done." } } ] },
+    { "sessionUpdate": "agent_message_chunk", "messageId": "a1", "content": { "type": "text", "text": " The research is complete." } }
+  ]
+}
