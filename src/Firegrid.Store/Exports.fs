@@ -2,6 +2,36 @@ module Firegrid.Store.Exports
 
 open Firegrid.Log
 open Firegrid.Store
+open Firegrid.Foundation
+
+// ---- MS-C4 (A3) StateReads seam: strong/eventual session-state reads --------
+// Re-export the generic `StateReads` read model at the @firegrid/store seam so a
+// consumer reads session state Promise-first. Thin pass-throughs — the semantics
+// live in `Firegrid.Foundation.StateReads`.
+
+let stateReaderStart
+    (basin: S2.Basin)
+    (codec: SubjectHistory.Codec<'record>)
+    (source: SubjectHistory.SubjectId)
+    (recoverFrom: SubjectHistory.Seq)
+    (initial: 'state)
+    (apply: 'state -> SubjectHistory.StoredRecord<'record> -> 'state)
+    : Async<StateReads.Reader<'record, 'state>> =
+    StateReads.start basin codec source recoverFrom initial apply
+
+let stateReadEventual (reader: StateReads.Reader<'record, 'state>) : Async<ViewState<'state>> =
+    StateReads.readEventual reader
+
+let stateReadThrough
+    (through: SubjectHistory.Version)
+    (reader: StateReads.Reader<'record, 'state>)
+    : Async<ViewState<'state>> =
+    StateReads.readThrough through reader
+
+let stateReadLatest (reader: StateReads.Reader<'record, 'state>) : Async<ViewState<'state>> =
+    StateReads.readLatest reader
+
+let stateReaderStop (reader: StateReads.Reader<'record, 'state>) : Async<unit> = StateReads.stop reader
 
 let createS2Runtime (config: S2ObjectStateBackendConfig) : S2Runtime = Runtime.create config
 

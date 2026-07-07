@@ -23,6 +23,7 @@
     <Compile Include="Naming.fs" />
     <Compile Include="Foundation/SubjectHistory.fs" />
     <Compile Include="Foundation/StateView.fs" />
+    <Compile Include="Foundation/StateReads.fs" />
     <Compile Include="Foundation/KvStore.fs" />
     <Compile Include="Foundation/Authority.fs" />
     <Compile Include="Foundation/DurableLog.fs" />

@@ -22,6 +22,7 @@ module Program =
     let private proofs =
         [ FoundationSubjectHistoryProof.proof
           FoundationStateViewProof.proof
+          FoundationStateReadsProof.proof
           FoundationKvStoreProof.proof
           FoundationCheckpointProof.proof
           FoundationCheckpointTrimSafetyProof.proof
