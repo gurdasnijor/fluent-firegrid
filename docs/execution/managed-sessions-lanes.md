@@ -97,7 +97,7 @@ Everything else is lane-owner discretion.
 | A4 | A | Session history fold + thread-index projection + proofs | MS-C4 | A1, B1 | open | — | — |
 | B1 | B | `Authority` protocol module (I5) + `DurableLog` (SubjectHistory + Authority + seal) + turn binding — surface (G6/G1 approved) | MS-C2 | P2 | done | Claude (B lane) | #92, #98 |
 | B2 | B | Turn attach / crash-terminal / idempotent-create proofs | MS-C2 | B1 | done | Claude (B lane) | #100 |
-| B3 | B | Lifecycle authority: claim, durable cancel, timeouts + proofs | MS-C5 | B1 | open | — | — |
+| B3 | B | Lifecycle authority: claim, durable cancel, timeouts + proofs | MS-C5 | B1 | in-progress | Claude (B lane) | — |
 | B4 | B | Fenced native-resume-artifact store + proof | MS-C5 | B1 | open | — | — |
 | C1 | C | Shard wake stream + tailed router with durable cursor | MS-C3 | P1 | open | — | — |
 | C2 | C | Folded timer index; latency + single-claim + exactly-once proofs | MS-C3 | C1 | open | — | — |
