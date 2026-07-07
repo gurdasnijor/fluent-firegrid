@@ -608,21 +608,36 @@ deposed writer's `store` fails `Deposed`, exactly the DurableLog `Deposed` /
 executable close of agent-ui's last-writer-wins session-store race: a stale
 process can no longer clobber the live writer's artifact.
 
-**Read-side pairing with `firegrid/native` (cited, not redefined).** The artifact
-is an opaque `Payload` plus metadata whose fields mirror D1's `firegrid/native`
-L1 extension (I2) — `Harness`, `NativeType`, `Payload` — so a harness adapter
-(WP D3) reads the fenced artifact to re-hydrate the harness and surfaces the same
-native fact to the UI as a `firegrid/native` record. This store holds the durable,
-fenced *source* of that state; it does **not** redefine the L1 vocabulary (see
+**Pairing with D2's `NativeResumeArtifact` (owned there) and D1's `firegrid/native`
+(both cited, not redefined).** The artifact is the durable storage schema for D2's
+ratified-pending `NativeResumeArtifact = { harness, version, payload }` (#99) — **D2
+owns that shape**; this store is *not* a second definition. `Harness`/`Version`/
+`Payload` round-trip D2's `harness`/`version`/`payload` field-for-field (D3
+serializes `payload: unknown` into the opaque `Payload: string`), so D3 loses no
+round-trip fidelity the day it stores its first artifact. `NativeType`/`Turn` are
+additive kernel/adapter-side enrichment: they let a harness adapter (WP D3) read
+the fenced artifact to re-hydrate the harness and surface the same native fact to
+the UI as a D1 `firegrid/native` (I2) record — `Harness`/`NativeType`/`Payload`
+mirror that L1 extension. This store holds the durable, fenced *source* of that
+state; it redefines **neither** vocabulary (see
 [`../canon/architecture/fluent/l1-observation-vocabulary.md`](../canon/architecture/fluent/l1-observation-vocabulary.md),
 §`firegrid/native`). The `Payload` is opaque to the store — never parsed.
 
-**Fence binding.** The register's subject is session-derived
-(`sessions/{sessionId}/resume`, never random) and its epoch rotates on takeover,
-so the fence is genuinely *per session*. Coordinating this claim with B3's
-session/lifecycle claim (one identity claiming both, deposed together on takeover)
-is lifecycle policy layered above, **not a mechanism here** — mirroring
-DurableLog's "AlreadyLive rejection is lifecycle policy (MS-C5), not a mechanism."
+**Fence binding and the claim-then-read convention.** The register's subject is
+session-derived (`sessions/{sessionId}/resume`, never random) and its epoch rotates
+on takeover, so the fence is genuinely *per session* — that per-session fence is
+the mechanism here. Coordinating the register claim with B3's session-log claim is
+the shared lifecycle convention that makes re-hydration safe, stated **verbatim on
+both sides** (B3 #103 R4 carries this identical sentence): *"One session holder
+identity claims both the session log and the resume register; a takeover `start`
+claims the resume register before any re-hydration read, so a stale writer's late
+`store` is fenced out before it can fork harness state."* The freshness this buys
+— that no later stale `store` can change what a resuming holder read — is pinned as
+the **Claim-then-read re-hydration** law below, which the
+`session.resume-artifact-fenced` proof enforces (interleaving included). (This is
+lifecycle policy layered above the primitive — mirroring DurableLog's "AlreadyLive
+rejection is lifecycle policy (MS-C5), not a mechanism" — but, unlike AlreadyLive,
+it is a *stated, proven* convention because the takeover window it closes is real.)
 
 ```fsharp
 // namespace Firegrid.Store — domain binding of Authority (I5); native-resume
@@ -633,10 +648,11 @@ DurableLog's "AlreadyLive rejection is lifecycle policy (MS-C5), not a mechanism
 /// source of the `firegrid/native` (I2) facts a harness adapter surfaces on the
 /// read side. Holds the artifact; does NOT redefine the L1 vocabulary.
 type ResumeArtifact =
-    { Harness: string             // emitting harness id — pairs with firegrid/native.harness
-      NativeType: string option   // pairs with firegrid/native.nativeType
-      Payload: string             // opaque resume blob (e.g. a Claude session id); never parsed
-      Turn: Turn.TurnId option }  // provenance: the turn whose completion produced it, if known
+    { Harness: string             // emitting harness id — pairs D2 NativeResumeArtifact.harness / firegrid/native.harness
+      Version: int64              // harness-owned artifact version — pairs D2 NativeResumeArtifact.version (round-trip fidelity)
+      NativeType: string option   // additive: pairs firegrid/native.nativeType (adapter-side enrichment)
+      Payload: string             // opaque resume blob (D2 payload: unknown, serialized; e.g. a Claude session id); never parsed
+      Turn: Turn.TurnId option }  // additive provenance: the turn whose completion produced it, if known
 
 module ResumeArtifactStore =
     /// A fenced writer over one session's resume register — wraps an
@@ -645,7 +661,9 @@ module ResumeArtifactStore =
     type Writer                                 // abstract; wraps Authority.Holder<ResumeArtifact>
 
     [<RequireQualifiedAccess>]
-    type OpenError = Failed of S2Errors.S2Failure
+    type OpenError =
+        | Claim of Authority.ClaimError        // pass-through (incl. `Sealed`); no narrowing — lane symmetry with B3 StartError
+        | Failed of S2Errors.S2Failure
     [<RequireQualifiedAccess>]
     type StoreError =
         | Deposed                              // a newer epoch took the session's write authority
@@ -683,8 +701,9 @@ match! ResumeArtifactStore.openWriter basin session holderId with
 | Ok writer ->
     let artifact =
         { Harness = "claude-agent-sdk"
+          Version = 1L                       // D2 NativeResumeArtifact.version — round-trips as-is
           NativeType = Some "resume"
-          Payload = claudeSessionId          // opaque to the store
+          Payload = claudeSessionId          // opaque to the store (D2 payload, serialized)
           Turn = Some turnId }
     match! ResumeArtifactStore.store writer artifact with
     | Ok () -> ()
@@ -692,11 +711,16 @@ match! ResumeArtifactStore.openWriter basin session holderId with
     | Error (ResumeArtifactStore.StoreError.Failed _) -> ()
 | Error _ -> ()
 
-// Resume side (authority-free): read the current artifact to re-hydrate the
-// harness; `None` on a session that has never produced one.
-match! ResumeArtifactStore.read basin session with
-| Ok (Some artifact) -> resumeHarness artifact.Harness artifact.Payload
-| Ok None -> startFresh ()
+// Re-hydration (claim-then-read law): a resuming holder claims the register
+// FIRST — rotating the epoch, deposing any stale writer — THEN reads, so no
+// late stale `store` can fork the state it re-hydrates. (Observers/UI may read
+// authority-free, without the claim; re-hydration reads are claim-first.)
+match! ResumeArtifactStore.openWriter basin session holderId with
+| Ok _writer ->
+    match! ResumeArtifactStore.read basin session with
+    | Ok (Some artifact) -> resumeHarness artifact.Harness artifact.Payload
+    | Ok None -> startFresh ()
+    | Error _ -> ()
 | Error _ -> ()
 ```
 
@@ -714,13 +738,35 @@ Laws (stated here; proven by WP B4's `session.resume-artifact-fenced` proof):
   Inherits `Authority`'s idempotent-claim law; `openWriter` (claim) is the sole
   deposal mechanism.
 - **Last-store-wins read.** `read` returns the artifact of the latest successful
-  `store`, or `None` before the first. Reads are authority-free — a reader needs
-  no claim (matches DurableLog `attach`; per the canon, readers never need
-  authority).
-- **Opaque payload; native pairing, not redefinition.** The store never parses
-  `Payload`; `Harness`/`NativeType`/`Payload` are the durable, fenced source of
-  the `firegrid/native` (I2) facts a harness adapter (D3) surfaces on read — the
-  store consumes that vocabulary's shape, it does not redefine it.
+  `store`, or `None` before the first. Because `Writer` wraps
+  `Authority.Holder<ResumeArtifact>`, each `openWriter` takeover appends an
+  `Authority` fence record onto the same subject stream the artifacts commit to;
+  `read` selects the latest *artifact* by **record kind** — fence rotations are S2
+  *command* records (`RFence`) and are skipped (`IgnoreCommandRecords`), while
+  artifacts are `text` records decoded by the artifact codec — so a bare takeover
+  (claim with no subsequent `store`) never shadows the current artifact. Reads are
+  authority-free — a reader needs no claim (matches DurableLog `attach`; per the
+  canon, readers never need authority). *Re-hydration* reads, however, are
+  claim-first (next law).
+- **Claim-then-read re-hydration** (`session.resume-artifact-fenced`). A resuming
+  holder MUST `openWriter` — rotating the register epoch, deposing any stale writer
+  — **before** its re-hydration `read`; then no later stale `store` can change what
+  it observed. Without the claim-first order the takeover window is real: a new
+  holder deposes the old on the session log (B3), reads the register authority-free,
+  re-hydrates, and a stale writer's late `store` (its register epoch never rotated)
+  then forks harness state. The authority-free `read` (prior law) stands for
+  observers/UI only. The proof pins the exact interleaving: a stale `store` after a
+  new holder's read-without-claim must be impossible. Shared convention (verbatim,
+  matched on B3 #103 R4): *"One session holder identity claims both the session log
+  and the resume register; a takeover `start` claims the resume register before any
+  re-hydration read, so a stale writer's late `store` is fenced out before it can
+  fork harness state."*
+- **Opaque payload; round-trips D2, redefines nothing.** The store never parses
+  `Payload`; `Harness`/`Version`/`Payload` round-trip D2's `NativeResumeArtifact`
+  (#99) field-for-field — D2 owns the shape, this is its durable storage schema —
+  and `Harness`/`NativeType`/`Payload` are the durable, fenced source of the
+  `firegrid/native` (I2) facts a harness adapter (D3) surfaces on read. The store
+  consumes both vocabularies' shapes; it redefines neither.
 - **No leaks.** Consumers never see fence tokens, seq nums, or the interleaved
   fence records; the derived subject is deterministic by design.
 
@@ -759,7 +805,11 @@ Proof obligations:
   turns: a live deposed producer cannot append turn output after takeover.
 - `session.resume-artifact-fenced` — the native resume artifact (e.g. Claude
   session id) is written under the session fence; a stale owner's write is
-  rejected (closes agent-ui's last-writer-wins session-store race).
+  rejected (closes agent-ui's last-writer-wins session-store race). The proof
+  includes the **claim-then-read** interleaving: a new holder that `openWriter`s
+  before its re-hydration `read` cannot then observe a stale writer's late `store`
+  (that store is fenced `Deposed`) — the "stale-store-after-new-holder-read-
+  without-claim" fork must be impossible.
 
 RFC invariants: turn single-writer, durable cancel, resume-artifact fencing.
 Unblocks: MS-M2.
