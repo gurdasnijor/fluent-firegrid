@@ -926,7 +926,9 @@ Laws (stated here; A3 proves the strong/eventual read law):
   `AppliedTail >= v` whose `State` reflects every source record with `Seq < v`;
   `readLatest` uses the checked tail as `v`, so a strong read issued after a
   *second host's* acknowledged append observes that append. Linearizable /
-  read-your-writes.
+  read-your-writes. `through` must be a committed version (one returned by an
+  acknowledged append, or <= a checked tail); behavior for a version beyond the
+  committed tail is out of contract.
 - **Eventual reads are a monotonic prefix.** `readEventual` returns the local
   applied snapshot: `AppliedTail` never regresses across successive reads on one
   reader, and `State` reflects exactly the records with `Seq < AppliedTail`. It
