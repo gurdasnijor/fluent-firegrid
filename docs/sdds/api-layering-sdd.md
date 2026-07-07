@@ -26,22 +26,30 @@ what those systems don't: **sealed durable logs with byte-faithful attach**
 the platform's first *application*, and their vocabulary belongs to that
 application.
 
+**The primary interface is an F#/Fable library** — `Firegrid.Durable`, the
+curated public API over the kernel, authored and consumed in idiomatic F#
+(the `durable { }` CE is the orchestration surface). TypeScript is a
+**future cross-compilation target**: every L3 module stays Fable-green so a
+`@firegrid/durable` emission + thin plain-TS wrapper can ship when a TS
+consumer is prioritized — a build decision then, not a rewrite.
+
 ## End state
 
 ```
  L4  APPLICATIONS & ADAPTERS — their own vocabulary, zero platform nouns
-       agent-sessions reference app · agent-ui · harness adapters
+       agent-sessions reference app (F#) · harness adapters (TS)
+       · agent-ui (TS — consumes the future emission)
         │
- L3  @firegrid/durable — THE platform facade (the only consumer package)
-       plain TS, Promise-first: activities · orchestrations · entities
-       · timers/signals · log attach · projections
+ L3  Firegrid.Durable — THE platform library (F#/Fable, public API)
+       activities · orchestrations (durable { }) · entities
+       · timers/signals · log attach · projections · table state & waits
         │
- L2  emitted seam (Fable → Exports.fs) — private; serves only L3
+        ├─ FUTURE: Fable emission seam → @firegrid/durable (plain-TS wrapper)
         │
- L1  platform kernel (F#, domain-free, sans-IO, proven)
-       Durable<'a> + durable { } CE · Workflow.* · Stepper replay
-       · Processor/Mailbox entities · activities · timers · wakes
-       · Authority · DurableLog · Checkpoint · StateReads
+ L1  platform kernel (F#, domain-free, sans-IO, proven; internal)
+       Durable<'a> · Workflow.* · Stepper replay · Processor/Mailbox
+       entities · activities · timers · wakes · Authority · DurableLog
+       · Checkpoint · StateReads
         │
  L0  S2 streams
 ```
@@ -49,50 +57,59 @@ application.
 | Layer | What lives there | Audience | Rule |
 | --- | --- | --- | --- |
 | L4 | Applications (reference app, agent-ui) and harness adapters | App developers, end users | Own vocabulary; consume L3 only |
-| L3 | `@firegrid/durable` | Any TS developer | Plain TS; the platform's one public API |
-| L2 | Fable emission + `Exports.fs` | L3 only | Private, mechanical, demand-driven; importing `dist/` is off-contract |
-| L1 | F# platform kernel | Platform developers, proofs | Domain-free; never imports applications |
+| L3 | `Firegrid.Durable` — the F#/Fable platform library | F#/Fable developers (any TS developer, once the emission ships) | Idiomatic F#; Fable-green always; the platform's one public API |
+| L2 | Emission seam (Fable → `Exports.fs` → future `@firegrid/durable`) | **Dormant** until a TS consumer is prioritized | Private, mechanical; importing `dist/` is off-contract |
+| L1 | F# platform kernel | Platform developers, proofs | Domain-free; internal — consumers use L3; never imports applications |
 | L0 | S2 | L1 only | Never leaks upward |
 
 ## Target surfaces
 
-### L3 — `@firegrid/durable`
+### L3 — `Firegrid.Durable` (the platform library)
 
-Promise-first; `AsyncIterable` for streams; every kernel DU error surfaces as
-a tagged union (`{ _tag: "Deposed" } | …`, never thrown strings); zero S2 or
-codec assembly required of the consumer; **no runtime dependencies**.
-Indicative shape (T1's corpus refines and freezes it):
+Idiomatic F# per the evaluation SDD: `Async` + `Result` + DU-typed errors,
+zero S2 or codec assembly required of the consumer, EffSharp-free, and
+**Fable-green as a standing build gate** (the TS option must never rot).
+The kernel's `durable { }` CE is the orchestration authoring surface;
+`Firegrid.Durable` curates it together with host, client, entity-state, and
+read primitives into the platform's one public API. Indicative shape (T1's
+corpus refines and freezes it):
 
-```ts
-import { DurableClient, host } from "@firegrid/durable"
+```fsharp
+open Firegrid.Durable   // the platform's one public API
 
 // Host side (Pulsar-style): register functions, run a namespace worker.
-host({ basin, namespace: "prod" })
-  .activity("charge", async (input) => { … })
-  .orchestration("checkout", async (ctx, input) => {
-    const paid = await ctx.call("charge", input)          // journaled; replay-served
-    const [a, b] = await ctx.all([…])                     // fan-out/fan-in
-    const winner = await ctx.any([ctx.timer(deadline), ctx.signal("approved")])
-    return result
-  })
-  .entity("counter", { init, ops: { add: (s, n) => s + n } })
-  .run()
+let worker =
+    Host.create basin "prod"
+    |> Host.activity "charge" (fun (input: ChargeInput) -> async { (* … *) })
+    |> Host.orchestration "checkout" (fun input -> durable {
+        let! paid = Workflow.call "charge" input          // journaled; replay-served
+        let! results = Workflow.all [ shipIt; notify ]    // fan-out/fan-in
+        let! winner =
+            Workflow.any [ DurableTask.timer deadline     // races
+                           DurableTask.signal "approved" ]
+        return receipt })
+    |> Host.entity "counter" counterHandler               // keyed entity; state = fold
+    |> Host.run
 
 // Client side.
-const client = await DurableClient.connect({ basin })
-await client.start("checkout", input, { id: "order-42" })
-await client.signal("order-42", "approved", payload)
-const status = await client.status("order-42")
+let client = Client.connect basin
+do! Client.start client "checkout" input (InstanceId "order-42")
+do! Client.signal client (InstanceId "order-42") "approved" payload
+let! status = Client.status client (InstanceId "order-42")
 
 // Stream-native primitives (beyond the DF trio):
-const log = client.logs.open(["invoices", "2026-07"])      // sealed durable log
-for await (const ev of log.attach()) { … }                  // prefix → tail → terminal
-const view = await client.projections.read(myFold, { read: "eventual" }) // lag = data
+let log = Logs.openLog client [ "invoices"; "2026-07" ]        // sealed durable log
+do! Logs.attach log observe                                    // prefix → tail → terminal
+let! view = Projections.read client myFold ReadGrade.Eventual  // lag = data
 ```
 
-The F#-native authoring surface is the existing `durable { }` computation
-expression (`Workflow.call/all/waitForSignal/sleepUntil/any`) — the TS `ctx`
-vocabulary mirrors it one-to-one.
+**Future TS target (dormant until a TS consumer is prioritized):** the
+library's Fable emission plus a thin `@firegrid/durable` wrapper — plain TS
+only (Promise, `AsyncIterable`, tagged unions mirroring the DU errors; an
+async/await `ctx` mirroring `durable { }`, DF-SDK style). No `effect` in its
+exported types or dependencies; an optional `/effect` subpath may wrap it.
+Shipping it is a build-and-wrap decision, not a redesign — that is what the
+standing Fable-green gate buys.
 
 #### State materialization & consistent reads
 
@@ -103,57 +120,65 @@ layer ([`fluent-firegrid-state-materialization-sdd.md`](./fluent-firegrid-state-
 simplification and one authoring change:
 
 - **Entity state is the fold of the entity's own log.** Table-shaped
-  authoring survives (`ctx.state(Table).get/set/delete`; schema owns codec +
-  primary key, expressed in plain TS, not `effect` Schema): mutations lower
-  to journaled state-change facts, `get` reads the fold. Because handler
-  state is a pure function of the log prefix, read-modify-write is
-  replay-deterministic **by construction** — the old `StateReadJournaled`
-  machinery is subsumed, not ported. Cross-subject reads from orchestrations
-  journal as activities (result replay-served). Idempotent mutations and the
-  crash/replay no-double-apply law carry over as corpus laws; owner fencing
-  is `Authority` epoch fencing (stronger than the old lease scheme).
+  authoring survives in F# (a `Table` schema record owning codec + primary
+  key; `State.get`/`State.set`/`State.delete` inside entity handlers):
+  mutations lower to journaled state-change facts, `get` reads the fold.
+  Because handler state is a pure function of the log prefix,
+  read-modify-write is replay-deterministic **by construction** — the old
+  `StateReadJournaled` machinery is subsumed, not ported. Cross-subject
+  reads from orchestrations journal as activities (result replay-served).
+  Idempotent mutations and the crash/replay no-double-apply law carry over
+  as corpus laws; owner fencing is `Authority` epoch fencing (stronger than
+  the old lease scheme).
 - **Reader-side materialization = checkpointed projections** (`Checkpoint` +
-  `StateReads`, kernel-proven): `client.projections.read(fold, …)` with
-  three read grades — `eventual` (local fold; staleness is `AppliedTail`
-  lag-data, never hidden), `latest` (linearizable via the check-tail
-  barrier), `through(v)` (read-your-writes for a writer holding its append
+  `StateReads`, kernel-proven): `Projections.read client fold grade` with
+  three read grades — `Eventual` (local fold; staleness is `AppliedTail`
+  lag-data, never hidden), `Latest` (linearizable via the check-tail
+  barrier), `Through v` (read-your-writes for a writer holding its append
   ack). Latest-value-per-`(table, key)` is one fold among many.
 - **Durable predicate waits** port as a platform capability:
-  `ctx.state(T).waitFor(key, { when: cel("row.status == 'paid'") })` —
+  `State.waitFor invoices "invoice-1" (Cel "row.status == 'paid'")` —
   serializable CEL predicates (keyed and indexed) registered as durable
   facts, evaluated on relevant state change, resumed via the wake/signal
   path, replay-served from the recorded resolution. The finish-line SDD's
   design carries over nearly verbatim because it already banned closures.
 - The finish-line SDD's "Effect-native generators" authoring direction is
-  **superseded** by doctrine rule 2: authoring is async/await + `ctx`
-  (DF-SDK/Restate-SDK style); determinism comes from journaling, not the
-  effect system.
+  **superseded**: the authoring surface is the F# `durable { }` CE
+  (program-as-data; determinism from journaling). The future TS emission
+  authors async/await + `ctx` (DF-SDK/Restate-SDK style) — never `effect`
+  generators.
 
 ### L4 — the agent-sessions reference application
 
-Application code in the platform's vocabulary: session = keyed entity, cancel
-= a command, turn output = a sealed log (attach is the platform primitive),
-history = a checkpointed projection. It lives app-side (`examples/`, later
-agent-ui's home), and its scenario corpus **is the platform's integration
-acceptance** — anywhere it must reach around `@firegrid/durable`, that is a
-platform gap and becomes a platform work packet.
+An F# application in the platform's vocabulary: session = keyed entity,
+cancel = a command, turn output = a sealed log (attach is the platform
+primitive), history = a checkpointed projection. It lives app-side
+(`examples/`, F#), and its scenario corpus **is the platform's integration
+acceptance** — anywhere it must reach around `Firegrid.Durable`, that is a
+platform gap and becomes a platform work packet. (agent-ui, being TS,
+consumes the future emission — see L2.)
 
-### L2 — the seam
+### L2 — the emission seam (dormant)
 
-Mechanical Fable pass-throughs (`Async` acceptable; L3 converts), grown only
-as greening the corpora demands: orchestration drive/replay + host/registry,
-entity admission, activity plumbing, generic sealed-log create/append/seal/
-attach, checkpoint + read primitives. Application modules are never seam
-mandates. Wake plumbing is not exported.
+Materializes only when the TS target is prioritized: mechanical Fable
+pass-throughs (`Async` acceptable; the wrapper converts to Promises), grown
+demand-driven by the TS corpus mirror — orchestration drive/replay +
+host/registry, entity admission, activity plumbing, sealed-log
+create/append/seal/attach, checkpoint + read primitives. Application modules
+are never seam mandates. Wake plumbing is not exported. Until then the
+Fable-green build gate on L3 is what keeps this layer cheap to open.
 
 ## Doctrine (binding on ratification)
 
 1. **Zero domain nouns** in L0–L3 — names, exports, subjects, docs.
-2. **Plain TS at L3/L4 exported surfaces**: Promise, AsyncIterable, tagged
-   unions. No `effect` (or any framework) in exported types or hard deps of
-   platform/contract packages; an optional `/effect` subpath wrapper may
-   *wrap* the plain facade. Pre-platform Effect packages are exempt until
-   retired.
+2. **The platform surface is idiomatic F#/Fable** (`Async`/`Result`/DU
+   errors per the evaluation SDD; EffSharp-free), and **every L3 module
+   keeps the Fable build green** so TS cross-compilation stays a build
+   decision, not a rewrite. TS-zone exported surfaces (the future emission
+   wrapper; the harness-adapter contract) are **plain TS**: Promise,
+   AsyncIterable, tagged unions — no `effect` in exported types or hard
+   deps; an optional `/effect` subpath may wrap. Pre-platform Effect
+   packages are exempt until retired.
 3. **Names in consumer vocabulary**; spec coordinates (interface ids,
    milestone ids, WP ids) never appear in package names or exports.
 4. **Placement**: platform never imports applications; domain modules never
@@ -183,14 +208,15 @@ mandates. Wake plumbing is not exported.
 
 | WP | Deliverable | Gate |
 | --- | --- | --- |
-| T0 | Ratchet: manifest runner + strict target suite in CI | None (mechanical) |
-| T1 | `@firegrid/durable` skeleton + red corpus + platform prose companion. Corpus: replay determinism across a host kill (activities not re-executed); fan-out/fan-in; `any` races; signal to a parked orchestration across restart; durable timer across restart; entity op serialization; typed activity failure; deterministic `currentTime`; status/result query; log attach (prefix/tail/terminal, byte-faithful); **entity table state** (get/set/delete; crash after mutation → no double-apply; deposed writer's state write fenced); **three read grades** (eventual with observable lag, latest linearizable, read-your-writes through an ack version); **CEL table wait** (immediate-if-true; park → mutate → resume; unrelated row does not resume an indexed wait; replay serves the recorded resolution) | **Human ratifies** |
-| T2 | Reference-app red corpus against `@firegrid/durable`: start turn / cancel from an unprivileged second client / duplicate-cancel idempotence / single-writer with typed rejection / deposed-writer rejection / attach semantics / history with cause and lag | **Human ratifies** |
+| T0 | Ratchet: manifest runner + strict target suite in CI, spanning **both** runners (F# corpus project + TS suite) | None (mechanical) |
+| T1 | **`Firegrid.Durable` library skeleton (F#) + red corpus (F# consumer tests) + platform prose companion.** Corpus: replay determinism across a host kill (activities not re-executed); fan-out/fan-in; `any` races; signal to a parked orchestration across restart; durable timer across restart; entity op serialization; typed activity failure; deterministic `currentTime`; status/result query; log attach (prefix/tail/terminal, byte-faithful); **entity table state** (get/set/delete; crash after mutation → no double-apply; deposed writer's state write fenced); **three read grades** (eventual with observable lag, latest linearizable, read-your-writes through an ack version); **CEL table wait** (immediate-if-true; park → mutate → resume; unrelated row does not resume an indexed wait; replay serves the recorded resolution) | **Human ratifies** |
+| T2 | Reference-app red corpus (F#) against `Firegrid.Durable`: start turn / cancel from an unprivileged second client / duplicate-cancel idempotence / single-writer with typed rejection / deposed-writer rejection / attach semantics / history with cause and lag | **Human ratifies** |
 | T3 | Harness-adapter contract as plain TS + red fixture-replay conformance corpus | **Human ratifies** |
+| T4 | **(Dormant — schedule when a TS consumer is prioritized, e.g. agent-ui integration.)** Fable emission seam + `@firegrid/durable` plain-TS wrapper + TS mirror of the T1 corpus | **Human schedules + ratifies** |
 
 T1 before T2 by design: the first application consumes the platform, it does
-not bypass it. This costs the agent-ui integration path one design cycle and
-that trade is deliberate.
+not bypass it. The agent-ui integration path now sits behind T4 — activating
+it is a scheduling decision the human makes, not a default.
 
 ## Getting there from today (the only section where legacy names appear)
 
@@ -198,10 +224,11 @@ that trade is deliberate.
 | --- | --- |
 | `src/Firegrid.Store` Foundation modules (`Durable/*`, `Authority`, `DurableLog`, `Checkpoint`, `StateReads`, wake path) | **Platform kernel (L1). Keep** — proven this wave; gains seam + facade exposure as T1 greens. |
 | `SessionLifecycle.fs`, `Turn.fs`, `SessionHistory.fs` (inside `Firegrid.Store`) | **Application code predating the platform surface.** Move out of platform namespaces; re-express over the facade as T2 greening demands; never platform API. |
-| `Exports.fs` (StateReads + legacy exports) | Grows into the platform seam demand-driven; legacy `ObjectState`/`WorkflowLog` exports retire with the TanStack path. |
+| `Exports.fs` (StateReads + legacy exports) | **Dormant until T4** — becomes the emission seam only when the TS target is scheduled; legacy `ObjectState`/`WorkflowLog` exports retire with the TanStack path. |
 | `@firegrid/l1-vocabulary` | Rename → `@firegrid/session-events` (L4 app-ecosystem package; content unchanged). |
 | `@firegrid/harness-adapter`, `@firegrid/claude-adapter` | Keep names; exported contract de-Effected via T3; descriptions rewritten consumer-first. |
-| `@firegrid/fluent` + `@firegrid/runtime` (TanStack) | Frozen. Retire when `@firegrid/durable` reaches parity — the parity bar is the proven inventory in `fluent-firegrid-state-materialization-sdd.md` + `fluent-firegrid-finish-line-sdd.md` (table state, read grades, CEL waits, awakeables, delayed sends, send handles, idempotency keys), tracked as a checklist in T1's prose companion. |
+| `@firegrid/fluent` + `@firegrid/runtime` (TanStack) | Frozen. Retire when `Firegrid.Durable` reaches parity — the parity bar is the proven inventory in `fluent-firegrid-state-materialization-sdd.md` + `fluent-firegrid-finish-line-sdd.md` (table state, read grades, CEL waits, awakeables, delayed sends, send handles, idempotency keys), tracked as a checklist in T1's prose companion. Its TS *consumers* migrate when T4 ships the emission. |
+| agent-ui (E-lane, TS) | Integration re-sequenced behind T4 (the TS emission) — a human scheduling decision. The F# reference app (T2) proves the platform semantics agent-ui will consume in the meantime. |
 | `@firegrid/log` (empty stub) | Delete. |
 | In-flight kernel WPs (A4 impl, C2, B4) | Finish as-is — L1 altitude, unaffected; they make greening cheaper. |
 | Managed-sessions ledger + wave process | Continues for in-flight work only; all new surface work flows through T-rows. |
