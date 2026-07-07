@@ -16,6 +16,9 @@ changes.
   managed-session (reconstruction-model) kernel with agent-ui as the first
   production user; work ledger in
   [`../execution/managed-sessions-lanes.md`](../execution/managed-sessions-lanes.md).
+- [`fsharp-fable-effsharp-evaluation-sdd.md`](./fsharp-fable-effsharp-evaluation-sdd.md) —
+  F#-zone API doctrine: F#-native surfaces, Firegrid-specific CEs, EffSharp as
+  substrate tool only; restored post-commitment with reconciliation notes.
 - [`fluent-firegrid-authoring-surface-sdd.md`](./fluent-firegrid-authoring-surface-sdd.md) —
   Restate-like Effect-native definitions, clients, and transport-neutral
   bindings.

@@ -72,7 +72,11 @@ Escalate to the architect (do not proceed) when a WP requires:
   capability WP, the Target Surface section in the SDD must exist and be
   architect-approved (write or update it as your WP's first commit if it is
   missing or your work changes it). Proofs then import only that public
-  surface. See "Proof-Driven Development" in the repo `AGENTS.md`.
+  surface. See "Proof-Driven Development" in the repo `AGENTS.md`. F#-zone
+  surfaces additionally pass the Validation Gates in
+  [`../sdds/fsharp-fable-effsharp-evaluation-sdd.md`](../sdds/fsharp-fable-effsharp-evaluation-sdd.md)
+  (ergonomic sample, emitted-TS sample, works-without-EffSharp proof or
+  documented necessity, Fable build check, package-level EffSharp decision).
 
 Everything else is lane-owner discretion.
 
@@ -113,7 +117,9 @@ Port the proven eff-firegrid F# assets into `src/` per the dispositions table
 in the decision record: S2 client (later rev), `SubjectHistory`/`StateView`/
 `KvStore`, then the `Foundation/Durable` kernel, each with its F# proofs. P3
 includes the sans-IO audit: pure semantics separated from I/O shells, ambient
-clock/randomness lifted to parameters. Ports are refactors of proven code —
+clock/randomness lifted to parameters. The `durable {}` CE port follows the
+F# API doctrine's CE rules (Delay/Run program-as-data, no arbitrary task
+binds, explicit `Workflow.local`, Result-shaped timeouts). Ports are refactors of proven code —
 behavior changes are out of scope; anything that looks like a redesign
 escalates (G1/G6).
 
