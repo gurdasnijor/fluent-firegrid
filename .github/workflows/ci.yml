@@ -15,7 +15,6 @@ concurrency:
 
 permissions:
   contents: read
-  packages: read
 
 env:
   CI: true
@@ -36,16 +35,6 @@ jobs:
 
       - name: Setup pnpm + Node + install
         uses: ./.github/actions/setup
-
-      - name: Authenticate GitHub NuGet source
-        env:
-          NUGET_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
-        run: |
-          dotnet nuget update source github \
-            --username "${{ github.repository_owner }}" \
-            --password "$NUGET_AUTH_TOKEN" \
-            --store-password-in-clear-text \
-            --configfile nuget.config
 
       - name: Restore .NET tools
         run: dotnet tool restore
