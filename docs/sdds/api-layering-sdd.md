@@ -229,6 +229,46 @@ The evaluation SDD's gates stand; their *evidence* requirement changes:
 3. **Architect enforcement.** Surface reviews check the artifact exists in the
    PR file list, not that the text claims it.
 
+## Execution model: top-down red/green (supersedes prose-first surfaces for S-lane)
+
+Ratified 2026-07-07 direction from the human: define the API layers **as code
+plus failing tests**, then converge implementation — not bottom-up kernel
+work hoping surfaces emerge. Mechanics:
+
+1. **A target surface is ratified as three artifacts together**: a surface
+   package (real exported signatures; bodies `throw NotImplemented("<WP>")`),
+   a **red corpus** (consumer tests against those exports — compiling,
+   running, failing), and a short prose companion for laws code cannot
+   express. The dependency doctrine makes this cheap: plain-TS facades have
+   self-contained types, so surfaces + tests compile before any wiring
+   exists.
+2. **The ratchet.** A manifest (`targets.json`: test → WP → `red`|`green`)
+   drives a target suite beside the blocking suite. Strict semantics: CI
+   fails on a green regression **or on a red test unexpectedly passing** —
+   an xpass forces an explicit promotion commit (manifest + ledger flip).
+3. **Definition of done**: a WP's tests move from manifest-red to the
+   blocking suite **with zero edits to test bodies**. Red tests are frozen at
+   ratification; editing one is a gate (G5 analog). This is the structural
+   fix for the proof-driven-development failure mode.
+4. **Demand-driven layers.** L2 seam exports, kernel adjustments, and module
+   re-placement (S9) are built only as green-making demands them — no
+   speculative surface area.
+5. **Roles.** The architect authors surface packages + red corpora (T-rows
+   below); **the human ratifies each corpus before merge**; workers take
+   green-making WPs via the coordinator; coordinator merge authority =
+   "reds flipped green, zero test edits, manifest + ledger in the same PR."
+
+| T-WP | Deliverable | Absorbs | Gate |
+| --- | --- | --- | --- |
+| T0 | Ratchet infrastructure: manifest runner, strict-xpass target suite in CI | — | None (mechanical) |
+| T1 | `@firegrid/sessions` surface package + red corpus (E1 dry-run scenarios: start/append/cancel-from-second-process/attach byte-faithful/terminals/history-with-lag; tagged-union errors) | S3, S4 | **Human ratifies corpus** |
+| T2 | `@firegrid/durable` surface package + red corpus (DF acceptance laws through the facade: replay determinism across host kill, fan-out/fan-in, WhenAny, signals, durable timers across restart, entity serialization) + platform SDD as prose companion | S8 | **Human ratifies corpus + SDD** |
+| T3 | Plain-TS adapter contract surface + red fixture-replay conformance corpus | S7 | **Human ratifies corpus** |
+
+S2 (seam), S5 (renames), S6 (doctrine edits), S9 (re-placement) execute as
+demanded by or alongside the T-rows. Green-making WPs are cut per corpus once
+ratified.
+
 ## Convergence plan (ledger rows on ratification — Lane S, "Consumer Surface")
 
 | WP | Deliverable | Depends | Gate |
