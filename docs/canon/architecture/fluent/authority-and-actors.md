@@ -74,6 +74,68 @@ protocol, no resident actor processes, no distributed liveness clock, no
 location directory — addressing is naming, activation is claiming, and a
 released actor is just an unclaimed log.
 
+## The Processor
+
+The actor composition lands as one generic shell (the **Processor**) plus a
+pure decision core (the **Handler**). The Handler is sans-IO — Fable-Rust-safe
+and deterministically testable; the Processor is written once, not per binding,
+and is the generalization of eff-firegrid's `DurableHost.claimAndRunTick`
+(P3's port supplies the implementation).
+
+```fsharp
+type WakeReason = MailboxReady | TimerFired of TimerId * Timestamp | ChildTerminal of SubjectId
+
+type Intent =                                 // requests TO the shell
+    | SetTimer of TimerId * dueAt: Timestamp
+    | Send of target: ActorAddress * Envelope // the only cross-actor channel
+    | Execute of EffectId * payload           // claim-first external effect
+
+type Decision<'state, 'record, 'terminal> =
+    { State: 'state
+      Append: 'record list                    // own authoritative log, fenced
+      Intents: Intent list                    // dispatched idempotently by shell
+      Seal: 'terminal option }
+
+type Handler<'state, 'msg, 'record, 'terminal> =
+    { Initial: 'state
+      Fold: 'state -> StoredRecord<'record> -> 'state
+      OnAdmitted: 'state -> Admitted<'msg> -> Decision<'state, 'record, 'terminal>
+      OnWake: 'state -> WakeReason -> Decision<'state, 'record, 'terminal> }
+
+module Processor =
+    val drive : DriveEnv -> ActorAddress -> Handler<'s,'m,'r,'t> -> Async<DriveOutcome>
+    // DriveOutcome = Idle | Sealed of 't | Deposed of Epoch | Failed of DriveError
+```
+
+The drive tick and its invariants:
+
+1. **Claim** — epoch increment via fence rotation (I5); at most one holder.
+2. **Rebuild** — fold own log from latest checkpoint; no resident memory.
+3. **Admit** — inbox from fenced cursor, provenance-deduped.
+4. **Decide** — pure handler call per admitted message / wake.
+5. **Commit** — append `Decision.Append` (including `Execute` *intents*) under
+   the fence, then dispatch intents idempotently. Intent-before-effect: a
+   crash between the two replays the intent, never doubles the decision.
+6. **Checkpoint** — inbox cursor advances as a fenced record; ack is a cursor
+   past a message whose outcome is already durable.
+7. **Park or seal** — register wake interest and release, or append terminal
+   and close. A deposed holder fails at step 5 and exits `Deposed`: it
+   computed, but could not commit.
+
+I/O contract: inputs are mailbox envelopes (open-append), wake events
+(delivered as mailbox messages by the kernel), and the actor's own log
+(rebuild). Outputs are fenced appends to its own log, sends to other actors'
+mailboxes, and intent-recorded external effects. Readers (attach, folds,
+tables) never need authority. There is no actor-to-actor call primitive — a
+reply is a send keyed by execution id.
+
+Two handler flavors share this one drive protocol, per
+[`execution-models.md`](./execution-models.md): the pure `Handler` (replay —
+objects, routers, timer wheels) and the session adapter (reconstruction — an
+effectful handler that drives an external harness but still writes only under
+the processor's fence, emitting L1 facts as its `Append`). The processor
+unifies coordination; execution strategy is the pluggable part.
+
 ## Consequences for the Ledger
 
 - **B1** delivers the `Authority` protocol module as its generic core
