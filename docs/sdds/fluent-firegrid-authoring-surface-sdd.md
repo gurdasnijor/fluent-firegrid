@@ -1,5 +1,11 @@
 # SDD: Fluent Firegrid Authoring Surface
 
+Doc-Class: SDD
+Status: active
+Date: 2026-07-07
+Owner: Firegrid Architecture
+Substrate: S2
+
 ### Restate-like contracts and clients over the TanStack/S2 substrate
 
 |   |   |
@@ -7,7 +13,7 @@
 | Status | Implemented through transport binding |
 | Date | 2026-06-25 |
 | Package | `@firegrid/fluent`, `@firegrid/fluent/http`, `@firegrid/example-full-stack-service` |
-| Lower runtime | TanStack Workflow over `@firegrid/fluent/s2` |
+| Lower runtime | Historical TanStack Workflow over `@firegrid/fluent/s2`; current S2 substrate boundary is `@firegrid/store` / `Firegrid.Store` |
 
 ---
 

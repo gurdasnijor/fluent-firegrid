@@ -1,9 +1,15 @@
 # Fluent Harness I/O
 
-Doc-Class: internal-contract
+Doc-Class: canon
 Status: active
 Date: 2026-06-05
 Owner: Firegrid Architecture
+Substrate: idealized
+
+> S2 status: the role split is still canon, but this page uses the old
+> `fluent-runtime` and idealized Durable Streams vocabulary. The current S2
+> lowering and current package boundary are summarized in
+> [`s2-substrate.md`](s2-substrate.md).
 
 This document is the role map for harness I/O. It exists to remove one recurring
 ambiguity: Firegrid sometimes plays the ACP client role and sometimes plays the
@@ -45,8 +51,9 @@ session authority. It may be a process owner, transport, projection, or native
 protocol adapter, but it does not decide wait matches, timer fires, child
 lifecycle, or committed tool results.
 
-The Durable Streams mechanics behind those decisions are specified in
-[`substrate-protocol.md`](substrate-protocol.md). This document covers the
+The current S2 mechanics behind those decisions are specified in
+[`s2-substrate.md`](s2-substrate.md). The superseded idealized protocol sketch is
+preserved in [`substrate-protocol.md`](substrate-protocol.md). This document covers the
 protocol edges that feed that substrate: which component observes harness
 traffic, which component records Layer 1 facts, and which component returns
 committed Layer 2 results to the harness.
@@ -264,5 +271,7 @@ fake recorders.
   fluent, fluent-runtime, and harnesses.
 - [`execution-models.md`](execution-models.md): why managed sessions resume by
   reconstruction while authored procedures resume by replay.
-- [`substrate-protocol.md`](substrate-protocol.md): the concrete Durable Streams
-  operation sequences for waits, timers, child sessions, attach, fork, and TTL.
+- [`s2-substrate.md`](s2-substrate.md): the current S2 operations and proof map.
+- [`substrate-protocol.md`](substrate-protocol.md): the superseded idealized
+  Durable Streams operation sequences for waits, timers, child sessions, attach,
+  fork, and TTL.

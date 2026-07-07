@@ -1,5 +1,17 @@
 # Fluent Firegrid
 
+Doc-Class: canon
+Status: active
+Date: 2026-07-07
+Owner: Firegrid Architecture
+Substrate: idealized
+
+> S2 status: this page describes the fluent architecture direction using the
+> idealized Durable Streams substrate vocabulary. The current EffSharp/S2
+> lowering is narrower and is tracked in [`s2-substrate.md`](s2-substrate.md).
+> When the two disagree, the S2 page describes the implementation that is
+> currently proved in this repository.
+
 Fluent Firegrid is the architecture for Effect-native durable coordination over
 Durable Streams. It gives Firegrid a lean substrate for authored durable
 procedures, managed-agent durable tools, wake/redrive, projections, and
@@ -198,7 +210,9 @@ contracts and proxy-based durable execution comparison.
 | Idempotency | stream id, step key, producer id | idempotent `PUT`, keyed replay, producer fencing |
 | GC | stream TTL / expiry | sliding `Stream-TTL`, `Stream-Expires-At` |
 
-The exact wire sequences are in [`substrate-protocol.md`](substrate-protocol.md).
+The current S2 lowering is in [`s2-substrate.md`](s2-substrate.md). The older
+idealized wire sequences are preserved in
+[`substrate-protocol.md`](substrate-protocol.md).
 
 The "journal" is the coordination view of a Durable Streams stream. An authored
 procedure mostly writes Layer 2 coordination facts. A managed session writes
@@ -421,10 +435,11 @@ README carries only the summary:
   deployment, process, stream ownership, and safety contract.
 - [`execution-models.md`](execution-models.md): replay vs reconstruction over
   the shared Durable Streams coordination core.
-- [`substrate-protocol.md`](substrate-protocol.md): concrete Durable Streams
-  operation sequences for suspend/resume, wait, timer, child, attach, fork, and
-  TTL.
+- [`s2-substrate.md`](s2-substrate.md): current S2 lowering and proof map.
+- [`substrate-protocol.md`](substrate-protocol.md): superseded idealized Durable
+  Streams operation sequences for suspend/resume, wait, timer, child, attach,
+  fork, and TTL.
 - [`harness-io.md`](harness-io.md): ACP client/conductor, native/cloud, and
   LanguageModel I/O boundaries.
-- [`../../../sdds/fluent-sdd.md`](../../../sdds/fluent-sdd.md):
-  execution-focused design details and acceptance context.
+- [`../../../sdds/README.md`](../../../sdds/README.md): current SDD index and
+  status policy.

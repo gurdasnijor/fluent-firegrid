@@ -1,8 +1,16 @@
 # Fluent Substrate Protocol Mapping
 
-Doc-Class: internal-contract
-Status: active
+Doc-Class: canon
+Status: superseded
+Date: 2026-07-07
 Owner: Firegrid Architecture
+Substrate: idealized
+
+> Superseded: this page specifies a fluent lowering against an idealized Durable
+> Streams substrate with named consumers, leases, claim/ack/release, webhook
+> wake, and substrate-side coordination features. The current EffSharp/S2
+> implementation uses a smaller set of proven S2 primitives. Use
+> [`s2-substrate.md`](s2-substrate.md) for current implementation guidance.
 
 This document maps fluent durable coordination onto Durable Streams operations.
 It is the canonical version of the "deferred features wired to the protocol"
