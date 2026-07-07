@@ -25,6 +25,7 @@
     "@effect/opentelemetry": "4.0.0-beta.87",
     "@effect/platform-node": "4.0.0-beta.87",
     "@firegrid/fluent": "workspace:*",
+    "@firegrid/harness-adapter": "workspace:*",
     "@firegrid/l1-vocabulary": "workspace:*",
     "@firegrid/log": "workspace:*",
     "@firegrid/trace": "workspace:*",

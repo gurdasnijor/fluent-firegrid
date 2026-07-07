@@ -54,6 +54,9 @@ importers:
       '@firegrid/fluent':
         specifier: workspace:*
         version: link:../../packages/fluent
+      '@firegrid/harness-adapter':
+        specifier: workspace:*
+        version: link:../../packages/harness-adapter
       '@firegrid/l1-vocabulary':
         specifier: workspace:*
         version: link:../../packages/l1-vocabulary
@@ -125,6 +128,19 @@ importers:
       effect:
         specifier: 4.0.0-beta.87
         version: 4.0.0-beta.87
+
+  packages/harness-adapter:
+    dependencies:
+      '@firegrid/l1-vocabulary':
+        specifier: workspace:*
+        version: link:../l1-vocabulary
+      effect:
+        specifier: 4.0.0-beta.87
+        version: 4.0.0-beta.87
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.0
 
   packages/l1-vocabulary:
     devDependencies:

@@ -39,6 +39,10 @@ Evidence driver:
   emitted through Fable.
 - `firegrid-log` is reserved for proofs that drive Firegrid's idiomatic TS
   facade over the Fable-emitted `Firegrid.Log` client.
+- `ts-package` means the proof drives a TS-zone package's public surface directly
+  (no external substrate): a deterministic in-process property over adapter-facing
+  data types, folds, and lowerings (the MS-C6 vocabulary and harness-adapter
+  contract). These proofs assert on workload results rather than trace evidence.
 
 The intended substrate end state is differential evidence: `upstream-sdk`
 proves the S2 oracle behavior, while `firegrid-log` proves Firegrid's client
@@ -67,6 +71,9 @@ a red proof run, not a code-review-only observation.
 | INV-018 | A checkpointed fold reconstructs identical `(state, version)` from `latest snapshot + suffix replay` as a full fold from `Seq 0`, including across a host restart — a cold fold with no resident memory rebuilds identical state. | `state.checkpoint-rebuild-equivalence` | `foundation-fsharp` | `ci-green` in `Firegrid.Foundation.Proofs`, executed by `pnpm run check`. |
 | INV-019 | Two checkpointers committing at the same observed sidecar tail resolve to exactly one committed snapshot (open-CAS single-winner via the I5 `Authority.admit` Open regime); the loser is rejected `Raced`, never interleaved, and a stale-state commit (`AsOf <= latest`) is rejected `Regressed` (monotonic snapshots). | `state.checkpoint-race` | `foundation-fsharp` | `ci-green` in `Firegrid.Foundation.Proofs`, executed by `pnpm run check`. |
 | INV-020 | `trim` never advances past the latest committed snapshot's `AsOf` (`AheadOfCheckpoint` otherwise); a reader starting at the trim floor rebuilds equivalent state, the trim marker on the source being skipped rather than folded. | `state.trim-safety` | `foundation-fsharp` | `ci-green` in `Firegrid.Foundation.Proofs`, executed by `pnpm run check`. |
+| INV-021 | L1 observation vocabulary (I2) is an ACP `session/update` superset: base variants decode faithfully, `firegrid/` extensions and unrecognized `sessionUpdate` values are ignorable-by-default (the base fold is invariant to stripping them), the schema is versioned, decoding is JSON round-trip stable, and subagent output folds under its parent tool call rather than into top-level turn text. | `l1-vocabulary.schema-conformance` | `ts-package` | `ci-green` in `apps/proofs`, executed by `pnpm run check`. |
+| INV-022 | Harness-adapter determinism: replaying a recorded transcript through the adapter's pure lowering and its `drive` shell reconstructs an L1 record sequence and a folded state identical to the recorded fixture, deterministically across runs; a mutated transcript is detected as divergent. | `harness.fixture-replay` | `ts-package` | `ci-green` in `apps/proofs`, executed by `pnpm run check`. |
+| INV-023 | Harness-adapter fact-level resume-suppression: driving with a `ResumePoint` emits exactly the suffix at Version >= the exclusive-upper-bound `observedThrough`, re-emitting no already-durable fact; `observedThrough = 0` emits the whole turn and `= length` emits nothing. The side-effect-non-re-execution half of resume requires a live gateable harness and is deferred to the WP D3 adapter proofs. | `harness.resume-suppression` | `ts-package` | `ci-green` in `apps/proofs`, executed by `pnpm run check`. |
 
 The bridge intentionally names proof families, not a required proof runner. An
 alternate implementation can claim the same invariant by publishing equivalent
