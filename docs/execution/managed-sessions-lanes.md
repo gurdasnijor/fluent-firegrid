@@ -50,8 +50,10 @@ Ground rules:
 ## Claim Protocol
 
 Claim a WP by editing the ledger row (Owner + Status: `in-progress`) in a small
-standalone commit before starting. Statuses: `open` → `in-progress` → `in-review`
-→ `done` (merged, proofs green). Blocked? Set `blocked:<reason>` and move on.
+standalone commit before starting. Statuses: `open` → `in-progress` →
+`surface-approved` (G6 cleared and merged; implementation pending — the row
+means the whole WP, never the spec alone) → `in-review` → `done` (merged,
+proofs green). Blocked? Set `blocked:<reason>` and move on.
 One WP per agent at a time.
 
 ## Architect Gates

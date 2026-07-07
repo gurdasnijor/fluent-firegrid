@@ -67,6 +67,17 @@ DoD = CI-green on GitHub (never local-only) · ledger row updated in the PR ·
 gates honored · proof names match the SDD's obligations · handoff summary on
 the PR.
 
+### Standing rulings (architect, 2026-07-07)
+
+1. **Ledger rows mean the whole WP.** A surface-only merge sets
+   `surface-approved`, never `done`. Reconcile any row that drifted.
+2. **Stale PRs #72/#73/#68: closure authorized** — close with a one-line
+   comment linking the superseding artifact (#73 → the restored F# API
+   doctrine SDD; #72 → two-zone rule + P-lane ports + EffSharp strip; #68 →
+   P3's ported kernel and C-lane timer proofs).
+3. **Prompts are templates; ledger + PR state is truth.** Adapt Part B prompts
+   to ground truth mechanically; never change scope, gates, or laws.
+
 ### Merge authority
 
 You may merge a PR yourself when it is CI-green **and** either (a) the
