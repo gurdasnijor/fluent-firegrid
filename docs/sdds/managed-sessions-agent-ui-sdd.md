@@ -301,10 +301,18 @@ guarantees differ and the contract must say so). First concrete adapter: Claude
 Agent SDK, including subagent scoping (`parent_tool_use_id`) and usage/cost
 facts.
 
-Decision required at C6 start (architect gate): L1 vocabulary base. Default
-position: a superset of ACP session-update semantics, so future ACP harnesses
-lower trivially and the UI folds one format. Record the decision in this
-section when made.
+Decision (G2, made 2026-07-06): the L1 observation vocabulary is an **ACP
+session-update superset**. Base vocabulary = ACP session/update semantics
+(message chunks, thought chunks, tool_call and tool_call_update, plan).
+Firegrid extensions are namespaced and additive: `firegrid/usage` (token/cost
+facts), `firegrid/subagent` (parent-scoped attribution), `firegrid/native`
+(harness-specific passthrough, tagged with harness id). Rules: every extension
+declares its fold behavior for consumers that do not understand it —
+ignorable-by-default, never load-bearing for the base fold's correctness; the
+schema is versioned; D2's fixture corpus is the compatibility gate. Rationale:
+future ACP harnesses lower near-trivially, and every UI folds one format
+regardless of harness. WP D1 turns this into the schema + decision-record
+page; deviations re-open gate G2.
 
 Proof obligations:
 
