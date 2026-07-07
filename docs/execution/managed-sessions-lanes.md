@@ -151,8 +151,10 @@ so. F1 is high-leverage and unblocked today.
 
 Changes to any of these require gate G1:
 
-- **I1 — Turn-stream record schema + naming** (B1). Consumed by Lanes A (history
-  fold), D (adapter emits into turns), E (attach).
+- **I1 — Generic `DurableLog` surface + Turn binding schema** (B1). The
+  generic sealed-log API and the turn address/chunk/terminal schemas bound to
+  it. Consumed by Lanes A (history fold), D (adapter emits into turns), E
+  (attach). Domain methods on the binding are a G1 violation.
 - **I2 — L1 observation vocabulary** (D1). Consumed by A4 (history fold) and E4
   (UI fold).
 - **I3 — Wake record shape + shard naming** (C1). Consumed by B3 (lifecycle

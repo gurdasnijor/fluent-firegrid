@@ -158,35 +158,55 @@ record schema reserves the reference shape now.
 
 Target Surface (exemplar — refined by WP B1 under gate G6):
 
+The generic primitive is the *stream half* of the table/stream duality — a
+sealed, single-writer, schema-coded durable log. Turn is a domain **binding**
+of it (an address scheme plus chunk/terminal schemas), not a new API. The
+*table half* is Lane A's checkpointed fold/`StateView` (prior art:
+firegrid's `effect-durable-operators` `DurableTable` — collections with
+`insert/get/query/subscribe` over a changelog); predicate-waits over tables,
+already proven on the object side (`store-object-state-wait`,
+`store-object-index-wait`), bridge the two halves.
+
 ```ts
-// packages/fluent, module: session/turn (placement per package-boundary principle)
+// packages/fluent, module: durable/log — generic, domain-free
 
-interface TurnAddress {
-  readonly sessionId: SessionId
-  readonly turnId: TurnId  // client-supplied; naming derived, never random
+interface LogAddress { readonly segments: ReadonlyArray<string> } // derived, never random
+
+class DurableLog extends Context.Service<DurableLog>()("firegrid/DurableLog", ...) {
+  // Idempotent by address: a retried create attaches to the existing log.
+  create: <C, T>(address: LogAddress, codec: LogCodec<C, T>) =>
+    Effect<LogProducer<C, T>, LogAlreadyLiveError | SubstrateError>
+  attach: <C, T>(address: LogAddress, codec: LogCodec<C, T>) =>
+    Effect<LogAttachment<C, T>, LogNotFoundError | SubstrateError>
 }
 
-class TurnStreams extends Context.Service<TurnStreams>()("firegrid/TurnStreams", ...) {
-  // Idempotent by address: a retry attaches to the existing turn.
-  create: (address: TurnAddress) => Effect<TurnProducer, TurnAlreadyLiveError | SubstrateError>
-  attach: (address: TurnAddress) => Effect<TurnAttachment, TurnNotFoundError | SubstrateError>
+interface LogProducer<C, T> {
+  readonly append: (chunk: C) => Effect<void, ProducerDeposedError | SubstrateError>
+  readonly seal: (terminal: T) => Effect<void, ProducerDeposedError | SubstrateError>
 }
 
-interface TurnProducer {
-  readonly append: (chunk: TurnChunk) => Effect<void, ProducerDeposedError | SubstrateError>
-  readonly seal: (terminal: TurnTerminal) => Effect<void, ProducerDeposedError | SubstrateError>
+interface LogAttachment<C, T> {
+  readonly chunks: Stream<C, SubstrateError>      // replay-from-zero + live tail
+  readonly terminal: Effect<T, SubstrateError>    // resolves at seal
 }
 
-interface TurnAttachment {
-  readonly chunks: Stream<TurnChunk, SubstrateError>   // replay-from-zero + live tail
-  readonly terminal: Effect<TurnTerminal, SubstrateError> // resolves at seal
-}
+// Turn: a binding, zero new methods. If turn work appears to need an
+// operation the generic surface lacks, that is gate G1/G6, not a TurnStreams method.
+const turnLog = (s: SessionId, t: TurnId) =>
+  ({ address: turnAddress(s, t), codec: LogCodec.make(TurnChunk, TurnTerminal) })
 ```
 
-Laws: `attach` after `seal` replays the full prefix then yields the terminal;
-`append`/`seal` after `seal` fail; a deposed producer's `append` fails
-(fenced); two `create` calls for one address yield one durable turn. The
-consumer never sees S2 stream names, fencing tokens, or sequence numbers.
+Laws (stated and proven at the generic level): `attach` after `seal` replays
+the full prefix then yields the terminal; `append`/`seal` after `seal` fail; a
+deposed producer's `append` fails (fenced); two `create` calls for one address
+yield one durable log. The consumer never sees S2 stream names, fencing
+tokens, or sequence numbers.
+
+Scope guard (both directions): domain semantics stay out of the generic layer,
+*and* the generic layer does not grow a KStreams operator algebra (joins,
+windowing, repartitioning) ahead of a consumer that demands it. The duality
+surface is: log (`append/seal/attach`), table (`fold/get/query/subscribe`,
+Lane A), predicate-wait (the bridge).
 
 Proof obligations:
 
