@@ -10,10 +10,23 @@ These instructions apply to the whole repository.
 - Keep generated or external reference material out of commits unless explicitly
   requested.
 
+## Language Zones
+
+This repo is two-zone by rule — see
+[`docs/canon/architecture/fluent/language-and-targets.md`](docs/canon/architecture/fluent/language-and-targets.md):
+
+- **F# owns everything that writes S2** (substrate, kernel semantics, folds,
+  lifecycle, wakes, timers) and follows the sans-IO core rule: pure semantics
+  modules, I/O in shells, time/randomness passed in as data. Use the ported
+  eff-firegrid modules as the style exemplar.
+- **TypeScript owns TS-ecosystem edges** (proof harness, harness adapters,
+  client SDK). Cross zones only via the kernel protocol or the single
+  Fable-emitted package seam — never deep imports.
+
 ## Effect Code
 
-This repo is Effect-native. New or modified Effect code must follow the local
-guidance in [`LLMS.md`](LLMS.md), adapted from the Effect team guidance in
+TS-zone Effect code must follow the local guidance in [`LLMS.md`](LLMS.md),
+adapted from the Effect team guidance in
 <https://github.com/Effect-TS/effect-smol/blob/main/LLMS.md>.
 
 In short:
