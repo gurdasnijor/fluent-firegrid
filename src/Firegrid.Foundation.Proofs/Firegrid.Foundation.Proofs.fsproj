@@ -33,6 +33,7 @@
     <Compile Include="FoundationSubjectHistoryProof.fs" />
     <Compile Include="FoundationStateViewProof.fs" />
     <Compile Include="FoundationStateReadsProof.fs" />
+    <Compile Include="FoundationSessionHistoryProof.fs" />
     <Compile Include="FoundationKvStoreProof.fs" />
     <Compile Include="FoundationCheckpointProof.fs" />
     <Compile Include="FoundationCheckpointTrimSafetyProof.fs" />

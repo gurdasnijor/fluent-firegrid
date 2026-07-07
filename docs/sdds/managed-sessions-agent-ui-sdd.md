@@ -2153,9 +2153,26 @@ merged / LOC deleted.
   `StateView`/`SubjectHistory` unchanged (no G1). Proof
   `state.stateview-strong-read` green: a strong read observes a *second host's*
   acknowledged append; an eventual read is a monotonic prefix (never ahead of
-  strong) that catches up. Conformance row INV-034. Session history fold +
-  thread-index (`session.history-fold`, `session.projection-lag-observable`)
-  remain A4.
+  strong) that catches up. Conformance row INV-034.
+- **A4 (MS-C4) — session-history projection shipped + proofs green (WP A4, the
+  wave's last).** `Firegrid.Store.SessionHistory`
+  (`src/Firegrid.Store/SessionHistory.fs`): the generic `Projection<'fact,'history>`
+  core composing I4 `Checkpoint` (cold rebuild) + A3 `StateReads` (reader seeded
+  from the latest checkpoint) + the `Turns` binding that folds B3's session log
+  (**I6**, `SessionLifecycle.LifecycleFact` on `sessions/{s}/log`) directly into
+  `History = { Order; ByTurn }` (the thread-index), preserving `EndCause`
+  losslessly (`Ended of EndCause`, never the `TurnTerminal` collapse). Consumes
+  I4/A3/I1/I6 unchanged; the one authorized cross-lane touch is making B3's
+  `SessionLifecycle.lifecycleCodec` public (G1-authorized by the #112 review).
+  Proofs green, driven through `SessionLifecycle`'s public API: `session.history-fold`
+  (rebuild ≡ fold-from-zero via checkpoint incl. restart; an **idle-timeout lands
+  as `Ended IdleTimeout`, not `Cancelled`**) and `session.projection-lag-observable`
+  (the reader's `AppliedTail` exposes lag). Conformance rows INV-035/036.
+  Note (recorded, not a gate): `Checkpoint.rebuild` is fence-safe (A2's
+  `IgnoreCommandRecords`), but the A3 `StateView` pump is command-unaware, so the
+  live reader is seeded *past* the log's seq-0 fence via the checkpoint;
+  fence-safe reading across a mid-log takeover fence is a StateView-level
+  follow-up, not exercised by these obligations.
 - **B1 / MS-C2 (I5 + I1) — modules shipped (WP B1-IMPL).** `Authority`
   (`src/Firegrid.Store/Foundation/Authority.fs`), `DurableLog`
   (`src/Firegrid.Store/Foundation/DurableLog.fs`), and the `Turn` binding
