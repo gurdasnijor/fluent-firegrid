@@ -16,8 +16,11 @@
 
   <ItemGroup>
     <Compile Include="S2/Types.fs" />
-    <Compile Include="S2/InternalSdk.fs" />
-    <Compile Include="S2/S2.fs" />
+    <Compile Include="S2/Interop.fs" />
+    <Compile Include="S2/Errors.fs" />
+    <Compile Include="S2/Client.fs" />
+    <Compile Include="S2/Cli.fs" />
+    <Compile Include="S2/Patterns.fs" />
   </ItemGroup>
 
 </Project>
