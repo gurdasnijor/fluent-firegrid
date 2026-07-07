@@ -828,18 +828,357 @@ C2 + C3, replacing agent-ui's in-memory `activeRuns` map. Cancel is a durable
 control fact any process can append; the producer observes it and terminates the
 turn; timeouts are kernel obligations, not process-local timers.
 
+MS-C5 is delivered by two WPs: **B3** (this surface — session claim /
+single-writer start, durable cancel, and durable timeouts) and **B4** (the
+fenced native-resume-artifact store, a sibling module whose
+`session.resume-artifact-fenced` obligation and surface refinement land with B4).
+B3 and B4 share the **MS-C5 claim convention**: One session holder identity
+claims both the session log and the resume register; a takeover `start` claims
+the resume register before any re-hydration read, so a stale writer's late
+`store` is fenced out before it can fork harness state. (B4 binds its own
+register fence at `sessions/{s}/resume`; the two fences share the holder
+identity, not one fence — this convention, not "grounded on B3's fence.")
+
+Target Surface (F# — WP B3; G6 approved with required changes folded; G1 fork
+decided — keep I1 unchanged, 2026-07-07):
+
+Lifecycle is a **session-actor policy** layered on B1's `Authority` (**I5**) and
+`DurableLog`/`Turn` (**I1**), per
+[`../canon/architecture/fluent/authority-and-actors.md`](../canon/architecture/fluent/authority-and-actors.md)
+("Session (managed agent) = the actor; prompts and cancels are mailbox sends").
+It invents **no second authority**: `start` is an `Authority.claim`, termination
+is a `DurableLog.seal`, and cancel is an ordinary **mailbox send**. It is one
+domain module, `SessionLifecycle`, in the F# `src/` zone
+(`src/Firegrid.Store/SessionLifecycle.fs`), sans-IO: a pure decision core
+(`fold`/`onCommand`/`onWake` — the session Handler, the Processor's pluggable
+part) plus an `Async` shell (`start`/`cancel`/`drive`).
+
+**Topology — three derived subjects per session** (all named from the
+`SessionId` the client already holds, never random):
+
+| Subject | Regime | Role |
+| --- | --- | --- |
+| `sessions/{s}/log` | FencedOwner (I5) | the session actor's own authoritative log; its fold is the **durable `activeRuns`** — which turn, if any, is live. The session outlives its turns, so it is never sealed per-turn. |
+| `sessions/{s}/in` | Open-append (InboxFold lineage) | the session **inbox**: cancels (and later prompts) land here as mailbox sends; senders need no authority. |
+| `sessions/{s}/turns/{t}` | FencedOwner + Sealed (I1 `Turn`) | the turn stream for one execution, created under the session holder's identity, sealed at terminal. |
+
+**Single-writer via composition, not a new mechanism.** A `start` claims the
+session log (`Authority.claim`) and reads the fold. Two concurrent starts are
+resolved by *both* I5 and policy: the session claim fences the loser, so its
+`TurnStarted` fails to commit; and the `AlreadyLive` policy rejects a start that
+observes a *different* live turn. A same-`turnId` start re-attaches
+(`DurableLog.create` re-claims, deposing any stale producer) — recovery, never a
+fork. The `AlreadyLive` rejection is exactly the lifecycle policy that
+`DurableLog.create` defers to MS-C5.
+
+**Durable cancel is a mailbox send.** `cancel` is an open-append to
+`sessions/{s}/in` carrying `(source, sourceSeq)` provenance — any process may
+call it without holding the session, and it is **not** a bespoke control
+channel. The holder admits it on its next `drive` (provenance-deduped) and seals
+the live turn; a resend folds once.
+
+**How the cancel reaches a running adapter** (the sentence D2's #99 R4 defers to
+this surface). The holder seals the turn on admitting the cancel; a concurrently
+running producer/adapter then observes cancellation as a `Deposed`/sealed append
+failure on its **next emit** — D2's `EmitError.deposed|sealed` law: it computed
+output but could not commit it. An in-process host **may** additionally interrupt
+the adapter fiber as an *optimization* (to stop wasted work sooner), never as the
+mechanism — the durable seal, not fiber interruption, is what terminates the turn.
+
+**Durable timeouts, no baked-in clock.** A deadline is a function of the durable
+fold (turn `startedAt`; last-chunk time on the turn stream), so any host
+**re-arms** it on claim — it survives restart and is not a process-local timer.
+The fire is delivered as a `WakeReason.TimerFired` by the kernel wake path, whose
+concrete wake-record + shard naming is **I3** (C1, PR #95, under architect
+review) — cited here and consumed abstractly; MS-C5 does **not** depend on I3's
+shape. In MS-C3's degraded sweep/poll mode the same deadline is recomputed, so
+correctness never hinges on tail wakes. Time enters the pure core only as
+`now: Timestamp` data (the sans-IO rule).
+
+```fsharp
+// namespace Firegrid.Store — session-actor lifecycle POLICY over the generic
+// Authority (I5), DurableLog/Turn (I1), and the kernel timer/wake path (I3, C1).
+// open Firegrid.Foundation            // Authority, DurableLog, SubjectHistory
+// open Firegrid.Store.Foundation.Durable  // WakeReason, TimerId, Timestamp — the
+//   kernel wake vocabulary (I3/C1); consumed here, NOT re-minted (one vocabulary).
+// Deps passed in (sans-IO shell): S2.Basin + the I1 Turn codec. No EffSharp.
+
+module SessionLifecycle =
+    // ---- Kernel wake vocabulary (consumed, NOT re-minted) -----------------
+    // `Timestamp`, `TimerId`, and `WakeReason` are the kernel's, from
+    // `Foundation/Durable/Processor.fs` — this surface consumes them so C1's
+    // router (`Drive : ActorAddress -> WakeReason -> …`) drives a session with
+    // no mapping shim between lanes. Time still enters the pure core only as
+    // `now: Timestamp` data (the sans-IO rule); it is never read ambiently.
+    //   type Timestamp   = int64
+    //   type TimerId     = TimerId of string
+    //   type WakeReason  = MailboxReady | TimerFired of TimerId * Timestamp
+    //                    | ChildTerminal of SubjectId
+
+    // ---- Derived addresses (never random) ---------------------------------
+    /// Session authoritative log (FencedOwner, I5): the durable `activeRuns`.
+    val logSubject   : Turn.SessionId -> SubjectHistory.SubjectId
+    /// Session inbox (open-append, InboxFold lineage): mailbox sends land here.
+    val inboxSubject : Turn.SessionId -> SubjectHistory.SubjectId
+
+    // ---- Durable timeout policy (data, not a clock) -----------------------
+    /// Idle + max-duration bounds (ms). Durable by construction: a deadline is a
+    /// function of the fold, so any host re-arms it on claim. `None` = unbounded.
+    type Timeouts =
+        { Idle: int64 option            // max quiet gap since the last turn chunk
+          MaxDuration: int64 option }   // absolute cap since turn start
+    val noTimeouts : Timeouts
+
+    // ---- Session-log schema (L2 coordination facts; holder-only) ----------
+    /// Why a turn ended, recorded on the SESSION log. The turn stream's terminal
+    /// stays the I1 `TurnTerminal` unchanged — cancel and both timeouts map it to
+    /// `TurnTerminal.Cancelled`; the distinct CAUSE is this L2 fact. (G1 fork
+    /// DECIDED — keep I1 unchanged, no first-class `TurnTerminal.TimedOut`; see the
+    /// gate-boundary note below for the G6 rationale.)
+    type EndCause =
+        | Done                          // producer completed normally
+        | Failed of reason: string
+        | Cancelled                     // external cancel (mailbox send)
+        | IdleTimeout
+        | MaxDurationTimeout
+    /// Exhaustive `EndCause → TurnTerminal` mapping (the turn-stream terminal),
+    /// so the collapse is stated, not implied:
+    ///   Done               → TurnTerminal.Completed
+    ///   Failed reason      → TurnTerminal.Failed reason
+    ///   Cancelled          → TurnTerminal.Cancelled
+    ///   IdleTimeout        → TurnTerminal.Cancelled
+    ///   MaxDurationTimeout → TurnTerminal.Cancelled
+    /// The three abnormal-stop causes collapse to `Cancelled` on the turn stream;
+    /// `EndCause` preserves the distinction losslessly on the session log.
+    /// Session-log record schema (I5-fenced; only the holder appends).
+    type LifecycleFact =
+        | TurnStarted of Turn.TurnId * startedAt: Timestamp
+        | TurnEnded   of Turn.TurnId * EndCause * endedAt: Timestamp
+
+    // ---- Inbox schema (open-append mailbox sends) -------------------------
+    /// A durable control message. Cancel is the only command in B3; prompts join
+    /// later (MS-C6/E). `(Source, SourceSeq)` makes a resend fold once.
+    type Command = Cancel of Turn.TurnId
+    type Sent = { Source: string; SourceSeq: int64; Command: Command }
+
+    // ---- Pure decision core (sans-IO; Fable-safe; deterministic) ----------
+    type State                          // abstract; live turn + arming info
+    val initial  : State
+    val fold     : State -> SubjectHistory.StoredRecord<LifecycleFact> -> State
+    /// The live turn, if any — the durable `activeRuns` answer for this session.
+    val liveTurn : State -> Turn.TurnId option
+
+    // A wake the holder must act on is the kernel `WakeReason` (above), NOT a
+    // private DU: `MailboxReady` admits the inbox; `TimerFired` re-checks the
+    // durable deadlines; `ChildTerminal` is `noop` here by policy (B3 has no
+    // child subjects — reserved for later composition). `WakeReason.TimerFired`
+    // carries the timer's delivery timestamp, but the processing-time fact
+    // `onWake` decides on is the separate `now: Timestamp` (see below).
+    /// The decision as data (not the effect): seal the live turn, append session
+    /// facts, (re)arm / disarm durable timers. `Arm` lowers to the kernel
+    /// `Intent.SetTimer`; `Disarm` is **advisory** — the kernel `Intent` is
+    /// `SetTimer | Send | Execute` with no cancel-timer, so a stale/late fire is
+    /// already `noop`-guarded by the pure core (`onWake` seals only when `now`
+    /// passes the deadline). If a first-class cancel-timer intent is ever wanted,
+    /// that is Lane-P coordination (like the InboxFold note), not a mechanism B3
+    /// mints here.
+    type Outcome =
+        { Seal:   (Turn.TurnId * TurnTerminal) option
+          Append: LifecycleFact list
+          Arm:    (TimerId * dueAt: Timestamp) list
+          Disarm: TimerId list }         // advisory — see note above
+    val noop : Outcome
+
+    /// Pure: state + admitted command + `now` → outcome. `Cancel` of the live
+    /// turn seals it `Cancelled`; `Cancel` of a non-live / already-ended turn is
+    /// `noop` — idempotent.
+    val onCommand : Timeouts -> State -> now: Timestamp -> Sent -> Outcome
+    /// Pure: state + `now` + kernel wake → outcome. `now: Timestamp` is the
+    /// processing-time fact the law depends on (`WakeReason.TimerFired`'s own
+    /// timestamp is only the delivery's claim, and `TurnEnded.endedAt` has no
+    /// other source) — symmetric with `onCommand`. An idle/max timer whose
+    /// deadline `now` has passed seals the live turn; a not-yet-due / stale
+    /// `TimerFired`, a `MailboxReady` with nothing to admit, or a `ChildTerminal`
+    /// is `noop`.
+    val onWake    : Timeouts -> State -> now: Timestamp -> WakeReason -> Outcome
+
+    // ---- Shell: start / cancel / drive (Async; composes I5 + I1) -----------
+    [<RequireQualifiedAccess>]
+    type StartError =
+        | AlreadyLive of Turn.TurnId    // single-writer policy: a different live turn holds the session
+        | Claim of Authority.ClaimError
+        | Failed of S2Errors.S2Failure
+
+    /// A started turn: the I1 turn `Producer` bound under the session claim, plus
+    /// the session `Holder` and folded `State`. Only this holder appends output.
+    type LiveTurn                       // abstract
+
+    /// Start a turn on `session` as `holderId`: `Authority.claim` the session log,
+    /// then the SINGLE-WRITER policy over the fold —
+    ///   • no live turn        → record `TurnStarted`, `DurableLog.create` the
+    ///                           turn stream under `holderId`, arm idle/max timers.
+    ///   • live turn = `turnId`→ re-attach (create re-claims / deposes a stale
+    ///                           producer): recovery, never a fork.
+    ///   • live turn ≠ `turnId`→ reject `AlreadyLive`.
+    /// A deposed racer's `TurnStarted` also fails under the session fence, so two
+    /// concurrent starts yield exactly one live turn.
+    val start :
+        S2.Basin -> Timeouts -> Turn.SessionId -> Turn.TurnId -> Authority.HolderId
+            -> now: Timestamp -> Async<Result<LiveTurn, StartError>>
+
+    /// Append one turn chunk under the session fence (re-arms the idle timer). A
+    /// live *deposed* producer fails `Deposed` — it computes but cannot commit.
+    val append   : LiveTurn -> TurnChunk -> Async<Result<unit, DurableLog.AppendError>>
+    /// Seal the turn normally (`TurnTerminal.Completed` + `TurnEnded Done`),
+    /// disarm timers. First-valid-terminal-wins (I1).
+    val complete : LiveTurn -> now: Timestamp -> Async<Result<unit, DurableLog.AppendError>>
+
+    [<RequireQualifiedAccess>]
+    type CancelError = Failed of S2Errors.S2Failure
+    /// Durable cancel — a MAILBOX SEND (open-append to `inboxSubject`), NOT a
+    /// control channel and NOT authority: any process may call it. Idempotent by
+    /// `(source, sourceSeq)`; the holder observes it on its next `drive` and seals
+    /// the turn `Cancelled`. Returns once the send is durable.
+    val cancel :
+        S2.Basin -> Turn.SessionId -> Turn.TurnId
+            -> source: string -> sourceSeq: int64 -> Async<Result<unit, CancelError>>
+
+    [<RequireQualifiedAccess>]
+    type Progress =
+        | Idle                          // nothing to admit / no deadline reached
+        | Advanced                      // facts / timers committed, turn still live
+        | Ended of EndCause             // the turn was sealed (cancel / timeout)
+        | Deposed                       // a newer holder owns the session; step down
+    [<RequireQualifiedAccess>]
+    type DriveError =
+        | Mailbox of S2Errors.S2Failure
+        | Failed of S2Errors.S2Failure
+
+    /// One holder drive tick: admit the inbox (provenance-deduped), apply the pure
+    /// `onCommand`/`onWake` decisions (seal the turn, append facts, (re)arm timers)
+    /// under the session fence. `wake` is the kernel `WakeReason` (`MailboxReady`
+    /// admits the inbox; `TimerFired` re-checks deadlines; `ChildTerminal` is
+    /// `noop`), so C1's router (`Drive : ActorAddress -> WakeReason -> …`) drives a
+    /// session with no shim. Sealing under a rotated fence surfaces `Deposed`.
+    val drive :
+        LiveTurn -> WakeReason -> now: Timestamp -> Async<Result<Progress, DriveError>>
+```
+
+Ergonomic sample (the consumer test — usable with no proof-harness knowledge):
+
+```fsharp
+// Producer process: start (single-writer) → append → complete. `now` is data.
+match! SessionLifecycle.start basin timeouts session turnId holderId now with
+| Ok live ->
+    let! _ = SessionLifecycle.append live (Text "hello")   // Error Deposed if fenced out
+    let! _ = SessionLifecycle.complete live now
+    ()
+| Error (SessionLifecycle.StartError.AlreadyLive other) -> ()  // a turn is already live
+| Error _ -> ()
+
+// Any OTHER process cancels durably — a mailbox send, no session authority held:
+let! _ = SessionLifecycle.cancel basin session turnId "api-pod-7" 0L
+
+// The holder observes the cancel on its next drive and seals the turn.
+// The wake is the kernel `WakeReason` (Foundation/Durable), not a private DU:
+match! SessionLifecycle.drive live Durable.WakeReason.MailboxReady now with
+| Ok (SessionLifecycle.Progress.Ended SessionLifecycle.EndCause.Cancelled) -> ()  // durable Cancelled
+| Ok (SessionLifecycle.Progress.Deposed) -> ()                 // a newer host took over
+| _ -> ()
+```
+
+Laws (stated here; proven by WP B3):
+
+- **Single-writer start** (`session.lifecycle-single-writer`, B3). Two concurrent
+  `start`s on one session yield exactly one live turn: the session claim fences
+  the loser (its `TurnStarted` fails to commit) and the `AlreadyLive` policy
+  rejects a start observing a different live turn — never two producers on one
+  session.
+- **Durable cancel is a mailbox send** (`session.lifecycle-durable-cancel`, B3).
+  `cancel` from a process that is not the producer appends to the inbox; the
+  holder's `drive` admits it and seals the turn to a durable
+  `TurnTerminal.Cancelled` (`TurnEnded Cancelled` on the session log). A
+  duplicate — same `(source, sourceSeq)`, or a cancel of an already-ended turn —
+  folds once (idempotent): no second terminal.
+- **Deposed producer cannot append** (`session.lifecycle-deposed-producer`, B3).
+  Extends `store.object-live-fencing` / `session.turn-crash-terminal` to
+  lifecycle: after a takeover `start` rotates the fence, the prior `LiveTurn`'s
+  `append`/`complete` fails `Deposed` — it computes but cannot commit. Recovery
+  drives the turn to a durable terminal; an attached reader observes it, never
+  hangs.
+- **Durable, host-independent timeouts.** Idle and max-duration deadlines are
+  functions of the durable fold, re-armed on every claim — a timeout survives
+  host restart and is not a process-local timer. `onWake` seals only when `now`
+  is past the deadline; a stale/duplicate fire is `noop`. Fire delivery is the
+  kernel wake path (I3, C1; cited, not depended on); the sweep/poll degraded mode
+  (MS-C3) recomputes the same deadline.
+- **No second authority.** `start` = `Authority.claim`, termination =
+  `DurableLog.seal`, cancel = an open-append send — composing I5, never
+  extending it (no I5 shape change → no G1 on I5).
+- **No leaks.** Consumers never see S2 stream names, fence tokens, seq nums, or
+  the inbox address.
+
+Gate-boundary notes (the first is now **decided** by the G6 ruling and recorded
+here for the record; the rest are raised for sign-off, **not** taken in this WP):
+
+- **Turn terminal for timeouts — G1 fork DECIDED: keep I1 unchanged** (architect
+  G6 ruling, 2026-07-07). This surface maps cancel *and* both timeouts onto the
+  existing `TurnTerminal.Cancelled`, recording the distinct cause only as an L2
+  `EndCause` on the session log — so I1 (the `Turn` schema, B1) is **unchanged**.
+  The alternative, a first-class `TurnTerminal.TimedOut` on the turn stream, was
+  weighed and declined. Rationale of record: (1) **no turn-stream reader behaves
+  differently by cause** — at that altitude the operative fact is "no more output,
+  not a normal completion"; (2) the **cause of record lives on the session log**,
+  which A4's history fold projects, so history/UI get `IdleTimeout` vs `Cancelled`
+  without touching I1; (3) D2's adapter contract **freezes `L1Terminal` as
+  `completed | cancelled | failed`**, so a first-class `TimedOut` would force a
+  *simultaneous* G1 on I1 **and** a change to that contract; (4) **I1 is ratified,
+  implemented, and proven** (B2's three green proofs), and no consumer requires the
+  distinction at turn altitude to reopen it; (5) the decision is **reversible
+  additively later** — `EndCause` remains the durable source of truth, so a future
+  first-class terminal would be a mechanical, additive migration.
+- **I3 dependency (cited, not depended-on).** Timer-wake delivery is I3's
+  wake-record + shard naming (C1, PR #95). MS-C5 consumes `WakeReason.TimerFired`
+  abstractly and re-arms deadlines from the fold, so it neither depends on I3's
+  concrete shape nor blocks on PR #95. If wiring lifecycle wakes later needs an
+  I3 shape change, that is a G1 on I3 — escalated separately.
+- **Inbox admission primitive.** The session inbox follows P3's
+  `InboxFold`/`Mailbox` lineage (provenance-deduped admission). If B3 needs a
+  generic mailbox surface P3 does not yet export publicly, that is Lane-P
+  coordination (as A1↔B1 for `Authority.admit`), not a bespoke re-implementation.
+
+Scope guard (both directions): lifecycle is **policy**, not a new primitive — it
+adds no authority regime (I5 owns claim/seal) and no generic drive loop (P3's
+Processor owns claim→admit→commit; this surface supplies only the session
+Handler + domain entry points). The inbox `Command` schema stays minimal (Cancel
+only in B3; prompts are MS-C6/E). The fenced native-resume-artifact store and its
+`session.resume-artifact-fenced` proof are **WP B4's** sibling surface within
+MS-C5, not B3.
+
+Validation Gates (F#-zone, G6 — per
+[`fsharp-fable-effsharp-evaluation-sdd.md`](./fsharp-fable-effsharp-evaluation-sdd.md)):
+
+- **Native shapes, EffSharp-free.** `Async` + `Result` + DU errors + `Codec`
+  records + a pure `fold`/`onCommand`/`onWake` core with time as `now: Timestamp`
+  data — no EffSharp (2026-07-06 deprecation); package-level decision "none,
+  nothing new."
+- **Ergonomic sample** above passes the consumer test.
+- **Emitted-TS sample + Fable build check** ride P4's Fable→TS facade; the surface
+  is Fable-safe by construction — it adds no BCL-only API beyond what `Authority`
+  / `DurableLog` / `SubjectHistory` already emit.
+
 Proof obligations:
 
-- `session.lifecycle-single-writer` — two concurrent starts for the same
-  session: exactly one live turn; the second is rejected or queued by policy,
-  never a second producer on the same session.
-- `session.lifecycle-durable-cancel` — cancel appended by a process that is not
-  the producer terminates the turn to a durable cancelled state; duplicate
+- `session.lifecycle-single-writer` (WP B3) — two concurrent starts for the same
+  session: exactly one live turn; the second is rejected (`AlreadyLive`) or
+  fenced by policy, never a second producer on the same session.
+- `session.lifecycle-durable-cancel` (WP B3) — cancel appended by a process that
+  is not the producer terminates the turn to a durable cancelled state; duplicate
   cancel is idempotent.
-- `session.lifecycle-deposed-producer` — extends `store.object-live-fencing` to
-  turns: a live deposed producer cannot append turn output after takeover.
-- `session.resume-artifact-fenced` — the native resume artifact (e.g. Claude
-  session id) is written under the session fence; a stale owner's write is
+- `session.lifecycle-deposed-producer` (WP B3) — extends `store.object-live-fencing`
+  to turns: a live deposed producer cannot append turn output after takeover.
+- `session.resume-artifact-fenced` (WP B4) — the native resume artifact (e.g.
+  Claude session id) is written under the session fence; a stale owner's write is
   rejected (closes agent-ui's last-writer-wins session-store race).
 
 RFC invariants: turn single-writer, durable cancel, resume-artifact fencing.
