@@ -117,11 +117,10 @@ seam) use Effect shapes per `LLMS.md`. The surface is written and
 architect-approved *before* proofs or implementation; proofs import only the
 public surface. Signatures below are directional — the implementing WP refines
 them under G6, and the merged PR updates this document to match. MS-C2 is
-written out as the exemplar (in TS notation for readability; WP B1 re-expresses
-it in F# — `DurableLog` is eff-firegrid's proven `SubjectHistory` plus
-seal/terminal and fenced-producer semantics, so B1 extends the P2 port rather
-than starting fresh); the first WP of each other capability supplies its
-section at the same altitude.
+written out as the exemplar (WP B1's F# surface — `DurableLog` is the
+P2-ported `SubjectHistory` plus the `Authority` protocol (I5) and seal, so B1
+extends the port rather than starting fresh); the first WP of each other
+capability supplies its section at the same altitude.
 
 ### MS-C1 — Checkpoint + Trim
 
@@ -330,62 +329,202 @@ reference (claim-check); turn and session streams never carry inline blobs
 larger than one S2 record comfortably allows. Implementation deferred; the
 record schema reserves the reference shape now.
 
-Target Surface (exemplar — refined by WP B1 under gate G6):
+Target Surface (F# — WP B1; gate G6 + G1 sign-off pending):
 
 The generic primitive is the *stream half* of the table/stream duality — a
-sealed, single-writer, schema-coded durable log. Its authority mechanics
-(claim, epoch deposal, seal) are a separate generic module, `Authority`
-(interface I5), per
-[`../canon/architecture/fluent/authority-and-actors.md`](../canon/architecture/fluent/authority-and-actors.md) —
-B3, C1, and A2 consume the same protocol instead of hand-rolling fence/CAS
-usage per lane. Turn is a domain **binding**
-of it (an address scheme plus chunk/terminal schemas), not a new API. The
-*table half* is Lane A's checkpointed fold/`StateView` (prior art:
+sealed, single-writer, schema-coded durable log. It factors into two generic
+F# modules, both grounded in the P2-ported `Firegrid.Foundation.SubjectHistory`
+and the proven S2 fence primitives (`Record.fence`,
+`AppendOptions.fencingToken`, `appendIfFenced`, `FencingTokenMismatch`):
+
+- **`Authority`** — the write-authority protocol (cross-lane interface **I5**),
+  per [`../canon/architecture/fluent/authority-and-actors.md`](../canon/architecture/fluent/authority-and-actors.md).
+  Claim, epoch deposal, and seal over a subject, in the canon's three regimes:
+  Open (CAS admission), FencedOwner (epoch), Sealed. B3 (lifecycle), C1 (router
+  leadership), and A2 (checkpoint election) consume this one protocol instead of
+  hand-rolling fence/CAS usage per lane.
+- **`DurableLog`** — `SubjectHistory` + `Authority` + seal: the domain-free
+  sealed log. Turn is a **binding** of it (an address scheme plus chunk/terminal
+  schemas), not a new API.
+
+The *table half* is Lane A's checkpointed fold/`StateView` (prior art:
 firegrid's `effect-durable-operators` `DurableTable` — collections with
 `insert/get/query/subscribe` over a changelog); predicate-waits over tables,
 already proven on the object side (`store-object-state-wait`,
 `store-object-index-wait`), bridge the two halves.
 
-```ts
-// packages/fluent, module: durable/log — generic, domain-free
+**Fence token ↔ epoch.** The substrate fence token is the epoch's string
+encoding, so `claim` rotates the fence to `epoch + 1` and a stale holder's
+fenced append surfaces `S2Errors.FencingTokenMismatch expected`, from which the
+deposing epoch reads back directly. Deposal is epoch increment, never
+revocation: the prior epoch is immortal and harmless — it may compute but cannot
+commit. Time-based takeover is *policy* layered above `claim`, never a clock in
+the primitive.
 
-interface LogAddress { readonly segments: ReadonlyArray<string> } // derived, never random
+```fsharp
+// namespace Firegrid.Foundation — generic, domain-free (extends the P2 port).
+// open Firegrid.Log; open Firegrid.Foundation.SubjectHistory
+// Deps passed in (sans-IO shell): S2.Basin + SubjectHistory.Codec. No EffSharp.
 
-class DurableLog extends Context.Service<DurableLog>()("firegrid/DurableLog", ...) {
-  // Idempotent by address: a retried create attaches to the existing log.
-  create: <C, T>(address: LogAddress, codec: LogCodec<C, T>) =>
-    Effect<LogProducer<C, T>, LogAlreadyLiveError | SubstrateError>
-  attach: <C, T>(address: LogAddress, codec: LogCodec<C, T>) =>
-    Effect<LogAttachment<C, T>, LogNotFoundError | SubstrateError>
-}
+module Authority =
+    /// Monotonic authority generation; a claim mints the next epoch.
+    type Epoch = Epoch of int64
+    /// Substrate fence token (the epoch's encoding). Opaque — never seen by consumers.
+    type Fence                                 // abstract
+    /// Identity of a would-be holder (worker/process). Same identity re-attaches;
+    /// a different identity takes over. (encore-ds `insertOrGet` shape.)
+    type HolderId = HolderId of string
+    /// A live claim, bound to one epoch's fence — carries its Basin + Codec, so
+    /// commit/seal take no extra args. Only the holder commits or seals.
+    type Holder<'record>                        // abstract; Basin + Codec + Subject + Epoch + Fence
+    val epoch : Holder<'record> -> Epoch
 
-interface LogProducer<C, T> {
-  readonly append: (chunk: C) => Effect<void, ProducerDeposedError | SubstrateError>
-  readonly seal: (terminal: T) => Effect<void, ProducerDeposedError | SubstrateError>
-}
+    [<RequireQualifiedAccess>]
+    type ClaimError =
+        | Sealed                               // subject already terminal
+        | Failed of S2Errors.S2Failure
+    [<RequireQualifiedAccess>]
+    type CommitError =
+        | Deposed of by: Epoch                 // a newer epoch rotated the fence
+        | Sealed                               // subject sealed; no holder may append
+        | Failed of S2Errors.S2Failure
+    [<RequireQualifiedAccess>]
+    type AdmitError<'record> =
+        | Lost of AppendConflict<'record>      // open-CAS: another writer took the slot
+        | Failed of S2Errors.S2Failure
 
-interface LogAttachment<C, T> {
-  readonly chunks: Stream<C, SubstrateError>      // replay-from-zero + live tail
-  readonly terminal: Effect<T, SubstrateError>    // resolves at seal
-}
+    // FencedOwner regime — exactly one live holder.
+    /// Claim the subject under `holderId`: returns the existing holder if it
+    /// already holds the current epoch (idempotent), else rotates the fence to
+    /// `epoch + 1` and takes over. `claim` is the sole deposal mechanism; fails
+    /// `Sealed` if the subject is already terminal.
+    val claim  : S2.Basin -> Codec<'r> -> SubjectId -> HolderId -> Async<Result<Holder<'r>, ClaimError>>
+    /// Fenced append of domain records under the holder's epoch.
+    val commit : Holder<'r> -> 'r list -> Async<Result<Version, CommitError>>
+    /// Append the terminal record and extinguish authority (first-terminal-wins).
+    val seal   : Holder<'r> -> 'r -> Async<Result<unit, CommitError>>
 
-// Turn: a binding, zero new methods. If turn work appears to need an
-// operation the generic surface lacks, that is gate G1/G6, not a TurnStreams method.
-const turnLog = (s: SessionId, t: TurnId) =>
-  ({ address: turnAddress(s, t), codec: LogCodec.make(TurnChunk, TurnTerminal) })
+    // Open regime — leaderless single-winner CAS (checkpoint election, dedupe
+    // claims, admission records). Thin naming over `SubjectHistory.appendExpected`.
+    val admit  : S2.Basin -> Codec<'r> -> SubjectId -> Version -> 'r list
+                     -> Async<Result<Version, AdmitError<'r>>>
+
+module DurableLog =
+    /// Derived (never random) address → subject/stream name.
+    type Address = { Segments: string list }
+    /// Streamed-body and terminal codecs for one log.
+    type Codec<'chunk, 'terminal> =
+        { Chunk: SubjectHistory.Codec<'chunk>
+          Terminal: SubjectHistory.Codec<'terminal> }
+    type Producer<'chunk, 'terminal>           // abstract; wraps an Authority.Holder over a chunk|terminal codec
+    type Attachment<'chunk, 'terminal>         // abstract; a reader, no authority needed
+
+    [<RequireQualifiedAccess>]
+    type CreateError = Sealed | Failed of S2Errors.S2Failure
+    [<RequireQualifiedAccess>]
+    type AppendError = Deposed | Sealed | Failed of S2Errors.S2Failure
+    [<RequireQualifiedAccess>]
+    type AttachError = NotFound | Failed of S2Errors.S2Failure
+
+    /// `create` = `Authority.claim` under `holderId`, bound to the address: the
+    /// same identity re-attaches to the live log; a different identity takes it
+    /// over under a new epoch (never forks a second stream). AlreadyLive
+    /// rejection is lifecycle policy (MS-C5), not a mechanism here.
+    val create : S2.Basin -> Codec<'c,'t> -> Address -> Authority.HolderId -> Async<Result<Producer<'c,'t>, CreateError>>
+    val append : Producer<'c,'t> -> 'c -> Async<Result<unit, AppendError>>
+    val seal   : Producer<'c,'t> -> 't -> Async<Result<unit, AppendError>>
+
+    val attach : S2.Basin -> Codec<'c,'t> -> Address -> Async<Result<Attachment<'c,'t>, AttachError>>
+    /// Pull-cursor (canon stream idiom): blocks-with-wait until the next chunk or
+    /// the seal arrives (the `SubjectHistory.openCursorWithWait` idiom), yielding
+    /// `Ok (Some c)` per chunk and `Ok None` at the terminal. No EffSharp.
+    val next     : Attachment<'c,'t> -> Async<Result<'c option, AttachError>>
+    /// Resolves once the log is sealed: the terminal record's body.
+    val terminal : Attachment<'c,'t> -> Async<Result<'t, AttachError>>
+    val close    : Attachment<'c,'t> -> Async<unit>
+
+// Turn: a DurableLog binding — address + codecs, ZERO new methods. If a turn
+// needs an operation DurableLog lacks, that is gate G1/G6, not a Turn method.
+// Domain zone; TurnChunk/TurnTerminal reserve the claim-check reference shape.
+module Turn =
+    type SessionId = SessionId of string
+    type TurnId = TurnId of string
+    val address : SessionId -> TurnId -> DurableLog.Address   // sessions/{s}/turns/{t}
+    val codec   : DurableLog.Codec<TurnChunk, TurnTerminal>
 ```
 
-Laws (stated and proven at the generic level): `attach` after `seal` replays
-the full prefix then yields the terminal; `append`/`seal` after `seal` fail; a
-deposed producer's `append` fails (fenced); two `create` calls for one address
-yield one durable log. The consumer never sees S2 stream names, fencing
-tokens, or sequence numbers.
+Ergonomic sample (the consumer test — usable with no proof-harness knowledge):
+
+```fsharp
+// Producer: claim → append → seal. Same holderId re-attaches; a different one
+// takes over. `create` is idempotent per identity.
+match! DurableLog.create basin Turn.codec (Turn.address s t) holderId with
+| Ok producer ->
+    let! _ = DurableLog.append producer chunk    // Error AppendError.Deposed if fenced out
+    let! _ = DurableLog.seal producer terminal
+    ()
+| Error _ -> ()
+
+// Reader: attach mid-flight, drain replay + live tail, then the terminal.
+match! DurableLog.attach basin Turn.codec (Turn.address s t) with
+| Ok a ->
+    let rec drain () = async {
+        match! DurableLog.next a with
+        | Ok (Some chunk) -> render chunk; return! drain ()
+        | Ok None -> let! t = DurableLog.terminal a in finish t
+        | Error _ -> () }
+    do! drain ()
+| Error _ -> ()
+```
+
+Laws (stated here; proven by WP B2 at the generic level):
+
+- **Fenced single-writer.** At most one holder per epoch; a deposed holder's
+  `commit`/`append` fails `Deposed` — it computes but cannot commit
+  (`store-object-live-fencing` lineage).
+- **Idempotent claim.** `claim subject holderId` while `holderId` still holds
+  the current epoch returns the same `Holder` (idempotent per epoch); a
+  different `holderId` rotates to `epoch + 1` and takes over — the
+  `insertOrGet({subject}/{epoch}, holderId)` shape. `claim` is the sole deposal
+  mechanism.
+- **Create is claim-by-identity.** `create address holderId` on a live address
+  re-attaches for the same identity and takes over (new epoch) for a different
+  one — so two creates for one address yield one durable log, never a fork. An
+  `AlreadyLive` *rejection* is lifecycle policy (MS-C5), never a log mechanism;
+  `session.turn-idempotent-create` is a same-identity re-attach, not a
+  second-create no-op.
+- **Seal is terminal.** First-valid-terminal wins; `commit`/`append`/`seal`
+  after seal fail `Sealed`; `attach` after seal replays the full prefix then
+  yields the terminal.
+- **Attach tails with wait.** `next` blocks until the next chunk or the seal,
+  then yields `Ok None` at the terminal (the `openCursorWithWait` idiom) — B2's
+  attach proof pins the observed prefix + terminal against this.
+- **Open regime is single-winner.** `admit`/`claim` at an observed tail yields
+  exactly one winner; the losers observe the conflict, not the work.
+- **No leaks.** Consumers never see S2 stream names, fence tokens, or seq nums.
 
 Scope guard (both directions): domain semantics stay out of the generic layer,
 *and* the generic layer does not grow a KStreams operator algebra (joins,
-windowing, repartitioning) ahead of a consumer that demands it. The duality
-surface is: log (`append/seal/attach`), table (`fold/get/query/subscribe`,
-Lane A), predicate-wait (the bridge).
+windowing, repartitioning) ahead of a consumer that demands it. `Authority` is
+the shared write-authority core (I5), not per-lane fence code. The duality
+surface is: log (`create/append/seal/attach`), table (`fold/get/query/subscribe`,
+Lane A), predicate-wait (the bridge). The **Mailbox** admission primitive (P3's
+generalized `InboxFold`) and the actor **Processor** drive loop are *not* in
+this surface — B1 supplies the write-authority protocol they compose; the
+fence/claim *mechanics* are P3's `Foundation/Durable` port (coordinate, don't
+duplicate).
+
+Validation Gates (F#-zone, G6 — per
+[`fsharp-fable-effsharp-evaluation-sdd.md`](./fsharp-fable-effsharp-evaluation-sdd.md)):
+
+- **Native shapes, EffSharp-free.** `Async` + `Result` + DU errors + `Codec`
+  records + pull-cursor reads — no EffSharp (per the 2026-07-06 deprecation), so
+  the package-level EffSharp decision is "none, nothing new introduced."
+- **Ergonomic sample** above passes the consumer test.
+- **Emitted-TS sample + Fable build check** ride P4's Fable→TS facade for
+  `Firegrid.Log`; deferred to implementation. The surface is Fable-safe by
+  construction — it adds no BCL-only API beyond what `SubjectHistory` already
+  emits.
 
 Proof obligations:
 
