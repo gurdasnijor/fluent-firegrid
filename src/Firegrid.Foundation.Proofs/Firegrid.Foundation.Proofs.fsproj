@@ -34,7 +34,11 @@
     <Compile Include="FoundationStateViewProof.fs" />
     <Compile Include="FoundationKvStoreProof.fs" />
     <Compile Include="FoundationCheckpointProof.fs" />
+    <Compile Include="FoundationCheckpointTrimSafetyProof.fs" />
+    <Compile Include="FoundationCheckpointRaceProof.fs" />
     <Compile Include="FoundationDurableKernelProof.fs" />
+    <Compile Include="FoundationTurnStreamProof.fs" />
+    <Compile Include="FoundationSessionLifecycleProof.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

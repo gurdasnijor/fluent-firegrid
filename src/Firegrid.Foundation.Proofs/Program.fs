@@ -24,7 +24,11 @@ module Program =
           FoundationStateViewProof.proof
           FoundationKvStoreProof.proof
           FoundationCheckpointProof.proof
-          FoundationDurableKernelProof.proof ]
+          FoundationCheckpointTrimSafetyProof.proof
+          FoundationCheckpointRaceProof.proof
+          FoundationDurableKernelProof.proof
+          FoundationTurnStreamProof.proof
+          FoundationSessionLifecycleProof.proof ]
 
     let private usage =
         "Usage: node dist/Program.js proof list | proof run <all|proof-name> [--report-dir <dir>] [--trial-id <id>] [--seed <n>]"

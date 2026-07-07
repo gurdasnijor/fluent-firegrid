@@ -548,6 +548,247 @@ wake streams, a `readSession`-tailed router with a durable cursor, and a folded
 timer index in front of the existing sweep semantics. Sweeps remain as the
 degraded-mode contract and their proofs stay green.
 
+Decision (made here): a wake record is a **pointer, never a payload** — it names
+the subject to drive and *why* (`WakeReason`), and nothing else. The triggering
+message, timer payload, or child terminal already lives durably on the subject's
+own mailbox/log; the shard stream carries no state a reader would otherwise miss.
+Consequence: losing every wake on a shard degrades *latency* to the sweep floor,
+never *correctness* — the router is an accelerator in front of the sweep, not a
+new source of truth. Alternative (wake carries the message body, so a drive skips
+re-reading the mailbox) rejected: it forks state across two logs and makes the
+wake path correctness-load-bearing.
+
+Decision (made here): leadership is the `Authority` **FencedOwner** regime (I5,
+WP B1) applied to the shard subject — exactly one live router per shard, deposal
+by epoch increment. C1 does **not** invent a shard-lease or a third fence idiom;
+the router's `claim` is an `Authority.claim` instance, and the durable cursor is
+the `Mailbox` fenced-checkpoint pattern (P3's `MailboxCheckpoint` lineage), not a
+bespoke offset store.
+
+Target Surface (F# — WP C1; gate G6 + G1 sign-off pending):
+
+The wake path is the actor reading of MS-C3 from
+[`../canon/architecture/fluent/authority-and-actors.md`](../canon/architecture/fluent/authority-and-actors.md):
+**a wake shard is a shard-granularity mailbox, and the router is its actor — its
+mailbox IS the shard stream.** It factors into two generic F# modules in the
+durable-kernel package, co-located with and composed from the P3-ported
+`Processor`/`Mailbox` and the B1 `Authority` protocol (I5), reusing the kernel's
+one pointer vocabulary (`ActorAddress`, `WakeReason`) rather than minting a
+parallel one:
+
+- **`WakeShard`** — the frozen cross-lane interface **I3**: the wake-record
+  schema (`{ Subject; Reason }`) and the deterministic shard naming
+  (`subject → shard → stream`). Consumed by B3 (lifecycle wakes) and future
+  temporal features; changing the record schema *or* the naming scheme is a G1
+  gate.
+- **`WakeRouter`** — the tail-driven actor: claim the shard (FencedOwner), tail
+  the stream with wait, dispatch each fresh wake to its target exactly once, and
+  advance a fenced durable cursor. A binding/combinator over
+  `Authority` + `Mailbox` + `Processor`, not a new drive loop.
+
+C1 depends on P1 only (ledger). This is a **sequencing** rule, not a fence
+fallback: C1's implementation builds the **pure core** immediately (`WakeShard`,
+`codec`, `shardOf`, `plan` — none of which touch `Authority`); the **shell**
+(`tick`/`run`) compiles only once B1's `Authority` implementation is merged.
+(B1-IMPL is now merged to `main`, so the shell is unblocked — but this remains
+the documented rule.) The router **never** ships a raw-fence variant: if B1 were
+ever unmerged when the shell is ready, C1 pauses and reports rather than
+re-introducing the parallel fence idiom this surface bans. C2's
+`wake.single-claim` election drives through `Authority.claim` (FencedOwner),
+exactly as A1/A2 route checkpoint election through `Authority.admit`.
+
+```fsharp
+// namespace Firegrid.Store.Foundation.Durable — the actor kernel (Processor/Mailbox lineage).
+// open Firegrid.Foundation                     // SubjectHistory (P2), Authority (I5, B1)
+// Reuses the kernel's pointer vocabulary: ActorAddress, WakeReason (Processor.fs).
+// Deps passed in (sans-IO shell): S2.Basin + Authority + the Mailbox cursor pattern. No EffSharp.
+
+module WakeShard =
+    /// I3 — a shard identifier: 0 <= id < Count. Shards partition the subject
+    /// space so exactly one router tails each shard's stream.
+    type ShardId = ShardId of int
+    /// I3 — fixed deployment parameter: how many shard streams exist under a
+    /// namespace. Resharding (changing Count) is a canon non-goal (no rebalancing
+    /// protocol); a Count change is an operational migration, out of C1 scope.
+    type ShardConfig = { Namespace: string; Count: int }
+
+    /// I3 — the wake record: a POINTER, never a payload. `Subject` is the actor to
+    /// drive; `Reason` is why. Reason reuses the kernel `WakeReason`
+    /// (MailboxReady | TimerFired | ChildTerminal) so there is ONE wake
+    /// vocabulary, not two. Changing this shape is a G1 gate.
+    type WakeRecord = { Subject: ActorAddress; Reason: WakeReason }
+
+    /// Codec for the shard stream. Records are open-appended by any poster. The
+    /// shard stream NEVER seals — it is an open-append mailbox forever, with no
+    /// terminal record; do not import B1 `DurableLog`'s seal semantics onto the
+    /// wake path by analogy (a wake shard has no lifecycle end).
+    val codec : SubjectHistory.Codec<WakeRecord>
+
+    /// I3 — stable, deployment-independent mapping subject → shard. Pinned in full
+    /// so any later change is a visible G1 reshard, never a silent one:
+    ///   key   = UTF-8 bytes of `String.concat "/" subject.Segments`
+    ///   hash  = FNV-1a, 32-bit, read UNSIGNED (offset basis 2166136261u,
+    ///           prime 16777619u, each step `(h ^^^ byte) * prime` wrapping mod 2^32)
+    ///   shard = ShardId (int (hash % uint32 Count))
+    /// Branch-free, no BigInt, no BCL hashing (never `Object.GetHashCode`) — so it
+    /// is bit-identical across the .NET host and P4's Fable→TS emit. Same subject →
+    /// same shard for a fixed `Count`. No existing `src/` helper to cite; C1
+    /// introduces this pinned function as part of I3.
+    val shardOf : ShardConfig -> ActorAddress -> ShardId
+    /// I3 — derived (never random) shard-stream subject: `"{ns}/wake/{shardId}"`.
+    val shardSubject : ShardConfig -> ShardId -> SubjectHistory.SubjectId
+    /// Convenience: the shard stream a subject's wakes land on (`shardOf` then
+    /// `shardSubject`).
+    val subjectShard : ShardConfig -> ActorAddress -> SubjectHistory.SubjectId
+
+    /// Post a wake for `subject`: open-append the pointer to its shard stream (the
+    /// router's mailbox). ANY process may post — the shard stream is an
+    /// open-append mailbox; delivery to the target is the router's job. Dedupe is
+    /// the router's cursor + idempotent drive, not the poster's concern; N posts
+    /// for one subject cost at most N idempotent drives.
+    val post :
+        S2.Basin -> ShardConfig -> subject: ActorAddress -> WakeReason
+            -> Async<Result<unit, S2Errors.S2Failure>>
+
+module WakeRouter =
+    /// The consumed prefix of this router's shard stream as an EXCLUSIVE upper
+    /// bound (the house `Version` convention): `NextSeq` is the next sequence to
+    /// dispatch — every `Seq < NextSeq` is already dispatched, so a fresh router
+    /// resumes AT `NextSeq` and re-dispatches nothing. Committed as a fenced record
+    /// on the router's own cursor log (the `MailboxCheckpoint` pattern), folded on
+    /// claim to resume tailing — no resident memory, no re-drive of the prefix.
+    type Cursor = { Shard: WakeShard.ShardId; NextSeq: SubjectHistory.Seq }
+
+    /// The drive dependency (sans-IO seam): "ensure subject S is claimed and
+    /// ticked for reason R." The router core decides WHICH subjects to dispatch
+    /// and in what order; the shell performs the drive (a `Processor` tick on the
+    /// target). Injected so the core stays pure/deterministic and C2's proofs can
+    /// substitute a recording driver. The drive is idempotent by the target's own
+    /// claim: driving an already-current subject is a no-op tick.
+    type Drive = ActorAddress -> WakeReason -> Async<Result<unit, string>>
+
+    [<RequireQualifiedAccess>]
+    type RouterError =
+        | ClaimFailed of Authority.ClaimError
+        | Deposed of by: Authority.Epoch        // a newer epoch took the shard; step aside
+        | ReadFailed of S2Errors.S2Failure
+        | DecodeFailed of seqNum: int64 * error: string
+        | DriveFailed of ActorAddress * error: string
+        | CursorCommitFailed of S2Errors.S2Failure
+
+    /// Pure decision core (sans-IO): given the current cursor and a batch of wake
+    /// records read from the shard tail, produce the ordered dispatch list and the
+    /// advanced cursor. Deterministic — no clock, no I/O. Skips `Seq < NextSeq`
+    /// STRICTLY (already dispatched); the advanced cursor's `NextSeq` is the last
+    /// dispatched `Seq + 1` (exclusive upper bound). C2's `wake.timer-exactly-once`
+    /// pins this boundary.
+    val plan :
+        Cursor -> batch: (SubjectHistory.Seq * WakeRecord) list
+            -> dispatch: (ActorAddress * WakeReason) list * next: Cursor
+
+    /// One claimed tick: claim the shard (FencedOwner), fold the cursor, read the
+    /// shard tail with wait, `plan` the fresh dispatches, drive each, then commit
+    /// the advanced cursor under the fence. Blocks-with-wait for the next wake (the
+    /// `SubjectHistory.openCursorWithWait` idiom) so an appended wake reaches
+    /// dispatch without a poll interval. Returns `Deposed` if a newer epoch rotated
+    /// the fence at commit — the deposed router computed but could not advance.
+    val tick :
+        S2.Basin -> ShardConfig -> WakeShard.ShardId -> Authority.HolderId -> Drive
+            -> Async<Result<Cursor, RouterError>>
+
+    /// Run the router loop until deposed or the async is cancelled: claim once,
+    /// then `tick` continuously, tailing the stream. Degraded mode: if no router
+    /// runs a shard, the existing sweep still drives the work — wakes accelerate,
+    /// sweeps guarantee (the liveness invariant: at least one live host per shard;
+    /// no substrate push).
+    val run :
+        S2.Basin -> ShardConfig -> WakeShard.ShardId -> Authority.HolderId -> Drive
+            -> Async<Result<unit, RouterError>>
+```
+
+Ergonomic sample (the consumer test — usable with no proof-harness knowledge):
+
+```fsharp
+// Producer side (e.g. B3 lifecycle): post a wake — a pointer, not a payload.
+// Any process may post; the subject's mailbox/log already holds the real state.
+let! _ = WakeShard.post basin shardCfg subject WakeReason.MailboxReady
+
+// Router side: `drive` claims + ticks the target actor (supplied by the host;
+// idempotent, so a replayed dispatch is a harmless no-op tick).
+let drive : WakeRouter.Drive =
+    fun target reason -> driveSubjectActor basin target reason
+
+// Run the shard the subject maps to. One live router per shard (FencedOwner).
+match! WakeRouter.run basin shardCfg (WakeShard.shardOf shardCfg subject) holderId drive with
+| Ok () -> ()                                        // ran until cancelled
+| Error (WakeRouter.RouterError.Deposed _) -> ()     // a newer epoch owns the shard; step aside
+| Error _ -> ()                                      // transient; the sweep still covers the work
+```
+
+Laws (stated here; all three proofs land in **WP C2** — C1 ships the shard
+stream + tailed router + durable cursor, not the timer index or these proofs):
+
+- **Wake is a pointer, not a payload.** A `WakeRecord` carries only
+  `Subject + Reason`; the triggering state stays on the subject's own
+  mailbox/log. A drive re-reads that state, so a wake never duplicates truth and
+  redundant wakes coalesce (N wakes → at most N idempotent drives, each observing
+  all pending state).
+- **Single live router per shard** (`wake.single-claim`, C2). Two routers tailing
+  one shard: `Authority.claim` (FencedOwner) yields exactly one live holder; the
+  loser is `Deposed` and can neither dispatch nor advance the cursor. It observes
+  the claim, not the work — the `store-object-live-fencing` lineage applied to a
+  shard.
+- **Durable cursor / effectively-exactly-once dispatch**
+  (`wake.timer-exactly-once`, C2). The cursor is a fenced checkpoint with
+  `NextSeq` an exclusive upper bound; `plan` skips `Seq < NextSeq` strictly and
+  advances `NextSeq` to the last dispatched `Seq + 1`. A restart resumes from the
+  committed cursor — undispatched wakes are not dropped and dispatched wakes are
+  not re-flooded (bounded replay of at most the in-flight batch). Dispatch is
+  at-least-once with an idempotent drive, so a due timer fires effectively
+  exactly once across a router restart; a not-yet-posted timer survives unfired.
+- **Tail latency, no poll** (`wake.tail-latency`, C2). `tick` blocks-with-wait on
+  the shard tail (`openCursorWithWait`), so an appended wake reaches its claimed
+  handler within a bound *asserted from trace evidence in the proof* (bound
+  recorded there, not in prose).
+- **Degraded mode is the sweep.** No live router for a shard ⇒ work still drives
+  via the existing sweep (`store-runtime-timer-sweep`,
+  `store-runtime-schedule-sweep` stay green). Wakes are a latency accelerator in
+  front of the sweep, never its replacement; the RFC liveness statement (≥1 live
+  host per shard; no substrate push) is the floor.
+- **Deterministic sharding.** `shardOf` is the pinned FNV-1a-32 over the UTF-8
+  address key, mod `Count` (above); same subject → same shard for a fixed
+  `Count`, bit-identical on .NET and Fable→TS. Resharding is a canon non-goal.
+- **No leaks.** Consumers see `ActorAddress` / `WakeReason` / `ShardId` — never S2
+  stream names, fence tokens, seq nums, or the cursor subject.
+
+Scope guard (both directions): C1 delivers the **shard wake stream + tailed
+router + durable cursor** only. The **folded timer index** (what decides *when* a
+`TimerFired` wake is posted) and the three named proofs are **WP C2** — C1 posts
+and routes timer wakes but does not build the wheel. No shard manager, no
+rebalancing, no resident actor processes, no location directory, no distributed
+liveness clock (the canon non-goals) — `Count` is a fixed deployment parameter,
+addressing is naming, activation is claiming. The router reuses `Authority` (I5)
+leadership, the `Mailbox` fenced cursor, and the `Processor` drive; it is a
+binding, not a new fence idiom or a second drive loop. Wakes never become the
+sole correctness path — the sweep stays the floor. (Deferred, recorded: the shard
+stream's consumed prefix grows unbounded; its trimming rides A-lane
+checkpoint+trim behind the router's committed cursor later — the A1
+sidecar-compaction precedent — and is out of C1 scope.)
+
+Validation Gates (F#-zone, G6 — per
+[`fsharp-fable-effsharp-evaluation-sdd.md`](./fsharp-fable-effsharp-evaluation-sdd.md)):
+
+- **Native shapes, EffSharp-free.** `Async` + `Result` + DU errors + `Codec`
+  records + a pure `plan`/`shardOf` core — no EffSharp (per the 2026-07-06
+  deprecation), so the package-level EffSharp decision is "none, nothing new."
+- **Ergonomic sample** above passes the consumer test — a host wires `post` and a
+  `Drive`, with no proof-harness knowledge.
+- **Works-without-EffSharp** is inherent (nothing introduced). **Emitted-TS
+  sample + Fable build check** ride P4's Fable→TS facade; the surface is
+  Fable-safe by construction — `shardOf` is a content hash (no BCL-only
+  `GetHashCode`), and it adds no API beyond what `SubjectHistory`/`Mailbox`
+  already emit.
+
 Proof obligations:
 
 - `wake.tail-latency` — an appended wake reaches its claimed handler within a
@@ -586,6 +827,242 @@ Claim, fence, cancel, and idle/max-duration timeouts as a durable protocol over
 C2 + C3, replacing agent-ui's in-memory `activeRuns` map. Cancel is a durable
 control fact any process can append; the producer observes it and terminates the
 turn; timeouts are kernel obligations, not process-local timers.
+
+MS-C5 is delivered by two WPs: **B3** (this surface — session claim /
+single-writer start, durable cancel, and durable timeouts) and **B4** (the
+fenced native-resume-artifact store, a sibling module whose
+`session.resume-artifact-fenced` obligation and surface refinement land with B4).
+B3 and B4 share the **MS-C5 claim convention**: One session holder identity
+claims both the session log and the resume register; a takeover `start` claims
+the resume register before any re-hydration read, so a stale writer's late
+`store` is fenced out before it can fork harness state. (B4 binds its own
+register fence at `sessions/{s}/resume`; the two fences share the holder
+identity, not one fence — this convention, not "grounded on B3's fence.")
+
+Target Surface (F# — WP B3; G6 approved with required changes folded; G1 fork
+decided — keep I1 unchanged, 2026-07-07):
+
+Lifecycle is a **session-actor policy** layered on B1's `Authority` (**I5**) and
+`DurableLog`/`Turn` (**I1**), per
+[`../canon/architecture/fluent/authority-and-actors.md`](../canon/architecture/fluent/authority-and-actors.md)
+("Session (managed agent) = the actor; prompts and cancels are mailbox sends").
+It invents **no second authority**: `start` is an `Authority.claim`, termination
+is a `DurableLog.seal`, and cancel is an ordinary **mailbox send**. It is one
+domain module, `SessionLifecycle`, in the F# `src/` zone
+(`src/Firegrid.Store/SessionLifecycle.fs`), sans-IO: a pure decision core
+(`fold`/`onCommand`/`onWake` — the session Handler, the Processor's pluggable
+part) plus an `Async` shell (`start`/`cancel`/`drive`).
+
+**Topology — three derived subjects per session** (all named from the
+`SessionId` the client already holds, never random):
+
+| Subject | Regime | Role |
+| --- | --- | --- |
+| `sessions/{s}/log` | FencedOwner (I5) | the session actor's own authoritative log; its fold is the **durable `activeRuns`** — which turn, if any, is live. The session outlives its turns, so it is never sealed per-turn. |
+| `sessions/{s}/in` | Open-append (InboxFold lineage) | the session **inbox**: cancels (and later prompts) land here as mailbox sends; senders need no authority. |
+| `sessions/{s}/turns/{t}` | FencedOwner + Sealed (I1 `Turn`) | the turn stream for one execution, created under the session holder's identity, sealed at terminal. |
+
+**Single-writer via composition, not a new mechanism.** A `start` claims the
+session log (`Authority.claim`) and reads the fold. Two concurrent starts are
+resolved by *both* I5 and policy: the session claim fences the loser, so its
+`TurnStarted` fails to commit; and the `AlreadyLive` policy rejects a start that
+observes a *different* live turn. A same-`turnId` start re-attaches
+(`DurableLog.create` re-claims, deposing any stale producer) — recovery, never a
+fork. The `AlreadyLive` rejection is exactly the lifecycle policy that
+`DurableLog.create` defers to MS-C5.
+
+**Durable cancel is a mailbox send.** `cancel` is an open-append to
+`sessions/{s}/in` carrying `(source, sourceSeq)` provenance — any process may
+call it without holding the session, and it is **not** a bespoke control
+channel. The holder admits it on its next `drive` (provenance-deduped) and seals
+the live turn; a resend folds once.
+
+**How the cancel reaches a running adapter** (the sentence D2's #99 R4 defers to
+this surface). The holder seals the turn on admitting the cancel; a concurrently
+running producer/adapter then observes cancellation as a `Deposed`/sealed append
+failure on its **next emit** — D2's `EmitError.deposed|sealed` law: it computed
+output but could not commit it. An in-process host **may** additionally interrupt
+the adapter fiber as an *optimization* (to stop wasted work sooner), never as the
+mechanism — the durable seal, not fiber interruption, is what terminates the turn.
+
+**Durable timeouts, no baked-in clock.** A deadline is a function of the durable
+fold (turn `startedAt`; last-chunk time on the turn stream), so any host
+**re-arms** it on claim — it survives restart and is not a process-local timer.
+The fire is delivered as a `WakeReason.TimerFired` by the kernel wake path, whose
+concrete wake-record + shard naming is **I3** (C1, PR #95, under architect
+review) — cited here and consumed abstractly; MS-C5 does **not** depend on I3's
+shape. In MS-C3's degraded sweep/poll mode the same deadline is recomputed, so
+correctness never hinges on tail wakes. Time enters the pure core only as
+`now: Timestamp` data (the sans-IO rule).
+
+```fsharp
+// namespace Firegrid.Store — session-actor lifecycle POLICY over the generic
+// Authority (I5), DurableLog/Turn (I1), and the kernel timer/wake path (I3, C1).
+// open Firegrid.Foundation            // Authority, DurableLog, SubjectHistory
+// open Firegrid.Store.Foundation.Durable  // WakeReason, TimerId, Timestamp — the
+//   kernel wake vocabulary (I3/C1); consumed here, NOT re-minted (one vocabulary).
+// Deps passed in (sans-IO shell): S2.Basin + the I1 Turn codec. No EffSharp.
+
+module SessionLifecycle =
+    // ---- Kernel wake vocabulary (consumed, NOT re-minted) -----------------
+    // `Timestamp`, `TimerId`, and `WakeReason` are the kernel's, from
+    // `Foundation/Durable/Processor.fs` — this surface consumes them so C1's
+    // router (`Drive : ActorAddress -> WakeReason -> …`) drives a session with
+    // no mapping shim between lanes. Time still enters the pure core only as
+    // `now: Timestamp` data (the sans-IO rule); it is never read ambiently.
+    //   type Timestamp   = int64
+    //   type TimerId     = TimerId of string
+    //   type WakeReason  = MailboxReady | TimerFired of TimerId * Timestamp
+    //                    | ChildTerminal of SubjectId
+
+    // ---- Derived addresses (never random) ---------------------------------
+    /// Session authoritative log (FencedOwner, I5): the durable `activeRuns`.
+    val logSubject   : Turn.SessionId -> SubjectHistory.SubjectId
+    /// Session inbox (open-append, InboxFold lineage): mailbox sends land here.
+    val inboxSubject : Turn.SessionId -> SubjectHistory.SubjectId
+
+    // ---- Durable timeout policy (data, not a clock) -----------------------
+    /// Idle + max-duration bounds (ms). Durable by construction: a deadline is a
+    /// function of the fold, so any host re-arms it on claim. `None` = unbounded.
+    type Timeouts =
+        { Idle: int64 option            // max quiet gap since the last turn chunk
+          MaxDuration: int64 option }   // absolute cap since turn start
+    val noTimeouts : Timeouts
+
+    // ---- Session-log schema (L2 coordination facts; holder-only) ----------
+    /// Why a turn ended, recorded on the SESSION log. The turn stream's terminal
+    /// stays the I1 `TurnTerminal` unchanged — cancel and both timeouts map it to
+    /// `TurnTerminal.Cancelled`; the distinct CAUSE is this L2 fact. (G1 fork
+    /// DECIDED — keep I1 unchanged, no first-class `TurnTerminal.TimedOut`; see the
+    /// gate-boundary note below for the G6 rationale.)
+    type EndCause =
+        | Done                          // producer completed normally
+        | Failed of reason: string
+        | Cancelled                     // external cancel (mailbox send)
+        | IdleTimeout
+        | MaxDurationTimeout
+    /// Exhaustive `EndCause → TurnTerminal` mapping (the turn-stream terminal),
+    /// so the collapse is stated, not implied:
+    ///   Done               → TurnTerminal.Completed
+    ///   Failed reason      → TurnTerminal.Failed reason
+    ///   Cancelled          → TurnTerminal.Cancelled
+    ///   IdleTimeout        → TurnTerminal.Cancelled
+    ///   MaxDurationTimeout → TurnTerminal.Cancelled
+    /// The three abnormal-stop causes collapse to `Cancelled` on the turn stream;
+    /// `EndCause` preserves the distinction losslessly on the session log.
+    /// Session-log record schema (I5-fenced; only the holder appends).
+    type LifecycleFact =
+        | TurnStarted of Turn.TurnId * startedAt: Timestamp
+        | TurnEnded   of Turn.TurnId * EndCause * endedAt: Timestamp
+
+    // ---- Inbox schema (open-append mailbox sends) -------------------------
+    /// A durable control message. Cancel is the only command in B3; prompts join
+    /// later (MS-C6/E). `(Source, SourceSeq)` makes a resend fold once.
+    type Command = Cancel of Turn.TurnId
+    type Sent = { Source: string; SourceSeq: int64; Command: Command }
+
+    // ---- Pure decision core (sans-IO; Fable-safe; deterministic) ----------
+    type State                          // abstract; live turn + arming info
+    val initial  : State
+    val fold     : State -> SubjectHistory.StoredRecord<LifecycleFact> -> State
+    /// The live turn, if any — the durable `activeRuns` answer for this session.
+    val liveTurn : State -> Turn.TurnId option
+
+    // A wake the holder must act on is the kernel `WakeReason` (above), NOT a
+    // private DU: `MailboxReady` admits the inbox; `TimerFired` re-checks the
+    // durable deadlines; `ChildTerminal` is `noop` here by policy (B3 has no
+    // child subjects — reserved for later composition). `WakeReason.TimerFired`
+    // carries the timer's delivery timestamp, but the processing-time fact
+    // `onWake` decides on is the separate `now: Timestamp` (see below).
+    /// The decision as data (not the effect): seal the live turn, append session
+    /// facts, (re)arm / disarm durable timers. `Arm` lowers to the kernel
+    /// `Intent.SetTimer`; `Disarm` is **advisory** — the kernel `Intent` is
+    /// `SetTimer | Send | Execute` with no cancel-timer, so a stale/late fire is
+    /// already `noop`-guarded by the pure core (`onWake` seals only when `now`
+    /// passes the deadline). If a first-class cancel-timer intent is ever wanted,
+    /// that is Lane-P coordination (like the InboxFold note), not a mechanism B3
+    /// mints here.
+    type Outcome =
+        { Seal:   (Turn.TurnId * TurnTerminal) option
+          Append: LifecycleFact list
+          Arm:    (TimerId * dueAt: Timestamp) list
+          Disarm: TimerId list }         // advisory — see note above
+    val noop : Outcome
+
+    /// Pure: state + admitted command + `now` → outcome. `Cancel` of the live
+    /// turn seals it `Cancelled`; `Cancel` of a non-live / already-ended turn is
+    /// `noop` — idempotent.
+    val onCommand : Timeouts -> State -> now: Timestamp -> Sent -> Outcome
+    /// Pure: state + `now` + kernel wake → outcome. `now: Timestamp` is the
+    /// processing-time fact the law depends on (`WakeReason.TimerFired`'s own
+    /// timestamp is only the delivery's claim, and `TurnEnded.endedAt` has no
+    /// other source) — symmetric with `onCommand`. An idle/max timer whose
+    /// deadline `now` has passed seals the live turn; a not-yet-due / stale
+    /// `TimerFired`, a `MailboxReady` with nothing to admit, or a `ChildTerminal`
+    /// is `noop`.
+    val onWake    : Timeouts -> State -> now: Timestamp -> WakeReason -> Outcome
+
+    // ---- Shell: start / cancel / drive (Async; composes I5 + I1) -----------
+    [<RequireQualifiedAccess>]
+    type StartError =
+        | AlreadyLive of Turn.TurnId    // single-writer policy: a different live turn holds the session
+        | Claim of Authority.ClaimError
+        | Failed of S2Errors.S2Failure
+
+    /// A started turn: the I1 turn `Producer` bound under the session claim, plus
+    /// the session `Holder` and folded `State`. Only this holder appends output.
+    type LiveTurn                       // abstract
+
+    /// Start a turn on `session` as `holderId`: `Authority.claim` the session log,
+    /// then the SINGLE-WRITER policy over the fold —
+    ///   • no live turn        → record `TurnStarted`, `DurableLog.create` the
+    ///                           turn stream under `holderId`, arm idle/max timers.
+    ///   • live turn = `turnId`→ re-attach (create re-claims / deposes a stale
+    ///                           producer): recovery, never a fork.
+    ///   • live turn ≠ `turnId`→ reject `AlreadyLive`.
+    /// A deposed racer's `TurnStarted` also fails under the session fence, so two
+    /// concurrent starts yield exactly one live turn.
+    val start :
+        S2.Basin -> Timeouts -> Turn.SessionId -> Turn.TurnId -> Authority.HolderId
+            -> now: Timestamp -> Async<Result<LiveTurn, StartError>>
+
+    /// Append one turn chunk under the session fence (re-arms the idle timer). A
+    /// live *deposed* producer fails `Deposed` — it computes but cannot commit.
+    val append   : LiveTurn -> TurnChunk -> Async<Result<unit, DurableLog.AppendError>>
+    /// Seal the turn normally (`TurnTerminal.Completed` + `TurnEnded Done`),
+    /// disarm timers. First-valid-terminal-wins (I1).
+    val complete : LiveTurn -> now: Timestamp -> Async<Result<unit, DurableLog.AppendError>>
+
+    [<RequireQualifiedAccess>]
+    type CancelError = Failed of S2Errors.S2Failure
+    /// Durable cancel — a MAILBOX SEND (open-append to `inboxSubject`), NOT a
+    /// control channel and NOT authority: any process may call it. Idempotent by
+    /// `(source, sourceSeq)`; the holder observes it on its next `drive` and seals
+    /// the turn `Cancelled`. Returns once the send is durable.
+    val cancel :
+        S2.Basin -> Turn.SessionId -> Turn.TurnId
+            -> source: string -> sourceSeq: int64 -> Async<Result<unit, CancelError>>
+
+    [<RequireQualifiedAccess>]
+    type Progress =
+        | Idle                          // nothing to admit / no deadline reached
+        | Advanced                      // facts / timers committed, turn still live
+        | Ended of EndCause             // the turn was sealed (cancel / timeout)
+        | Deposed                       // a newer holder owns the session; step down
+    [<RequireQualifiedAccess>]
+    type DriveError =
+        | Mailbox of S2Errors.S2Failure
+        | Failed of S2Errors.S2Failure
+
+    /// One holder drive tick: admit the inbox (provenance-deduped), apply the pure
+    /// `onCommand`/`onWake` decisions (seal the turn, append facts, (re)arm timers)
+    /// under the session fence. `wake` is the kernel `WakeReason` (`MailboxReady`
+    /// admits the inbox; `TimerFired` re-checks deadlines; `ChildTerminal` is
+    /// `noop`), so C1's router (`Drive : ActorAddress -> WakeReason -> …`) drives a
+    /// session with no shim. Sealing under a rotated fence surfaces `Deposed`.
+    val drive :
+        LiveTurn -> WakeReason -> now: Timestamp -> Async<Result<Progress, DriveError>>
+```
 
 Target Surface (F# — WP B4; the *resume-artifact-store slice* of MS-C5; gate
 G6):
@@ -692,7 +1169,98 @@ module ResumeArtifactStore =
     val read : S2.Basin -> Turn.SessionId -> Async<Result<ResumeArtifact option, ReadError>>
 ```
 
-Ergonomic sample (the consumer test — usable with no proof-harness knowledge):
+Ergonomic sample — WP B3 (the consumer test — usable with no proof-harness knowledge):
+
+```fsharp
+// Producer process: start (single-writer) → append → complete. `now` is data.
+match! SessionLifecycle.start basin timeouts session turnId holderId now with
+| Ok live ->
+    let! _ = SessionLifecycle.append live (Text "hello")   // Error Deposed if fenced out
+    let! _ = SessionLifecycle.complete live now
+    ()
+| Error (SessionLifecycle.StartError.AlreadyLive other) -> ()  // a turn is already live
+| Error _ -> ()
+
+// Any OTHER process cancels durably — a mailbox send, no session authority held:
+let! _ = SessionLifecycle.cancel basin session turnId "api-pod-7" 0L
+
+// The holder observes the cancel on its next drive and seals the turn.
+// The wake is the kernel `WakeReason` (Foundation/Durable), not a private DU:
+match! SessionLifecycle.drive live Durable.WakeReason.MailboxReady now with
+| Ok (SessionLifecycle.Progress.Ended SessionLifecycle.EndCause.Cancelled) -> ()  // durable Cancelled
+| Ok (SessionLifecycle.Progress.Deposed) -> ()                 // a newer host took over
+| _ -> ()
+```
+
+Laws (stated here; proven by WP B3):
+
+- **Single-writer start** (`session.lifecycle-single-writer`, B3). Two concurrent
+  `start`s on one session yield exactly one live turn: the session claim fences
+  the loser (its `TurnStarted` fails to commit) and the `AlreadyLive` policy
+  rejects a start observing a different live turn — never two producers on one
+  session.
+- **Durable cancel is a mailbox send** (`session.lifecycle-durable-cancel`, B3).
+  `cancel` from a process that is not the producer appends to the inbox; the
+  holder's `drive` admits it and seals the turn to a durable
+  `TurnTerminal.Cancelled` (`TurnEnded Cancelled` on the session log). A
+  duplicate — same `(source, sourceSeq)`, or a cancel of an already-ended turn —
+  folds once (idempotent): no second terminal.
+- **Deposed producer cannot append** (`session.lifecycle-deposed-producer`, B3).
+  Extends `store.object-live-fencing` / `session.turn-crash-terminal` to
+  lifecycle: after a takeover `start` rotates the fence, the prior `LiveTurn`'s
+  `append`/`complete` fails `Deposed` — it computes but cannot commit. Recovery
+  drives the turn to a durable terminal; an attached reader observes it, never
+  hangs.
+- **Durable, host-independent timeouts.** Idle and max-duration deadlines are
+  functions of the durable fold, re-armed on every claim — a timeout survives
+  host restart and is not a process-local timer. `onWake` seals only when `now`
+  is past the deadline; a stale/duplicate fire is `noop`. Fire delivery is the
+  kernel wake path (I3, C1; cited, not depended on); the sweep/poll degraded mode
+  (MS-C3) recomputes the same deadline.
+- **No second authority.** `start` = `Authority.claim`, termination =
+  `DurableLog.seal`, cancel = an open-append send — composing I5, never
+  extending it (no I5 shape change → no G1 on I5).
+- **No leaks.** Consumers never see S2 stream names, fence tokens, seq nums, or
+  the inbox address.
+
+Gate-boundary notes (the first is now **decided** by the G6 ruling and recorded
+here for the record; the rest are raised for sign-off, **not** taken in this WP):
+
+- **Turn terminal for timeouts — G1 fork DECIDED: keep I1 unchanged** (architect
+  G6 ruling, 2026-07-07). This surface maps cancel *and* both timeouts onto the
+  existing `TurnTerminal.Cancelled`, recording the distinct cause only as an L2
+  `EndCause` on the session log — so I1 (the `Turn` schema, B1) is **unchanged**.
+  The alternative, a first-class `TurnTerminal.TimedOut` on the turn stream, was
+  weighed and declined. Rationale of record: (1) **no turn-stream reader behaves
+  differently by cause** — at that altitude the operative fact is "no more output,
+  not a normal completion"; (2) the **cause of record lives on the session log**,
+  which A4's history fold projects, so history/UI get `IdleTimeout` vs `Cancelled`
+  without touching I1; (3) D2's adapter contract **freezes `L1Terminal` as
+  `completed | cancelled | failed`**, so a first-class `TimedOut` would force a
+  *simultaneous* G1 on I1 **and** a change to that contract; (4) **I1 is ratified,
+  implemented, and proven** (B2's three green proofs), and no consumer requires the
+  distinction at turn altitude to reopen it; (5) the decision is **reversible
+  additively later** — `EndCause` remains the durable source of truth, so a future
+  first-class terminal would be a mechanical, additive migration.
+- **I3 dependency (cited, not depended-on).** Timer-wake delivery is I3's
+  wake-record + shard naming (C1, PR #95). MS-C5 consumes `WakeReason.TimerFired`
+  abstractly and re-arms deadlines from the fold, so it neither depends on I3's
+  concrete shape nor blocks on PR #95. If wiring lifecycle wakes later needs an
+  I3 shape change, that is a G1 on I3 — escalated separately.
+- **Inbox admission primitive.** The session inbox follows P3's
+  `InboxFold`/`Mailbox` lineage (provenance-deduped admission). If B3 needs a
+  generic mailbox surface P3 does not yet export publicly, that is Lane-P
+  coordination (as A1↔B1 for `Authority.admit`), not a bespoke re-implementation.
+
+Scope guard (both directions): lifecycle is **policy**, not a new primitive — it
+adds no authority regime (I5 owns claim/seal) and no generic drive loop (P3's
+Processor owns claim→admit→commit; this surface supplies only the session
+Handler + domain entry points). The inbox `Command` schema stays minimal (Cancel
+only in B3; prompts are MS-C6/E). The fenced native-resume-artifact store and its
+`session.resume-artifact-fenced` proof are **WP B4's** sibling surface within
+MS-C5, not B3.
+
+Ergonomic sample — WP B4 (the consumer test — usable with no proof-harness knowledge):
 
 ```fsharp
 // Writer (the session's live holder): claim the fenced register, store the
@@ -784,6 +1352,19 @@ the injected `S2.Basin`.
 Validation Gates (F#-zone, G6 — per
 [`fsharp-fable-effsharp-evaluation-sdd.md`](./fsharp-fable-effsharp-evaluation-sdd.md)):
 
+_WP B3:_
+
+- **Native shapes, EffSharp-free.** `Async` + `Result` + DU errors + `Codec`
+  records + a pure `fold`/`onCommand`/`onWake` core with time as `now: Timestamp`
+  data — no EffSharp (2026-07-06 deprecation); package-level decision "none,
+  nothing new."
+- **Ergonomic sample** above passes the consumer test.
+- **Emitted-TS sample + Fable build check** ride P4's Fable→TS facade; the surface
+  is Fable-safe by construction — it adds no BCL-only API beyond what `Authority`
+  / `DurableLog` / `SubjectHistory` already emit.
+
+_WP B4:_
+
 - **Native shapes, EffSharp-free.** `Async` + `Result` + DU errors + a
   `ResumeArtifact` record + a private JSON codec (`JsJson`, as `Turn` uses) — no
   EffSharp (per the 2026-07-06 deprecation), so the package-level EffSharp
@@ -795,15 +1376,15 @@ Validation Gates (F#-zone, G6 — per
 
 Proof obligations:
 
-- `session.lifecycle-single-writer` — two concurrent starts for the same
-  session: exactly one live turn; the second is rejected or queued by policy,
-  never a second producer on the same session.
-- `session.lifecycle-durable-cancel` — cancel appended by a process that is not
-  the producer terminates the turn to a durable cancelled state; duplicate
+- `session.lifecycle-single-writer` (WP B3) — two concurrent starts for the same
+  session: exactly one live turn; the second is rejected (`AlreadyLive`) or
+  fenced by policy, never a second producer on the same session.
+- `session.lifecycle-durable-cancel` (WP B3) — cancel appended by a process that
+  is not the producer terminates the turn to a durable cancelled state; duplicate
   cancel is idempotent.
-- `session.lifecycle-deposed-producer` — extends `store.object-live-fencing` to
+- `session.lifecycle-deposed-producer` (WP B3) — extends `store.object-live-fencing` to
   turns: a live deposed producer cannot append turn output after takeover.
-- `session.resume-artifact-fenced` — the native resume artifact (e.g. Claude
+- `session.resume-artifact-fenced` (WP B4) — the native resume artifact (e.g. Claude
   session id) is written under the session fence; a stale owner's write is
   rejected (closes agent-ui's last-writer-wins session-store race). The proof
   includes the **claim-then-read** interleaving: a new holder that `openWriter`s
@@ -835,6 +1416,242 @@ schema is versioned; D2's fixture corpus is the compatibility gate. Rationale:
 future ACP harnesses lower near-trivially, and every UI folds one format
 regardless of harness. WP D1 turns this into the schema + decision-record
 page; deviations re-open gate G2.
+
+D1 shipped that vocabulary as `@firegrid/l1-vocabulary` (interface I2) plus the
+decision record
+[`../canon/architecture/fluent/l1-observation-vocabulary.md`](../canon/architecture/fluent/l1-observation-vocabulary.md).
+The adapter contract below **consumes** it: an adapter lowers harness traffic
+into `L1StreamRecord`s and never mints a parallel vocabulary. If the contract
+were to require a change to I2, that is gate **G1** — escalate; do not widen the
+vocabulary here.
+
+Target Surface (TS — WP D2; gate G6 + G1 sign-off pending):
+
+The adapter is the reconstruction-model seam of
+[`../canon/architecture/fluent/harness-io.md`](../canon/architecture/fluent/harness-io.md):
+the raw harness owns the model loop and writes nothing durable; the adapter turns
+its protocol traffic into L1 observation facts and hands them to the kernel, which
+appends them under the turn's fence. Per
+[`../canon/architecture/fluent/authority-and-actors.md`](../canon/architecture/fluent/authority-and-actors.md)
+the adapter is *an effectful handler that writes only under the Processor's fence,
+emitting L1 facts as its Append* — it owns **no** authority, durability,
+wait/timer/child semantics, or projection schema.
+
+It factors into a **pure lowering core** (sans-IO — the fixture-replay target)
+and an **I/O shell** (the live `drive`), driving against two kernel-provided
+seams (the fenced L1 sink and, for gateable adapters, the durable-tool gate) and
+referencing one B4 seam (the fenced native-resume-artifact store — MS-C5, cited
+not redefined).
+
+```ts
+// package @firegrid/harness-adapter — TS zone, Effect shapes per LLMS.md.
+// Consumes @firegrid/l1-vocabulary (I2). Owns no durability.
+import type { L1StreamRecord } from "@firegrid/l1-vocabulary"
+import { Context, Data, Effect, type Scope } from "effect"
+
+// ── Declared interception posture (the durability guarantee differs) ──────
+// gateable    — can mediate Firegrid durable tools (transactional, replay-served).
+// observe-only — cannot mediate any; harness-native effects are only suppressed.
+export type InterceptionCapability = "gateable" | "observe-only"
+
+export interface HarnessCapabilities {
+  readonly harness: string                 // stable harness id (matches firegrid/native `harness`)
+  readonly interception: InterceptionCapability
+  readonly emitsUsage: boolean             // lowers firegrid/usage token/cost facts
+  readonly emitsSubagents: boolean         // lowers subagent scoping (firegrid/subagent + parent tool content)
+}
+
+// ── Opaque harness resume state — produced here, stored fenced by B4 (MS-C5) ─
+export interface NativeResumeArtifact {
+  readonly harness: string
+  readonly version: number                 // harness-owned artifact version
+  readonly payload: unknown                // opaque; e.g. Claude session id + cursor
+}
+
+// ── Pure protocol → L1 lowering (sans-IO; deterministic; Effect-free) ─────
+// A fold from recorded harness protocol events to L1 records: no I/O, no clock,
+// no entropy. Replaying an event log reproduces identical L1 facts — the
+// `harness.fixture-replay` target. Per-harness; D3 supplies Claude's, including
+// parent_tool_use_id scoping and usage/cost lowering.
+export interface HarnessLowering<Event, State> {
+  readonly initial: State
+  readonly lower: (
+    state: State,
+    event: Event
+  ) => { readonly state: State; readonly records: ReadonlyArray<L1StreamRecord> }
+}
+
+// ── Kernel-provided seams the shell drives against ────────────────────────
+// Fenced L1 append. `emit` is the adapter's only write; the kernel appends under
+// the turn's fence (I1 DurableLog). A deposed/sealed turn surfaces here and the
+// adapter must stop — the reconstruction analog of DurableLog.AppendError.
+export class L1Sink extends Context.Service<L1Sink, {
+  readonly emit: (record: L1StreamRecord) => Effect.Effect<void, EmitError>
+}>()("@firegrid/harness-adapter/L1Sink") {}
+
+// Durable-tool mediation. Provided at a *gateable* adapter's layer construction
+// (a dependency of its `Layer`), never in `drive`'s R — so an observe-only
+// adapter, whose layer has no `ToolGate`, literally cannot obtain one. Pause at a
+// Firegrid-mediated tool call; the kernel commits the L2 intent/result and
+// returns the committed result to feed back to the harness. Resume serves the
+// recorded result, never re-executes (execution-models Model B). L2 authority is
+// the runtime's (I5), not this contract's.
+export class ToolGate extends Context.Service<ToolGate, {
+  readonly mediate: (call: MediatedToolCall) => Effect.Effect<CommittedToolResult, GateError>
+}>()("@firegrid/harness-adapter/ToolGate") {}
+
+export interface MediatedToolCall {
+  readonly toolCallId: string              // the L1 tool_call this gates
+  readonly name: string
+  readonly rawInput: unknown
+}
+export interface CommittedToolResult {
+  readonly toolCallId: string
+  readonly output: unknown                 // durable L2 result fed back to the harness
+}
+
+// ── The adapter service (I/O shell) ───────────────────────────────────────
+export interface ResumePoint {
+  readonly artifact: NativeResumeArtifact   // prior harness resume state
+  // EXCLUSIVE upper bound (house convention — same boundary class as C1 R3 and
+  // D1's fold): the I1 Version below which L1 facts are already durable. Resume
+  // emits the suffix FROM `observedThrough` onward (facts at Version >=
+  // observedThrough); the fact AT observedThrough is the first not-yet-durable one.
+  readonly observedThrough: number
+}
+export interface DriveInput {
+  // The user turn: a NON-EMPTY sequence of `user_message_chunk`s that share one
+  // `messageId`. Plural because L1ChunkBody.content is a single content block per
+  // chunk (ACP; see packages/l1-vocabulary), so a multi-block prompt
+  // (text + image + resource) needs several records — a singular record cannot
+  // express it, and widening the arity after ratification would be G1.
+  readonly prompt: readonly [L1StreamRecord, ...ReadonlyArray<L1StreamRecord>]
+  readonly resume?: ResumePoint             // present iff continuing an existing turn/session
+}
+export type L1Terminal =
+  | { readonly _tag: "completed" }
+  | { readonly _tag: "cancelled" }          // a cancel was observed and the turn ended
+  | { readonly _tag: "failed"; readonly reason: string }
+// This contract fixes only the terminal *representation*. How a cancel reaches a
+// running `drive` is B3's MS-C5 surface to define (cancel is a mailbox send, per
+// canon) — deliberately not pinned here.
+export interface DriveOutcome {
+  readonly artifact: NativeResumeArtifact    // updated resume state for the kernel to persist (B4-fenced)
+  readonly terminal: L1Terminal
+}
+
+export class HarnessAdapter extends Context.Service<HarnessAdapter, {
+  readonly capabilities: HarnessCapabilities
+  // Drive one turn to terminal: lower harness traffic to L1 via `L1Sink.emit` and
+  // produce the updated resume artifact. `ToolGate` is deliberately NOT in `drive`'s
+  // R — a gateable adapter closes over it at layer construction; an observe-only
+  // adapter's layer never depends on it, so it *cannot* mediate. The posture is
+  // enforced by the types, not by prose. The harness process is a scoped resource.
+  readonly drive: (
+    input: DriveInput
+  ) => Effect.Effect<DriveOutcome, DriveError, L1Sink | Scope.Scope>
+}>()("@firegrid/harness-adapter/HarnessAdapter") {}
+
+// ── Typed errors ──────────────────────────────────────────────────────────
+export class DriveError extends Data.TaggedError("DriveError")<{
+  readonly harness: string
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+export class EmitError extends Data.TaggedError("EmitError")<{
+  readonly kind: "deposed" | "sealed" | "failed"
+  readonly message: string
+}> {}
+export class GateError extends Data.TaggedError("GateError")<{
+  readonly toolCallId: string
+  readonly message: string
+}> {}
+```
+
+Ergonomic sample (the consumer test — the kernel drives an adapter; the proof
+drives the pure core, with no live process):
+
+```ts
+// Kernel side (Processor): the claim gives the fenced L1Sink; drive to terminal;
+// persist the returned artifact under the same fence (B4).
+const runTurn = Effect.fn("runTurn")(function*(input: DriveInput) {
+  const adapter = yield* HarnessAdapter
+  const outcome = yield* adapter.drive(input)          // emits L1 under the fence
+  // Illustrative only — `ResumeArtifactStore` names B4's API and is pending B4
+  // ratification (MS-C5); shown here to place the seam, not to fix its shape.
+  yield* ResumeArtifactStore.put(outcome.artifact)     // B4 (MS-C5), fenced per session
+  return outcome.terminal
+})
+
+// Proof side (harness.fixture-replay): replay the PURE lowering over a recorded
+// transcript and check against a D1 golden fixture and its fold.
+const replay = <E, S>(l: HarnessLowering<E, S>, events: ReadonlyArray<E>) =>
+  events.reduce(
+    (acc, ev) => {
+      const step = l.lower(acc.state, ev)
+      return { state: step.state, out: [...acc.out, ...step.records] }
+    },
+    { state: l.initial, out: [] as ReadonlyArray<L1StreamRecord> }
+  ).out
+// expect: replay(lowering, events) deep-equals fixture.records; and
+//         foldTurn(replay(...)) deep-equals foldTurn(fixture.records).
+```
+
+Laws (stated here; proven by WP D2/D3 after approval):
+
+- **Emits only I2, never a parallel vocabulary.** Every fact is an
+  `L1StreamRecord`; harness specifics ride `firegrid/native` or the documented
+  `firegrid/*` extensions, never a new base variant. A need the base vocabulary
+  cannot express is gate G1 (change I2), not an adapter escape hatch.
+- **No authority.** The adapter's only write is `L1Sink.emit`; it never appends,
+  fences, seals, decides wait/timer/child completion, or owns a projection schema
+  (harness-io F-A constraints). `EmitError.deposed`/`sealed` stops the turn — it
+  computed but could not commit.
+- **Deterministic lowering.** `lower` is pure: the same recorded event sequence
+  yields identical L1 records and identical `foldTurn` state
+  (`harness.fixture-replay`). All nondeterminism lives in the harness process,
+  behind the I/O shell.
+- **Resume suppresses, never repeats.** Given a `ResumePoint`, `drive` re-enters
+  via the native artifact and emits the suffix from `observedThrough` onward
+  (facts at Version >= `observedThrough`, the exclusive-upper-bound convention):
+  already-observed L1 facts are not re-emitted and already-observed side effects
+  are not re-executed — gateable durable tools are served their recorded L2 result
+  and fed back; observe-only harness-native side effects are suppressed by native
+  resume (`harness.resume-suppression`).
+- **Interception posture is declared and honored.** A `gateable` adapter may call
+  `ToolGate.mediate` (durable, transactional results, replay-served on resume) for
+  Firegrid-registered tools; an `observe-only` adapter *cannot* — its layer
+  provides no `ToolGate`, so the prohibition is a type-level property, not prose.
+  Its harness-native side effects are at-least-once-observed but not
+  Firegrid-transactional, and the contract says so. The posture is a static
+  per-adapter declaration, not a per-call surprise.
+- **Subagent output is parent-scoped.** Subagent activity lowers to
+  `tool_call_update` content on its `parent_tool_use_id` tool call plus an
+  ignorable `firegrid/subagent` record, so `foldTurn` attributes it to the parent
+  and never interleaves it into top-level turn text (`harness.subagent-scoping`) —
+  exactly what D1's fold and subagent fixture already require.
+- **Resume artifact is opaque and fenced elsewhere.** The adapter
+  produces/consumes `NativeResumeArtifact` as an opaque, harness-versioned blob;
+  its durable, fenced per-session storage is B4 (MS-C5), referenced here, never
+  re-implemented. **D2 owns the TS-side `NativeResumeArtifact` shape; B4's F#
+  store is generic over an opaque serialized payload plus `(harness, version)`
+  metadata and must not redefine the artifact.**
+
+Scope guard (both directions): the adapter owns protocol→L1 lowering and
+resume-artifact production; it does not own durability, L2/authority,
+wait/timer/child lifecycle, or queryable projections (those are B / A / runtime).
+It is the neutral generalization of harness-io's `FiregridAcpClient` and the
+native lowering adapter — a Claude Agent SDK adapter (D3) and a future ACP/codex
+adapter both implement this one contract. The contract does not grow into a
+general RPC or agent-framework surface ahead of a consumer that demands it.
+
+TS-zone shape (G6): Effect service + layer, `Effect.fn` for effectful methods,
+tagged errors for expected failures, a sans-IO Effect-free `lower` core, and
+consuming `@firegrid/l1-vocabulary`'s public exports only (no deep imports). The
+fixture-replay harness (recorded transcripts as fixtures, deterministic
+reconstruction as the proof — the lane's main artifact) and any adapter
+implementation land in follow-up commits **after** architect approval of this
+surface.
 
 Proof obligations:
 
@@ -920,6 +1737,18 @@ merged / LOC deleted.
   host restart both reconstruct `(state, Version)` identical to
   `SubjectHistory.foldTo` from `Seq 0`. Deferred to A2: sidecar compaction and
   driving `commit` through `Authority.admit` (I5).
+- **A2 (MS-C1) — proofs green + election on I5 (WP A2).** `Checkpoint.commit`'s
+  election now routes through B1's `Authority.admit` (the I5 **Open /
+  bare-authority** regime, whose single-winner CAS *is* checkpoint election — not
+  FencedOwner, not a private CAS path), with no `Checkpoint` surface change.
+  Proofs `state.checkpoint-race` (two racers → exactly one commits; loser
+  `Raced`; stale state `Regressed`; monotonic snapshots) and `state.trim-safety`
+  (guard `AheadOfCheckpoint`; a reader from the trim floor rebuilds equivalent
+  state) green. Trim-safety surfaced and fixed an A1 defect: S2 trim leaves a
+  command record on the source, so `rebuild` now folds the source via bounded
+  batch reads with `IgnoreCommandRecords` (public S2 API, no surface change)
+  rather than `SubjectHistory.foldTo`, which would decode the trim marker. F2
+  conformance rows INV-018/019/020 added. Still deferred: sidecar compaction.
 - **B1 / MS-C2 (I5 + I1) — modules shipped (WP B1-IMPL).** `Authority`
   (`src/Firegrid.Store/Foundation/Authority.fs`), `DurableLog`
   (`src/Firegrid.Store/Foundation/DurableLog.fs`), and the `Turn` binding
@@ -930,6 +1759,34 @@ merged / LOC deleted.
   emit green). Composes the P3 fence primitives (PR #91), does not duplicate
   them. Proof obligations (`session.turn-attach`, `session.turn-crash-terminal`,
   `session.turn-idempotent-create`) land with WP B2.
+- **B2 / MS-C2 — turn-stream proofs green (WP B2).** `session.turn-streams` in
+  `Firegrid.Foundation.Proofs` (`FoundationTurnStreamProof.fs`) proves the three
+  MS-C2 obligations over the public `DurableLog`/`Turn` surface on real `s2Lite`:
+  `session.turn-attach` (byte-identical mid-flight vs. start prefix + same
+  terminal), `session.turn-crash-terminal` (a live deposed producer cannot
+  commit after a fresh-connection recovery host takes over; recovery reaches a
+  durable terminal; the attached reader observes it — the `store.object-live-fencing`
+  technique adapted to the foundation runner), `session.turn-idempotent-create`
+  (same-identity re-attach → one stream never forked; different-identity → epoch
+  takeover deposing prior producers). Conformance rows INV-015/016/017 added.
+- **B3 / MS-C5 — turn lifecycle authority shipped + proofs green (WP B3).**
+  `SessionLifecycle` (`src/Firegrid.Store/SessionLifecycle.fs`) implements the
+  MS-C5 Target Surface exactly: a session-actor **policy** over B1's `Authority`
+  (I5) and `DurableLog`/`Turn` (I1) — **no second authority**. `start` =
+  `Authority.claim` the session log + the single-writer `AlreadyLive` policy over
+  the fold; durable cancel = a `(source, sourceSeq)`-deduped **mailbox send**
+  (open-append to `sessions/{s}/in`) the holder seals on its next `drive`; durable
+  timeouts = deadlines re-derived from the fold, fired via the kernel
+  `WakeReason.TimerFired` (the I3/C1 vocabulary consumed, not re-minted). Cancel
+  and both timeouts map to the unchanged I1 `TurnTerminal.Cancelled`; the distinct
+  cause is the L2 `EndCause` on the session log (the decided G1 posture — I1
+  unchanged). Pure `fold`/`onCommand`/`onWake` core + `Async` shell, EffSharp-free,
+  Fable-safe (JS + TS emit green). Proofs `session.lifecycle-{single-writer,
+  durable-cancel,deposed-producer}` in `FoundationSessionLifecycleProof.fs` green
+  on real `s2Lite`, driven through the public surface only; the deposed-producer
+  proof extends B2's two-host live-fencing technique. Conformance rows
+  INV-021/022/023 added. B4's `session.resume-artifact-fenced` is the sibling MS-C5
+  obligation, still open.
 - **MS-C6 / WP D1 — L1 observation vocabulary (I2).** Shipped
   `@firegrid/l1-vocabulary` (`packages/l1-vocabulary`): the ACP `session/update`
   superset schema, Effect-free decoder, and canonical `foldTurn` base fold, with
@@ -939,6 +1796,20 @@ merged / LOC deleted.
   replay harness. Proof `l1-vocabulary.schema-conformance` green in `apps/proofs`
   (decode, JSON round-trip stability, schema version, ignorable-by-default,
   subagent scoping).
+- **MS-C6 / WP D2 — harness adapter contract (implementation).** Shipped
+  `@firegrid/harness-adapter` (`packages/harness-adapter`) implementing the
+  architect-approved MS-C6 Target Surface: the ratified contract types + service
+  seams (`HarnessAdapter`, `L1Sink`, `ToolGate`, tagged errors), the pure
+  Effect-free `replay` lowering core, the generic `drive` reconstruction shell
+  (`makeReconstructionAdapter` — prompt validation, resume-suppression by the
+  exclusive-upper-bound `observedThrough`, fenced emit via `L1Sink`), and the
+  ACP-native `referenceLowering` (deliberately not the Claude adapter — D3). The
+  interception posture is type-enforced: `ToolGate` is a gateable adapter's layer
+  dependency, absent from `drive`'s `R`, so an observe-only adapter cannot obtain
+  one. Proofs `harness.fixture-replay` and `harness.resume-suppression` green in
+  `apps/proofs` over the D1 seed corpus. Conformance rows INV-021/022/023 added.
+  The side-effect-non-re-execution half of resume-suppression, subagent scoping,
+  and usage/cost lowering land with the WP D3 Claude adapter.
 
 ## Acceptance Criteria
 

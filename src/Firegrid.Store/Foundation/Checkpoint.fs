@@ -19,11 +19,11 @@ open Firegrid.Foundation.SubjectHistory
 /// the `State` reflects every source record with `Seq < AsOf`, and `rebuild`
 /// resumes the fold from `Seq AsOf`. `AsOf = Version 0` is the empty fold.
 ///
-/// **Checkpoint election is open-CAS, not fenced-owner.** `commit` is grounded
-/// directly on `SubjectHistory.appendExpected` (open-CAS) at the observed
-/// sidecar tail: two writers race and a conditional append decides one winner.
-/// When I5 (B1) lands, `commit` becomes an `Authority.admit` instance over the
-/// sidecar subject with no surface change.
+/// **Checkpoint election is open-CAS, not fenced-owner.** `commit` routes
+/// through `Authority.admit` — the I5 (B1) Open (bare-authority) regime, whose
+/// single-winner CAS at the observed sidecar tail *is* checkpoint election — not
+/// a private CAS path and not the FencedOwner regime. Two writers race and the
+/// conditional append decides one winner; the loser gets `Raced`.
 module Checkpoint =
     /// I4 — the checkpoint record shape (cross-lane interface; consumed by A4's
     /// session-history fold and any long-lived fold). Folded state tagged with
@@ -146,6 +146,54 @@ module Checkpoint =
                 return record |> Option.map (fun stored -> stored.Body)
         }
 
+    /// Fold the source from `fromSeq` (inclusive) up to `untilVer` (the
+    /// exclusive as-of upper bound), decoding each *data* record via the record
+    /// codec and applying it. Command records are filtered with
+    /// `IgnoreCommandRecords`: `trim` appends a trim marker to the source, and a
+    /// rebuild that resumes across it must skip the marker rather than hand its
+    /// binary body to the record codec. This is why the source fold reads S2
+    /// directly (bounded batch reads that end at the tail) instead of
+    /// `SubjectHistory.foldTo`, which surfaces command records and would decode
+    /// the trim marker as a source record.
+    let private foldSourceData (fold: Fold<'record, 'state>) (Seq fromSeq) (Version untilVer) (seed: 'state) : Async<'state> =
+        async {
+            let (SubjectId sourceName) = fold.Source
+            let stream = fold.Basin |> S2.stream sourceName
+            let mutable state = seed
+            let mutable pos = fromSeq
+            let mutable go = pos < untilVer
+
+            while go do
+                let! batch =
+                    stream
+                    |> S2.readWith
+                        { S2.ReadOptions.empty with
+                            Start = Some(S2.FromSeqNum pos)
+                            IgnoreCommandRecords = true }
+
+                match batch with
+                | [] -> go <- false
+                | records ->
+                    let mutable lastSeq = pos - 1L
+
+                    for record in records do
+                        if record.SeqNum > lastSeq then
+                            lastSeq <- record.SeqNum
+
+                        if record.SeqNum < untilVer then
+                            match fold.RecordCodec.Decode record.Body with
+                            | Ok body -> state <- fold.Apply state { Seq = Seq record.SeqNum; Body = body }
+                            | Error error ->
+                                failwithf "checkpoint rebuild: decode failed at seq %d: %s" record.SeqNum error
+
+                    let next = lastSeq + 1L
+                    // Stop at the as-of bound or when a batch makes no progress
+                    // (only command records remained ahead of `pos`).
+                    if next >= untilVer || next <= pos then go <- false else pos <- next
+
+            return state
+        }
+
     /// Rebuild = latest snapshot + suffix replay to the source tail. With no
     /// snapshot this is a fold-from-zero. Returns the folded state and the
     /// source Version it is as-of. No resident memory — a cold Fold rebuilds.
@@ -154,17 +202,17 @@ module Checkpoint =
             let! snapshot = latest fold
             let resumeSeq, seed = resumeFrom snapshot fold.Initial
             let! sourceTail = SubjectHistory.tail fold.Basin fold.Source
-
-            let! state, version =
-                SubjectHistory.foldTo fold.Basin fold.RecordCodec fold.Source resumeSeq sourceTail seed fold.Apply
-
-            return state, version
+            let! state = foldSourceData fold resumeSeq sourceTail seed
+            return state, sourceTail
         }
 
     /// Commit a snapshot to the sidecar under open-CAS at its observed tail.
-    /// Two racing writers: exactly one wins; the loser gets `Raced`. Snapshots
-    /// are monotonic: rejects `Regressed` when `snapshot.AsOf <= latest.AsOf`
-    /// (a slow checkpointer cannot overwrite `latest` with stale state).
+    /// The election routes through `Authority.admit` — the I5 Open (bare-authority)
+    /// regime, whose single-winner CAS *is* checkpoint election, per the MS-C1
+    /// surface — never a private CAS path. Two racing writers: exactly one wins;
+    /// the loser gets `Raced` (`Authority.AdmitError.Lost`). Snapshots are
+    /// monotonic: rejects `Regressed` when `snapshot.AsOf <= latest.AsOf` (a slow
+    /// checkpointer cannot overwrite `latest` with stale state).
     let commit
         (fold: Fold<'record, 'state>)
         (snapshot: Snapshot<'state>)
@@ -189,13 +237,13 @@ module Checkpoint =
             if versionNumber snapshot.AsOf <= versionNumber latestAsOf then
                 return Error(CommitFailure.Regressed(snapshot.AsOf, latestAsOf))
             else
-                let! appended =
-                    SubjectHistory.appendExpected fold.Basin fold.SnapshotCodec fold.Sidecar sidecarTail [ snapshot ]
+                let! admitted =
+                    Authority.admit fold.Basin fold.SnapshotCodec fold.Sidecar sidecarTail [ snapshot ]
 
-                match appended with
+                match admitted with
                 | Ok version -> return Ok version
-                | Error(SubjectHistory.AppendFailure.Conflict conflict) -> return Error(CommitFailure.Raced conflict)
-                | Error(SubjectHistory.AppendFailure.Failed failure) -> return Error(CommitFailure.Failed failure)
+                | Error(Authority.AdmitError.Lost conflict) -> return Error(CommitFailure.Raced conflict)
+                | Error(Authority.AdmitError.Failed failure) -> return Error(CommitFailure.Failed failure)
         }
 
     /// Convenience: rebuild to the current source tail, then commit that snapshot.

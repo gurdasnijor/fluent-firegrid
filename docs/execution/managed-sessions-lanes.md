@@ -92,17 +92,17 @@ Everything else is lane-owner discretion.
 | P4 | P | Fable→TS emission + idiomatic TS facade for `Firegrid.Log`; re-point substrate proofs from `upstream-sdk` to `firegrid-log` driver | canon: language-and-targets | P1, F4 | done | Codex | #87 |
 | P5 | P | Remove EffSharp from `Firegrid.Log`/`Store`/`Foundation.Proofs`; delete private NuGet feed | canon: language-and-targets | P4 | done | Codex | #89 |
 | A1 | A | Checkpointed fold: snapshot record + rebuild | MS-C1 | P2 | done | Claude (A lane) | #96 |
-| A2 | A | Checkpoint-race + trim-safety proofs | MS-C1 | A1 | open | — | — |
+| A2 | A | Checkpoint-race + trim-safety proofs | MS-C1 | A1 | done | Claude (A lane) | #101 |
 | A3 | A | StateView strong/eventual reads exposed at the seam + proof | MS-C4 | P2 | open | — | — |
 | A4 | A | Session history fold + thread-index projection + proofs | MS-C4 | A1, B1 | open | — | — |
 | B1 | B | `Authority` protocol module (I5) + `DurableLog` (SubjectHistory + Authority + seal) + turn binding — surface (G6/G1 approved) | MS-C2 | P2 | done | Claude (B lane) | #92, #98 |
-| B2 | B | Turn attach / crash-terminal / idempotent-create proofs | MS-C2 | B1 | open | — | — |
-| B3 | B | Lifecycle authority: claim, durable cancel, timeouts + proofs | MS-C5 | B1 | open | — | — |
+| B2 | B | Turn attach / crash-terminal / idempotent-create proofs | MS-C2 | B1 | done | Claude (B lane) | #100 |
+| B3 | B | Lifecycle authority: claim, durable cancel, timeouts + proofs | MS-C5 | B1 | done | Claude (B lane) | #103, #106 |
 | B4 | B | Fenced native-resume-artifact store + proof | MS-C5 | B1 | in-progress | Claude (B lane) | #102 (surface) |
-| C1 | C | Shard wake stream + tailed router with durable cursor | MS-C3 | P1 | open | — | — |
+| C1 | C | Shard wake stream + tailed router with durable cursor | MS-C3 | P1 | surface-approved | Claude (C lane) | #95 |
 | C2 | C | Folded timer index; latency + single-claim + exactly-once proofs | MS-C3 | C1 | open | — | — |
 | D1 | D | L1 vocabulary decision record + schema (**gate G2**) | MS-C6 | — | done | Claude (D lane) | #97 |
-| D2 | D | Adapter contract + fixture-replay proof harness | MS-C6 | D1 | open | — | — |
+| D2 | D | Adapter contract + fixture-replay proof harness | MS-C6 | D1 | done | Claude (D lane) | #99, #104 |
 | D3 | D | Claude Agent SDK adapter (subagent scoping, usage facts) + proofs | MS-C6 | D2 | open | — | — |
 | E1 | E | agent-ui M1: attach replaces resumable store (**gate G4**) | MS-M1 | B2 | open | — | — |
 | E2 | E | agent-ui M2: lifecycle on kernel authority (**gate G4**) | MS-M2 | B3, B4, E1 | open | — | — |
