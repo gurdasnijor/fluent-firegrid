@@ -23,6 +23,7 @@ module Program =
         [ FoundationSubjectHistoryProof.proof
           FoundationStateViewProof.proof
           FoundationKvStoreProof.proof
+          FoundationCheckpointProof.proof
           FoundationDurableKernelProof.proof ]
 
     let private usage =
