@@ -196,11 +196,20 @@ Changes to any of these require gate G1:
   generic sealed-log API and the turn address/chunk/terminal schemas bound to
   it. Consumed by Lanes A (history fold), D (adapter emits into turns), E
   (attach). Domain methods on the binding are a G1 violation.
-- **I2 — L1 observation vocabulary** (D1). Consumed by A4 (history fold) and E4
-  (UI fold).
+- **I2 — L1 observation vocabulary** (D1). Consumed by E4 (UI fold) and a future
+  L1-inclusive history fold — **not** by A4, which defers L1 per its Q3 ruling
+  (A4's history fold folds I6/L2, not I2).
 - **I3 — Wake record shape + shard naming** (C1). Consumed by B3 (lifecycle
   wakes) and future temporal features.
 - **I4 — Checkpoint record shape** (A1). Consumed by A4 and any long-lived fold.
+- **I6 — `SessionLifecycle.LifecycleFact` + `sessions/{s}/log` naming** (B3). The
+  session log's L2 turn-lifecycle fact schema (`TurnStarted`/`TurnEnded` +
+  `EndCause`) and its derived subject (`SessionLifecycle.logSubject`).
+  **Writer = the B3 lifecycle holder; consumer = A4's history fold**
+  (`session.history-fold`). Changes are a G1 gate. (Registered by the A4 G6 FULL
+  review, 2026-07-07; A4 folds this directly — no dedicated history subject — so
+  its projection can never fork from lifecycle truth, and `EndCause` survives
+  losslessly into the thread index.)
 
 ## Suggested Parallel Start
 
