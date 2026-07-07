@@ -30,22 +30,37 @@ remain automation gaps. They must not be cited as fully conformance-green until
 the listed evidence is promoted to `ci-green` or accompanied by a recorded green
 run.
 
-| Invariant | Requirement | Proof evidence | Evidence status |
-| --- | --- | --- | --- |
-| INV-001 | An acknowledged append is visible to later tail/read operations in append order. | `effect-s2.capability-a.read-after-append` | `ci-green` in `apps/proofs`, executed by `pnpm run check`. |
-| INV-002 | Restart from a persisted cursor folds exactly the durable suffix after that cursor. | `effect-s2.capability-a.cursor-fold`; `foundation.subject-history` | `ci-green` in `apps/proofs` and `Firegrid.Foundation.Proofs`, executed by `pnpm run check`. |
-| INV-003 | Two writers appending at the same expected tail cannot both commit. | `effect-s2.capability-b.match-seq-num-contention`; `foundation.subject-history` | `ci-green` in `apps/proofs` and `Firegrid.Foundation.Proofs`, executed by `pnpm run check`. |
-| INV-004 | Fencing is explicit and cooperative: a deposed owner must be unable to commit after takeover. | `effect-s2.capability-b.fence-semantics` | `ci-green` in `apps/proofs`, executed by `pnpm run check`. Historical `store.object-live-fencing` and `store.object-stale-owner` files are `not-active` until rehomed to current surfaces. |
-| INV-005 | Workflow event appends use expected-index CAS; stale writers surface conflict without changing committed order. | `store.event-log-cas`, `store.run-lifecycle` | `not-active`; historical TS proof files remain as porting references and are not in the active CI registry. |
-| INV-006 | Runtime replay reconstructs committed workflow state from durable events without reissuing completed effects. | `store.runtime-end-to-end`, `store.awakeable`, `store.runtime-approval` | `not-active`; historical TS proof files remain as porting references and are not in the active CI registry. |
-| INV-007 | Timers and schedules are durable: overdue work is swept once after restart and does not refire after completion. | `store.timers-signals`, `store.runtime-timer-sweep`, `store.runtime-schedule-sweep`, `store.workflow-schedule` | `not-active`; historical TS proof files remain as porting references and are not in the active CI registry. |
-| INV-008 | Object state is materialized from durable facts and can be replayed/reconstructed by a new owner. | `store.object-state`, `store.object-replay-state`, `store.object-serialization` | `not-active`; historical TS proof files remain as porting references and are not in the active CI registry. |
-| INV-009 | Object waits resolve from durable state/index facts rather than private callbacks. | `store.object-state-wait`, `store.object-index-wait` | `not-active`; historical TS proof files remain as porting references and are not in the active CI registry. |
-| INV-010 | Host recovery can resume due work after crash/restart using durable facts, not process memory. | `store.host-crash-restart`, `store.host-tick`, `store.object-cross-host` | `not-active`; historical TS proof files remain as porting references and are not in the active CI registry. |
-| INV-011 | Delayed sends are represented as durable starts and are drained by host/object recovery. | `store.object-delayed-send`, `store.service-delayed-send` | `not-active`; historical TS proof files remain as porting references and are not in the active CI registry. |
-| INV-012 | Subject-scoped history uses exclusive tail versions: expected-version append returns the new tail, stale append reports the actual tail and winning record, and fold-to-target applies records through that target tail in append order. | `foundation.subject-history` | `ci-green` in `Firegrid.Foundation.Proofs`, executed by `pnpm run check`. |
-| INV-013 | A `StateView` strong read observes all records through the checked tail, while an eventual read exposes only the local applied snapshot and pump failures terminalize later reads. | `foundation.state-view` | `ci-green` in `Firegrid.Foundation.Proofs`, executed by `pnpm run check`. |
-| INV-014 | `KvStore` put/delete operations append durable facts, strong reads catch up through the view, and an append acknowledgment is not hidden by a later local projection failure. | `foundation.kv-store` | `ci-green` in `Firegrid.Foundation.Proofs`, executed by `pnpm run check`. |
+Evidence driver:
+
+- `upstream-sdk` means the proof drives S2 through `@s2-dev/streamstore` as an
+  external substrate oracle. It proves the S2 guarantee, not Firegrid client
+  conformance.
+- `foundation-fsharp` means the proof drives the F# Foundation proof runner
+  emitted through Fable.
+- `firegrid-log` is reserved for proofs that drive Firegrid's idiomatic TS
+  facade over the Fable-emitted `Firegrid.Log` client.
+
+The intended substrate end state is differential evidence: `upstream-sdk`
+proves the S2 oracle behavior, while `firegrid-log` proves Firegrid's client
+facade faithfully exposes that behavior. A divergence between the two should be
+a red proof run, not a code-review-only observation.
+
+| Invariant | Requirement | Proof evidence | Evidence driver | Evidence status |
+| --- | --- | --- | --- | --- |
+| INV-001 | An acknowledged append is visible to later tail/read operations in append order. | `effect-s2.capability-a.read-after-append` | `upstream-sdk` | `ci-green` in `apps/proofs`, executed by `pnpm run check`. |
+| INV-002 | Restart from a persisted cursor folds exactly the durable suffix after that cursor. | `effect-s2.capability-a.cursor-fold`; `foundation.subject-history` | `upstream-sdk`; `foundation-fsharp` | `ci-green` in `apps/proofs` and `Firegrid.Foundation.Proofs`, executed by `pnpm run check`. |
+| INV-003 | Two writers appending at the same expected tail cannot both commit. | `effect-s2.capability-b.match-seq-num-contention`; `foundation.subject-history` | `upstream-sdk`; `foundation-fsharp` | `ci-green` in `apps/proofs` and `Firegrid.Foundation.Proofs`, executed by `pnpm run check`. |
+| INV-004 | Fencing is explicit and cooperative: a deposed owner must be unable to commit after takeover. | `effect-s2.capability-b.fence-semantics` | `upstream-sdk` | `ci-green` in `apps/proofs`, executed by `pnpm run check`. Historical `store.object-live-fencing` and `store.object-stale-owner` files are `not-active` until rehomed to current surfaces. |
+| INV-005 | Workflow event appends use expected-index CAS; stale writers surface conflict without changing committed order. | `store.event-log-cas`, `store.run-lifecycle` | no active driver | `not-active`; historical TS proof files remain as porting references and are not in the active CI registry. |
+| INV-006 | Runtime replay reconstructs committed workflow state from durable events without reissuing completed effects. | `store.runtime-end-to-end`, `store.awakeable`, `store.runtime-approval` | no active driver | `not-active`; historical TS proof files remain as porting references and are not in the active CI registry. |
+| INV-007 | Timers and schedules are durable: overdue work is swept once after restart and does not refire after completion. | `store.timers-signals`, `store.runtime-timer-sweep`, `store.runtime-schedule-sweep`, `store.workflow-schedule` | no active driver | `not-active`; historical TS proof files remain as porting references and are not in the active CI registry. |
+| INV-008 | Object state is materialized from durable facts and can be replayed/reconstructed by a new owner. | `store.object-state`, `store.object-replay-state`, `store.object-serialization` | no active driver | `not-active`; historical TS proof files remain as porting references and are not in the active CI registry. |
+| INV-009 | Object waits resolve from durable state/index facts rather than private callbacks. | `store.object-state-wait`, `store.object-index-wait` | no active driver | `not-active`; historical TS proof files remain as porting references and are not in the active CI registry. |
+| INV-010 | Host recovery can resume due work after crash/restart using durable facts, not process memory. | `store.host-crash-restart`, `store.host-tick`, `store.object-cross-host` | no active driver | `not-active`; historical TS proof files remain as porting references and are not in the active CI registry. |
+| INV-011 | Delayed sends are represented as durable starts and are drained by host/object recovery. | `store.object-delayed-send`, `store.service-delayed-send` | no active driver | `not-active`; historical TS proof files remain as porting references and are not in the active CI registry. |
+| INV-012 | Subject-scoped history uses exclusive tail versions: expected-version append returns the new tail, stale append reports the actual tail and winning record, and fold-to-target applies records through that target tail in append order. | `foundation.subject-history` | `foundation-fsharp` | `ci-green` in `Firegrid.Foundation.Proofs`, executed by `pnpm run check`. |
+| INV-013 | A `StateView` strong read observes all records through the checked tail, while an eventual read exposes only the local applied snapshot and pump failures terminalize later reads. | `foundation.state-view` | `foundation-fsharp` | `ci-green` in `Firegrid.Foundation.Proofs`, executed by `pnpm run check`. |
+| INV-014 | `KvStore` put/delete operations append durable facts, strong reads catch up through the view, and an append acknowledgment is not hidden by a later local projection failure. | `foundation.kv-store` | `foundation-fsharp` | `ci-green` in `Firegrid.Foundation.Proofs`, executed by `pnpm run check`. |
 
 The bridge intentionally names proof families, not a required proof runner. An
 alternate implementation can claim the same invariant by publishing equivalent
