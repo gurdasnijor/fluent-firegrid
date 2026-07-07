@@ -972,6 +972,188 @@ RFC invariant reserved for A3: **INV-034** (strong/eventual read contract; the
 originally-reserved INV-033 was reassigned to C2), added to the conformance
 bridge with the implementation + proof PR (this one).
 
+Target Surface (F# — WP A4; gate G6 — **FULL architect review pending**):
+
+This is the **projection half** of MS-C4: a durable **session-history fold** plus
+a **thread-index projection**, completing the table side of the duality. A
+session accumulates turns over a long life, so the history is a *long-lived* fold
+— it is snapshotted with the I4 `Checkpoint` machinery (a cold host rebuilds from
+`latest snapshot + suffix`, never `Seq 0`) and served with the A3 `StateReads`
+seam (strong/eventual reads whose `AppliedTail` makes projection lag data). It is
+one module, `SessionHistory`, in the F# `src/` zone
+(`src/Firegrid.Store/SessionHistory.fs`), sans-IO, EffSharp-free.
+
+**Consumes three ratified interfaces AS-IS — no shape change to any (that is
+G1):** I4 `Checkpoint`/`Snapshot` (the checkpointed fold), the A3 `StateReads`
+seam (live reads + lag), and I1 `Turn` (`SessionId`/`TurnId`/`TurnTerminal` and
+the `sessions/{s}/…` address convention). The generic core is a thin composition
+over `Checkpoint` + `StateReads`; the `Turns` binding supplies the domain shape.
+
+**Projections are rebuildable, never alternate truth** (the MS-C4 RFC invariant):
+the history and the thread-index are *derived* from the session-fact log by a
+pure `apply`; they are recomputed by replay, and the checkpoint is only an
+optimization that never changes the result.
+
+**Topology — one derived session-fact subject.** The history folds a
+per-session **fact log** (`sessions/{s}/history`, derived from the `SessionId`
+the client already holds, analogous to `Turn.address` — never random), a plain
+`SubjectHistory` subject of L1/L2 fact records. Its I4 checkpoint sidecar is the
+usual `Checkpoint.checkpointSubject` derivation; a live reader is seeded *from
+the latest checkpoint* (`Checkpoint.resumeFrom`) so even the resident view skips
+`Seq 0`. (Who *writes* the fact log — the session actor / adapter, D/E lane — is
+out of A4 scope; see the open question below.)
+
+```fsharp
+// namespace Firegrid.Store — session-history projection over the generic I4
+// Checkpoint + A3 StateReads table half and the I1 Turn address/domain.
+// open Firegrid.Foundation           // Checkpoint, StateReads, SubjectHistory, ViewState
+// open Firegrid.Foundation.SubjectHistory
+// Deps passed in (sans-IO shell): S2.Basin + the fact Codec. No EffSharp.
+
+module SessionHistory =
+    // ---- Generic core: a checkpointed + readable fold (I4 + A3) -----------
+
+    /// A durable, long-lived projection over a session-fact subject: the I4
+    /// checkpointed fold (cold rebuild) bound to the A3 readable view (live +
+    /// lag), over one subject with one `apply`. Abstract — the consumer never
+    /// sees the sidecar, cursor, or seq nums.
+    type Projection<'fact, 'history>            // abstract; holds a Checkpoint.Fold + StateReads config
+
+    /// Bind a projection over `source` (its checkpoint sidecar is derived). The
+    /// `StateCodec` snapshots `'history` for the sidecar; the record `Codec`
+    /// decodes facts.
+    val make :
+        S2.Basin -> Codec<'fact> -> Checkpoint.StateCodec<'history> -> source: SubjectId
+            -> initial: 'history -> apply: ('history -> StoredRecord<'fact> -> 'history)
+            -> Projection<'fact, 'history>
+
+    /// Cold rebuild via I4: `latest snapshot + suffix` to the source tail (a
+    /// fold-from-zero when never checkpointed). No resident memory. Returns the
+    /// history and the source `Version` it is as-of.
+    val rebuild : Projection<'fact, 'history> -> Async<'history * Version>
+    /// Snapshot the current history to the sidecar (I4 open-CAS `checkpoint`).
+    val checkpoint : Projection<'fact, 'history> -> Async<Result<Checkpoint.Snapshot<'history>, Checkpoint.CommitFailure<'history>>>
+    /// Latest committed checkpoint, or None (I4 `latest`).
+    val latest : Projection<'fact, 'history> -> Async<Checkpoint.Snapshot<'history> option>
+
+    /// A resident, live reader over the history — the A3 `StateReads.Reader`,
+    /// seeded from the latest checkpoint so it live-tails the suffix only.
+    type Reader<'fact, 'history> = StateReads.Reader<'fact, 'history>
+    val startReader  : Projection<'fact, 'history> -> Async<Reader<'fact, 'history>>
+    /// Eventual read: the local applied history (a monotonic prefix; `AppliedTail`
+    /// exposes the projection's lag as data). Thin over `StateReads.readEventual`.
+    val readEventual : Reader<'fact, 'history> -> Async<ViewState<'history>>
+    /// Strong read at the checked tail (linearizable). Thin over `StateReads.readLatest`.
+    val readLatest   : Reader<'fact, 'history> -> Async<ViewState<'history>>
+    val stopReader   : Reader<'fact, 'history> -> Async<unit>
+
+    // ---- Turn binding: session turn-history + thread-index ---------------
+
+    /// The Turn-aware binding: L2 session-history facts, the folded history, and
+    /// the thread-index — the reference shape over I1 `Turn`.
+    module Turns =
+        /// Session-history fact schema (what the session actor appends to the
+        /// fact log). L2 coordination facts about turns; L1 observation facts
+        /// (block-level, per C6) extend this additively — deferred.
+        type HistoryFact =
+            | TurnOpened of Turn.TurnId * openedAt: int64
+            | TurnClosed of Turn.TurnId * TurnTerminal * closedAt: int64
+
+        type TurnStatus = Live | Ended of TurnTerminal
+        type TurnEntry =
+            { Turn: Turn.TurnId; Status: TurnStatus; OpenedAt: int64; ClosedAt: int64 option }
+
+        /// The folded session history AND its thread-index in one value:
+        /// `Order` is the append-ordered turn ids; `ByTurn` is the derived index
+        /// (a projection, never alternate truth).
+        type History = { Order: Turn.TurnId list; ByTurn: Map<string, TurnEntry> }
+
+        val subject   : Turn.SessionId -> SubjectId            // sessions/{s}/history
+        val initial   : History
+        val apply     : History -> StoredRecord<HistoryFact> -> History
+        val codec     : Codec<HistoryFact>
+        val stateCodec : Checkpoint.StateCodec<History>
+        /// Bind the projection for a session (`make` over the derived subject).
+        val make       : S2.Basin -> Turn.SessionId -> Projection<HistoryFact, History>
+        /// The thread-index projection: turns indexed by id — a derived view.
+        val threadIndex : History -> Map<string, TurnEntry>
+```
+
+Ergonomic sample (the consumer test — usable with no proof-harness knowledge):
+
+```fsharp
+let projection = SessionHistory.Turns.make basin sessionId
+
+// Cold rebuild: latest checkpoint + suffix (skips Seq 0 for a long session).
+let! history, asOf = SessionHistory.rebuild projection
+let index = SessionHistory.Turns.threadIndex history        // turn lookup
+
+// Snapshot the long-lived history so the next cold start is cheap.
+let! _ = SessionHistory.checkpoint projection
+
+// Live: a resident reader, seeded from the checkpoint, that tails the suffix.
+let! reader = SessionHistory.startReader projection
+let! e = SessionHistory.readEventual reader                 // may lag; e.AppliedTail = lag
+let! s = SessionHistory.readLatest reader                   // linearizable at the tail
+```
+
+Laws (stated here; A4 proves history-fold + projection-lag):
+
+- **History fold reconstructs deterministically** (`session.history-fold`, A4).
+  For any session-fact log and any sequence of committed checkpoints, `rebuild`
+  yields the same `(history, Version)` as a fold from `Seq 0` — *including across
+  a host restart*; checkpointing does not change the result. (This is A1's
+  rebuild-equivalence applied to the history fold; A4 reuses I4, it does not
+  re-prove `Checkpoint`.)
+- **Projection lag is observable** (`session.projection-lag-observable`, A4). An
+  eventual read exposes `AppliedTail`; the gap to the checked tail
+  (`readLatest`) is readable data, so a stale projection is never mistaken for
+  the truth. Thin over A3's read law.
+- **Projections never alternate truth.** History and thread-index are pure
+  functions of the fact log via `apply`; the checkpoint and the resident reader
+  are optimizations, not a second source of truth.
+- **No leaks.** Consumers never see the sidecar, cursor, S2 stream names, or seq
+  nums — only `History` + `AppliedTail`.
+
+Scope guard: A4 is the **projection half only**. It reuses I4/A3/I1 unchanged and
+does not re-prove them; it does not fold the per-turn token streams (off the fold
+hot path per MS-C2) nor grow a KStreams operator algebra. The **write side** of
+the fact log (the session actor / adapter emitting L1/L2 facts) is D/E lane, not
+A4. The `HistoryFact`/`History` shapes are A4's projection interface (a new
+derived-fact shape; the writer consumes it — see the open question on reusing
+B3's `sessions/{s}/log` instead).
+
+Validation Gates (F#-zone, G6):
+
+- **Native shapes, EffSharp-free.** `Async` + `Result` + DU facts + `Map`/list
+  history + `Codec`/`StateCodec` records over the P2/I4/A3 primitives — no
+  EffSharp; the package-level decision is "none, nothing new."
+- **Ergonomic sample** above passes the consumer test.
+- **Emitted-TS sample + Fable build check** ride the store's existing `Exports.fs`
+  seam; Fable-safe by construction (adds no BCL-only API beyond `Checkpoint` /
+  `StateReads` / `Map`).
+
+Open questions for the FULL review (A4 the largest surface):
+
+1. **Source of the fact log.** A4 folds a dedicated derived `sessions/{s}/history`
+   subject (proposed: decouples A4 from B3's lifecycle-fact codec and keeps the
+   fact schema A4's own). The alternative is folding B3's existing
+   `sessions/{s}/log` (`SessionLifecycle.logSubject` + `LifecycleFact`,
+   `TurnStarted`/`TurnEnded`) directly — economical (no new write side) but couples
+   A4 to MS-C5 and needs B3's fact codec exposed. **Recommend: dedicated subject,
+   generic over the fact type, with `Turns` as the reference binding.**
+2. **Thread-index scope.** Proposed as the *per-session* turn index (`ByTurn`) —
+   the MS-M3 thread-history need. A *cross-session* thread list (sessions indexed
+   for the thread picker) is the same machinery over a sessions-registry subject;
+   deferred unless the review wants it in A4.
+3. **L1 fact inclusion.** `HistoryFact` carries L2 turn-lifecycle facts; block-level
+   L1 observations (C6/I2) extend it additively. Confirm whether A4 folds L1 now
+   or defers to the D/E write side landing the vocabulary on the fact log.
+
+RFC invariants reserved for A4: **INV-035** (`session.history-fold`) and
+**INV-036** (`session.projection-lag-observable`), added to the conformance
+bridge with the implementation + proof PR (not this docs-only surface PR).
+
 Proof obligations:
 
 - `state.stateview-strong-read` (**A3**) — a strong read issued after a second
