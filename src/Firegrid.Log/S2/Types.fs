@@ -1,6 +1,6 @@
 namespace Firegrid.Log
 
-open Effect
+open System
 
 /// Configuration for the S2 service. The first strawman intentionally exposes
 /// only stable client options; advanced endpoint/retry/session configuration can

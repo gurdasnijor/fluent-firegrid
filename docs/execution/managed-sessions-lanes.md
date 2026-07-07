@@ -47,28 +47,6 @@ Ground rules:
 - **Frozen paths stay frozen.** No new features on the TanStack lowering.
 - Verify with the repo root `pnpm preflight` plus the proof runner for your new
   proofs.
-- **Local EffSharp restore.** If `dotnet restore` or `pnpm check` fails locally
-  with a GitHub Packages 401 for `EffSharp`, CI credentials are not the issue
-  under test. Use a temporary NuGet config that adds the cached local
-  `EffSharp` package directory plus `nuget.org`, and keep that config out of
-  commits:
-
-  ```sh
-  tmpcfg=$(mktemp /tmp/firegrid-nuget.XXXXXX)
-  printf '%s\n' \
-    '<?xml version="1.0" encoding="utf-8"?>' \
-    '<configuration>' \
-    '  <packageSources>' \
-    '    <clear />' \
-    '    <add key="local-effsharp" value="/Users/gnijor/gurdasnijor/fluent-firegrid/.nuget/packages/effsharp/0.0.1-alpha.1" />' \
-    '    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />' \
-    '  </packageSources>' \
-    '</configuration>' \
-    > "$tmpcfg"
-  NUGET_CONFIG="$tmpcfg" NUGET_PACKAGES=/Users/gnijor/gurdasnijor/fluent-firegrid/.nuget/packages pnpm check
-  rm -f "$tmpcfg"
-  ```
-
 ## Claim Protocol
 
 Claim a WP by editing the ledger row (Owner + Status: `in-progress`) in a small

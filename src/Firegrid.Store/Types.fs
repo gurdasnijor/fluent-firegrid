@@ -1,6 +1,5 @@
 namespace Firegrid.Store
 
-open Effect
 open Firegrid.Log
 
 type S2ObjectStateBackendConfig =
@@ -19,7 +18,7 @@ type S2ObjectStateOwner =
 type S2Runtime =
     { Basin: string
       Namespace: string
-      Layer: Layer<S2Error, unit> }
+      Client: S2.Client }
 
 type S2StateAppend =
     { Address: S2ObjectStateAddress
