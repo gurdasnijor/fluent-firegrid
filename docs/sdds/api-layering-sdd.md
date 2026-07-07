@@ -1,5 +1,12 @@
 # SDD: API Layering — Target Surfaces per Layer
 
+**The product is a durable-execution platform over S2 streams** — Durable-
+Functions-semantics orchestrations (deterministic replay over journaled
+histories, per Burckhardt et al., OOPSLA 2021), addressable entities, and
+at-least-once activities, hosted Pulsar-Functions-style as functions attached
+to streams. **Agent sessions are application #1 on that platform, not the
+platform.** Every layering decision below follows from that sentence.
+
 Doc-Class: sdd
 Status: draft — architect-authored; **pending human ratification** (nothing in
 the convergence plan dispatches until this document is ratified)
@@ -32,6 +39,16 @@ the consumer. Findings, verified on `main`:
   satisfied wave-wide by *assertion* ("rides P4's seam, Fable-safe by
   construction") rather than by artifact. Five consecutive surface reviews —
   architect included — accepted the phrasing.
+- **The platform itself is invisible.** The P3-ported kernel already contains
+  a complete Durable-Functions-style engine: `Durable<'a>` (a free monad —
+  program-as-data orchestrations with `Perform`/`PerformAll`/`Await`/
+  `WhenAny`/`CurrentTime`), the `durable { }` computation expression
+  (`Api.fs`), the Azure-DF-shaped `Workflow.call/all/waitForSignal/sleepUntil/
+  any` vocabulary, and `Stepper`'s journaled `StepRecord` replay — proven by
+  `FoundationDurableKernelProof.fs`. None of it is exported at any seam, named
+  in any package, or presented in any SDD as the product. The wave built and
+  reviewed *application* capabilities while the platform stayed anonymous
+  plumbing — the deepest instance of the layering gap.
 - The adapter contract (`@firegrid/harness-adapter`) and its Claude
   implementation carry a **hard `effect@4.0.0-beta.87` dependency in their
   exported types** (`Context.Service`, `Effect.Effect`, `Data.TaggedError`) —
@@ -61,23 +78,30 @@ section is what prevents the audit findings from recurring.
 
 | Layer | Name | Audience | Doctrine | Current state |
 | --- | --- | --- | --- | --- |
-| L0 | Substrate (S2 streams, basins, fencing) | Kernel internals only | s2-substrate canon | Good |
-| L1 | Kernel (F# `src/`: `Firegrid.Store`, `Firegrid.Foundation`) | F#-zone developers, proofs | Evaluation SDD (F# API doctrine) | Good — proven, ergonomic *at F# altitude* |
+| L0 | Substrate (S2 streams, basins, fencing) | Platform internals only | s2-substrate canon | Good |
+| L1p | **Platform kernel** (domain-free F#): orchestrations (`Durable<'a>`, `durable { }`, `Workflow.*`, `Stepper` replay), entities (Processor/Mailbox/Handler), activities, durable timers + wake path, Authority, DurableLog, Checkpoint, StateReads/projections | Platform developers, proofs, L1a | Evaluation SDD (F# API doctrine) | Good — proven; **anonymous and unexposed** |
+| L1a | **Applications in F#** (domain modules over L1p): today, *sessions* (`Turn`, `SessionLifecycle`, `SessionHistory`) | Application developers, proofs | Same F# doctrine; **never inside platform namespaces** | Good code, wrong placement (lives inside `Firegrid.Store` beside the kernel) |
 | L2 | Emitted seam (Fable emission + `Exports.fs`) | **Exactly one consumer: L3.** Not a public API. | Complete and mechanical: everything L3 needs, nothing more; `Async` is acceptable here | **Nearly empty — the gap** |
-| L3 | Consumer facade (TS packages a developer imports) | agent-ui developers; external TS consumers | This SDD (below): Promise-first, human names, quickstart-able | **Missing for sessions; misnamed for events** |
-| L4 | Adapters & applications (`claude-adapter`, agent-ui) | Harness implementors; end users | D2 adapter contract; app SDDs | Adapter good; app blocked on L3 |
+| L3 | Consumer facades (TS packages a developer imports): **`@firegrid/durable`** (the platform: define activities, author/start/signal orchestrations, entity ops) and **`@firegrid/sessions`** (application #1) | Any TS developer; agent-ui | This SDD: Promise-first, human names, quickstart-able, Effect-free | **Both missing; events package misnamed** |
+| L4 | Adapters & end applications (`claude-adapter`, agent-ui) | Harness implementors; end users | D2 adapter contract; app SDDs | Adapter good; app blocked on L3 |
 
 **Binding rules (in force on ratification):**
 
 1. Every capability WP names its layer in the ledger row.
-2. An L1 (kernel) WP is not *wave-complete* until its L3 exposure ships or a
-   ledger row explicitly defers it. "Done" on a kernel row means kernel-done;
-   the wave tracks consumer reachability as its own deliverable.
+2. An L1 (kernel or application) WP is not *wave-complete* until its L3
+   exposure ships or a ledger row explicitly defers it. "Done" on a kernel row
+   means kernel-done; the wave tracks consumer reachability as its own
+   deliverable.
 3. L2 exists to serve L3 and is never documented, named, or linked as a public
    API. Consumers who import from `dist/` are off-contract.
 4. Spec coordinates (I2, MS-C6, L1-as-in-vocabulary, WP ids) never appear in
    package names, in the first sentence of package descriptions, or in any
    L3/L4 exported identifier. They belong in docs and code comments.
+5. **Placement follows the platform/application split.** Domain modules never
+   live in platform namespaces or directories; a new domain (e.g. a second
+   application) arrives as its own L1a module space over L1p's public
+   surfaces, exactly as sessions bind Authority/DurableLog/Checkpoint today.
+   Platform modules never import application modules.
 
 ## Naming doctrine and the rename table
 
@@ -87,7 +111,8 @@ not "which spec section ratified it?".
 | Current | Target | Rationale |
 | --- | --- | --- |
 | `@firegrid/l1-vocabulary` | `@firegrid/session-events` | It is the typed vocabulary of session update events (an ACP superset) a UI decodes and folds. "L1" and "vocabulary" are ledger-speak. |
-| *(none)* | `@firegrid/sessions` | The consumer entry point for the session kernel. Does not exist today. Defined below. |
+| *(none)* | `@firegrid/durable` | **The platform facade** — activities, orchestrations, entities, timers over S2. The engine exists at L1p; the package does not. S8. |
+| *(none)* | `@firegrid/sessions` | The application-#1 facade for the session domain. Does not exist today. Defined below. |
 | `@firegrid/harness-adapter` | *(keep name)* | Audience is harness implementors; the name is already in their vocabulary. Description rewritten consumer-first (spec refs move to the end). |
 | `@firegrid/claude-adapter` | *(keep name)* | Same. |
 | `@firegrid/log` (empty stub) | *(absorbed)* | Delete the stub; the store seam supersedes P4's intent. If a standalone log facade is ever needed it gets its own surface stop. |
@@ -133,7 +158,11 @@ L3 converts):
   API. Posting wakes from TS is off-contract until a consumer demands it
   (surface stop then).
 
-### L3 — `@firegrid/sessions` (the consumer entry point; **G6 surface stop**)
+### L3 — `@firegrid/sessions` (application-#1 facade; **G6 surface stop**)
+
+(The platform facade `@firegrid/durable` is S8's deliverable; its target
+shape is specified in the platform SDD, not here — this section covers only
+the sessions application facade.)
 
 Promise-first, tagged-union errors, `AsyncIterable` for streams, zero S2 or
 codec assembly required of the consumer. Target shape (signatures indicative;
@@ -211,51 +240,65 @@ The evaluation SDD's gates stand; their *evidence* requirement changes:
 | S5 | Rename `l1-vocabulary` → `session-events`; delete `log` stub; rewrite all package descriptions | S1 | None (mechanical) |
 | S6 | Gate-enforcement amendment + dependency doctrine folded into lanes doc, dispatch pack, and `CLAUDE.md` (rescope `LLMS.md` to legacy packages); layer column added to ledger | S1 | None (docs) |
 | S7 | De-Effect the D2 adapter contract: exported types become plain TS (interfaces, `Promise`, tagged unions); `effect` dropped from `harness-adapter`/`claude-adapter` deps; D3 impl follows; optional `/effect` wrapper only if a consumer asks | S1 | **G1 — architect-driven surface amendment** (contract shape change) |
+| S8 | **Platform SDD + `@firegrid/durable` facade**: semantics documented against the DF model (deterministic replay, journaled history, entity serialization); L2 exports for `Durable`/`Workflow`/`Stepper`/host; plain-TS SDK (define activities, author/start/signal orchestrations, entity ops); `durable { }` CE documented as the F#-native authoring surface; parity checklist vs frozen `@firegrid/fluent` | S1 | **Architect-authored SDD → human ratification → G6 facade surface stop** |
+| S9 | Module re-placement per binding rule 5: `Turn`/`SessionLifecycle`/`SessionHistory` move out of platform namespaces into a sessions module space (mechanical F# move; after in-flight kernel work lands to avoid churn) | S1; in-flight L1 work merged | None (mechanical; no shape change) |
 
 Sequencing: S2, S3, S5, S6 dispatch in parallel after S1; S4 follows S2+S3;
 S7 runs in the D lane in parallel (its shape amendment is architect-authored
-in the surface, worker-implemented).
+in the surface, worker-implemented). S8's SDD authoring starts immediately
+after S1 (architect work, no worker dispatch); its facade follows the sessions
+facade unless the human re-prioritizes. S9 batches after the current kernel
+wave merges.
 In-flight kernel work (A4 impl, C2, B4 impl) is unaffected and continues — it
 is L1 work and remains correct at its own altitude; S-lane is where the wave's
 missing top layer gets built.
 
-## Relationship to the workflow stack (why workflow authoring is deferred, not dropped)
+## The platform and its applications
 
-The L1 kernel serves **two consumer branches**, of which this SDD specifies
-one:
+The platform is not a future direction — **it is already implemented and
+proven at L1p**; what is missing is its name, its seam exports, and its
+facade. The corrected picture:
 
 ```
-        L4   agent-ui (E-lane)              other apps / services
-                 │                                 │
-        L3   @firegrid/sessions             workflow-authoring API
-             (this SDD: S3/S4)              (Restate-style; FUTURE SDD)
-                 │                                 │
-        L2   emitted seam (Exports.fs) ────────────┘
+        L4   agent-ui (E-lane)         other apps / services
+                 │                            │
+        L3   @firegrid/sessions        @firegrid/durable
+             (application #1 facade)   (THE PLATFORM facade: activities,
+                 │                      orchestrations, entities, timers)
+                 │                            │
+        L2   emitted seam (Exports.fs) ───────┘
                  │
-        L1   F# kernel
-              ├─ session capabilities (Authority, DurableLog/Turn,
-              │   SessionLifecycle, Checkpoint, StateReads, SessionHistory, wakes)
-              └─ durable actor kernel (P3 port: Processor, Mailbox, timers,
-                  Send/Execute intents — the workflow-engine core)
+        L1a  applications (F#): sessions (Turn, SessionLifecycle,
+             SessionHistory) — first domain expressed on the platform
+                 │
+        L1p  PLATFORM KERNEL (F#, domain-free):
+              orchestrations: Durable<'a> free monad, durable { } CE,
+                Workflow.call/all/waitForSignal/sleepUntil/any,
+                Stepper journaled-replay (DF semantics, OOPSLA 2021)
+              entities: Processor / Mailbox / Handler (single-writer admission)
+              activities: Execute intents + ActivityAdapter
+              time & liveness: durable timers, wake shards/router
+              storage primitives: Authority, DurableLog, Checkpoint,
+                StateReads / projections
                  │
         L0   S2 streams
 
   [frozen, parallel]:  @firegrid/fluent → vendored TanStack runtime
+                       (same authoring vocabulary, old substrate; retired
+                        when @firegrid/durable reaches parity)
 ```
 
-The P3-ported durable kernel is deliberately the broker machinery a
-Restate-style workflow SDK needs; managed sessions are the *first domain*
-expressed on it (session = actor, turn = sealed log, cancel = mailbox send,
-timeout = durable timer). A workflow is the *second domain* on the same
-kernel — a handler actor whose steps are journaled `Execute` intents. The
-endgame is a future SDD that re-grounds the Restate-style authoring
-ergonomics on this kernel and retires the frozen TanStack lowering;
-`@firegrid/fluent` rides TanStack today only because that re-pointing must be
-its own surface-stop design (authoring CE-vs-SDK choice, replay-determinism
-rules, versioning), not a side effect of this one. That future SDD inherits
-this document's layer model, dependency doctrine, and artifact gates.
-Sessions ship first because the wave's paying consumer (agent-ui / E-lane)
-needs sessions.
+Sessions demonstrate the intended pattern for *every* application: session =
+entity, turn = sealed log, cancel = mailbox send, timeout = durable timer —
+domain policy binding platform primitives, adding no new authority or drive
+loop. The frozen `@firegrid/fluent`/TanStack stack is the platform's
+predecessor wearing the same authoring vocabulary (`Workflow.call` appears in
+both); it retires when `@firegrid/durable` reaches parity, which is S8's
+design cycle — semantics documented against the Durable Functions model
+(deterministic replay, journaled histories) with the F# `durable { }` CE as
+the F#-native authoring surface and a plain-TS SDK over the seam. Sessions'
+facade ships first only because the wave's paying consumer (agent-ui) needs
+it; that is sequencing, not primacy.
 
 ## Non-goals
 - UI components, React hooks, or anything above L4.
