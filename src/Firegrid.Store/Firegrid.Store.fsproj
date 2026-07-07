@@ -39,6 +39,8 @@
     <Compile Include="Foundation/Durable/ActivityAdapter.fs" />
     <Compile Include="Foundation/Durable/Mailbox.fs" />
     <Compile Include="Foundation/Durable/Processor.fs" />
+    <Compile Include="Foundation/Durable/WakeShard.fs" />
+    <Compile Include="Foundation/Durable/WakeRouter.fs" />
     <Compile Include="Foundation/Durable/TimerAdapter.fs" />
     <Compile Include="Foundation/Durable/Host.fs" />
     <Compile Include="Foundation/Durable/Runtime.fs" />
