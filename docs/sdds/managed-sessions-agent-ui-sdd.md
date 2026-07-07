@@ -127,10 +127,177 @@ section at the same altitude.
 
 The deferred state-story completion: snapshot records carrying
 `{state, asOfSeqNum}`, rebuild = latest snapshot + suffix replay, trim behind
-committed snapshots, checkpoint races resolved under fencing.
+committed snapshots, checkpoint races resolved by open-CAS election (the Open
+regime of `Authority`/I5 — checkpoint writing is a *bare authority with no
+mailbox*, per
+[`../canon/architecture/fluent/authority-and-actors.md`](../canon/architecture/fluent/authority-and-actors.md)).
 
 Production surface: checkpointed fold in the substrate layer
 (`src/Firegrid.Store` / `packages` seam per the package-boundary principle).
+
+Target Surface (F# — WP A1; gate G6 + G1 sign-off pending):
+
+This is the **table half** of the table/stream duality named in MS-C2 (the log
+half is B1's `DurableLog`): a durable fold whose state is periodically
+*snapshotted* so a cold host reconstructs it as `latest snapshot + suffix
+replay` instead of replaying from `Seq 0`. It is one generic F# module,
+`Checkpoint`, grounded in the P2-ported `Firegrid.Foundation.SubjectHistory`
+(A1 depends on P2 only). Snapshots live on a **derived sidecar subject**
+(`checkpointSubject source`, never a random name) so trimming the source never
+drops a snapshot, and the snapshot log is itself an ordinary open-CAS log.
+(Deferred, recorded: the sidecar itself grows unbounded — its compaction, by
+trim-behind-latest or S2 retention on the snapshot log, is out of A1 scope.)
+
+**Version is the exclusive upper bound** (the P2 convention, non-negotiable): a
+`Snapshot.AsOf` is the source `Version` its `State` has folded *through* — the
+`State` reflects every source record with `Seq < AsOf`, and `rebuild` resumes
+the fold from `Seq AsOf`. `AsOf = Version 0` is the empty fold.
+
+**Checkpoint election is open-CAS, not fenced-owner.** Per
+[`../canon/architecture/fluent/authority-and-actors.md`](../canon/architecture/fluent/authority-and-actors.md),
+the checkpoint writer is a *bare authority* (Open/CAS regime of `Authority`, I5),
+no mailbox: two writers `commit` at the observed sidecar tail and a conditional
+append decides one winner. A1 grounds `commit` directly on the P2
+`SubjectHistory.appendExpected` (open-CAS); when I5 (B1) lands, `commit` is an
+`Authority.admit` instance over the sidecar subject with no surface change — and
+A2's `state.checkpoint-race` proof must drive `commit` through that
+`Authority.admit` protocol, not a private CAS path. Coordinate with B1, do not
+re-implement the fence/CAS mechanics.
+
+```fsharp
+// namespace Firegrid.Foundation — generic, domain-free (extends the P2 port).
+// open Firegrid.Log; open Firegrid.Foundation.SubjectHistory
+// Deps passed in (sans-IO shell): S2.Basin + codecs. No EffSharp.
+
+module Checkpoint =
+    /// I4 — the checkpoint record shape (cross-lane interface; consumed by A4's
+    /// session-history fold and any long-lived fold). Folded state tagged with
+    /// the source Version it is as-of (exclusive upper bound). Changing this
+    /// shape is a G1 gate.
+    type Snapshot<'state> = { AsOf: Version; State: 'state }
+
+    /// State serialization for the snapshot sidecar. Source records keep the
+    /// existing SubjectHistory.Codec; only the folded state needs this.
+    type StateCodec<'state> =
+        { Encode: 'state -> string
+          Decode: string -> Result<'state, string> }
+
+    /// A checkpointed fold: a source subject bound to its derived sidecar
+    /// snapshot subject, with the seed state and fold function. Abstract — the
+    /// consumer never sees stream names, seq nums, or the sidecar address.
+    type Fold<'record, 'state>                 // abstract; holds S2.Basin + subjects + codecs + apply
+
+    [<RequireQualifiedAccess>]
+    type CommitFailure<'state> =
+        | Raced of AppendConflict<Snapshot<'state>>  // open-CAS: another checkpointer took the slot
+        | Regressed of requested: Version * latest: Version  // AsOf <= latest committed AsOf (stale state)
+        | Failed of S2Errors.S2Failure
+    [<RequireQualifiedAccess>]
+    type TrimFailure =
+        | AheadOfCheckpoint of requested: Version * committed: Version  // would trim past the snapshot
+        | Failed of S2Errors.S2Failure
+
+    /// Derived (never random) sidecar address for a source subject's snapshots.
+    val checkpointSubject : SubjectId -> SubjectId
+
+    /// Bind a fold over `source` (its sidecar is derived).
+    val make :
+        S2.Basin -> Codec<'record> -> StateCodec<'state> -> source: SubjectId
+            -> initial: 'state -> apply: ('state -> StoredRecord<'record> -> 'state)
+            -> Fold<'record, 'state>
+
+    /// Pure rebuild plan (sans-IO core): from a latest snapshot (or none) decide
+    /// the resume Seq and the seed state. `None -> (Seq 0, initial)`.
+    val resumeFrom : Snapshot<'state> option -> initial: 'state -> Seq * 'state
+
+    /// Latest committed snapshot on the sidecar, or None when never checkpointed.
+    val latest : Fold<'record, 'state> -> Async<Snapshot<'state> option>
+
+    /// Rebuild = latest snapshot + suffix replay to the source tail. With no
+    /// snapshot this is a fold-from-zero. Returns the folded state and the
+    /// source Version it is as-of. No resident memory — a cold Fold rebuilds.
+    val rebuild : Fold<'record, 'state> -> Async<'state * Version>
+
+    /// Commit a snapshot to the sidecar under open-CAS at its observed tail.
+    /// Two racing writers: exactly one wins; the loser gets `Raced`. Snapshots
+    /// are monotonic: rejects `Regressed` when `snapshot.AsOf <= latest.AsOf`
+    /// (a slow checkpointer cannot overwrite `latest` with stale state).
+    val commit :
+        Fold<'record, 'state> -> Snapshot<'state> -> Async<Result<Version, CommitFailure<'state>>>
+
+    /// Convenience: rebuild to the current source tail, then commit that snapshot.
+    val checkpoint : Fold<'record, 'state> -> Async<Result<Snapshot<'state>, CommitFailure<'state>>>
+
+    /// Trim the source behind a committed snapshot. `upTo` must be <= the latest
+    /// committed snapshot's AsOf (`AheadOfCheckpoint` otherwise); a reader
+    /// starting at the trim floor still rebuilds equivalent state.
+    val trim : Fold<'record, 'state> -> upTo: Version -> Async<Result<unit, TrimFailure>>
+```
+
+Ergonomic sample (the consumer test — usable with no proof-harness knowledge):
+
+```fsharp
+// A checkpointed fold over a source subject, seeded with initial + apply.
+let fold = Checkpoint.make basin recordCodec stateCodec source initial apply
+
+// Rebuild with no resident memory: latest snapshot + suffix replay to tail.
+let! state, asOf = Checkpoint.rebuild fold
+
+// Snapshot the current tail (open-CAS election; `Raced` if another writer won).
+match! Checkpoint.checkpoint fold with
+| Ok snap ->
+    // snap.State reflects every source record with Seq < snap.AsOf.
+    let! _ = Checkpoint.trim fold snap.AsOf   // trim source behind the snapshot
+    ()
+| Error (Checkpoint.CommitFailure.Raced _) -> ()      // lost the election; re-read latest
+| Error (Checkpoint.CommitFailure.Regressed _) -> ()  // stale state; latest already ahead
+| Error (Checkpoint.CommitFailure.Failed _) -> ()
+```
+
+Laws (stated here; A1 proves rebuild-equivalence, A2 proves race + trim-safety):
+
+- **Rebuild equivalence** (`state.checkpoint-rebuild-equivalence`, A1). For any
+  source log and any sequence of committed snapshots, `rebuild` yields the same
+  `(state, Version)` as `SubjectHistory.foldTo` from `Seq 0` to the source tail —
+  *including across a host restart*: a fresh `Fold` with no resident memory
+  reconstructs identical state from `latest snapshot + suffix`. Checkpoint +
+  suffix replay ≡ full replay.
+- **Checkpoint race** (`state.checkpoint-race`, A2). Two `commit`s at the same
+  observed sidecar tail: exactly one wins (open-CAS single-winner); the loser
+  gets `Raced`, its snapshot rejected, never interleaved.
+- **Monotonic snapshots** (A2, with `checkpoint-race`). Committed snapshots are
+  monotonic in `AsOf`: `commit` rejects `Regressed` when
+  `snapshot.AsOf <= latest.AsOf` (absent a snapshot, `latest = Version 0`). A
+  slow checkpointer that wins a CAS slot with stale state therefore cannot
+  regress `latest` — keeping `rebuild` suffixes minimal and `trim`'s high-water
+  guard reading the true latest `AsOf`.
+- **Trim safety** (`state.trim-safety`, A2). `trim upTo` never advances past the
+  latest committed snapshot's `AsOf` (else `AheadOfCheckpoint`); a reader
+  starting at the trim floor still rebuilds equivalent state, because the
+  snapshot covers the trimmed prefix.
+- **No leaks.** Consumers never see S2 stream names, the sidecar address, seq
+  nums, or CAS tokens.
+
+Scope guard (both directions): the checkpointed fold is the *table half* only —
+snapshot state stays domain-free, and the module does not grow a KStreams
+operator algebra (joins, windowing, repartitioning) ahead of a consumer that
+demands it. The duality surface is: log (`create/append/seal/attach`, B1), table
+(`make/rebuild/commit/checkpoint/trim` here + `StateView`), predicate-wait (the
+bridge). The `Snapshot<'state>` shape is cross-lane interface **I4** (consumed by
+A4 and any long-lived fold); election reuses `Authority`'s Open regime (**I5**,
+B1) rather than a bespoke per-lane CAS.
+
+Validation Gates (F#-zone, G6 — per
+[`fsharp-fable-effsharp-evaluation-sdd.md`](./fsharp-fable-effsharp-evaluation-sdd.md)):
+
+- **Native shapes, EffSharp-free.** `Async` + `Result` + DU errors + `Codec`
+  records + a pure `resumeFrom` core — no EffSharp (per the 2026-07-06
+  deprecation), so the package-level EffSharp decision is "none, nothing new."
+- **Ergonomic sample** above passes the consumer test.
+- **Works-without-EffSharp** is inherent (nothing introduced). **Emitted-TS
+  sample + Fable build check** ride P4's Fable→TS facade; the surface is
+  Fable-safe by construction — it adds no BCL-only API beyond what
+  `SubjectHistory` already emits.
 
 Proof obligations:
 
