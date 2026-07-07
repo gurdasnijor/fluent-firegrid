@@ -88,7 +88,14 @@ and adapter code are Effect-native. It still exposes plain TypeScript records,
 constructors, and `Error` subclasses at the boundary so consumers do not handle
 F#-shaped unions or `Basins_ensure` / `StreamModule_append` names.
 
+This is a deliberate, revisitable doctrine deviation from the Promise-first JS
+export guidance in the F# API doctrine. The current consumers of this seam are
+Effect-native, so the primary facade is Effect-native; data records and error
+classes stay Effect-free, and a future `@firegrid/log/promise` entry point must
+be additive rather than a replacement.
+
 ```ts
+import * as Context from "effect/Context"
 import type * as Effect from "effect/Effect"
 import type * as Layer from "effect/Layer"
 import type * as Stream from "effect/Stream"
@@ -188,12 +195,23 @@ export interface ReadInput {
   readonly format?: "string" | "bytes"
 }
 
-export interface ReadRecord {
+export interface StringReadRecord {
+  readonly kind: "string"
   readonly seqNum: number
-  readonly body: string | Uint8Array
-  readonly headers: ReadonlyArray<readonly [string, string]> | ReadonlyArray<readonly [Uint8Array, Uint8Array]>
+  readonly body: string
+  readonly headers: ReadonlyArray<readonly [string, string]>
   readonly timestamp: Date
 }
+
+export interface BytesReadRecord {
+  readonly kind: "bytes"
+  readonly seqNum: number
+  readonly body: Uint8Array
+  readonly headers: ReadonlyArray<readonly [Uint8Array, Uint8Array]>
+  readonly timestamp: Date
+}
+
+export type ReadRecord = StringReadRecord | BytesReadRecord
 
 export interface ReadBatch {
   readonly records: ReadonlyArray<ReadRecord>
@@ -234,13 +252,16 @@ export interface FiregridLogClient {
 
 export interface FiregridLogService extends FiregridLogClient {}
 
+export declare class FiregridLog
+  extends Context.Tag("firegrid/log/FiregridLog")<FiregridLog, FiregridLogService>() {}
+
 export declare const makeFiregridLog: (
   config: S2ClientConfig
 ) => Effect.Effect<FiregridLogService, S2Error>
 
 export declare const layerFiregridLog: (
   config: S2ClientConfig
-) => Layer.Layer<FiregridLogService, S2Error>
+) => Layer.Layer<FiregridLog, S2Error>
 ```
 
 ### Laws
@@ -256,12 +277,18 @@ export declare const layerFiregridLog: (
   `FencingTokenMismatchError`, `RangeNotSatisfiableError`) with the recovery
   fields used by callers. If the current generated F# output lacks a recovery
   field, implementation updates the F# export surface before wrapping it.
+- **Effect boundary:** the facade's data records, constructors, and error
+  classes stay Effect-free. Effect appears only on operation return types,
+  streams, and the service layer. Any future Promise-first entry point is
+  additive and lowers through the same generated Fable typed truth.
 - **Record fidelity:** `AppendInput.create` and `AppendRecord.*` lower
   one-to-one to the generated F# record/command constructors, including fence
   and trim command records. The facade does not reinterpret command records.
 - **Read fidelity:** `readSession` preserves stream order and command-record
   filtering semantics from the F# client. It may expose an Effect `Stream`, but
-  must not buffer beyond what is needed to bridge the generated runtime.
+  must not buffer beyond what is needed to bridge the generated runtime. Effect
+  interruption of the `readSession` stream closes the underlying S2 read
+  session so long-running readers do not leak substrate sessions.
 - **Differential evidence:** after implementation, the active substrate proofs
   gain `firegrid-log` copies that drive this facade, while the existing
   `upstream-sdk` oracle copies remain. The conformance bridge only marks
