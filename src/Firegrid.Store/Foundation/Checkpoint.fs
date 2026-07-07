@@ -19,11 +19,11 @@ open Firegrid.Foundation.SubjectHistory
 /// the `State` reflects every source record with `Seq < AsOf`, and `rebuild`
 /// resumes the fold from `Seq AsOf`. `AsOf = Version 0` is the empty fold.
 ///
-/// **Checkpoint election is open-CAS, not fenced-owner.** `commit` is grounded
-/// directly on `SubjectHistory.appendExpected` (open-CAS) at the observed
-/// sidecar tail: two writers race and a conditional append decides one winner.
-/// When I5 (B1) lands, `commit` becomes an `Authority.admit` instance over the
-/// sidecar subject with no surface change.
+/// **Checkpoint election is open-CAS, not fenced-owner.** `commit` routes
+/// through `Authority.admit` — the I5 (B1) Open (bare-authority) regime, whose
+/// single-winner CAS at the observed sidecar tail *is* checkpoint election — not
+/// a private CAS path and not the FencedOwner regime. Two writers race and the
+/// conditional append decides one winner; the loser gets `Raced`.
 module Checkpoint =
     /// I4 — the checkpoint record shape (cross-lane interface; consumed by A4's
     /// session-history fold and any long-lived fold). Folded state tagged with
@@ -207,9 +207,12 @@ module Checkpoint =
         }
 
     /// Commit a snapshot to the sidecar under open-CAS at its observed tail.
-    /// Two racing writers: exactly one wins; the loser gets `Raced`. Snapshots
-    /// are monotonic: rejects `Regressed` when `snapshot.AsOf <= latest.AsOf`
-    /// (a slow checkpointer cannot overwrite `latest` with stale state).
+    /// The election routes through `Authority.admit` — the I5 Open (bare-authority)
+    /// regime, whose single-winner CAS *is* checkpoint election, per the MS-C1
+    /// surface — never a private CAS path. Two racing writers: exactly one wins;
+    /// the loser gets `Raced` (`Authority.AdmitError.Lost`). Snapshots are
+    /// monotonic: rejects `Regressed` when `snapshot.AsOf <= latest.AsOf` (a slow
+    /// checkpointer cannot overwrite `latest` with stale state).
     let commit
         (fold: Fold<'record, 'state>)
         (snapshot: Snapshot<'state>)
@@ -234,13 +237,13 @@ module Checkpoint =
             if versionNumber snapshot.AsOf <= versionNumber latestAsOf then
                 return Error(CommitFailure.Regressed(snapshot.AsOf, latestAsOf))
             else
-                let! appended =
-                    SubjectHistory.appendExpected fold.Basin fold.SnapshotCodec fold.Sidecar sidecarTail [ snapshot ]
+                let! admitted =
+                    Authority.admit fold.Basin fold.SnapshotCodec fold.Sidecar sidecarTail [ snapshot ]
 
-                match appended with
+                match admitted with
                 | Ok version -> return Ok version
-                | Error(SubjectHistory.AppendFailure.Conflict conflict) -> return Error(CommitFailure.Raced conflict)
-                | Error(SubjectHistory.AppendFailure.Failed failure) -> return Error(CommitFailure.Failed failure)
+                | Error(Authority.AdmitError.Lost conflict) -> return Error(CommitFailure.Raced conflict)
+                | Error(Authority.AdmitError.Failed failure) -> return Error(CommitFailure.Failed failure)
         }
 
     /// Convenience: rebuild to the current source tail, then commit that snapshot.

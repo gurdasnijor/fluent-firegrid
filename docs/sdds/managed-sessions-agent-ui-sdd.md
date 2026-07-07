@@ -710,6 +710,18 @@ merged / LOC deleted.
   host restart both reconstruct `(state, Version)` identical to
   `SubjectHistory.foldTo` from `Seq 0`. Deferred to A2: sidecar compaction and
   driving `commit` through `Authority.admit` (I5).
+- **A2 (MS-C1) — proofs green + election on I5 (WP A2).** `Checkpoint.commit`'s
+  election now routes through B1's `Authority.admit` (the I5 **Open /
+  bare-authority** regime, whose single-winner CAS *is* checkpoint election — not
+  FencedOwner, not a private CAS path), with no `Checkpoint` surface change.
+  Proofs `state.checkpoint-race` (two racers → exactly one commits; loser
+  `Raced`; stale state `Regressed`; monotonic snapshots) and `state.trim-safety`
+  (guard `AheadOfCheckpoint`; a reader from the trim floor rebuilds equivalent
+  state) green. Trim-safety surfaced and fixed an A1 defect: S2 trim leaves a
+  command record on the source, so `rebuild` now folds the source via bounded
+  batch reads with `IgnoreCommandRecords` (public S2 API, no surface change)
+  rather than `SubjectHistory.foldTo`, which would decode the trim marker. F2
+  conformance rows INV-018/019/020 added. Still deferred: sidecar compaction.
 - **B1 / MS-C2 (I5 + I1) — modules shipped (WP B1-IMPL).** `Authority`
   (`src/Firegrid.Store/Foundation/Authority.fs`), `DurableLog`
   (`src/Firegrid.Store/Foundation/DurableLog.fs`), and the `Turn` binding

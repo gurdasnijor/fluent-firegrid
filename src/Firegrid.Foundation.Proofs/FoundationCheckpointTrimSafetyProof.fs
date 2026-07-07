@@ -173,7 +173,7 @@ module FoundationCheckpointTrimSafetyProof =
                 do!
                     ctx.EmitSpan
                         "proof.foundation.checkpoint_trim_safety.completed"
-                        [ "proof.property", "foundation.checkpoint-trim-safety"
+                        [ "proof.property", "state.trim-safety"
                           "trim.guard_rejects_ahead", string result.GuardRejectsAheadOfCheckpoint
                           "trim.rebuild_from_floor_equivalent", string result.RebuildFromTrimFloorEquivalentState
                           "trim.marker_skipped", string result.TrimMarkerAdvancesTailButIsSkipped ]
@@ -182,7 +182,7 @@ module FoundationCheckpointTrimSafetyProof =
             })
 
     let checkpointTrimSafetyProperty =
-        property "foundation.checkpoint-trim-safety" {
+        property "state.trim-safety" {
             s2Lite ""
             workload runWorkload
 
@@ -206,7 +206,7 @@ module FoundationCheckpointTrimSafetyProof =
                   v.Trace.SpanExists
                       "trim-safety proof span emitted"
                       "proof.foundation.checkpoint_trim_safety.completed"
-                      [ "proof.property", "foundation.checkpoint-trim-safety" ]
+                      [ "proof.property", "state.trim-safety" ]
                   v.Trace.Operation
                       "trim-safety operation was recorded"
                       ({ TraceOperationMatch.named "foundation.checkpoint_trim_safety" with
@@ -219,7 +219,7 @@ module FoundationCheckpointTrimSafetyProof =
         }
 
     let proof =
-        proof "foundation.checkpoint-trim-safety" {
+        proof "state.trim-safety" {
             describedAs "Trim never passes the latest committed snapshot; a reader from the trim floor rebuilds equivalent state."
             property checkpointTrimSafetyProperty
         }
