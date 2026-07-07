@@ -24,6 +24,9 @@
     <Compile Include="Foundation/SubjectHistory.fs" />
     <Compile Include="Foundation/StateView.fs" />
     <Compile Include="Foundation/KvStore.fs" />
+    <Compile Include="Foundation/Authority.fs" />
+    <Compile Include="Foundation/DurableLog.fs" />
+    <Compile Include="Foundation/Turn.fs" />
     <Compile Include="Foundation/Durable/Semantics.fs" />
     <Compile Include="Foundation/Durable/Api.fs" />
     <Compile Include="Foundation/Durable/Registry.fs" />

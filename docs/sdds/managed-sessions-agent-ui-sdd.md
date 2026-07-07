@@ -700,7 +700,16 @@ Capability pairs in parentheses are independent of each other.
 Update this section as work lands: proof green / module shipped / agent-ui PR
 merged / LOC deleted.
 
-- (none yet)
+- **B1 / MS-C2 (I5 + I1) — modules shipped (WP B1-IMPL).** `Authority`
+  (`src/Firegrid.Store/Foundation/Authority.fs`), `DurableLog`
+  (`src/Firegrid.Store/Foundation/DurableLog.fs`), and the `Turn` binding
+  (`src/Firegrid.Store/Foundation/Turn.fs`) implement the MS-C2 Target Surface
+  exactly: idempotent-per-holder `claim` with epoch-increment takeover, seal as
+  a reserved fence sentinel, `next`/`terminal` blocking-with-wait per the
+  `openCursorWithWait` idiom. F#-native, EffSharp-free, Fable-safe (JS + TS
+  emit green). Composes the P3 fence primitives (PR #91), does not duplicate
+  them. Proof obligations (`session.turn-attach`, `session.turn-crash-terminal`,
+  `session.turn-idempotent-create`) land with WP B2.
 
 ## Acceptance Criteria
 
