@@ -700,7 +700,16 @@ Capability pairs in parentheses are independent of each other.
 Update this section as work lands: proof green / module shipped / agent-ui PR
 merged / LOC deleted.
 
-- (none yet)
+- **A1 (MS-C1)** — `Firegrid.Foundation.Checkpoint` shipped
+  (`src/Firegrid.Store/Foundation/Checkpoint.fs`): the checkpointed fold (table
+  half). Derived-sidecar snapshots (`checkpointSubject`, I4 `Snapshot<'state>`),
+  open-CAS `commit` grounded on `SubjectHistory.appendExpected` with the
+  monotonic `Regressed` guard, `rebuild` = latest snapshot + suffix replay,
+  `checkpoint` convenience, and `trim` behind the committed AsOf. Proof
+  `state.checkpoint-rebuild-equivalence` green: a cold `Fold` and a fresh-client
+  host restart both reconstruct `(state, Version)` identical to
+  `SubjectHistory.foldTo` from `Seq 0`. Deferred to A2: sidecar compaction and
+  driving `commit` through `Authority.admit` (I5).
 
 ## Acceptance Criteria
 
