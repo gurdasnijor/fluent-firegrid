@@ -219,11 +219,45 @@ In-flight kernel work (A4 impl, C2, B4 impl) is unaffected and continues — it
 is L1 work and remains correct at its own altitude; S-lane is where the wave's
 missing top layer gets built.
 
-## Non-goals
+## Relationship to the workflow stack (why workflow authoring is deferred, not dropped)
 
-- A workflow-authoring surface over the new kernel (the Restate-style
-  `@firegrid/fluent` API rides the frozen TanStack path; migrating it is a
-  future SDD — this SDD covers the *sessions* consumer surface only).
+The L1 kernel serves **two consumer branches**, of which this SDD specifies
+one:
+
+```
+        L4   agent-ui (E-lane)              other apps / services
+                 │                                 │
+        L3   @firegrid/sessions             workflow-authoring API
+             (this SDD: S3/S4)              (Restate-style; FUTURE SDD)
+                 │                                 │
+        L2   emitted seam (Exports.fs) ────────────┘
+                 │
+        L1   F# kernel
+              ├─ session capabilities (Authority, DurableLog/Turn,
+              │   SessionLifecycle, Checkpoint, StateReads, SessionHistory, wakes)
+              └─ durable actor kernel (P3 port: Processor, Mailbox, timers,
+                  Send/Execute intents — the workflow-engine core)
+                 │
+        L0   S2 streams
+
+  [frozen, parallel]:  @firegrid/fluent → vendored TanStack runtime
+```
+
+The P3-ported durable kernel is deliberately the broker machinery a
+Restate-style workflow SDK needs; managed sessions are the *first domain*
+expressed on it (session = actor, turn = sealed log, cancel = mailbox send,
+timeout = durable timer). A workflow is the *second domain* on the same
+kernel — a handler actor whose steps are journaled `Execute` intents. The
+endgame is a future SDD that re-grounds the Restate-style authoring
+ergonomics on this kernel and retires the frozen TanStack lowering;
+`@firegrid/fluent` rides TanStack today only because that re-pointing must be
+its own surface-stop design (authoring CE-vs-SDK choice, replay-determinism
+rules, versioning), not a side effect of this one. That future SDD inherits
+this document's layer model, dependency doctrine, and artifact gates.
+Sessions ship first because the wave's paying consumer (agent-ui / E-lane)
+needs sessions.
+
+## Non-goals
 - UI components, React hooks, or anything above L4.
 - Multi-language facades (TS only; other targets are future surface stops).
 - Resharding, retention, and other kernel-altitude deferrals recorded
