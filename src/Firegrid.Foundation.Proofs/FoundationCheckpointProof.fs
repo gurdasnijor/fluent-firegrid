@@ -227,7 +227,7 @@ module FoundationCheckpointProof =
                 do!
                     ctx.EmitSpan
                         "proof.foundation.checkpoint.completed"
-                        [ "proof.property", "foundation.checkpoint-rebuild-equivalence"
+                        [ "proof.property", "state.checkpoint-rebuild-equivalence"
                           "checkpoint.rebuild_equals_fold", string result.RebuildEqualsFoldFromZero
                           "checkpoint.rebuild_across_restart", string result.RebuildAcrossRestartEqualsFoldFromZero
                           "checkpoint.latest_reflects_commit", string result.LatestReflectsLastCommit
@@ -238,7 +238,7 @@ module FoundationCheckpointProof =
             })
 
     let checkpointRebuildEquivalenceProperty =
-        property "foundation.checkpoint-rebuild-equivalence" {
+        property "state.checkpoint-rebuild-equivalence" {
             s2Lite ""
             workload runWorkload
 
@@ -262,7 +262,7 @@ module FoundationCheckpointProof =
                   v.Trace.SpanExists
                       "checkpoint proof span emitted"
                       "proof.foundation.checkpoint.completed"
-                      [ "proof.property", "foundation.checkpoint-rebuild-equivalence" ]
+                      [ "proof.property", "state.checkpoint-rebuild-equivalence" ]
                   v.Trace.Operation
                       "checkpoint operation was recorded"
                       ({ TraceOperationMatch.named "foundation.checkpoint" with
@@ -275,7 +275,7 @@ module FoundationCheckpointProof =
         }
 
     let proof =
-        proof "foundation.checkpoint-rebuild-equivalence" {
+        proof "state.checkpoint-rebuild-equivalence" {
             describedAs
                 "Checkpoint rebuild equals fold-from-zero for the same source, including across a host restart."
 
