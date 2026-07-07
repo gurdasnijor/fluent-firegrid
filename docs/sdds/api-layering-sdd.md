@@ -94,6 +94,41 @@ The F#-native authoring surface is the existing `durable { }` computation
 expression (`Workflow.call/all/waitForSignal/sleepUntil/any`) — the TS `ctx`
 vocabulary mirrors it one-to-one.
 
+#### State materialization & consistent reads
+
+The platform carries forward the proven semantics of the frozen stack's state
+layer ([`fluent-firegrid-state-materialization-sdd.md`](./fluent-firegrid-state-materialization-sdd.md),
+[`fluent-firegrid-finish-line-sdd.md`](./fluent-firegrid-finish-line-sdd.md)
+— together the parity bar for retiring it), with one structural
+simplification and one authoring change:
+
+- **Entity state is the fold of the entity's own log.** Table-shaped
+  authoring survives (`ctx.state(Table).get/set/delete`; schema owns codec +
+  primary key, expressed in plain TS, not `effect` Schema): mutations lower
+  to journaled state-change facts, `get` reads the fold. Because handler
+  state is a pure function of the log prefix, read-modify-write is
+  replay-deterministic **by construction** — the old `StateReadJournaled`
+  machinery is subsumed, not ported. Cross-subject reads from orchestrations
+  journal as activities (result replay-served). Idempotent mutations and the
+  crash/replay no-double-apply law carry over as corpus laws; owner fencing
+  is `Authority` epoch fencing (stronger than the old lease scheme).
+- **Reader-side materialization = checkpointed projections** (`Checkpoint` +
+  `StateReads`, kernel-proven): `client.projections.read(fold, …)` with
+  three read grades — `eventual` (local fold; staleness is `AppliedTail`
+  lag-data, never hidden), `latest` (linearizable via the check-tail
+  barrier), `through(v)` (read-your-writes for a writer holding its append
+  ack). Latest-value-per-`(table, key)` is one fold among many.
+- **Durable predicate waits** port as a platform capability:
+  `ctx.state(T).waitFor(key, { when: cel("row.status == 'paid'") })` —
+  serializable CEL predicates (keyed and indexed) registered as durable
+  facts, evaluated on relevant state change, resumed via the wake/signal
+  path, replay-served from the recorded resolution. The finish-line SDD's
+  design carries over nearly verbatim because it already banned closures.
+- The finish-line SDD's "Effect-native generators" authoring direction is
+  **superseded** by doctrine rule 2: authoring is async/await + `ctx`
+  (DF-SDK/Restate-SDK style); determinism comes from journaling, not the
+  effect system.
+
 ### L4 — the agent-sessions reference application
 
 Application code in the platform's vocabulary: session = keyed entity, cancel
@@ -149,7 +184,7 @@ mandates. Wake plumbing is not exported.
 | WP | Deliverable | Gate |
 | --- | --- | --- |
 | T0 | Ratchet: manifest runner + strict target suite in CI | None (mechanical) |
-| T1 | `@firegrid/durable` skeleton + red corpus + platform prose companion. Corpus: replay determinism across a host kill (activities not re-executed); fan-out/fan-in; `any` races; signal to a parked orchestration across restart; durable timer across restart; entity op serialization; typed activity failure; deterministic `currentTime`; status/result query; log attach (prefix/tail/terminal, byte-faithful); projection read with observable lag | **Human ratifies** |
+| T1 | `@firegrid/durable` skeleton + red corpus + platform prose companion. Corpus: replay determinism across a host kill (activities not re-executed); fan-out/fan-in; `any` races; signal to a parked orchestration across restart; durable timer across restart; entity op serialization; typed activity failure; deterministic `currentTime`; status/result query; log attach (prefix/tail/terminal, byte-faithful); **entity table state** (get/set/delete; crash after mutation → no double-apply; deposed writer's state write fenced); **three read grades** (eventual with observable lag, latest linearizable, read-your-writes through an ack version); **CEL table wait** (immediate-if-true; park → mutate → resume; unrelated row does not resume an indexed wait; replay serves the recorded resolution) | **Human ratifies** |
 | T2 | Reference-app red corpus against `@firegrid/durable`: start turn / cancel from an unprivileged second client / duplicate-cancel idempotence / single-writer with typed rejection / deposed-writer rejection / attach semantics / history with cause and lag | **Human ratifies** |
 | T3 | Harness-adapter contract as plain TS + red fixture-replay conformance corpus | **Human ratifies** |
 
@@ -166,7 +201,7 @@ that trade is deliberate.
 | `Exports.fs` (StateReads + legacy exports) | Grows into the platform seam demand-driven; legacy `ObjectState`/`WorkflowLog` exports retire with the TanStack path. |
 | `@firegrid/l1-vocabulary` | Rename → `@firegrid/session-events` (L4 app-ecosystem package; content unchanged). |
 | `@firegrid/harness-adapter`, `@firegrid/claude-adapter` | Keep names; exported contract de-Effected via T3; descriptions rewritten consumer-first. |
-| `@firegrid/fluent` + `@firegrid/runtime` (TanStack) | Frozen. Retire when `@firegrid/durable` reaches parity (checklist in T1's prose companion). |
+| `@firegrid/fluent` + `@firegrid/runtime` (TanStack) | Frozen. Retire when `@firegrid/durable` reaches parity — the parity bar is the proven inventory in `fluent-firegrid-state-materialization-sdd.md` + `fluent-firegrid-finish-line-sdd.md` (table state, read grades, CEL waits, awakeables, delayed sends, send handles, idempotency keys), tracked as a checklist in T1's prose companion. |
 | `@firegrid/log` (empty stub) | Delete. |
 | In-flight kernel WPs (A4 impl, C2, B4) | Finish as-is — L1 altitude, unaffected; they make greening cheaper. |
 | Managed-sessions ledger + wave process | Continues for in-flight work only; all new surface work flows through T-rows. |
