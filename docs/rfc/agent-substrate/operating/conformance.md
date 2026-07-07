@@ -13,19 +13,36 @@ claimed by `fluent-firegrid`. The proof names are the implementation evidence;
 an invariant without a passing proof is aspirational and must not be cited as
 implemented.
 
-| Invariant | Requirement | Current proof evidence |
-| --- | --- | --- |
-| INV-001 | An acknowledged append is visible to later tail/read operations in append order. | `effect-s2.capability-a.read-after-append` |
-| INV-002 | Restart from a persisted cursor folds exactly the durable suffix after that cursor. | `effect-s2.capability-a.cursor-fold` |
-| INV-003 | Two writers appending at the same expected tail cannot both commit. | `effect-s2.capability-b.match-seq-num-contention` |
-| INV-004 | Fencing is explicit and cooperative: a deposed owner must be unable to commit after takeover. | `effect-s2.capability-b.fence-semantics`, `store.object-live-fencing`, `store.object-stale-owner` |
-| INV-005 | Workflow event appends use expected-index CAS; stale writers surface conflict without changing committed order. | `store.event-log-cas`, `store.run-lifecycle` |
-| INV-006 | Runtime replay reconstructs committed workflow state from durable events without reissuing completed effects. | `store.runtime-end-to-end`, `store.awakeable`, `store.runtime-approval` |
-| INV-007 | Timers and schedules are durable: overdue work is swept once after restart and does not refire after completion. | `store.timers-signals`, `store.runtime-timer-sweep`, `store.runtime-schedule-sweep`, `store.workflow-schedule` |
-| INV-008 | Object state is materialized from durable facts and can be replayed/reconstructed by a new owner. | `store.object-state`, `store.object-replay-state`, `store.object-serialization` |
-| INV-009 | Object waits resolve from durable state/index facts rather than private callbacks. | `store.object-state-wait`, `store.object-index-wait` |
-| INV-010 | Host recovery can resume due work after crash/restart using durable facts, not process memory. | `store.host-crash-restart`, `store.host-tick`, `store.object-cross-host` |
-| INV-011 | Delayed sends are represented as durable starts and are drained by host/object recovery. | `store.object-delayed-send`, `store.service-delayed-send` |
+Evidence status:
+
+- `ci-green` means the proof workload is executed by the current repository CI
+  entrypoint, `.github/workflows/ci.yml` -> `pnpm run check`.
+- `registered` means the proof is present in a checked-in proof registry but is
+  not invoked by the current CI workflow.
+- `ci-compile` means the proof source compiles in CI, but the proof workload is
+  not yet executed by a checked-in runner command.
+
+Rows with `registered` or `ci-compile` evidence are traceable but remain
+automation gaps. They must not be cited as fully conformance-green until the
+listed evidence is promoted to `ci-green` or accompanied by a recorded green
+run.
+
+| Invariant | Requirement | Proof evidence | Evidence status |
+| --- | --- | --- | --- |
+| INV-001 | An acknowledged append is visible to later tail/read operations in append order. | `effect-s2.capability-a.read-after-append` | `registered` in `apps/proofs/proofs/main.ts`; CI execution gap. |
+| INV-002 | Restart from a persisted cursor folds exactly the durable suffix after that cursor. | `effect-s2.capability-a.cursor-fold`; `foundation.subject-history` | TS proof is `registered`; F# proof is `ci-compile` via `Firegrid.Fable.slnx`. |
+| INV-003 | Two writers appending at the same expected tail cannot both commit. | `effect-s2.capability-b.match-seq-num-contention`; `foundation.subject-history` | TS proof is `registered`; F# proof is `ci-compile`. |
+| INV-004 | Fencing is explicit and cooperative: a deposed owner must be unable to commit after takeover. | `effect-s2.capability-b.fence-semantics`, `store.object-live-fencing`, `store.object-stale-owner` | `registered` in `apps/proofs/proofs/main.ts`; CI execution gap. |
+| INV-005 | Workflow event appends use expected-index CAS; stale writers surface conflict without changing committed order. | `store.event-log-cas`, `store.run-lifecycle` | `registered` in `apps/proofs/proofs/main.ts`; CI execution gap. |
+| INV-006 | Runtime replay reconstructs committed workflow state from durable events without reissuing completed effects. | `store.runtime-end-to-end`, `store.awakeable`, `store.runtime-approval` | `registered` in `apps/proofs/proofs/main.ts`; CI execution gap. |
+| INV-007 | Timers and schedules are durable: overdue work is swept once after restart and does not refire after completion. | `store.timers-signals`, `store.runtime-timer-sweep`, `store.runtime-schedule-sweep`, `store.workflow-schedule` | `registered` in `apps/proofs/proofs/main.ts`; CI execution gap. |
+| INV-008 | Object state is materialized from durable facts and can be replayed/reconstructed by a new owner. | `store.object-state`, `store.object-replay-state`, `store.object-serialization` | `registered` in `apps/proofs/proofs/main.ts`; CI execution gap. |
+| INV-009 | Object waits resolve from durable state/index facts rather than private callbacks. | `store.object-state-wait`, `store.object-index-wait` | `registered` in `apps/proofs/proofs/main.ts`; CI execution gap. |
+| INV-010 | Host recovery can resume due work after crash/restart using durable facts, not process memory. | `store.host-crash-restart`, `store.host-tick`, `store.object-cross-host` | `registered` in `apps/proofs/proofs/main.ts`; CI execution gap. |
+| INV-011 | Delayed sends are represented as durable starts and are drained by host/object recovery. | `store.object-delayed-send`, `store.service-delayed-send` | `registered` in `apps/proofs/proofs/main.ts`; CI execution gap. |
+| INV-012 | Subject-scoped history uses exclusive tail versions: expected-version append returns the new tail, stale append reports the actual tail and winning record, and fold-to-target applies records through that target tail in append order. | `foundation.subject-history` | `ci-compile` via `Firegrid.Fable.slnx`; proof execution script gap. |
+| INV-013 | A `StateView` strong read observes all records through the checked tail, while an eventual read exposes only the local applied snapshot and pump failures terminalize later reads. | `foundation.state-view` | `ci-compile` via `Firegrid.Fable.slnx`; proof execution script gap. |
+| INV-014 | `KvStore` put/delete operations append durable facts, strong reads catch up through the view, and an append acknowledgment is not hidden by a later local projection failure. | `foundation.kv-store` | `ci-compile` via `Firegrid.Fable.slnx`; proof execution script gap. |
 
 The bridge intentionally names proof families, not a required proof runner. An
 alternate implementation can claim the same invariant by publishing equivalent
