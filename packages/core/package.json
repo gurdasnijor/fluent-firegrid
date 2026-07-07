@@ -20,24 +20,19 @@
       "default": "./src/statePredicate.ts"
     }
   },
-  "files": ["src"],
+  "files": [
+    "src"
+  ],
   "publishConfig": {
     "access": "public"
   },
-  "scripts": {
-    "build": "tsc",
-    "lint": "oxlint -f unix --config ../../.oxlintrc.json -A effect/restricted-syntax .",
-    "test": "vitest run --root ../.. --project core --passWithNoTests",
-    "typecheck": "tsc --noEmit"
-  },
+  "scripts": {},
   "dependencies": {
     "@marcbachmann/cel-js": "^7.6.1",
     "@standard-schema/spec": "^1.0.0",
     "effect": "4.0.0-beta.87"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
-    "typescript": "^5.7.0",
-    "vitest": "^3.2.0"
+    "@types/node": "^22.10.0"
   }
 }

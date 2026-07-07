@@ -18,14 +18,7 @@
     "proofs",
     "README.md"
   ],
-  "scripts": {
-    "build": "tsc",
-    "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
-    "lint": "oxlint -f unix --config ../../.oxlintrc.json .",
-    "proofs": "tsx proofs/main.ts proof run all",
-    "test": "vitest run --root ../.. --project proofs",
-    "typecheck": "tsc --noEmit"
-  },
+  "scripts": {},
   "dependencies": {
     "@effect/opentelemetry": "4.0.0-beta.87",
     "@effect/platform-node": "4.0.0-beta.87",
@@ -41,10 +34,6 @@
     "effect": "4.0.0-beta.87"
   },
   "devDependencies": {
-    "@effect/language-service": "^0.86.2",
-    "@types/node": "^22.10.0",
-    "tsx": "^4.22.4",
-    "typescript": "^5.7.0",
-    "vitest": "^3.2.0"
+    "@types/node": "^22.10.0"
   }
 }

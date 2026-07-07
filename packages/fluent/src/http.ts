@@ -1,4 +1,3 @@
-/* oxlint-disable effect/restricted-syntax -- HTTP Request/Response handling is a runtime boundary that must run fluent Effects. */
 import {
   type AnyGeneratorHandler,
   type CallRequest,

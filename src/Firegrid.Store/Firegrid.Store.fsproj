@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <AssemblyName>Firegrid.Store</AssemblyName>
+    <RootNamespace>Firegrid.Store</RootNamespace>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <DefineConstants>$(DefineConstants);FABLE_COMPILER</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="EffSharp" Version="*-*" />
+    <PackageReference Include="Fable.Core" Version="5.1.0" />
+    <PackageReference Include="Fable.Promise" Version="3.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Firegrid.Log/Firegrid.Log.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Types.fs" />
+    <Compile Include="JsJson.fs" />
+    <Compile Include="Naming.fs" />
+    <Compile Include="Runtime.fs" />
+    <Compile Include="ObjectState.fs" />
+    <Compile Include="WorkflowLog.fs" />
+    <Compile Include="Exports.fs" />
+  </ItemGroup>
+
+</Project>

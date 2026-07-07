@@ -1,0 +1,28 @@
+{
+  "name": "@firegrid/store",
+  "version": "0.0.0",
+  "description": "Fable-native S2-backed durable store adapters for Firegrid.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/Exports.js",
+  "exports": {
+    ".": "./dist/Exports.js"
+  },
+  "files": [
+    "Firegrid.Store.fsproj",
+    "*.fs",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet tool run fable -- Firegrid.Store.fsproj -o dist --optimize --noCache --noRestore",
+    "diagnostics": "echo '@firegrid/store diagnostics are covered by dotnet build'",
+    "lint": "echo '@firegrid/store lint is covered by F# compile'",
+    "test": "pnpm run typecheck",
+    "typecheck": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet build Firegrid.Store.fsproj -v:q"
+  },
+  "dependencies": {
+    "@firegrid/log": "workspace:*",
+    "@s2-dev/streamstore": "0.24.1",
+    "effect": "4.0.0-beta.87"
+  }
+}

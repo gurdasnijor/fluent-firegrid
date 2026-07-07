@@ -1,4 +1,8 @@
 node_modules/
+.nuget/
+bin/
+obj/
+build/
 dist/
 coverage/
 .jscpd-report/
@@ -8,6 +12,11 @@ coverage/
 !.env.example
 .DS_Store
 *.log
+!src/Firegrid.Log/
+!src/Firegrid.Log/**
+src/Firegrid.Log/bin/
+src/Firegrid.Log/obj/
+src/Firegrid.Log/dist/
 *.tsbuildinfo
 
 # Vendored source for reference only - not checked in

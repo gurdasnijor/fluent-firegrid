@@ -1,4 +1,3 @@
-/* oxlint-disable effect/restricted-syntax -- This fixture is an HTTP process boundary that runs fluent Effect clients. */
 import { bindFluentDefinitions, object, objectClient, run, sendObjectClient, state } from "@firegrid/fluent"
 import { primaryKey, Table } from "@firegrid/fluent/state"
 import {

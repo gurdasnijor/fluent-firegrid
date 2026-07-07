@@ -1,5 +1,4 @@
 // @ts-nocheck -- Vendored TanStack source targets a looser optional-property TypeScript policy.
-/* oxlint-disable effect/restricted-syntax -- Vendored TanStack implementation source keeps upstream imperative control flow. */
 import { runWorkflow } from "./run-workflow"
 import type { AnyWorkflowDefinition, RunStore, SignalDelivery, WorkflowEvent } from "../types"
 

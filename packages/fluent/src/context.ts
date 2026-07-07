@@ -1,4 +1,3 @@
-/* oxlint-disable effect/restricted-syntax -- This module bridges Effect handlers into TanStack's Promise-based ctx.step boundary. */
 import type {
   DeterministicValueOptions,
   SleepOptions,

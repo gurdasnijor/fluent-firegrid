@@ -13,22 +13,17 @@
       "default": "./src/index.ts"
     }
   },
-  "files": ["src", "README.md"],
-  "scripts": {
-    "diagnostics": "effect-language-service diagnostics --project tsconfig.json --strict",
-    "lint": "oxlint -f unix --config ../../.oxlintrc.json .",
-    "build": "tsc",
-    "test": "vitest run --root ../.. --project acp-process",
-    "typecheck": "tsc --noEmit"
-  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {},
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.22.0",
     "effect": "4.0.0-beta.87"
   },
   "devDependencies": {
     "@effect/platform-node": "4.0.0-beta.87",
-    "@types/node": "^22.10.0",
-    "typescript": "^5.7.0",
-    "vitest": "^3.2.0"
+    "@types/node": "^22.10.0"
   }
 }

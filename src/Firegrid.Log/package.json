@@ -1,0 +1,26 @@
+{
+  "name": "@firegrid/log",
+  "version": "0.0.0",
+  "description": "Fable-native EffSharp bindings for S2 durable streams.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/S2/S2.js",
+  "exports": {
+    ".": "./dist/S2/S2.js"
+  },
+  "files": [
+    "Firegrid.Log.fsproj",
+    "S2",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet tool run fable -- Firegrid.Log.fsproj -o dist --optimize --noCache --noRestore",
+    "diagnostics": "echo '@firegrid/log diagnostics are covered by dotnet build'",
+    "lint": "echo '@firegrid/log lint is covered by F# compile'",
+    "test": "pnpm run typecheck",
+    "typecheck": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet build Firegrid.Log.fsproj -v:q"
+  },
+  "dependencies": {
+    "@s2-dev/streamstore": "0.24.1"
+  }
+}

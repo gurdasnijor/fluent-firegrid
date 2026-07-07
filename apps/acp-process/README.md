@@ -33,8 +33,7 @@ the service tag (`.Default` wires `spawnAcpProcess`).
 
 - **F-A1 / F-A11**: imports only `@agentclientprotocol/sdk` + `effect` +
   `@effect/platform` — no runtime package, Durable Streams, Store/Host/
-  EventIngress/Sources, or projection internals (dependency-cruiser guard
-  `fluent-acp-process-tiny-import-surface`).
+  EventIngress/Sources, or projection internals.
 - **F-A12**: owns no agent-db / queryable projection schema.
 - **F-A13**: implements no `acp.Client`/`acp.Agent`; exposes no `Client|Agent` union.
 - **F-A14**: writes nothing to stdout; process diagnostics flow via the executor.
