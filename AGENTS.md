@@ -26,6 +26,30 @@ In short:
 - Model expected domain failures as typed tagged errors.
 - Manage resources through Effect scopes, layers, and `acquireRelease`.
 
+## Proof-Driven Development
+
+Proofs verify surfaces; they do not replace them. The known failure mode is
+code that regresses to "whatever makes the proof pass." These rules prevent it:
+
+- **Surface before proofs.** Capability work starts from a Target Surface
+  section in the owning SDD: module placement, exported types and signatures,
+  typed errors, and the laws the surface obeys. If the section does not exist
+  or your work changes it, write/update it and get architect sign-off (gate G6
+  in the execution ledger) before writing proof or implementation code.
+- **Proofs consume only public exports.** No deep imports into module
+  internals, no test-only hooks, no proof-only branches or flags in production
+  code. If a proof cannot be written against the public surface, the surface is
+  wrong — escalate, do not tunnel.
+- **The consumer test.** A production module must be usable by a consumer who
+  has never read its proofs. If correct setup requires proof-harness knowledge,
+  the surface is incomplete.
+- **Primitive + combinator.** New behavior should be expressible as an existing
+  primitive plus a combinator over the surface. If it cannot be, that is a
+  design smell to escalate, not to code around.
+- **Passing is half done.** The deliverable of a capability work packet is the
+  surface *and* its proof. Widening types, leaking internals, or weakening
+  signatures to get green is a gate violation, not progress.
+
 ## Repository Workflow
 
 - Use `pnpm` for repository commands.

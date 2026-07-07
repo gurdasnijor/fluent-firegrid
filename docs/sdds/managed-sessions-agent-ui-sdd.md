@@ -106,6 +106,16 @@ Every capability entry has: production surface, proof obligations (falsifiable,
 named), RFC invariants touched, and the consumer milestone it unblocks. Proof
 names follow the house registry pattern in `apps/proofs`.
 
+**Target Surface convention (gate G6).** Each capability carries a Target
+Surface subsection — module placement, exported types and signatures (Effect
+shapes per `LLMS.md`: `Context.Service`, typed tagged errors, `Stream` for
+sequences), and the laws the surface obeys. The surface is written and
+architect-approved *before* proofs or implementation; proofs import only the
+public surface. Signatures below are directional — the implementing WP refines
+them under G6, and the merged PR updates this document to match. MS-C2 is
+written out as the exemplar; the first WP of each other capability supplies its
+section at the same altitude.
+
 ### MS-C1 — Checkpoint + Trim
 
 The deferred state-story completion: snapshot records carrying
@@ -145,6 +155,38 @@ Decision (made here): attachments and other large payloads are stored by
 reference (claim-check); turn and session streams never carry inline blobs
 larger than one S2 record comfortably allows. Implementation deferred; the
 record schema reserves the reference shape now.
+
+Target Surface (exemplar — refined by WP B1 under gate G6):
+
+```ts
+// packages/fluent, module: session/turn (placement per package-boundary principle)
+
+interface TurnAddress {
+  readonly sessionId: SessionId
+  readonly turnId: TurnId  // client-supplied; naming derived, never random
+}
+
+class TurnStreams extends Context.Service<TurnStreams>()("firegrid/TurnStreams", ...) {
+  // Idempotent by address: a retry attaches to the existing turn.
+  create: (address: TurnAddress) => Effect<TurnProducer, TurnAlreadyLiveError | SubstrateError>
+  attach: (address: TurnAddress) => Effect<TurnAttachment, TurnNotFoundError | SubstrateError>
+}
+
+interface TurnProducer {
+  readonly append: (chunk: TurnChunk) => Effect<void, ProducerDeposedError | SubstrateError>
+  readonly seal: (terminal: TurnTerminal) => Effect<void, ProducerDeposedError | SubstrateError>
+}
+
+interface TurnAttachment {
+  readonly chunks: Stream<TurnChunk, SubstrateError>   // replay-from-zero + live tail
+  readonly terminal: Effect<TurnTerminal, SubstrateError> // resolves at seal
+}
+```
+
+Laws: `attach` after `seal` replays the full prefix then yields the terminal;
+`append`/`seal` after `seal` fail; a deposed producer's `append` fails
+(fenced); two `create` calls for one address yield one durable turn. The
+consumer never sees S2 stream names, fencing tokens, or sequence numbers.
 
 Proof obligations:
 

@@ -28,10 +28,11 @@ Read in this order before starting a WP:
 
 Ground rules:
 
-- **Proof-first.** A capability WP's deliverable is the proof *and* the
-  production surface it exercises. Proofs drive production modules through
-  their public API and verify via workload results plus trace evidence
-  (`traceSql`), never via test-only shortcuts.
+- **Surface-first, then proof-first.** A capability WP's deliverable is the
+  Target Surface (SDD section, gate G6) *and* the proof that exercises it.
+  Proofs drive production modules through their public API and verify via
+  workload results plus trace evidence (`traceSql`), never via test-only
+  shortcuts, deep imports, or proof-only branches in production code.
 - **Stay in lane.** Do not modify another lane's modules or proofs. Shared
   contracts change only through an architect gate (below).
 - **Module placement** follows the package-boundary principle (stable seams
@@ -64,6 +65,11 @@ Escalate to the architect (do not proceed) when a WP requires:
   revert path, per SDD).
 - G5 — Deviating from an SDD proof obligation (renaming is fine; weakening what
   it asserts is not).
+- G6 — Surface sign-off: before writing proof or implementation code for a
+  capability WP, the Target Surface section in the SDD must exist and be
+  architect-approved (write or update it as your WP's first commit if it is
+  missing or your work changes it). Proofs then import only that public
+  surface. See "Proof-Driven Development" in the repo `AGENTS.md`.
 
 Everything else is lane-owner discretion.
 
