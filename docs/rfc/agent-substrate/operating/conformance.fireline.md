@@ -22,6 +22,12 @@ Date: 2026-07-07
 Owner: Firegrid Architecture
 Substrate: idealized
 
+> **Frozen / historical (Rust Fireline).** This profile describes the legacy
+> Rust `crates/fireline-*` implementation, not the current `fluent-firegrid`
+> system; it is retained as reference archaeology. Current implementation
+> profiles use the `.fluent.md` suffix — see
+> [Implementation Profiles](../README.md#implementation-profiles).
+
 ## §1 Purpose
 
 The Stream-First Agent Substrate RFC defines a neutral substrate: durable record

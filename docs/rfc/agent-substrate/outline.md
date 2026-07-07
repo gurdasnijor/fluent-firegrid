@@ -267,6 +267,10 @@ The RFC is neutral. Fireline-specific names and compatibility contracts live in
 Fireline profile pages or the Fireline mapping page, not in the neutral
 substrate vocabulary.
 
+The `*.fireline.md` pages below are the **frozen historical** profile family
+(legacy Rust Fireline); current `fluent-firegrid` profiles use the `.fluent.md`
+suffix. See [Implementation Profiles](./README.md#implementation-profiles).
+
 Read:
 
 - [Relationship to Fireline](./reference/fireline-mapping.md)

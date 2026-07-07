@@ -32,21 +32,32 @@ Reference implementation family: Stream-first managed-agent systems
 ## Implementation Profiles
 
 The RFC is neutral. Implementation-specific contracts live beside the neutral
-page they qualify, using a sibling suffix pattern:
+page they qualify, using a sibling suffix pattern: `name.md` is the neutral RFC
+page and `name.<impl>.md` is an implementation profile for that page. The
+suffix names an implementation *family*, not a repository or a language.
 
-- `name.md` is the neutral RFC page.
-- `name.fireline.md` is Fireline's implementation profile for that page.
+**Invariant.** Every `name.<impl>.md` profile MUST have a sibling neutral
+`name.md` with the same base name. A profile only ever qualifies a neutral
+page; it never stands alone.
 
-Future implementations can use the same sibling pattern with their own suffix,
-for example `name.example.md`. Every `*.fireline.md` file must have a sibling
-neutral `*.md` file with the same base name.
+Two profile families live in this repo, and they are not interchangeable:
 
-The imported `*.fireline.md` files are retained as historical implementation
-profiles from the source RFC. They do not describe the current
-`fluent-firegrid` EffSharp/S2 implementation. New implementation profiles for
-this repository should use a real implementation suffix, for example
-`name.fluent.md`, and should cite the S2 substrate canon when they depend on S2
-instead of the RFC's idealized substrate.
+- **`name.fireline.md` — frozen / historical.** Imported from the source RFC;
+  they describe the legacy Rust **Fireline** implementation (`crates/fireline-*`)
+  and are retained as reference archaeology. They do **not** describe the
+  current `fluent-firegrid` system. Do not add new `*.fireline.md` files, and
+  do not cite them as evidence of what this repo implements.
+- **`name.fluent.md` — active.** The suffix for `fluent-firegrid`
+  implementation profiles (the F#/S2 substrate). New profiles for this
+  repository use `.fluent.md` and cite the S2 substrate canon
+  ([`../../canon/architecture/fluent/s2-substrate.md`](../../canon/architecture/fluent/s2-substrate.md))
+  wherever they depend on S2 rather than the RFC's idealized substrate.
+
+**Authoring a profile for this repository? Use `.fluent.md`.** This is the
+resolved convention (execution ledger WP F3): the `fireline` family is closed,
+`fluent` is the active family, and MS-C6 harness-adapter profiles cite the
+`.fluent.md` pages they add. Other implementations follow the same sibling
+pattern under their own family suffix (for example `name.example.md`).
 
 ## Section Map
 

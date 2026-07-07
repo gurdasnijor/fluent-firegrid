@@ -419,8 +419,12 @@ merged / LOC deleted.
 - **Wake liveness statement** — no substrate push means at least one live host
   per shard; the RFC must say this plainly (same operational posture as any
   partition-leader system, but it forecloses "fully serverless" readings).
-- **`fireline` profile naming** — C6 cites RFC profile pages; rename or
-  re-document the suffix before C6 lands.
+- **`fireline` profile naming** — **resolved (WP F3)**: re-documented, not
+  renamed. The `fireline` profile family is frozen (legacy Rust `crates/fireline-*`,
+  reference-only); current `fluent-firegrid` profiles use the `.fluent.md`
+  suffix and cite the S2 substrate canon. C6/D-lane harness-adapter profiles are
+  authored as `.fluent.md` pages. Convention is authoritative in
+  [`../rfc/agent-substrate/README.md`](../rfc/agent-substrate/README.md#implementation-profiles).
 - **Fable/TS seam placement** — active substrate is `src/Firegrid.Log` /
   `src/Firegrid.Store` (F#→JS) with the product surface in `packages/`; each
   capability's module placement follows the package-boundary principle (stable
