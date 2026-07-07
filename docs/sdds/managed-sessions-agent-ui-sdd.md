@@ -710,6 +710,16 @@ merged / LOC deleted.
   host restart both reconstruct `(state, Version)` identical to
   `SubjectHistory.foldTo` from `Seq 0`. Deferred to A2: sidecar compaction and
   driving `commit` through `Authority.admit` (I5).
+- **B1 / MS-C2 (I5 + I1) — modules shipped (WP B1-IMPL).** `Authority`
+  (`src/Firegrid.Store/Foundation/Authority.fs`), `DurableLog`
+  (`src/Firegrid.Store/Foundation/DurableLog.fs`), and the `Turn` binding
+  (`src/Firegrid.Store/Foundation/Turn.fs`) implement the MS-C2 Target Surface
+  exactly: idempotent-per-holder `claim` with epoch-increment takeover, seal as
+  a reserved fence sentinel, `next`/`terminal` blocking-with-wait per the
+  `openCursorWithWait` idiom. F#-native, EffSharp-free, Fable-safe (JS + TS
+  emit green). Composes the P3 fence primitives (PR #91), does not duplicate
+  them. Proof obligations (`session.turn-attach`, `session.turn-crash-terminal`,
+  `session.turn-idempotent-create`) land with WP B2.
 - **MS-C6 / WP D1 — L1 observation vocabulary (I2).** Shipped
   `@firegrid/l1-vocabulary` (`packages/l1-vocabulary`): the ACP `session/update`
   superset schema, Effect-free decoder, and canonical `foldTurn` base fold, with
