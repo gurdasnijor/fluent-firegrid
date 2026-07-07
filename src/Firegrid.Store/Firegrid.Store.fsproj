@@ -43,6 +43,7 @@
     <Compile Include="Foundation/Durable/Host.fs" />
     <Compile Include="Foundation/Durable/Runtime.fs" />
     <Compile Include="Foundation/Durable/App.fs" />
+    <Compile Include="SessionLifecycle.fs" />
     <Compile Include="Runtime.fs" />
     <Compile Include="ObjectState.fs" />
     <Compile Include="WorkflowLog.fs" />

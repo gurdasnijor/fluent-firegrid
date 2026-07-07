@@ -1558,6 +1558,24 @@ merged / LOC deleted.
   technique adapted to the foundation runner), `session.turn-idempotent-create`
   (same-identity re-attach → one stream never forked; different-identity → epoch
   takeover deposing prior producers). Conformance rows INV-015/016/017 added.
+- **B3 / MS-C5 — turn lifecycle authority shipped + proofs green (WP B3).**
+  `SessionLifecycle` (`src/Firegrid.Store/SessionLifecycle.fs`) implements the
+  MS-C5 Target Surface exactly: a session-actor **policy** over B1's `Authority`
+  (I5) and `DurableLog`/`Turn` (I1) — **no second authority**. `start` =
+  `Authority.claim` the session log + the single-writer `AlreadyLive` policy over
+  the fold; durable cancel = a `(source, sourceSeq)`-deduped **mailbox send**
+  (open-append to `sessions/{s}/in`) the holder seals on its next `drive`; durable
+  timeouts = deadlines re-derived from the fold, fired via the kernel
+  `WakeReason.TimerFired` (the I3/C1 vocabulary consumed, not re-minted). Cancel
+  and both timeouts map to the unchanged I1 `TurnTerminal.Cancelled`; the distinct
+  cause is the L2 `EndCause` on the session log (the decided G1 posture — I1
+  unchanged). Pure `fold`/`onCommand`/`onWake` core + `Async` shell, EffSharp-free,
+  Fable-safe (JS + TS emit green). Proofs `session.lifecycle-{single-writer,
+  durable-cancel,deposed-producer}` in `FoundationSessionLifecycleProof.fs` green
+  on real `s2Lite`, driven through the public surface only; the deposed-producer
+  proof extends B2's two-host live-fencing technique. Conformance rows
+  INV-021/022/023 added. B4's `session.resume-artifact-fenced` is the sibling MS-C5
+  obligation, still open.
 - **MS-C6 / WP D1 — L1 observation vocabulary (I2).** Shipped
   `@firegrid/l1-vocabulary` (`packages/l1-vocabulary`): the ACP `session/update`
   superset schema, Effect-free decoder, and canonical `foldTurn` base fold, with
