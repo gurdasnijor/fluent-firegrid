@@ -106,6 +106,16 @@ Every capability entry has: production surface, proof obligations (falsifiable,
 named), RFC invariants touched, and the consumer milestone it unblocks. Proof
 names follow the house registry pattern in `apps/proofs`.
 
+**Target Surface convention (gate G6).** Each capability carries a Target
+Surface subsection — module placement, exported types and signatures (Effect
+shapes per `LLMS.md`: `Context.Service`, typed tagged errors, `Stream` for
+sequences), and the laws the surface obeys. The surface is written and
+architect-approved *before* proofs or implementation; proofs import only the
+public surface. Signatures below are directional — the implementing WP refines
+them under G6, and the merged PR updates this document to match. MS-C2 is
+written out as the exemplar; the first WP of each other capability supplies its
+section at the same altitude.
+
 ### MS-C1 — Checkpoint + Trim
 
 The deferred state-story completion: snapshot records carrying
@@ -145,6 +155,58 @@ Decision (made here): attachments and other large payloads are stored by
 reference (claim-check); turn and session streams never carry inline blobs
 larger than one S2 record comfortably allows. Implementation deferred; the
 record schema reserves the reference shape now.
+
+Target Surface (exemplar — refined by WP B1 under gate G6):
+
+The generic primitive is the *stream half* of the table/stream duality — a
+sealed, single-writer, schema-coded durable log. Turn is a domain **binding**
+of it (an address scheme plus chunk/terminal schemas), not a new API. The
+*table half* is Lane A's checkpointed fold/`StateView` (prior art:
+firegrid's `effect-durable-operators` `DurableTable` — collections with
+`insert/get/query/subscribe` over a changelog); predicate-waits over tables,
+already proven on the object side (`store-object-state-wait`,
+`store-object-index-wait`), bridge the two halves.
+
+```ts
+// packages/fluent, module: durable/log — generic, domain-free
+
+interface LogAddress { readonly segments: ReadonlyArray<string> } // derived, never random
+
+class DurableLog extends Context.Service<DurableLog>()("firegrid/DurableLog", ...) {
+  // Idempotent by address: a retried create attaches to the existing log.
+  create: <C, T>(address: LogAddress, codec: LogCodec<C, T>) =>
+    Effect<LogProducer<C, T>, LogAlreadyLiveError | SubstrateError>
+  attach: <C, T>(address: LogAddress, codec: LogCodec<C, T>) =>
+    Effect<LogAttachment<C, T>, LogNotFoundError | SubstrateError>
+}
+
+interface LogProducer<C, T> {
+  readonly append: (chunk: C) => Effect<void, ProducerDeposedError | SubstrateError>
+  readonly seal: (terminal: T) => Effect<void, ProducerDeposedError | SubstrateError>
+}
+
+interface LogAttachment<C, T> {
+  readonly chunks: Stream<C, SubstrateError>      // replay-from-zero + live tail
+  readonly terminal: Effect<T, SubstrateError>    // resolves at seal
+}
+
+// Turn: a binding, zero new methods. If turn work appears to need an
+// operation the generic surface lacks, that is gate G1/G6, not a TurnStreams method.
+const turnLog = (s: SessionId, t: TurnId) =>
+  ({ address: turnAddress(s, t), codec: LogCodec.make(TurnChunk, TurnTerminal) })
+```
+
+Laws (stated and proven at the generic level): `attach` after `seal` replays
+the full prefix then yields the terminal; `append`/`seal` after `seal` fail; a
+deposed producer's `append` fails (fenced); two `create` calls for one address
+yield one durable log. The consumer never sees S2 stream names, fencing
+tokens, or sequence numbers.
+
+Scope guard (both directions): domain semantics stay out of the generic layer,
+*and* the generic layer does not grow a KStreams operator algebra (joins,
+windowing, repartitioning) ahead of a consumer that demands it. The duality
+surface is: log (`append/seal/attach`), table (`fold/get/query/subscribe`,
+Lane A), predicate-wait (the bridge).
 
 Proof obligations:
 
