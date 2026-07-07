@@ -739,29 +739,18 @@ stream + tailed router + durable cursor, not the timer index or these proofs):
   redundant wakes coalesce (N wakes → at most N idempotent drives, each observing
   all pending state).
 - **Single live router per shard** (`wake.single-claim`, C2). Two routers tailing
-  one shard: `Authority.claim` (FencedOwner) yields exactly one live holder; the
-  loser is `Deposed` and can neither dispatch nor advance the cursor. It observes
-  the claim, not the work — the `store-object-live-fencing` lineage applied to a
-  shard.
-  > **⚠️ Open question — C2, pending architect ruling (STOP).** The merged C1
-  > `WakeRouter.cycle` drives the batch *before* its fenced cursor commit
-  > (drive-then-commit — a deposal at commit leaves only idempotent re-drives), so
-  > a not-yet-aware deposed router performs one **idempotent re-drive (dispatch)**
-  > before its commit fails `Deposed`. The impl therefore guarantees the loser
-  > cannot **advance the cursor** (the single-writer durable authority), not that
-  > it cannot **dispatch** — so this law's "can neither dispatch" overreaches, and
-  > conflicts with the canon's own *"a stale holder may compute but cannot commit"*
-  > (driving is computing). **Option A** (recommended, docs-only): reword to "the
-  > loser cannot advance the cursor; dispatch is at-least-once with an idempotent
-  > drive, so a deposed holder may perform at most one harmless redundant re-drive"
-  > — `wake.single-claim` asserts single-writer-on-the-cursor + `Deposed` loser +
-  > idempotent-drive harmlessness; no code change; aligns with the canon/Restate.
-  > **Option B** (code change to merged C1): re-architect `cycle` to
-  > intent-before-effect (fenced dispatch-intent commit → dispatch → ack cursor) so
-  > a deposed holder fails the fenced gate before dispatching; literally satisfies
-  > "cannot dispatch" but adds an intent/ack split and re-opens C1, and buys no
-  > correctness (the drive is idempotent). C2 is STOPPED on `wake.single-claim`
-  > pending this ruling.
+  one shard: `Authority.claim` (FencedOwner) yields exactly one live holder;
+  **exactly one router advances the cursor** — the single-writer durable
+  authority. The loser's fenced cursor commit fails `Deposed`, so it **cannot
+  advance the cursor**. Dispatch is **at-least-once with an idempotent drive**: a
+  not-yet-aware deposed holder may perform at most one **harmless redundant
+  re-drive** before its fenced commit reveals the deposal — harmless because the
+  target's own claim makes a re-drive a no-op tick (the canon's *"a stale holder
+  may compute but cannot commit"*). The `store-object-live-fencing` lineage
+  applied to a shard's durable cursor. *(Reworded from "can neither dispatch nor
+  advance the cursor" — architect-approved C2 Option A, PR #110: the merged C1
+  router is drive-then-commit, so the guarantee is single-writer on the cursor +
+  idempotent-at-least-once dispatch, not "no dispatch by a deposed holder.")*
 - **Durable cursor / effectively-exactly-once dispatch**
   (`wake.timer-exactly-once`, C2). The cursor is a fenced checkpoint with
   `NextSeq` an exclusive upper bound; `plan` skips `Seq < NextSeq` strictly and
@@ -832,8 +821,11 @@ Proof obligations:
 
 - `wake.tail-latency` — an appended wake reaches its claimed handler within a
   bound asserted from trace evidence (bound recorded in the proof, not prose).
-- `wake.single-claim` — two routers tailing the same shard: exactly one claims
-  a given wake; the loser observes the claim, not the work.
+- `wake.single-claim` — two routers tailing the same shard: exactly one advances
+  the cursor (the single-writer durable authority) via `Authority.claim`; the
+  loser's fenced commit fails `Deposed`. Dispatch is at-least-once with an
+  idempotent drive, so a deposed holder's at-most-one redundant re-drive is
+  harmless.
 - `wake.timer-exactly-once` — a due timer fires exactly once across a router
   restart; a not-yet-due timer survives the restart unfired.
 
