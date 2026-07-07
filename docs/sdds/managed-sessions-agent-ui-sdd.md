@@ -720,6 +720,16 @@ merged / LOC deleted.
   emit green). Composes the P3 fence primitives (PR #91), does not duplicate
   them. Proof obligations (`session.turn-attach`, `session.turn-crash-terminal`,
   `session.turn-idempotent-create`) land with WP B2.
+- **B2 / MS-C2 — turn-stream proofs green (WP B2).** `session.turn-streams` in
+  `Firegrid.Foundation.Proofs` (`FoundationTurnStreamProof.fs`) proves the three
+  MS-C2 obligations over the public `DurableLog`/`Turn` surface on real `s2Lite`:
+  `session.turn-attach` (byte-identical mid-flight vs. start prefix + same
+  terminal), `session.turn-crash-terminal` (a live deposed producer cannot
+  commit after a fresh-connection recovery host takes over; recovery reaches a
+  durable terminal; the attached reader observes it — the `store.object-live-fencing`
+  technique adapted to the foundation runner), `session.turn-idempotent-create`
+  (same-identity re-attach → one stream never forked; different-identity → epoch
+  takeover deposing prior producers). Conformance rows INV-015/016/017 added.
 - **MS-C6 / WP D1 — L1 observation vocabulary (I2).** Shipped
   `@firegrid/l1-vocabulary` (`packages/l1-vocabulary`): the ACP `session/update`
   superset schema, Effect-free decoder, and canonical `foldTurn` base fold, with
