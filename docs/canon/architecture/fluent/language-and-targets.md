@@ -31,10 +31,14 @@ Exactly two ways to cross between zones:
 1. **The kernel protocol** — ingress/attach/control surfaces, per the
    runtime-fronted posture in [`architecture.md`](./architecture.md). Processes
    (adapters, consumers, the proof harness) prefer this edge.
-2. **One Fable-emitted package seam** — the Fable→JS build of the kernel,
-   published under the existing substrate package names with hand-curated
-   `.d.ts`. Library-level access (custom TS hosts, law-level proofs) uses this
-   edge only.
+2. **One Fable-emitted package seam** — the Fable build of the kernel,
+   published under the existing substrate package names. Emit TypeScript
+   (`fable --lang typescript`) so the seam's types are generated from the F#
+   source and cannot drift; wrap with a thin hand-written idiomatic TS facade
+   for npm consumers (emitted TS is structurally F#-shaped and is not the
+   public API). Library-level access (custom TS hosts, law-level proofs) uses
+   this edge only. API design inside the F# zone follows
+   [`../../sdds/fsharp-fable-effsharp-evaluation-sdd.md`](../../../sdds/fsharp-fable-effsharp-evaluation-sdd.md).
 
 No other deep imports across zones. TS proofs driving an F# kernel are
 structurally black-box, which mechanically enforces the proofs-consume-only-
