@@ -30,7 +30,8 @@ module Program =
           FoundationDurableKernelProof.proof
           FoundationTurnStreamProof.proof
           FoundationSessionLifecycleProof.proof
-          FoundationResumeArtifactProof.proof ]
+          FoundationResumeArtifactProof.proof
+          FoundationWakePathProof.proof ]
 
     let private usage =
         "Usage: node dist/Program.js proof list | proof run <all|proof-name> [--report-dir <dir>] [--trial-id <id>] [--seed <n>]"

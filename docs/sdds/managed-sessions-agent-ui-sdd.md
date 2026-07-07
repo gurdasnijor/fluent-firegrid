@@ -2033,6 +2033,28 @@ merged / LOC deleted.
   and the three `wake.*` proofs (`wake.tail-latency`, `wake.single-claim`,
   `wake.timer-exactly-once`); shard-stream retention rides A-lane
   checkpoint+trim.
+- **C2 / MS-C3 — folded timer index + wake.* proofs (WP C2).** Shipped
+  `TimerIndex` (`src/Firegrid.Store/Foundation/Durable/TimerIndex.fs`): a durable
+  open-append timer log (`Armed`/`Fired`) whose pure fold (`apply`/`pending`/`due`)
+  materialises the pending set; `fireDue now` posts a `TimerFired` wake for each
+  due timer **through the public `WakeShard.post`** (no deep imports) and records
+  it `Fired`. Firing is at-least-once with the router's idempotent drive; a
+  not-yet-due timer is left armed; `now` is passed in as data (sans-IO). The three
+  MS-C3 proof obligations are green in `Firegrid.Foundation.Proofs`
+  (`FoundationWakePathProof.fs`, proof `wake.path`), driven entirely through the
+  public `WakeShard`/`WakeRouter`/`TimerIndex` surface with the injected `Drive`
+  seam as the observability hook: `wake.tail-latency` (post→dispatch within a
+  recorded `<=3000ms` bound emitted as trace evidence), `wake.single-claim` (two
+  S2 clients over one `s2Lite`; a rival router takes over mid-drive so the first's
+  fenced cursor commit fails `Deposed` — exactly one advances the cursor; both
+  drove the one wake, the deposed holder's re-drive idempotent — the approved
+  Option A law, PR #110), and `wake.timer-exactly-once` (a due timer fires once
+  across a router restart; a not-yet-due timer survives unfired; a poison record
+  is consumed and skipped — cursor passes it, later wakes dispatch, restart neither
+  re-dispatches nor re-wedges; a wake at the committed cursor survives a restart
+  undropped and a poison at that boundary recovers — the last-scanned+1 exclusive
+  upper bound). Conformance rows INV-031/032/033 added (INV-030 taken by B4).
+  MS-C3 complete; unblocks MS-M5 timer/approval features.
 - **MS-C6 / WP D3 — Claude Agent SDK adapter.** Shipped `@firegrid/claude-adapter`
   (`packages/claude-adapter`): a concrete `HarnessAdapter` over the D2 contract
   that lowers Claude Agent SDK transcripts into L1 records (I2). The pure
