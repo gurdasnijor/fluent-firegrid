@@ -626,6 +626,220 @@ future ACP harnesses lower near-trivially, and every UI folds one format
 regardless of harness. WP D1 turns this into the schema + decision-record
 page; deviations re-open gate G2.
 
+D1 shipped that vocabulary as `@firegrid/l1-vocabulary` (interface I2) plus the
+decision record
+[`../canon/architecture/fluent/l1-observation-vocabulary.md`](../canon/architecture/fluent/l1-observation-vocabulary.md).
+The adapter contract below **consumes** it: an adapter lowers harness traffic
+into `L1StreamRecord`s and never mints a parallel vocabulary. If the contract
+were to require a change to I2, that is gate **G1** — escalate; do not widen the
+vocabulary here.
+
+Target Surface (TS — WP D2; gate G6 + G1 sign-off pending):
+
+The adapter is the reconstruction-model seam of
+[`../canon/architecture/fluent/harness-io.md`](../canon/architecture/fluent/harness-io.md):
+the raw harness owns the model loop and writes nothing durable; the adapter turns
+its protocol traffic into L1 observation facts and hands them to the kernel, which
+appends them under the turn's fence. Per
+[`../canon/architecture/fluent/authority-and-actors.md`](../canon/architecture/fluent/authority-and-actors.md)
+the adapter is *an effectful handler that writes only under the Processor's fence,
+emitting L1 facts as its Append* — it owns **no** authority, durability,
+wait/timer/child semantics, or projection schema.
+
+It factors into a **pure lowering core** (sans-IO — the fixture-replay target)
+and an **I/O shell** (the live `drive`), driving against two kernel-provided
+seams (the fenced L1 sink and, for gateable adapters, the durable-tool gate) and
+referencing one B4 seam (the fenced native-resume-artifact store — MS-C5, cited
+not redefined).
+
+```ts
+// package @firegrid/harness-adapter — TS zone, Effect shapes per LLMS.md.
+// Consumes @firegrid/l1-vocabulary (I2). Owns no durability.
+import type { L1StreamRecord } from "@firegrid/l1-vocabulary"
+import { Context, Data, Effect, type Scope } from "effect"
+
+// ── Declared interception posture (the durability guarantee differs) ──────
+// gateable    — can mediate Firegrid durable tools (transactional, replay-served).
+// observe-only — cannot mediate any; harness-native effects are only suppressed.
+export type InterceptionCapability = "gateable" | "observe-only"
+
+export interface HarnessCapabilities {
+  readonly harness: string                 // stable harness id (matches firegrid/native `harness`)
+  readonly interception: InterceptionCapability
+  readonly emitsUsage: boolean             // lowers firegrid/usage token/cost facts
+  readonly emitsSubagents: boolean         // lowers subagent scoping (firegrid/subagent + parent tool content)
+}
+
+// ── Opaque harness resume state — produced here, stored fenced by B4 (MS-C5) ─
+export interface NativeResumeArtifact {
+  readonly harness: string
+  readonly version: number                 // harness-owned artifact version
+  readonly payload: unknown                // opaque; e.g. Claude session id + cursor
+}
+
+// ── Pure protocol → L1 lowering (sans-IO; deterministic; Effect-free) ─────
+// A fold from recorded harness protocol events to L1 records: no I/O, no clock,
+// no entropy. Replaying an event log reproduces identical L1 facts — the
+// `harness.fixture-replay` target. Per-harness; D3 supplies Claude's, including
+// parent_tool_use_id scoping and usage/cost lowering.
+export interface HarnessLowering<Event, State> {
+  readonly initial: State
+  readonly lower: (
+    state: State,
+    event: Event
+  ) => { readonly state: State; readonly records: ReadonlyArray<L1StreamRecord> }
+}
+
+// ── Kernel-provided seams the shell drives against ────────────────────────
+// Fenced L1 append. `emit` is the adapter's only write; the kernel appends under
+// the turn's fence (I1 DurableLog). A deposed/sealed turn surfaces here and the
+// adapter must stop — the reconstruction analog of DurableLog.AppendError.
+export class L1Sink extends Context.Service<L1Sink, {
+  readonly emit: (record: L1StreamRecord) => Effect.Effect<void, EmitError>
+}>()("@firegrid/harness-adapter/L1Sink") {}
+
+// Durable-tool mediation — present only for a `gateable` adapter. Pause at a
+// Firegrid-mediated tool call; the kernel commits the L2 intent/result and
+// returns the committed result to feed back to the harness. Resume serves the
+// recorded result, never re-executes (execution-models Model B). L2 authority is
+// the runtime's (I5), not this contract's.
+export class ToolGate extends Context.Service<ToolGate, {
+  readonly mediate: (call: MediatedToolCall) => Effect.Effect<CommittedToolResult, GateError>
+}>()("@firegrid/harness-adapter/ToolGate") {}
+
+export interface MediatedToolCall {
+  readonly toolCallId: string              // the L1 tool_call this gates
+  readonly name: string
+  readonly rawInput: unknown
+}
+export interface CommittedToolResult {
+  readonly toolCallId: string
+  readonly output: unknown                 // durable L2 result fed back to the harness
+}
+
+// ── The adapter service (I/O shell) ───────────────────────────────────────
+export interface ResumePoint {
+  readonly artifact: NativeResumeArtifact   // prior harness resume state
+  readonly observedThrough: number          // the L1 append Version already durable (I1)
+}
+export interface DriveInput {
+  readonly prompt: L1StreamRecord           // the user turn (a mailbox send lowered to L1)
+  readonly resume?: ResumePoint             // present iff continuing an existing turn/session
+}
+export type L1Terminal =
+  | { readonly _tag: "completed" }
+  | { readonly _tag: "cancelled" }          // durable cancel observed (an ordinary mailbox message)
+  | { readonly _tag: "failed"; readonly reason: string }
+export interface DriveOutcome {
+  readonly artifact: NativeResumeArtifact    // updated resume state for the kernel to persist (B4-fenced)
+  readonly terminal: L1Terminal
+}
+
+export class HarnessAdapter extends Context.Service<HarnessAdapter, {
+  readonly capabilities: HarnessCapabilities
+  // Drive one turn to terminal: lower harness traffic to L1 via `L1Sink.emit`,
+  // mediate durable tools via `ToolGate` (gateable only), and produce the updated
+  // resume artifact. The harness process is a scoped resource.
+  readonly drive: (
+    input: DriveInput
+  ) => Effect.Effect<DriveOutcome, DriveError, L1Sink | ToolGate | Scope.Scope>
+}>()("@firegrid/harness-adapter/HarnessAdapter") {}
+
+// ── Typed errors ──────────────────────────────────────────────────────────
+export class DriveError extends Data.TaggedError("DriveError")<{
+  readonly harness: string
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+export class EmitError extends Data.TaggedError("EmitError")<{
+  readonly kind: "deposed" | "sealed" | "failed"
+  readonly message: string
+}> {}
+export class GateError extends Data.TaggedError("GateError")<{
+  readonly toolCallId: string
+  readonly message: string
+}> {}
+```
+
+Ergonomic sample (the consumer test — the kernel drives an adapter; the proof
+drives the pure core, with no live process):
+
+```ts
+// Kernel side (Processor): the claim gives the fenced L1Sink; drive to terminal;
+// persist the returned artifact under the same fence (B4).
+const runTurn = Effect.fn("runTurn")(function*(input: DriveInput) {
+  const adapter = yield* HarnessAdapter
+  const outcome = yield* adapter.drive(input)          // emits L1 under the fence
+  yield* ResumeArtifactStore.put(outcome.artifact)     // B4 (MS-C5), fenced per session
+  return outcome.terminal
+})
+
+// Proof side (harness.fixture-replay): replay the PURE lowering over a recorded
+// transcript and check against a D1 golden fixture and its fold.
+const replay = <E, S>(l: HarnessLowering<E, S>, events: ReadonlyArray<E>) =>
+  events.reduce(
+    (acc, ev) => {
+      const step = l.lower(acc.state, ev)
+      return { state: step.state, out: [...acc.out, ...step.records] }
+    },
+    { state: l.initial, out: [] as ReadonlyArray<L1StreamRecord> }
+  ).out
+// expect: replay(lowering, events) deep-equals fixture.records; and
+//         foldTurn(replay(...)) deep-equals foldTurn(fixture.records).
+```
+
+Laws (stated here; proven by WP D2/D3 after approval):
+
+- **Emits only I2, never a parallel vocabulary.** Every fact is an
+  `L1StreamRecord`; harness specifics ride `firegrid/native` or the documented
+  `firegrid/*` extensions, never a new base variant. A need the base vocabulary
+  cannot express is gate G1 (change I2), not an adapter escape hatch.
+- **No authority.** The adapter's only write is `L1Sink.emit`; it never appends,
+  fences, seals, decides wait/timer/child completion, or owns a projection schema
+  (harness-io F-A constraints). `EmitError.deposed`/`sealed` stops the turn — it
+  computed but could not commit.
+- **Deterministic lowering.** `lower` is pure: the same recorded event sequence
+  yields identical L1 records and identical `foldTurn` state
+  (`harness.fixture-replay`). All nondeterminism lives in the harness process,
+  behind the I/O shell.
+- **Resume suppresses, never repeats.** Given a `ResumePoint`, `drive` re-enters
+  via the native artifact and emits only facts after `observedThrough`:
+  already-observed L1 facts are not re-emitted and already-observed side effects
+  are not re-executed — gateable durable tools are served their recorded L2 result
+  and fed back; observe-only harness-native side effects are suppressed by native
+  resume (`harness.resume-suppression`).
+- **Interception posture is declared and honored.** A `gateable` adapter may call
+  `ToolGate.mediate` (durable, transactional results, replay-served on resume) for
+  Firegrid-registered tools; an `observe-only` adapter MUST NOT — its
+  harness-native side effects are at-least-once-observed but not
+  Firegrid-transactional, and the contract says so. The posture is a static
+  per-adapter declaration, not a per-call surprise.
+- **Subagent output is parent-scoped.** Subagent activity lowers to
+  `tool_call_update` content on its `parent_tool_use_id` tool call plus an
+  ignorable `firegrid/subagent` record, so `foldTurn` attributes it to the parent
+  and never interleaves it into top-level turn text (`harness.subagent-scoping`) —
+  exactly what D1's fold and subagent fixture already require.
+- **Resume artifact is opaque and fenced elsewhere.** The adapter
+  produces/consumes `NativeResumeArtifact` as an opaque, harness-versioned blob;
+  its durable, fenced per-session storage is B4 (MS-C5), referenced here, never
+  re-implemented.
+
+Scope guard (both directions): the adapter owns protocol→L1 lowering and
+resume-artifact production; it does not own durability, L2/authority,
+wait/timer/child lifecycle, or queryable projections (those are B / A / runtime).
+It is the neutral generalization of harness-io's `FiregridAcpClient` and the
+native lowering adapter — a Claude Agent SDK adapter (D3) and a future ACP/codex
+adapter both implement this one contract. The contract does not grow into a
+general RPC or agent-framework surface ahead of a consumer that demands it.
+
+TS-zone shape (G6): Effect service + layer, `Effect.fn` for effectful methods,
+tagged errors for expected failures, a sans-IO Effect-free `lower` core, and
+consuming `@firegrid/l1-vocabulary`'s public exports only (no deep imports). The
+fixture-replay harness (recorded transcripts as fixtures, deterministic
+reconstruction as the proof — the lane's main artifact) and any adapter
+implementation land in follow-up commits **after** architect approval of this
+surface.
+
 Proof obligations:
 
 - `harness.fixture-replay` — replaying a recorded harness transcript fixture
