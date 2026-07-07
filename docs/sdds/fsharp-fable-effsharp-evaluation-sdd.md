@@ -23,6 +23,13 @@ governs *between* zones. Three amendments apply on top of the original text:
 3. **The Validation Gates section is folded into gate G6** for F#-zone Target
    Surfaces (see the execution ledger).
 
+4. **EffSharp is deprecated repo-wide (ruled 2026-07-06).** The internal
+   carveouts below ("keep `Log`/`Store` EffSharp internals for now") are
+   superseded: no new EffSharp; removal is tracked as WP P5 in the execution
+   ledger. The carveouts' underlying needs are met natively — `promise {}` +
+   `Result` for JS interop with typed errors, and the pull-cursor pattern for
+   read sessions.
+
 The authoring-layer material (`workflow {}` CE) remains finish-line scope, but
 its CE rules (Delay/Run program-as-data, no arbitrary task binds, explicit
 `Workflow.local`, Result-shaped timeouts) bind WP P3's port of the eff-firegrid

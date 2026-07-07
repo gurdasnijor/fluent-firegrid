@@ -342,6 +342,40 @@ export declare const fromPromiseClient: (
   directly. Upstream SDK use stays inside the F# S2 client or in the retained
   oracle proofs.
 
+## EffSharp Is Deprecated
+
+Ruled 2026-07-06. EffSharp was a bridge library built while the mental model
+was still TS-Effect; the F# API doctrine's own conclusion — F# natively covers
+most of what Effect gives TypeScript — applies to the bridge itself. It is also
+the sole reason for the private GitHub Packages NuGet feed and its recurring
+local-auth friction.
+
+- **No new EffSharp.** New F# code uses native shapes: `Result` + DUs for
+  errors, `Async`/`task`/`promise` CEs at shells, records/parameters for
+  dependencies, and the pull-cursor pattern (`readCursor`/`tryNext`/`close`)
+  for stream consumption — the shape the eff-firegrid foundational design
+  already proved without EffSharp.
+- **Removal is WP P5**: strip EffSharp from `Firegrid.Log`, `Firegrid.Store`,
+  and `Firegrid.Foundation.Proofs`, then delete the private NuGet feed from
+  `nuget.config`. The CI-green proof suites gate the refactor.
+- **P3 lands EffSharp-free from the start** (the eff-firegrid durable kernel is
+  `Async`-based already).
+- **Distinct from Effect (TS).** EffSharp (F#-side Effect port) and Effect
+  (TS library) are different dependencies. Effect's justified TS footprint is
+  narrow: it is the proof harness's internal idiom (structured concurrency,
+  fault injection, scoped cleanup, OTel weave — verification infrastructure
+  that never ships to consumers) plus optional thin wrapper modules. It is not
+  the default idiom for public TS surfaces.
+
+The layering at the Fable boundary: generated exports are Promise-shaped
+(doctrine rule); the public facade is **Promise-first** (plain types, `Error`
+subclasses, async iterables) because the first production consumer (agent-ui)
+and future TS hosts are Promise-native; Effect consumers get a thin wrapper
+submodule (e.g. `@firegrid/log/effect`). Wrapping promises in Effect is
+trivial; the reverse requires embedding a runtime — which is why Promise-first
+is the only ordering where the secondary idiom stays thin. Nothing at the seam
+requires an effect system on either side.
+
 ## The Sans-IO Core Rule
 
 Kernel *semantics* are pure F# modules: `fold : State -> Record -> State`,
