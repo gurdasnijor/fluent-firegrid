@@ -54,6 +54,9 @@ importers:
       '@firegrid/fluent':
         specifier: workspace:*
         version: link:../../packages/fluent
+      '@firegrid/l1-vocabulary':
+        specifier: workspace:*
+        version: link:../../packages/l1-vocabulary
       '@firegrid/log':
         specifier: workspace:*
         version: link:../../src/Firegrid.Log
@@ -122,6 +125,12 @@ importers:
       effect:
         specifier: 4.0.0-beta.87
         version: 4.0.0-beta.87
+
+  packages/l1-vocabulary:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.0
 
   packages/runtime:
     dependencies:

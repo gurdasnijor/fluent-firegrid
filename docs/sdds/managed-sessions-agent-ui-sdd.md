@@ -710,6 +710,15 @@ merged / LOC deleted.
   host restart both reconstruct `(state, Version)` identical to
   `SubjectHistory.foldTo` from `Seq 0`. Deferred to A2: sidecar compaction and
   driving `commit` through `Authority.admit` (I5).
+- **MS-C6 / WP D1 — L1 observation vocabulary (I2).** Shipped
+  `@firegrid/l1-vocabulary` (`packages/l1-vocabulary`): the ACP `session/update`
+  superset schema, Effect-free decoder, and canonical `foldTurn` base fold, with
+  the G2 decision record at
+  [`../canon/architecture/fluent/l1-observation-vocabulary.md`](../canon/architecture/fluent/l1-observation-vocabulary.md)
+  and the seed fixture corpus (`packages/l1-vocabulary/fixtures/*.json`) for D2's
+  replay harness. Proof `l1-vocabulary.schema-conformance` green in `apps/proofs`
+  (decode, JSON round-trip stability, schema version, ignorable-by-default,
+  subagent scoping).
 
 ## Acceptance Criteria
 

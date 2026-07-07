@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "name": "usage-extension",
+  "description": "A short turn carrying a firegrid/usage extension record with token and cost facts.",
+  "notes": "firegrid/usage is ignorable-by-default: removing it does not change the base fold. A usage-aware UI reads it to surface per-turn cost.",
+  "records": [
+    { "sessionUpdate": "user_message_chunk", "messageId": "u1", "content": { "type": "text", "text": "Hi" } },
+    { "sessionUpdate": "agent_message_chunk", "messageId": "a1", "content": { "type": "text", "text": "Hello there." } },
+    { "sessionUpdate": "firegrid/usage", "inputTokens": 12, "outputTokens": 8, "cacheReadInputTokens": 4, "totalTokens": 20, "costUsd": 0.0004, "model": "claude-opus-4-8" }
+  ]
+}
