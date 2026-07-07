@@ -1,4 +1,4 @@
-import { AppendInput, AppendRecord, SeqNumMismatchError } from "@firegrid/log"
+import { AppendInput, AppendRecord, SeqNumMismatchError } from "@s2-dev/streamstore"
 import * as Effect from "effect/Effect"
 import * as Stream from "effect/Stream"
 

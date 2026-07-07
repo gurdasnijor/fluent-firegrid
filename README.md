@@ -38,9 +38,12 @@ Run the production proof registry with:
 pnpm run proofs
 ```
 
-This starts real `s2 lite` and process-host fixtures, then verifies the current
-log, store, runtime, and fluent object surfaces from workload results plus
-OTel/chDB trace evidence.
+This runs the active blocking proof suites: the TypeScript `apps/proofs`
+registry for current `@firegrid/log` S2 substrate behavior, and the Fable
+TypeScript-emitted `Firegrid.Foundation.Proofs` registry for foundation
+store/view behavior. Historical store/runtime/object proof files remain in
+`apps/proofs/proofs` as porting references until their product surfaces are
+rehomed into the active registry.
 
 ## Cleanup Policy
 

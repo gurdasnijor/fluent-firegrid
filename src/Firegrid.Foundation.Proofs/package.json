@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet tool run fable -- Firegrid.Foundation.Proofs.fsproj -o dist --optimize --noCache --noRestore",
+    "build:ts": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet tool run fable -- Firegrid.Foundation.Proofs.fsproj -o dist-ts --lang typescript --noCache --noRestore",
     "diagnostics": "echo '@firegrid/foundation-proofs diagnostics are covered by F# compile'",
     "lint": "echo '@firegrid/foundation-proofs lint is covered by F# compile'",
+    "proofs": "pnpm run build:ts && tsx dist-ts/Program.ts proof run all --report-dir ../../.verification-reports/foundation-proofs",
     "test": "pnpm run typecheck",
     "typecheck": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet build Firegrid.Foundation.Proofs.fsproj -v:q"
   },
@@ -14,5 +16,9 @@
     "@firegrid/store": "workspace:*",
     "@s2-dev/streamstore": "0.24.1",
     "chdb": "^3.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.21.0"
   }
 }

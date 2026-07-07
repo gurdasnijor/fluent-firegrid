@@ -2,14 +2,14 @@ import {
   AppendInput,
   AppendRecord,
   FencingTokenMismatchError,
-  SeqNumMismatchError,
-  type StreamApi
-} from "@firegrid/log"
+  SeqNumMismatchError
+} from "@s2-dev/streamstore"
 import * as Effect from "effect/Effect"
 import * as Stream from "effect/Stream"
 
 import { type Proof, proof } from "../src/Proof.ts"
 import type { Check, Verifiers } from "../src/Property.ts"
+import type { StreamApi } from "../src/S2Runtime.ts"
 import type { TraceProof } from "../src/TraceProof.ts"
 
 type ProofCheck<A> = Check<A> | TraceProof

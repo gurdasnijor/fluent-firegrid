@@ -96,6 +96,19 @@ and OTel configuration automatically.
 
 ## Current Surface
 
+The active blocking registry in `proofs/main.ts` currently contains proof files
+that target live public package surfaces:
+
+- `effect-s2.capability-a.atomic-replay`
+- `effect-s2.capability-a.read-after-append`
+- `effect-s2.capability-a.cursor-fold`
+- `effect-s2.capability-b.match-seq-num-contention`
+- `effect-s2.capability-b.fence-semantics`
+
+The older `store-*` files in this directory are retained as porting references.
+They are not active conformance evidence until they are rehomed to current
+public surfaces and restored to the runner registry.
+
 ```ts
 export default proof("effect-s2.capability-a.atomic-replay")
   .describedAs(
