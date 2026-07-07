@@ -145,6 +145,18 @@ importers:
         specifier: 4.0.0-beta.87
         version: 4.0.0-beta.87
 
+  src/Firegrid.Foundation.Proofs:
+    dependencies:
+      '@firegrid/store':
+        specifier: workspace:*
+        version: link:../Firegrid.Store
+      '@s2-dev/streamstore':
+        specifier: 0.24.1
+        version: 0.24.1
+      chdb:
+        specifier: ^3.1.0
+        version: 3.1.0
+
   src/Firegrid.Log:
     dependencies:
       '@s2-dev/streamstore':

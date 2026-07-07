@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <AssemblyName>Firegrid.Foundation.Proofs</AssemblyName>
+    <RootNamespace>Firegrid.Foundation.Proofs</RootNamespace>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <DefineConstants>$(DefineConstants);FABLE_COMPILER</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="EffSharp" Version="*-*" />
+    <PackageReference Include="Fable.Core" Version="5.1.0" />
+    <PackageReference Include="Fable.Promise" Version="3.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Firegrid.Log/Firegrid.Log.fsproj" />
+    <ProjectReference Include="../Firegrid.Store/Firegrid.Store.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Proof.fs" />
+    <Compile Include="Reports.fs" />
+    <Compile Include="S2Lite.fs" />
+    <Compile Include="ProofOperation.fs" />
+    <Compile Include="Expect.fs" />
+    <Compile Include="TraceSql.fs" />
+    <Compile Include="TraceExpect.fs" />
+    <Compile Include="TraceProof.fs" />
+    <Compile Include="Verification.fs" />
+    <Compile Include="Property.fs" />
+    <Compile Include="ProofBuilder.fs" />
+    <Compile Include="FoundationSubjectHistoryProof.fs" />
+    <Compile Include="FoundationStateViewProof.fs" />
+    <Compile Include="FoundationKvStoreProof.fs" />
+  </ItemGroup>
+
+</Project>

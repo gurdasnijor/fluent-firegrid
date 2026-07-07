@@ -2,6 +2,9 @@
   <Folder Name="/src/Firegrid.Log/">
     <Project Path="src/Firegrid.Log/Firegrid.Log.fsproj" />
   </Folder>
+  <Folder Name="/src/Firegrid.Foundation.Proofs/">
+    <Project Path="src/Firegrid.Foundation.Proofs/Firegrid.Foundation.Proofs.fsproj" />
+  </Folder>
   <Folder Name="/src/Firegrid.Store/">
     <Project Path="src/Firegrid.Store/Firegrid.Store.fsproj" />
   </Folder>

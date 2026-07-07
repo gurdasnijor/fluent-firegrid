@@ -81,7 +81,7 @@ Everything else is lane-owner discretion.
 | WP | Lane | Title | SDD ref | Deps | Status | Owner | PR |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | P1 | P | Port eff-firegrid `src/S2` (later rev); supersede `Firegrid.Log/S2` scaffold | canon: language-and-targets | — | done | Codex | #81 |
-| P2 | P | Port `SubjectHistory`/`StateView`/`KvStore` + their F# proofs | canon: language-and-targets | P1 | in-progress | Codex | — |
+| P2 | P | Port `SubjectHistory`/`StateView`/`KvStore` + their F# proofs | canon: language-and-targets | P1 | in-review | Codex | — |
 | P3 | P | Port `Foundation/Durable` kernel + F# proofs; audit sans-IO core/shell split | canon: language-and-targets | P2 | open | — | — |
 | A1 | A | Checkpointed fold: snapshot record + rebuild | MS-C1 | P2 | open | — | — |
 | A2 | A | Checkpoint-race + trim-safety proofs | MS-C1 | A1 | open | — | — |
