@@ -1,0 +1,29 @@
+{
+  "name": "@firegrid/harness-adapter",
+  "version": "0.0.0",
+  "description": "Harness adapter contract (MS-C6, I2 consumer): the reconstruction-model seam between an agent harness and the L1 observation vocabulary — pure lowering core, drive/L1Sink/ToolGate shell, reference lowering.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "src"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {},
+  "dependencies": {
+    "@firegrid/l1-vocabulary": "workspace:*",
+    "effect": "4.0.0-beta.87"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0"
+  }
+}

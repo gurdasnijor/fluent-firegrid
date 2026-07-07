@@ -1585,6 +1585,20 @@ merged / LOC deleted.
   replay harness. Proof `l1-vocabulary.schema-conformance` green in `apps/proofs`
   (decode, JSON round-trip stability, schema version, ignorable-by-default,
   subagent scoping).
+- **MS-C6 / WP D2 — harness adapter contract (implementation).** Shipped
+  `@firegrid/harness-adapter` (`packages/harness-adapter`) implementing the
+  architect-approved MS-C6 Target Surface: the ratified contract types + service
+  seams (`HarnessAdapter`, `L1Sink`, `ToolGate`, tagged errors), the pure
+  Effect-free `replay` lowering core, the generic `drive` reconstruction shell
+  (`makeReconstructionAdapter` — prompt validation, resume-suppression by the
+  exclusive-upper-bound `observedThrough`, fenced emit via `L1Sink`), and the
+  ACP-native `referenceLowering` (deliberately not the Claude adapter — D3). The
+  interception posture is type-enforced: `ToolGate` is a gateable adapter's layer
+  dependency, absent from `drive`'s `R`, so an observe-only adapter cannot obtain
+  one. Proofs `harness.fixture-replay` and `harness.resume-suppression` green in
+  `apps/proofs` over the D1 seed corpus. Conformance rows INV-021/022/023 added.
+  The side-effect-non-re-execution half of resume-suppression, subagent scoping,
+  and usage/cost lowering land with the WP D3 Claude adapter.
 
 ## Acceptance Criteria
 

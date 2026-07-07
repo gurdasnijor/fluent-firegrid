@@ -102,7 +102,7 @@ Everything else is lane-owner discretion.
 | C1 | C | Shard wake stream + tailed router with durable cursor | MS-C3 | P1 | surface-approved | Claude (C lane) | #95 |
 | C2 | C | Folded timer index; latency + single-claim + exactly-once proofs | MS-C3 | C1 | open | — | — |
 | D1 | D | L1 vocabulary decision record + schema (**gate G2**) | MS-C6 | — | done | Claude (D lane) | #97 |
-| D2 | D | Adapter contract + fixture-replay proof harness | MS-C6 | D1 | surface-approved | Claude (D lane) | #99 |
+| D2 | D | Adapter contract + fixture-replay proof harness | MS-C6 | D1 | done | Claude (D lane) | #99, #104 |
 | D3 | D | Claude Agent SDK adapter (subagent scoping, usage facts) + proofs | MS-C6 | D2 | open | — | — |
 | E1 | E | agent-ui M1: attach replaces resumable store (**gate G4**) | MS-M1 | B2 | open | — | — |
 | E2 | E | agent-ui M2: lifecycle on kernel authority (**gate G4**) | MS-M2 | B3, B4, E1 | open | — | — |
