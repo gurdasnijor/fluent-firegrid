@@ -1136,6 +1136,186 @@ module S2 =
             return ()
         }
 
+    // ---- Promise-first facade exports for @firegrid/log ----
+
+    [<RequireQualifiedAccess>]
+    module Facade =
+
+        [<Emit("$0 == null")>]
+        let private nil (_value: obj) : bool = jsNative
+
+        [<Emit("$0.read($1, $2)")>]
+        let private streamReadWithOptions (_stream: IStream) (_input: obj) (_options: obj) : JS.Promise<IReadBatch> =
+            jsNative
+
+        let private optionFloat (value: obj) : float option =
+            if nil value then None else Some(unbox<float> value)
+
+        let private optionString (value: obj) : string option =
+            if nil value then None else Some(string value)
+
+        let private optionDate (value: obj) : DateTime option =
+            if nil value then None else Some(unbox<DateTime> value)
+
+        let private fromConfig (config: Firegrid.Log.S2Config) : ConnectOptions =
+            { ConnectOptions.create config.AccessToken with
+                AccountEndpoint = config.Endpoint
+                BasinEndpoint = config.Endpoint
+                RequestTimeoutMillis = config.RequestTimeoutMillis
+                ConnectionTimeoutMillis = config.ConnectionTimeoutMillis
+                Retry = Some { Retry.empty with MaxAttempts = Some 1 } }
+
+        let private headersString (record: obj) : (string * string)[] =
+            if nil (record?headers) then
+                [||]
+            else
+                [| for header in unbox<obj[]> (record?headers) ->
+                       let pair = unbox<obj[]> header
+                       (string pair.[0], string pair.[1]) |]
+
+        let private headersBytes (record: obj) : (byte[] * byte[])[] =
+            if nil (record?headers) then
+                [||]
+            else
+                [| for header in unbox<obj[]> (record?headers) ->
+                       let pair = unbox<obj[]> header
+                       (unbox<byte[]> pair.[0], unbox<byte[]> pair.[1]) |]
+
+        let private appendRecord (record: obj) : obj =
+            match string (record?kind) with
+            | "string" ->
+                recString
+                    appendRecordNs
+                    (createObj
+                        [ "body" ==> string (record?body)
+                          "headers" ==> headersString record
+                          match optionDate (record?timestamp) with
+                          | Some timestamp -> "timestamp" ==> timestamp
+                          | None -> () ])
+            | "bytes" ->
+                recBytes
+                    appendRecordNs
+                    (createObj
+                        [ "body" ==> unbox<byte[]> (record?body)
+                          "headers" ==> headersBytes record
+                          match optionDate (record?timestamp) with
+                          | Some timestamp -> "timestamp" ==> timestamp
+                          | None -> () ])
+            | "fence" -> recFence appendRecordNs (string (record?token))
+            | "trim" -> recTrim appendRecordNs (float (unbox<float> (record?seqNum)))
+            | kind -> failwithf "Unsupported append record kind: %s" kind
+
+        let private appendInput (input: obj) : obj =
+            let records =
+                if nil (input?records) then
+                    [||]
+                else
+                    input?records |> unbox<obj[]> |> Array.map appendRecord
+
+            let options =
+                createObj
+                    [ match optionFloat (input?matchSeqNum) with
+                      | Some seqNum -> "matchSeqNum" ==> seqNum
+                      | None -> ()
+                      match optionString (input?fencingToken) with
+                      | Some token -> "fencingToken" ==> token
+                      | None -> () ]
+
+            inputCreate appendInputNs (box records) options
+
+        let private readStart (input: obj) : obj option =
+            if nil input || nil (input?start) || nil (input?start?from) then
+                None
+            else
+                let from = input?start?from
+                Some(
+                    createObj
+                        [ if not (nil (from?seqNum)) then
+                              "seqNum" ==> unbox<float> (from?seqNum)
+                          elif not (nil (from?timestamp)) then
+                              "timestamp" ==> unbox<DateTime> (from?timestamp)
+                          elif not (nil (from?tailOffset)) then
+                              "tailOffset" ==> unbox<float> (from?tailOffset) ]
+                )
+
+        let private readStop (input: obj) : obj option =
+            if nil input || nil (input?stop) then
+                None
+            else
+                let stop = input?stop
+
+                Some(
+                    createObj
+                        [ if not (nil (stop?limits)) then
+                              "limits"
+                              ==> createObj
+                                      [ if not (nil (stop?limits?count)) then
+                                            "count" ==> int (unbox<float> (stop?limits?count))
+                                        if not (nil (stop?limits?bytes)) then
+                                            "bytes" ==> int (unbox<float> (stop?limits?bytes)) ]
+                          if not (nil (stop?untilTimestamp)) then
+                              "untilTimestamp" ==> unbox<DateTime> (stop?untilTimestamp)
+                          if not (nil (stop?waitSecs)) then
+                              "waitSecs" ==> int (unbox<float> (stop?waitSecs)) ]
+                )
+
+        let private readInput (input: obj) : obj =
+            createObj
+                [ match readStart input with
+                  | Some start -> "start" ==> createObj [ "from" ==> start ]
+                  | None -> ()
+                  if not (nil input) && not (nil (input?clamp)) then
+                      "clamp" ==> unbox<bool> (input?clamp)
+                  match readStop input with
+                  | Some stop -> "stop" ==> stop
+                  | None -> ()
+                  if not (nil input) && not (nil (input?ignoreCommandRecords)) then
+                      "ignoreCommandRecords" ==> unbox<bool> (input?ignoreCommandRecords) ]
+
+        let private readOptions (format: string) : obj =
+            createObj [ "as" ==> format ]
+
+        let private streamHandle (target: Firegrid.Log.S2StreamRef) (client: Client) : Stream =
+            client |> basin target.Basin |> stream target.Stream
+
+        let make (config: Firegrid.Log.S2Config) : JS.Promise<Client> =
+            Promise.lift (connectWith (fromConfig config))
+
+        let ensureBasin (basinName: string) (client: Client) : JS.Promise<unit> =
+            client.Raw.basins.ensure (createObj [ "basin" ==> basinName ])
+            |> Promise.map (fun _ -> ())
+
+        let ensureStream (target: Firegrid.Log.S2StreamRef) (client: Client) : JS.Promise<unit> =
+            let basin = client.Raw.basin target.Basin
+            basin.streams.ensure (createObj [ "stream" ==> target.Stream ])
+            |> Promise.map (fun _ -> ())
+
+        let checkTail (target: Firegrid.Log.S2StreamRef) (client: Client) : JS.Promise<obj> =
+            let stream = streamHandle target client
+            stream.Raw.checkTail ()
+            |> Promise.map box
+
+        let append (target: Firegrid.Log.S2StreamRef) (input: obj) (client: Client) : JS.Promise<obj> =
+            let stream = streamHandle target client
+            stream.Raw.append (appendInput input)
+            |> Promise.map box
+
+        let read (target: Firegrid.Log.S2StreamRef) (input: obj) (format: string) (client: Client) : JS.Promise<obj> =
+            let stream = streamHandle target client
+            streamReadWithOptions stream.Raw (readInput input) (readOptions format)
+            |> Promise.map box
+
+        let readSession
+            (target: Firegrid.Log.S2StreamRef)
+            (input: obj)
+            (format: string)
+            (client: Client)
+            : JS.Promise<JS.AsyncIterable<obj>> =
+            let stream = streamHandle target client
+
+            stream.Raw.readSession (readInput input, readOptions format)
+            |> Promise.map (fun raw -> unbox<JS.AsyncIterable<obj>> (box raw))
+
     // ---- Effect compatibility surface for @firegrid/log consumers ----
 
     open Effect

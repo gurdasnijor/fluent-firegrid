@@ -26,10 +26,10 @@ The current implementation relies on these S2 facts:
 
 | Primitive | S2 mechanism | Proof coverage |
 | --- | --- | --- |
-| Append visibility | acknowledged append advances tail; later reads see the batch in order | `effect-s2.capability-a.read-after-append` |
-| Restart cursor fold | replay from a persisted sequence number reads the suffix in order | `effect-s2.capability-a.cursor-fold` |
-| Optimistic contention | two appends at one `matchSeqNum` cannot both commit | `effect-s2.capability-b.match-seq-num-contention` |
-| Cooperative fencing | owners fence by writing and checking durable ownership facts, not by substrate-enforced exclusive leases | `effect-s2.capability-b.fence-semantics`, `store.object-live-fencing` |
+| Append visibility | acknowledged append advances tail; later reads see the batch in order | `effect-s2.capability-a.read-after-append`, `firegrid-log.capability-a.read-after-append` |
+| Restart cursor fold | replay from a persisted sequence number reads the suffix in order | `effect-s2.capability-a.cursor-fold`, `firegrid-log.capability-a.cursor-fold` |
+| Optimistic contention | two appends at one `matchSeqNum` cannot both commit | `effect-s2.capability-b.match-seq-num-contention`, `firegrid-log.capability-b.match-seq-num-contention` |
+| Cooperative fencing | owners fence by writing and checking durable ownership facts, not by substrate-enforced exclusive leases | `effect-s2.capability-b.fence-semantics`, `firegrid-log.capability-b.fence-semantics`, `store.object-live-fencing` |
 | Event-log CAS | workflow events append with expected next index; stale writers surface a conflict | `store.event-log-cas` |
 | Host recovery | a restarted host can recover/sweep due work from durable facts | `store.host-crash-restart`, `store.host-tick`, `store.runtime-timer-sweep`, `store.runtime-schedule-sweep` |
 
