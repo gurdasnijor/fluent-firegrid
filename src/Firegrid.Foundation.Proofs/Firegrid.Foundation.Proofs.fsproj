@@ -35,6 +35,7 @@
     <Compile Include="FoundationKvStoreProof.fs" />
     <Compile Include="FoundationCheckpointProof.fs" />
     <Compile Include="FoundationDurableKernelProof.fs" />
+    <Compile Include="FoundationTurnStreamProof.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
