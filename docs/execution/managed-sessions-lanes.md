@@ -94,7 +94,7 @@ Everything else is lane-owner discretion.
 | A1 | A | Checkpointed fold: snapshot record + rebuild | MS-C1 | P2 | done | Claude (A lane) | #96 |
 | A2 | A | Checkpoint-race + trim-safety proofs | MS-C1 | A1 | done | Claude (A lane) | #101 |
 | A3 | A | StateView strong/eventual reads exposed at the seam + proof | MS-C4 | P2 | done | Claude (A lane) | #108, #111 |
-| A4 | A | Session history fold + thread-index projection + proofs | MS-C4 | A1, B1 | open | — | — |
+| A4 | A | Session history fold + thread-index projection + proofs | MS-C4 | A1, B1 | in-progress | Claude (A lane) | — |
 | B1 | B | `Authority` protocol module (I5) + `DurableLog` (SubjectHistory + Authority + seal) + turn binding — surface (G6/G1 approved) | MS-C2 | P2 | done | Claude (B lane) | #92, #98 |
 | B2 | B | Turn attach / crash-terminal / idempotent-create proofs | MS-C2 | B1 | done | Claude (B lane) | #100 |
 | B3 | B | Lifecycle authority: claim, durable cancel, timeouts + proofs | MS-C5 | B1 | done | Claude (B lane) | #103, #106 |
@@ -196,11 +196,20 @@ Changes to any of these require gate G1:
   generic sealed-log API and the turn address/chunk/terminal schemas bound to
   it. Consumed by Lanes A (history fold), D (adapter emits into turns), E
   (attach). Domain methods on the binding are a G1 violation.
-- **I2 — L1 observation vocabulary** (D1). Consumed by A4 (history fold) and E4
-  (UI fold).
+- **I2 — L1 observation vocabulary** (D1). Consumed by E4 (UI fold) and a future
+  L1-inclusive history fold — **not** by A4, which defers L1 per its Q3 ruling
+  (A4's history fold folds I6/L2, not I2).
 - **I3 — Wake record shape + shard naming** (C1). Consumed by B3 (lifecycle
   wakes) and future temporal features.
 - **I4 — Checkpoint record shape** (A1). Consumed by A4 and any long-lived fold.
+- **I6 — `SessionLifecycle.LifecycleFact` + `sessions/{s}/log` naming** (B3). The
+  session log's L2 turn-lifecycle fact schema (`TurnStarted`/`TurnEnded` +
+  `EndCause`) and its derived subject (`SessionLifecycle.logSubject`).
+  **Writer = the B3 lifecycle holder; consumer = A4's history fold**
+  (`session.history-fold`). Changes are a G1 gate. (Registered by the A4 G6 FULL
+  review, 2026-07-07; A4 folds this directly — no dedicated history subject — so
+  its projection can never fork from lifecycle truth, and `EndCause` survives
+  losslessly into the thread index.)
 
 ## Suggested Parallel Start
 
