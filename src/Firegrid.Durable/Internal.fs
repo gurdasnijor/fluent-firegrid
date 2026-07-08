@@ -778,7 +778,7 @@ module internal WorkerLoop =
                 return active
             }
 
-        let rec loop () =
+        let rec loop (consecutiveErrors: int) =
             async {
                 if stopRequested then
                     finished <- true
@@ -786,18 +786,23 @@ module internal WorkerLoop =
                     let! outcome = Async.Catch(pass ())
 
                     match outcome with
-                    | Choice2Of2 error ->
+                    | Choice2Of2 error when consecutiveErrors >= 2 ->
                         // Terminate on persistent infrastructure errors so a
                         // dangling worker can never wedge the corpus process;
                         // durable state is safe — another worker resumes.
                         Interop.consoleError ("Firegrid.Durable worker loop stopped: " + error.Message)
                         finished <- true
+                    | Choice2Of2 error ->
+                        // Transient hiccup (loaded s2, connection blip): retry.
+                        Interop.consoleError ("Firegrid.Durable worker pass failed (retrying): " + error.Message)
+                        do! Interop.sleepUnref 150
+                        return! loop (consecutiveErrors + 1)
                     | Choice1Of2 active ->
                         do! Interop.sleepUnref (if active then 15 else 120)
-                        return! loop ()
+                        return! loop 0
             }
 
-        Async.StartAsPromise(loop ()) |> ignore
+        Async.StartAsPromise(loop 0) |> ignore
 
         fun () ->
             async {
