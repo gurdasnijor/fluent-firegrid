@@ -9,6 +9,12 @@ namespace Firegrid.GridExamples
 open Firegrid
 open Firegrid.Durable   // only for Duration/ReadGrade value types
 
+/// Example-local stand-in for the Claude harness adapter (T3, TS-zone): the
+/// examples only need *a* `Harness` value to typecheck. Not platform surface.
+[<AutoOpen>]
+module private ExampleHarness =
+    let claudeHarness : Harness = Unchecked.defaultof<Harness>
+
 // ══ 1. Define an agent ════════════════════════════════════════════════════
 module Define =
 

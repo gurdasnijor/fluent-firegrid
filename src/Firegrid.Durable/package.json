@@ -1,0 +1,23 @@
+{
+  "name": "@firegrid/durable",
+  "version": "0.0.0",
+  "description": "Firegrid.Durable — the platform's public API surface (L2). Ratified contract; bodies land via the T1 red corpus.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "files": [
+    "Firegrid.Durable.fsproj",
+    "*.fs",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet tool run fable -- Firegrid.Durable.fsproj -o dist --optimize --noCache --noRestore",
+    "diagnostics": "echo '@firegrid/durable diagnostics are covered by dotnet build'",
+    "lint": "echo '@firegrid/durable lint is covered by F# compile'",
+    "test": "pnpm run typecheck",
+    "typecheck": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet build Firegrid.Durable.fsproj -v:q"
+  },
+  "dependencies": {
+    "@firegrid/log": "workspace:*",
+    "@s2-dev/streamstore": "0.24.1"
+  }
+}

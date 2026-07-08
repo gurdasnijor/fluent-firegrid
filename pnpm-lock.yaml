@@ -195,6 +195,31 @@ importers:
         specifier: 4.0.0-beta.87
         version: 4.0.0-beta.87
 
+  src/Firegrid.Durable:
+    dependencies:
+      '@firegrid/log':
+        specifier: workspace:*
+        version: link:../Firegrid.Log
+      '@s2-dev/streamstore':
+        specifier: 0.24.1
+        version: 0.24.1
+
+  src/Firegrid.Durable.Corpus:
+    dependencies:
+      '@firegrid/durable':
+        specifier: workspace:*
+        version: link:../Firegrid.Durable
+      '@firegrid/log':
+        specifier: workspace:*
+        version: link:../Firegrid.Log
+      '@s2-dev/streamstore':
+        specifier: 0.24.1
+        version: 0.24.1
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.0
+
   src/Firegrid.Foundation.Proofs:
     dependencies:
       '@firegrid/store':

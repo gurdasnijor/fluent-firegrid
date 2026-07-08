@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <AssemblyName>Firegrid.Examples</AssemblyName>
+    <RootNamespace>Firegrid</RootNamespace>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <DefineConstants>$(DefineConstants);FABLE_COMPILER</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Fable.Core" Version="5.1.0" />
+    <PackageReference Include="Fable.Promise" Version="3.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Firegrid.Durable/Firegrid.Durable.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Firegrid.fs" />
+    <Compile Include="GridExamples.fs" />
+  </ItemGroup>
+
+</Project>

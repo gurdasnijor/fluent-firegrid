@@ -25,3 +25,6 @@ repos/
 
 .verification-reports/
 .claude/worktrees/
+
+# T1 corpus scratch (side-channel files + per-law s2-lite roots)
+.corpus-scratch/

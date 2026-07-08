@@ -2,10 +2,19 @@
   <Folder Name="/src/Firegrid.Log/">
     <Project Path="src/Firegrid.Log/Firegrid.Log.fsproj" />
   </Folder>
+  <Folder Name="/src/Firegrid.Durable/">
+    <Project Path="src/Firegrid.Durable/Firegrid.Durable.fsproj" />
+  </Folder>
+  <Folder Name="/src/Firegrid.Durable.Corpus/">
+    <Project Path="src/Firegrid.Durable.Corpus/Firegrid.Durable.Corpus.fsproj" />
+  </Folder>
   <Folder Name="/src/Firegrid.Foundation.Proofs/">
     <Project Path="src/Firegrid.Foundation.Proofs/Firegrid.Foundation.Proofs.fsproj" />
   </Folder>
   <Folder Name="/src/Firegrid.Store/">
     <Project Path="src/Firegrid.Store/Firegrid.Store.fsproj" />
+  </Folder>
+  <Folder Name="/examples/firegrid/">
+    <Project Path="examples/firegrid/Firegrid.Examples.fsproj" />
   </Folder>
 </Solution>

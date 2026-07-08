@@ -16,8 +16,14 @@
 ///   7. Client                     — start, signal, cancel, observe
 ///   8. Logs & Projections         — stream-native reads
 ///   9. Errors                     — every failure is a value you can match
+///
+/// Mechanical ceremony (T1; no public name, parameter order, or type shape
+/// changed): the namespace is `rec` so the contract keeps its reading order
+/// while sections reference each other (e.g. `EntityDef.State` uses
+/// `ReadGrade` from section 9); `and` chains that followed a `module` are
+/// re-rooted as `type` (identical declarations, legal F#).
 /// ═══════════════════════════════════════════════════════════════════════
-namespace Firegrid.Durable
+namespace rec Firegrid.Durable
 
 open Firegrid.Log
 
@@ -88,7 +94,7 @@ module Step =
     /// process that only *calls* it. `Worker.implement` binds the body.
     let declare<'input, 'output> (name: string) : Step<'input, 'output> = notYet
 
-and Codecs<'i, 'o> = { EncodeIn: 'i -> string; DecodeIn: string -> 'i; EncodeOut: 'o -> string; DecodeOut: string -> 'o }
+type Codecs<'i, 'o> = { EncodeIn: 'i -> string; DecodeIn: string -> 'i; EncodeOut: 'o -> string; DecodeOut: string -> 'o }
 
 // ── 3. Signals — durable external events ──────────────────────────────────
 
@@ -127,6 +133,10 @@ type WorkflowBuilder() =
     member _.Return (x: 'a) : Workflow<'a> = notYet
     member _.ReturnFrom (m: Workflow<'a>) : Workflow<'a> = notYet
     member _.TryWith (m: Workflow<'a>, handler: exn -> Workflow<'a>) : Workflow<'a> = notYet
+    // Ceremony: `try/with` desugars against the *delayed* body, and this
+    // builder's Delay is guarded (returns the thunk) — so the compiler needs
+    // a thunk-shaped overload. Same operation, mechanical requirement.
+    member _.TryWith (m: unit -> Workflow<'a>, handler: exn -> Workflow<'a>) : Workflow<'a> = notYet
     member _.While (guard: unit -> bool, body: unit -> Workflow<unit>) : Workflow<unit> = notYet
     member _.Zero () : Workflow<unit> = notYet
     member _.Delay (f: unit -> Workflow<'a>) : unit -> Workflow<'a> = notYet               // program-as-data
@@ -167,7 +177,11 @@ module Workflow =
     /// Deterministic local computation (pure; NOT for effects — those are steps).
     let local (name: string) (compute: unit -> 'a) : Workflow<'a> = notYet
     /// Current time, captured deterministically (same value on replay).
-    let currentTime : Workflow<Timestamp> = notYet
+    /// (Skeleton body: this is a module-level *value* — a `notYet` here would
+    /// throw at JS module load and kill every consumer at import; the opaque
+    /// constructor defers the failure to consumption, which throws `notYet`
+    /// at the workflow builder like every other unimplemented path.)
+    let currentTime : Workflow<Timestamp> = Workflow ()
     /// Durable sleep until an instant.
     let sleepUntil (t: Timestamp) : Workflow<unit> = notYet
     /// Durable sleep for a span.
@@ -180,7 +194,7 @@ module Workflow =
     ///     Deadline  ^| Workflow.sleep (Duration.hours 48) ]
     let select (branches: SelectBranch<'tag> list) : Workflow<'tag> = notYet
 
-and SelectBranch<'tag> = internal SelectBranch of unit
+type SelectBranch<'tag> = internal SelectBranch of unit
 
 [<AutoOpen>]
 module SelectSyntax =
@@ -335,7 +349,7 @@ module Client =
 
 /// A sealed durable log: byte-faithful attach — recorded prefix, then live
 /// tail, then the terminal. One loop, no polling.
-and DurableLog =
+type DurableLog =
     member _.Attach () : AsyncSeq<LogEvent> = notYet
     member _.Append (data: string) : Async<unit> = notYet
 
@@ -350,7 +364,7 @@ module AsyncSeq =
     let pick (f: 't -> 'r option) (source: AsyncSeq<'t>) : Async<'r> = notYet
 
 /// A named fold over durable records — history views, indexes, dashboards.
-and Projection<'state> = internal Projection of unit
+type Projection<'state> = internal Projection of unit
 
 /// Read grades — you always know what staleness you're accepting:
 ///   Eventual  — local fold; may lag; the lag is data (View.Behind)
@@ -366,7 +380,7 @@ module Projection =
 
 /// A serializable predicate (CEL text) — persisted with the wait, evaluated
 /// on relevant state change, never a closure. Registration-time validated.
-and Cel = Cel of string
+type Cel = Cel of string
 
 [<RequireQualifiedAccess>]
 module Wait =
