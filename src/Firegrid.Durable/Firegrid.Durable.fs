@@ -28,10 +28,26 @@
 ///   • `DurableLog.Seal`         — a terminal was promised; nothing could seal
 ///   • `Append : Async<Version>` — `Through v` requires the writer to HOLD an ack
 ///   • `Step.terminal`           — `StepError.Terminal` was unreachable from handlers
+///
+/// Implementation ceremony (T1 green-making; no public name, parameter order,
+/// or member type shape changed — every delta is forced by Fable mechanics
+/// and flagged in the promotion PR):
+///   • contract types gained INTERNAL backing fields (records with `internal`
+///     fields; members unchanged) — a body cannot exist without state
+///   • `define`/`declare`/`attach` are `inline`: Fable erases generics, so
+///     the derived-codec type capture (`typeof<'t>`) must happen at the call
+///     site (spike/s0-ergonomics finding, T3)
+///   • `WireNameAttribute` is an abbreviation of `CompiledNameAttribute`:
+///     Fable erases custom attributes from reflection info entirely, and
+///     `CompiledName` is the one case-name pin its reflection honors
+///   • `DerivedInternal` (end of file) is public plumbing for the inline
+///     capture sites — F# requires inline-reachable code to be public; it is
+///     NOT part of the ratified surface
 /// ═══════════════════════════════════════════════════════════════════════
 namespace rec Firegrid.Durable
 
 open Firegrid.Log
+open Firegrid.Durable.Internal
 
 [<AutoOpen>]
 module private Impl =
@@ -46,15 +62,15 @@ module private Impl =
 ///     definition time
 ///   • union case NAMES are the wire format: renaming a case is a breaking
 ///     change, caught by golden-fixture tests, pinned with [<WireName>]
-type WireNameAttribute(name: string) =
-    inherit System.Attribute()
+type WireNameAttribute = Microsoft.FSharp.Core.CompiledNameAttribute
 
 /// A span of time for timeouts, timers, and delays.
 type Duration =
-    static member seconds (n: float) : Duration = notYet
-    static member minutes (n: float) : Duration = notYet
-    static member hours   (n: float) : Duration = notYet
-    static member days    (n: float) : Duration = notYet
+    internal { Ms: float }
+    static member seconds (n: float) : Duration = { Ms = n * 1_000.0 }
+    static member minutes (n: float) : Duration = { Ms = n * 60_000.0 }
+    static member hours   (n: float) : Duration = { Ms = n * 3_600_000.0 }
+    static member days    (n: float) : Duration = { Ms = n * 86_400_000.0 }
 
 /// Wall-clock instant (ms since epoch). `float` by doctrine (no int64).
 type Timestamp = float
@@ -79,34 +95,46 @@ type Retry =
 /// The name is two-segment ("service/handler"); it lands in journals and is
 /// the step's permanent identity.
 type Step<'input, 'output> =
+    internal
+        { StepName: string
+          EncIn: 'input -> string
+          DecIn: string -> 'input
+          EncOut: 'output -> string
+          DecOut: string -> 'output
+          RunFn: 'input -> Async<'output>
+          RegisterInto: RegBag -> RegBag }
+
     /// Call the step from a workflow. Journaled: executed at most once per
     /// workflow position; replay serves the recorded result.
-    member _.Call (input: 'input) : Workflow<'output> = notYet
+    member step.Call (input: 'input) : Workflow<'output> = Wiring.stepCall step NoRetry input
     /// Fire-and-forget from a workflow: journaled dispatch, the workflow does
     /// NOT wait for completion. (One-way delivery; failures surface in ops
     /// telemetry, not in the calling workflow.)
-    member _.Send (input: 'input) : Workflow<unit> = notYet
+    member step.Send (input: 'input) : Workflow<unit> = Wiring.stepSend step input
     /// As Call, with a retry policy.
-    member _.CallWith (retry: Retry) (input: 'input) : Workflow<'output> = notYet
+    member step.CallWith (retry: Retry) (input: 'input) : Workflow<'output> = Wiring.stepCall step retry input
 
-and Workflow<'a> = internal Workflow of unit // the durable-program type; built only by `workflow { }` and the members on Step/Signal/defs
+and Workflow<'a> = internal Workflow of WfNode<'a> // the durable-program type; built only by `workflow { }` and the members on Step/Signal/defs
 
 [<RequireQualifiedAccess>]
 module Step =
     /// Define a step: name + an ordinary async function. Serialization for
     /// 'input/'output is derived from the types.
-    let define (name: string) (run: 'input -> Async<'output>) : Step<'input, 'output> = notYet
+    let inline define (name: string) (run: 'input -> Async<'output>) : Step<'input, 'output> =
+        DerivedInternal.mkStep name run typeof<'input> typeof<'output>
     /// Define with pinned codecs, for types whose wire format must survive
     /// refactoring (see payload doctrine).
-    let defineWith (codecs: Codecs<'input, 'output>) (name: string) (run: 'input -> Async<'output>) : Step<'input, 'output> = notYet
+    let defineWith (codecs: Codecs<'input, 'output>) (name: string) (run: 'input -> Async<'output>) : Step<'input, 'output> =
+        Wiring.mkStepWith name run codecs
     /// Declare a step you don't implement here — share the contract with a
     /// process that only *calls* it. `Worker.implement` binds the body.
-    let declare<'input, 'output> (name: string) : Step<'input, 'output> = notYet
+    let inline declare<'input, 'output> (name: string) : Step<'input, 'output> =
+        DerivedInternal.declareStep name typeof<'input> typeof<'output>
     /// Mark a failure TERMINAL from inside a step implementation: raising the
     /// returned exception fails the step as `StepError.Terminal message`
     /// after this one attempt — retries are bypassed regardless of policy.
     /// (Ratified amendment: `Terminal` was otherwise unreachable.)
-    let terminal (message: string) : exn = notYet
+    let terminal (message: string) : exn = TerminalStepSignal message :> exn
 
 type Codecs<'i, 'o> = { EncodeIn: 'i -> string; DecodeIn: string -> 'i; EncodeOut: 'o -> string; DecodeOut: string -> 'o }
 
@@ -115,17 +143,23 @@ type Codecs<'i, 'o> = { EncodeIn: 'i -> string; DecodeIn: string -> 'i; EncodeOu
 /// A named, typed event a workflow can wait for and any process can send.
 /// Parked waits are journal state: they pin no process and survive restarts.
 type Signal<'payload> =
+    internal
+        { SignalName: string
+          SigEnc: 'payload -> string
+          SigDec: string -> 'payload }
+
     /// Wait for the signal, up to `timeout`. Returns `Error Timeout` — never
     /// throws — so timeout handling is ordinary `match!`.
-    member _.Await (timeout: Duration) : Workflow<Result<'payload, Timeout>> = notYet
+    member signal.Await (timeout: Duration) : Workflow<Result<'payload, Timeout>> = Wiring.signalAwaitTimeout signal timeout
     /// Wait forever (human-in-the-loop without a deadline).
-    member _.Await () : Workflow<'payload> = notYet
+    member signal.Await () : Workflow<'payload> = Wiring.signalAwait signal
 
 and Timeout = Timeout
 
 [<RequireQualifiedAccess>]
 module Signal =
-    let define<'payload> (name: string) : Signal<'payload> = notYet
+    let inline define<'payload> (name: string) : Signal<'payload> =
+        DerivedInternal.mkSignal name typeof<'payload>
 
 // ── 4. workflow { } — durable programs ────────────────────────────────────
 //
@@ -142,19 +176,19 @@ module Signal =
 //   return / return!                 // return! is stack-safe (guarded recursion)
 
 type WorkflowBuilder() =
-    member _.Bind (m: Workflow<'a>, f: 'a -> Workflow<'b>) : Workflow<'b> = notYet
-    member _.MergeSources (a: Workflow<'a>, b: Workflow<'b>) : Workflow<'a * 'b> = notYet   // and! = fan-out
-    member _.Return (x: 'a) : Workflow<'a> = notYet
-    member _.ReturnFrom (m: Workflow<'a>) : Workflow<'a> = notYet
-    member _.TryWith (m: Workflow<'a>, handler: exn -> Workflow<'a>) : Workflow<'a> = notYet
+    member _.Bind (m: Workflow<'a>, f: 'a -> Workflow<'b>) : Workflow<'b> = Wiring.bindW m f
+    member _.MergeSources (a: Workflow<'a>, b: Workflow<'b>) : Workflow<'a * 'b> = Wiring.mergeW a b   // and! = fan-out
+    member _.Return (x: 'a) : Workflow<'a> = Wiring.retW x
+    member _.ReturnFrom (m: Workflow<'a>) : Workflow<'a> = m
+    member _.TryWith (m: Workflow<'a>, handler: exn -> Workflow<'a>) : Workflow<'a> = Wiring.tryWithW (fun () -> m) handler
     // Ceremony: `try/with` desugars against the *delayed* body, and this
     // builder's Delay is guarded (returns the thunk) — so the compiler needs
     // a thunk-shaped overload. Same operation, mechanical requirement.
-    member _.TryWith (m: unit -> Workflow<'a>, handler: exn -> Workflow<'a>) : Workflow<'a> = notYet
-    member _.While (guard: unit -> bool, body: unit -> Workflow<unit>) : Workflow<unit> = notYet
-    member _.Zero () : Workflow<unit> = notYet
-    member _.Delay (f: unit -> Workflow<'a>) : unit -> Workflow<'a> = notYet               // program-as-data
-    member _.Run (f: unit -> Workflow<'a>) : Workflow<'a> = notYet
+    member _.TryWith (m: unit -> Workflow<'a>, handler: exn -> Workflow<'a>) : Workflow<'a> = Wiring.tryWithW m handler
+    member _.While (guard: unit -> bool, body: unit -> Workflow<unit>) : Workflow<unit> = Wiring.whileW guard body
+    member _.Zero () : Workflow<unit> = Wiring.retW ()
+    member _.Delay (f: unit -> Workflow<'a>) : unit -> Workflow<'a> = f                    // program-as-data
+    member _.Run (f: unit -> Workflow<'a>) : Workflow<'a> = f ()
 
 [<AutoOpen>]
 module Builder =
@@ -162,8 +196,17 @@ module Builder =
 
 /// A defined workflow: name + input/output types + the program.
 type WorkflowDef<'input, 'output> =
+    internal
+        { WfName: string
+          WfEncIn: 'input -> string
+          WfDecIn: string -> 'input
+          WfEncOut: 'output -> string
+          WfDecOut: string -> 'output
+          WfFactory: ('input -> Workflow<'output>) option
+          RegisterInto: RegBag -> RegBag }
+
     /// Start an instance. The id is the idempotency key: same id → same run.
-    member _.Start (client: Client) (input: 'input) (id: Id) : Async<Run<'output>> = notYet
+    member def.Start (client: Client) (input: 'input) (id: Id) : Async<Run<'output>> = Wiring.startRun def client input id
     /// Call as a durable child from a parent workflow; the parent waits for
     /// the child's result (journaled; survives both processes dying).
     member _.CallChild (input: 'input) : Workflow<'output> = notYet
@@ -182,38 +225,38 @@ type Eternal<'state> =
 [<RequireQualifiedAccess>]
 module Workflow =
     /// Define a workflow: two-segment name + the program as a function.
-    let define (name: string) (program: 'input -> Workflow<'output>) : WorkflowDef<'input, 'output> = notYet
+    let inline define (name: string) (program: 'input -> Workflow<'output>) : WorkflowDef<'input, 'output> =
+        DerivedInternal.mkWorkflow name program typeof<'input> typeof<'output>
     /// Declare without implementing (contract sharing; see Step.declare).
-    let declare<'input, 'output> (name: string) : WorkflowDef<'input, 'output> = notYet
+    let inline declare<'input, 'output> (name: string) : WorkflowDef<'input, 'output> =
+        DerivedInternal.declareWorkflow name typeof<'input> typeof<'output>
     /// An unbounded loop as generations: the program runs one generation and
     /// returns `ContinueAsNew state` to roll over with a fresh journal.
     let defineEternal (name: string) (generation: 'state -> Workflow<Eternal<'state>>) : WorkflowDef<'state, unit> = notYet
     /// Deterministic local computation (pure; NOT for effects — those are steps).
     let local (name: string) (compute: unit -> 'a) : Workflow<'a> = notYet
     /// Current time, captured deterministically (same value on replay).
-    /// (Skeleton body: this is a module-level *value* — a `notYet` here would
-    /// throw at JS module load and kill every consumer at import; the opaque
-    /// constructor defers the failure to consumption, which throws `notYet`
-    /// at the workflow builder like every other unimplemented path.)
-    let currentTime : Workflow<Timestamp> = Workflow ()
+    /// (Module-level *value*: constructed from the pre-initialized Internal
+    /// node so module initialization order cannot observe an unset binding.)
+    let currentTime : Workflow<Timestamp> = Workflow Node.currentTimeNode
     /// Durable sleep until an instant.
-    let sleepUntil (t: Timestamp) : Workflow<unit> = notYet
+    let sleepUntil (t: Timestamp) : Workflow<unit> = Wiring.sleepUntilW t
     /// Durable sleep for a span.
-    let sleep (d: Duration) : Workflow<unit> = notYet
+    let sleep (d: Duration) : Workflow<unit> = Wiring.sleepW d.Ms
     /// Fan-out: run all, wait for all, results in order.
-    let all (workflows: Workflow<'a> list) : Workflow<'a list> = notYet
+    let all (workflows: Workflow<'a> list) : Workflow<'a list> = Wiring.allW workflows
     /// Tagged race: first to finish wins; you match on YOUR union.
     ///   let! winner = Workflow.select [
     ///     Approved  ^| signal.Await ()
     ///     Deadline  ^| Workflow.sleep (Duration.hours 48) ]
-    let select (branches: SelectBranch<'tag> list) : Workflow<'tag> = notYet
+    let select (branches: SelectBranch<'tag> list) : Workflow<'tag> = Wiring.selectW branches
 
-type SelectBranch<'tag> = internal SelectBranch of unit
+type SelectBranch<'tag> = internal SelectBranch of WaitSpec<'tag>
 
 [<AutoOpen>]
 module SelectSyntax =
     /// Tag a branch for `Workflow.select`: `Approved ^| signal.Await ()`.
-    let (^|) (tag: 'a -> 'tag) (branch: Workflow<'a>) : SelectBranch<'tag> = notYet
+    let (^|) (tag: 'a -> 'tag) (branch: Workflow<'a>) : SelectBranch<'tag> = Wiring.branch tag branch
 
 // ── 5. Services — stateless durable request-response ─────────────────────
 //
@@ -291,9 +334,15 @@ type Decider<'command, 'event, 'state, 'reply> =
       Decide: Key -> 'command -> 'state -> 'reply * 'event list }
 
 type EntityDef<'command, 'event, 'state, 'reply> =
+    internal
+        { EntName: string
+          EntEncCmd: 'command -> string
+          EntDecReply: string -> 'reply
+          RegisterInto: RegBag -> RegBag }
+
     /// EXCLUSIVE handler, request-response: serialized per key; the reply is
     /// computed with exclusive state access and returned to the caller.
-    member _.Call (client: Client) (key: string) (command: 'command) : Async<'reply> = notYet
+    member entity.Call (client: Client) (key: string) (command: 'command) : Async<'reply> = Wiring.entityCall entity client key command
     /// EXCLUSIVE handler, fire-and-forget (the reply is discarded). Durable,
     /// deduplicated; any process may send — no locks, no ownership needed.
     member _.Send (client: Client) (key: string) (command: 'command) : Async<unit> = notYet
@@ -305,7 +354,8 @@ type EntityDef<'command, 'event, 'state, 'reply> =
 
 [<RequireQualifiedAccess>]
 module Entity =
-    let define (name: string) (decider: Decider<'command, 'event, 'state, 'reply>) : EntityDef<'command, 'event, 'state, 'reply> = notYet
+    let inline define (name: string) (decider: Decider<'command, 'event, 'state, 'reply>) : EntityDef<'command, 'event, 'state, 'reply> =
+        DerivedInternal.mkEntity name decider typeof<'command> typeof<'event> typeof<'reply>
 
 // ── 7. Worker — hosting ───────────────────────────────────────────────────
 //
@@ -314,50 +364,77 @@ module Entity =
 // between ticks). Liveness across workers: any live worker per namespace
 // keeps everything moving; parked work costs nothing.
 
-type Registration = internal Registration of unit
-type Worker = member _.Stop () : Async<unit> = notYet
+type Registration = internal Registration of (RegBag -> RegBag)
+
+type Worker =
+    internal { StopFn: unit -> Async<unit> }
+    member worker.Stop () : Async<unit> = worker.StopFn ()
 
 [<AutoOpen>]
 module Registrations =
     /// Register any definition — one word: `reg reserve`, `reg checkout`,
     /// `reg counter`. (Ships as overloads/SRTP, not obj.)
-    let reg (definition: obj) : Registration = notYet
+    let reg (definition: obj) : Registration = Wiring.regOf definition
 
 [<RequireQualifiedAccess>]
 module Worker =
     /// Bind a declared step/workflow to its implementation in THIS worker.
-    let implement (declaration: WorkflowDef<'i, 'o>) (program: 'i -> Workflow<'o>) : WorkflowDef<'i, 'o> = notYet
-    let implementStep (declaration: Step<'i, 'o>) (run: 'i -> Async<'o>) : Step<'i, 'o> = notYet
+    let implement (declaration: WorkflowDef<'i, 'o>) (program: 'i -> Workflow<'o>) : WorkflowDef<'i, 'o> =
+        Wiring.mkWorkflowDef
+            declaration.WfName
+            (Some program)
+            { EncodeIn = declaration.WfEncIn
+              DecodeIn = declaration.WfDecIn
+              EncodeOut = declaration.WfEncOut
+              DecodeOut = declaration.WfDecOut }
+    let implementStep (declaration: Step<'i, 'o>) (run: 'i -> Async<'o>) : Step<'i, 'o> =
+        Wiring.mkStepWith
+            declaration.StepName
+            run
+            { EncodeIn = declaration.EncIn
+              DecodeIn = declaration.DecIn
+              EncodeOut = declaration.EncOut
+              DecodeOut = declaration.DecOut }
     /// Run a namespace worker hosting these definitions. Returns the running
     /// worker (loop already started); `worker.Stop()` for graceful shutdown.
-    let run (basin: S2.Basin) (ns: string) (definitions: Registration list) : Async<Worker> = notYet
+    let run (basin: S2.Basin) (ns: string) (definitions: Registration list) : Async<Worker> = Wiring.runWorker basin ns definitions
 
 // ── 8. Client — start, signal, cancel, observe ────────────────────────────
 
 type Client =
+    internal { ClientBasin: S2.Basin }
+
     /// Everything below hangs off a connected client.
     member _.Logs (address: string list) : DurableLog = notYet
-    member _.Read (projection: Projection<'state>) (grade: ReadGrade) : Async<View<'state>> = notYet
+    member client.Read (projection: Projection<'state>) (grade: ReadGrade) : Async<View<'state>> = Wiring.readProjection client projection grade
 
 /// A handle to a running (or finished) workflow instance. Serializable:
 /// reconstruct with `Run.attach client id` from any process.
 and Run<'output> =
+    internal
+        { RunKey: string
+          RunBasin: S2.Basin
+          RunSource: string
+          mutable RunSeq: int
+          RunDecOut: string -> 'output }
+
     /// The result. Waits durably; follows ContinueAsNew generation chains.
-    member _.Result : Async<Result<'output, RunFailure>> = notYet
-    member _.Status : Async<RunStatus> = notYet
-    member _.Signal (signal: Signal<'p>) (payload: 'p) : Async<unit> = notYet
+    member run.Result : Async<Result<'output, RunFailure>> = Wiring.runResult run
+    member run.Status : Async<RunStatus> = Wiring.runStatus run
+    member run.Signal (signal: Signal<'p>) (payload: 'p) : Async<unit> = Wiring.runSignal run signal.SignalName (signal.SigEnc payload)
     /// Durable cancel: delivered at the workflow's next bind boundary as a
     /// catchable failure (compensate, then return), else → Cancelled terminal.
-    member _.Cancel () : Async<unit> = notYet
+    member run.Cancel () : Async<unit> = Wiring.runSignal run Node.cancelSignalName "null"
 
 and RunStatus = Running | Completed | Cancelled | Failed of StepError
 and RunFailure = FailedRun of StepError | CancelledRun
 
 [<RequireQualifiedAccess>]
 module Client =
-    let connect (basin: S2.Basin) : Client = notYet
+    let connect (basin: S2.Basin) : Client = { ClientBasin = basin }
     /// Reattach to an instance by id from anywhere.
-    let attach<'output> (client: Client) (id: Id) : Run<'output> = notYet
+    let inline attach<'output> (client: Client) (id: Id) : Run<'output> =
+        DerivedInternal.attach client id typeof<'output>
 
 // ── 9. Logs & Projections — stream-native reads ───────────────────────────
 
@@ -386,7 +463,8 @@ module AsyncSeq =
     let pick (f: 't -> 'r option) (source: AsyncSeq<'t>) : Async<'r> = notYet
 
 /// A named fold over durable records — history views, indexes, dashboards.
-type Projection<'state> = internal Projection of unit
+type Projection<'state> =
+    internal Projection of name: string * address: string list * initial: 'state * apply: ('state -> string -> 'state)
 
 /// Read grades — you always know what staleness you're accepting:
 ///   Eventual  — local fold; may lag; the lag is data (View.Behind)
@@ -398,7 +476,8 @@ and View<'state> = { State: 'state; AsOf: Version; Behind: float }
 
 [<RequireQualifiedAccess>]
 module Projection =
-    let define (name: string) (source: string list) (initial: 'state) (apply: 'state -> string -> 'state) : Projection<'state> = notYet
+    let define (name: string) (source: string list) (initial: 'state) (apply: 'state -> string -> 'state) : Projection<'state> =
+        Projection (name, source, initial, apply)
 
 /// A serializable predicate (CEL text) — persisted with the wait, evaluated
 /// on relevant state change, never a closure. Registration-time validated.
@@ -423,3 +502,446 @@ exception DurableCancelled
 /// Raised when a step exhausts retries / fails terminally and you didn't
 /// handle the Result-shaped variant. Catchable; carries the StepError.
 exception DurableStepFailed of StepError
+
+// ── Wiring (internal) ──────────────────────────────────────────────────────
+//
+// Glue between the contract types above and the Internal machinery: this is
+// where the L2 surface is lowered onto the L1 kernel. Internal helpers only;
+// nothing here is surface.
+
+module internal Wiring =
+    open Firegrid.Store.Foundation.Durable
+
+    module KD = Firegrid.Store.Foundation.Durable.Durable
+    module KApp = Firegrid.Store.Foundation.Durable.App.DurableApp
+    module KActivity = Firegrid.Store.Foundation.Durable.App.Activity
+    module KWorkflow = Firegrid.Store.Foundation.Durable.App.Workflow
+
+    /// The journaled terminal outcome of a run: what the `<instance>/out`
+    /// stream carries and `Run.Result`/`Run.Status` decode.
+    type WfOutcome =
+        | WOk of string
+        | WErr of StepError
+        | WCancelled
+
+    let private outcomeTy = typeof<WfOutcome>
+    let encodeOutcome (outcome: WfOutcome) : string = Codec.encodeWith outcomeTy (box outcome)
+    let decodeOutcome (text: string) : WfOutcome = Codec.decodeWith outcomeTy text |> unbox
+
+    // ── program lowering ──────────────────────────────────────────────────
+
+    let private cancelledExn () = DurableCancelled :> exn
+    let lowerNode<'a> (node: WfNode<'a>) : Durable<'a> = Node.lower cancelledExn node
+    let lowerW<'a> (Workflow node: Workflow<'a>) : Durable<'a> = lowerNode node
+
+    let retW<'a> (value: 'a) : Workflow<'a> = Workflow(NProg(KD.result value))
+
+    let bindW<'a, 'b> (m: Workflow<'a>) (f: 'a -> Workflow<'b>) : Workflow<'b> =
+        Workflow(NProg(lowerW m |> KD.bind (fun value -> lowerW (f value))))
+
+    let mergeW<'a, 'b> (a: Workflow<'a>) (b: Workflow<'b>) : Workflow<'a * 'b> =
+        Workflow(NProg(Fanout.pair (lowerW a) (lowerW b)))
+
+    let allW<'a> (workflows: Workflow<'a> list) : Workflow<'a list> =
+        Workflow(NProg(Fanout.all (workflows |> List.map lowerW)))
+
+    let tryWithW<'a> (body: unit -> Workflow<'a>) (handler: exn -> Workflow<'a>) : Workflow<'a> =
+        Workflow(NProg(Programs.catch (fun () -> lowerW (body ())) (fun error -> lowerW (handler error))))
+
+    let whileW (guard: unit -> bool) (body: unit -> Workflow<unit>) : Workflow<unit> =
+        Workflow(NProg(Programs.whileLoop guard (fun () -> lowerW (body ()))))
+
+    let sleepW (ms: float) : Workflow<unit> =
+        Workflow(
+            NWait
+                { NeedsNow = true
+                  Arity = 1
+                  Tasks = fun now -> [ RaceEvent(EventKey.Timer(now + int64 ms)) ]
+                  Project =
+                    fun baseIndex result ->
+                        match result with
+                        | EventWon(index, EventKey.Timer _, _) when index = baseIndex -> KD.result ()
+                        | other -> failwith ("sleep: unexpected race winner " + string other) }
+        )
+
+    let sleepUntilW (t: float) : Workflow<unit> =
+        Workflow(
+            NWait
+                { NeedsNow = false
+                  Arity = 1
+                  Tasks = fun _ -> [ RaceEvent(EventKey.Timer(int64 t)) ]
+                  Project =
+                    fun baseIndex result ->
+                        match result with
+                        | EventWon(index, EventKey.Timer _, _) when index = baseIndex -> KD.result ()
+                        | other -> failwith ("sleepUntil: unexpected race winner " + string other) }
+        )
+
+    let signalAwait<'p> (signal: Signal<'p>) : Workflow<'p> =
+        Workflow(
+            NWait
+                { NeedsNow = false
+                  Arity = 1
+                  Tasks = fun _ -> [ RaceEvent(EventKey.Signal signal.SignalName) ]
+                  Project =
+                    fun baseIndex result ->
+                        match result with
+                        | EventWon(index, EventKey.Signal _, payload) when index = baseIndex ->
+                            KD.result (signal.SigDec payload)
+                        | other -> failwith ("signal await: unexpected race winner " + string other) }
+        )
+
+    let signalAwaitTimeout<'p> (signal: Signal<'p>) (timeout: Duration) : Workflow<Result<'p, Timeout>> =
+        Workflow(
+            NWait
+                { NeedsNow = true
+                  Arity = 2
+                  Tasks =
+                    fun now ->
+                        [ RaceEvent(EventKey.Signal signal.SignalName)
+                          RaceEvent(EventKey.Timer(now + int64 timeout.Ms)) ]
+                  Project =
+                    fun baseIndex result ->
+                        match result with
+                        | EventWon(index, EventKey.Signal _, payload) when index = baseIndex ->
+                            KD.result (Ok(signal.SigDec payload))
+                        | EventWon(index, EventKey.Timer _, _) when index = baseIndex + 1 ->
+                            KD.result (Error Timeout)
+                        | other -> failwith ("signal await: unexpected race winner " + string other) }
+        )
+
+    let branch<'a, 'tag> (tag: 'a -> 'tag) (w: Workflow<'a>) : SelectBranch<'tag> =
+        match w with
+        | Workflow(NWait spec) -> SelectBranch(WaitSpec.map tag spec)
+        | Workflow(NProg _) ->
+            failwith
+                "Workflow.select: a branch must be a primitive wait (Signal.Await, Workflow.sleep, Workflow.sleepUntil)"
+
+    let selectW<'tag> (branches: SelectBranch<'tag> list) : Workflow<'tag> =
+        match branches with
+        | [] -> failwith "Workflow.select: no branches"
+        | _ ->
+            Workflow(NWait(WaitSpec.combine (branches |> List.map (fun (SelectBranch spec) -> spec))))
+
+    // ── steps ─────────────────────────────────────────────────────────────
+
+    let codecsFor<'i, 'o> (inTy: System.Type) (outTy: System.Type) : Codecs<'i, 'o> =
+        Codec.ensureWireSafe inTy
+        Codec.ensureWireSafe outTy
+
+        { EncodeIn = fun (value: 'i) -> Codec.encodeWith inTy (box value)
+          DecodeIn = fun text -> Codec.decodeWith inTy text |> unbox<'i>
+          EncodeOut = fun (value: 'o) -> Codec.encodeWith outTy (box value)
+          DecodeOut = fun text -> Codec.decodeWith outTy text |> unbox<'o> }
+
+    let mkStepWith<'i, 'o> (name: string) (run: 'i -> Async<'o>) (codecs: Codecs<'i, 'o>) : Step<'i, 'o> =
+        let handler =
+            StepWire.wrapHandler (fun payload ->
+                async {
+                    let! output = run (codecs.DecodeIn payload)
+                    return codecs.EncodeOut output
+                })
+
+        { StepName = name
+          EncIn = codecs.EncodeIn
+          DecIn = codecs.DecodeIn
+          EncOut = codecs.EncodeOut
+          DecOut = codecs.DecodeOut
+          RunFn = run
+          RegisterInto =
+            fun bag ->
+                { bag with
+                    App = KApp.addActivity (KActivity.define name handler) bag.App } }
+
+    let mkStep<'i, 'o> (name: string) (run: 'i -> Async<'o>) (inTy: System.Type) (outTy: System.Type) : Step<'i, 'o> =
+        mkStepWith name run (codecsFor inTy outTy)
+
+    let declareStep<'i, 'o> (name: string) (inTy: System.Type) (outTy: System.Type) : Step<'i, 'o> =
+        let declared (_: 'i) : Async<'o> =
+            async {
+                return
+                    failwith (
+                        "step '"
+                        + name
+                        + "' is declared here without a body; bind one with Worker.implementStep"
+                    )
+            }
+
+        mkStepWith name declared (codecsFor inTy outTy)
+
+    let private policyOf (retry: Retry) : StepPolicy =
+        match retry with
+        | NoRetry -> { A = 1; Ms = 0.0; F = 1.0 }
+        | Fixed(attempts, every) -> { A = attempts; Ms = every.Ms; F = 1.0 }
+        | Backoff(attempts, first, factor) -> { A = attempts; Ms = first.Ms; F = factor }
+
+    let stepCall<'i, 'o> (step: Step<'i, 'o>) (retry: Retry) (input: 'i) : Workflow<'o> =
+        let envelope = StepWire.encodeEnvelope { Pol = policyOf retry; P = step.EncIn input }
+        let activity: Activity = { Name = step.StepName; Input = envelope }
+
+        Workflow(
+            NProg(
+                Perform(
+                    activity,
+                    fun value ->
+                        match StepWire.decodeOutcome value with
+                        | SOk payload -> KD.result (step.DecOut payload)
+                        | SFail message -> raise (DurableStepFailed(StepError.Failed message))
+                        | STerm message -> raise (DurableStepFailed(StepError.Terminal message))
+                )
+            )
+        )
+
+    /// DELTA (documented in the promotion PR): the kernel's only call shape is
+    /// Perform (call + await completion), so Send is journaled dispatch that
+    /// still waits for handler completion before the next bind. True one-way
+    /// delivery is the K1 kernel packet.
+    let stepSend<'i, 'o> (step: Step<'i, 'o>) (input: 'i) : Workflow<unit> =
+        let envelope = StepWire.encodeEnvelope { Pol = policyOf NoRetry; P = step.EncIn input }
+        let activity: Activity = { Name = step.StepName; Input = envelope }
+        Workflow(NProg(Perform(activity, fun _ -> KD.result ())))
+
+    // ── workflow definitions ──────────────────────────────────────────────
+
+    let mkWorkflowDef<'i, 'o> (name: string) (factory: ('i -> Workflow<'o>) option) (codecs: Codecs<'i, 'o>) : WorkflowDef<'i, 'o> =
+        let register (bag: RegBag) : RegBag =
+            match factory with
+            | None ->
+                failwith (
+                    "workflow '"
+                    + name
+                    + "' is a declaration; bind an implementation with Worker.implement before registering"
+                )
+            | Some program ->
+                let build (raw: string) : Durable<string> =
+                    Programs.catch
+                        (fun () ->
+                            lowerW (program (codecs.DecodeIn raw))
+                            |> KD.map (fun output -> encodeOutcome (WOk(codecs.EncodeOut output))))
+                        (fun error ->
+                            match error with
+                            | DurableCancelled -> KD.result (encodeOutcome WCancelled)
+                            | DurableStepFailed stepError -> KD.result (encodeOutcome (WErr stepError))
+                            | other -> raise other)
+
+                { bag with
+                    App = KApp.addWorkflow (KWorkflow.defineWith name id id id id build) bag.App }
+
+        { WfName = name
+          WfEncIn = codecs.EncodeIn
+          WfDecIn = codecs.DecodeIn
+          WfEncOut = codecs.EncodeOut
+          WfDecOut = codecs.DecodeOut
+          WfFactory = factory
+          RegisterInto = register }
+
+    // ── runs (start, attach, observe) ─────────────────────────────────────
+
+    let startRun<'i, 'o> (def: WorkflowDef<'i, 'o>) (client: Client) (input: 'i) (Id key: Id) : Async<Run<'o>> =
+        async {
+            let! result =
+                DurableClient.startWith
+                    client.ClientBasin
+                    (InstanceId.create key)
+                    (WorkflowName.create def.WfName)
+                    (def.WfEncIn input)
+
+            match result with
+            | DurableClientStartStatus.Accepted _ -> ()
+            | DurableClientStartStatus.Failed failure -> failwith ("workflow start failed: " + string failure)
+
+            do! OutStream.ensure client.ClientBasin key
+
+            return
+                { RunKey = key
+                  RunBasin = client.ClientBasin
+                  RunSource = "run/" + Interop.entropy ()
+                  RunSeq = 0
+                  RunDecOut = def.WfDecOut }
+        }
+
+    let attachRun<'o> (client: Client) (Id key: Id) (outTy: System.Type) : Run<'o> =
+        { RunKey = key
+          RunBasin = client.ClientBasin
+          RunSource = "run/" + Interop.entropy ()
+          RunSeq = 0
+          RunDecOut = fun text -> Codec.decodeWith outTy text |> unbox<'o> }
+
+    let runResult<'o> (run: Run<'o>) : Async<Result<'o, RunFailure>> =
+        async {
+            let! body = OutStream.awaitOutcome run.RunBasin run.RunKey
+
+            return
+                match decodeOutcome body with
+                | WOk payload -> Ok(run.RunDecOut payload)
+                | WErr stepError -> Error(FailedRun stepError)
+                | WCancelled -> Error CancelledRun
+        }
+
+    let runStatus<'o> (run: Run<'o>) : Async<RunStatus> =
+        async {
+            let! body = OutStream.readOutcome run.RunBasin run.RunKey
+
+            return
+                match body with
+                | None -> Running
+                | Some text ->
+                    match decodeOutcome text with
+                    | WOk _ -> Completed
+                    | WErr stepError -> RunStatus.Failed stepError
+                    | WCancelled -> Cancelled
+        }
+
+    let runSignal<'o> (run: Run<'o>) (name: string) (payload: string) : Async<unit> =
+        async {
+            let seq = run.RunSeq
+            run.RunSeq <- run.RunSeq + 1
+
+            let! result =
+                DurableClient.raiseSignalFrom
+                    run.RunBasin
+                    (InstanceId.create run.RunKey)
+                    run.RunSource
+                    (int64 seq)
+                    name
+                    payload
+
+            match result with
+            | DurableClientSignalStatus.Accepted _ -> ()
+            | DurableClientSignalStatus.Failed failure -> failwith ("signal failed: " + string failure)
+        }
+
+    // ── signals ───────────────────────────────────────────────────────────
+
+    let mkSignal<'p> (name: string) (payloadTy: System.Type) : Signal<'p> =
+        Codec.ensureWireSafe payloadTy
+
+        { SignalName = name
+          SigEnc = fun (value: 'p) -> Codec.encodeWith payloadTy (box value)
+          SigDec = fun text -> Codec.decodeWith payloadTy text |> unbox<'p> }
+
+    // ── entities ──────────────────────────────────────────────────────────
+
+    let mkEntity<'c, 'e, 's, 'r>
+        (name: string)
+        (decider: Decider<'c, 'e, 's, 'r>)
+        (cmdTy: System.Type)
+        (evtTy: System.Type)
+        (replyTy: System.Type)
+        : EntityDef<'c, 'e, 's, 'r> =
+        Codec.ensureWireSafe cmdTy
+        Codec.ensureWireSafe evtTy
+        Codec.ensureWireSafe replyTy
+
+        let decCmd (text: string) : 'c = Codec.decodeWith cmdTy text |> unbox
+        let encEvt (value: 'e) = Codec.encodeWith evtTy (box value)
+        let decEvt (text: string) : 'e = Codec.decodeWith evtTy text |> unbox
+        let encReply (value: 'r) = Codec.encodeWith replyTy (box value)
+
+        let spec: EntityRuntimeSpec =
+            { Name = name
+              Initial = box decider.Initial
+              Evolve = fun state body -> box (decider.Evolve (unbox<'s> state) (decEvt body))
+              Decide =
+                fun key cmdBody state ->
+                    let reply, events = decider.Decide (Key key) (decCmd cmdBody) (unbox<'s> state)
+                    encReply reply, events |> List.map encEvt }
+
+        { EntName = name
+          EntEncCmd = fun (value: 'c) -> Codec.encodeWith cmdTy (box value)
+          EntDecReply = fun text -> Codec.decodeWith replyTy text |> unbox<'r>
+          RegisterInto = fun bag -> { bag with Entities = bag.Entities @ [ spec ] } }
+
+    let entityCall<'c, 'e, 's, 'r> (entity: EntityDef<'c, 'e, 's, 'r>) (client: Client) (key: string) (command: 'c) : Async<'r> =
+        async {
+            let basin = client.ClientBasin
+            do! basin |> S2.ensureStream (EntityRun.journalName entity.EntName key)
+            do! basin |> S2.ensureStream (EntityRun.inboxName entity.EntName key)
+            let source = "ec/" + Interop.entropy ()
+            do! EntityRun.submitCommand basin entity.EntName key source 0.0 (entity.EntEncCmd command)
+            let! replyBody = EntityRun.awaitReply basin entity.EntName key source 0.0
+            return entity.EntDecReply replyBody
+        }
+
+    // ── projections ───────────────────────────────────────────────────────
+
+    let readProjection<'s> (client: Client) (projection: Projection<'s>) (grade: ReadGrade) : Async<View<'s>> =
+        let (Projection(_, address, initial, apply)) = projection
+
+        match grade with
+        | Latest ->
+            async {
+                let streamName = String.concat "/" address
+                do! client.ClientBasin |> S2.ensureStream streamName
+                let stream = client.ClientBasin |> S2.stream streamName
+                let! tail = stream |> S2.checkTail
+
+                if tail.SeqNum <= 0L then
+                    return { State = initial; AsOf = Version 0.0; Behind = 0.0 }
+                else
+                    let! records = EntityRun.readAllRecords stream
+
+                    let state =
+                        records
+                        |> List.fold (fun acc (record: S2.ReadRecord) -> apply acc record.Body) initial
+
+                    return
+                        { State = state
+                          AsOf = Version(float tail.SeqNum)
+                          Behind = 0.0 }
+            }
+        | Eventual
+        | Through _ -> notYet // other packets' laws (three-read-grades) pin these
+
+    // ── worker ────────────────────────────────────────────────────────────
+
+    let regOf (definition: obj) : Registration =
+        let register = Interop.dynGet definition "RegisterInto"
+
+        if Interop.isNullish register then
+            failwith "reg: not a registrable definition (expected a Step/Workflow/Entity definition value)"
+        else
+            Registration(unbox<RegBag -> RegBag> register)
+
+    let runWorker (basin: S2.Basin) (_ns: string) (definitions: Registration list) : Async<Worker> =
+        async {
+            let bag =
+                (RegBag.empty, definitions)
+                ||> List.fold (fun acc (Registration register) -> register acc)
+
+            let stop = WorkerLoop.start basin bag
+            return { StopFn = stop }
+        }
+
+// ── Derived-codec capture plumbing ─────────────────────────────────────────
+//
+// PUBLIC only because F# requires everything an `inline` body touches to be
+// accessible at the call site (Fable erases generics, so the contract's
+// `define`/`declare`/`attach` capture `typeof<…>` inline and land here).
+// NOT part of the ratified surface — never call directly.
+[<System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)>]
+module DerivedInternal =
+    let mkStep<'i, 'o> (name: string) (run: 'i -> Async<'o>) (inTy: System.Type) (outTy: System.Type) : Step<'i, 'o> =
+        Wiring.mkStep name run inTy outTy
+
+    let declareStep<'i, 'o> (name: string) (inTy: System.Type) (outTy: System.Type) : Step<'i, 'o> =
+        Wiring.declareStep name inTy outTy
+
+    let mkSignal<'p> (name: string) (payloadTy: System.Type) : Signal<'p> = Wiring.mkSignal name payloadTy
+
+    let mkWorkflow<'i, 'o> (name: string) (program: 'i -> Workflow<'o>) (inTy: System.Type) (outTy: System.Type) : WorkflowDef<'i, 'o> =
+        Wiring.mkWorkflowDef name (Some program) (Wiring.codecsFor inTy outTy)
+
+    let declareWorkflow<'i, 'o> (name: string) (inTy: System.Type) (outTy: System.Type) : WorkflowDef<'i, 'o> =
+        Wiring.mkWorkflowDef name None (Wiring.codecsFor inTy outTy)
+
+    let mkEntity<'c, 'e, 's, 'r>
+        (name: string)
+        (decider: Decider<'c, 'e, 's, 'r>)
+        (cmdTy: System.Type)
+        (evtTy: System.Type)
+        (replyTy: System.Type)
+        : EntityDef<'c, 'e, 's, 'r> =
+        Wiring.mkEntity name decider cmdTy evtTy replyTy
+
+    let attach<'o> (client: Client) (id: Id) (outTy: System.Type) : Run<'o> = Wiring.attachRun client id outTy

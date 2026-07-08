@@ -15,9 +15,11 @@
 
   <ItemGroup>
     <ProjectReference Include="../Firegrid.Log/Firegrid.Log.fsproj" />
+    <ProjectReference Include="../Firegrid.Store/Firegrid.Store.fsproj" />
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="Internal.fs" />
     <Compile Include="Firegrid.Durable.fs" />
     <Compile Include="Examples.fs" />
   </ItemGroup>
