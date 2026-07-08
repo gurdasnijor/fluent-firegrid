@@ -78,17 +78,44 @@ module S2Substrate =
 
     let claim host pair = claimWith (FenceToken.create host) pair
 
+    /// Read the FULL log. A single S2 read returns at most one batch (1000
+    /// records) -- an unpaginated read silently truncates any journal past
+    /// that, which corrupts every consumer (mailbox cursor, replay history,
+    /// dispatch cursors). Paginate to the tail observed at entry.
     let readLogText decode (owned: OwnedKey) =
         async {
             try
-                let! records =
-                    owned.Log
-                    |> S2.readWith
-                        { S2.ReadOptions.empty with
-                            Start = Some(S2.FromSeqNum 0L)
-                            IgnoreCommandRecords = true }
+                let! tail = owned.Log |> S2.checkTail
 
-                return records |> List.map (fun record -> record.SeqNum, decode record.Body)
+                if tail.SeqNum <= 0L then
+                    return []
+                else
+                    let rec page (from: int64) acc =
+                        async {
+                            if from >= tail.SeqNum then
+                                return List.rev acc
+                            else
+                                let! records =
+                                    owned.Log
+                                    |> S2.readWith
+                                        { S2.ReadOptions.empty with
+                                            Start = Some(S2.FromSeqNum from)
+                                            Clamp = true
+                                            IgnoreCommandRecords = true }
+
+                                match List.rev records with
+                                | [] ->
+                                    // Only command records (fences/trims) remain.
+                                    return List.rev acc
+                                | (last: S2.ReadRecord) :: _ ->
+                                    let acc =
+                                        (acc, records)
+                                        ||> List.fold (fun state record -> (record.SeqNum, decode record.Body) :: state)
+
+                                    return! page (last.SeqNum + 1L) acc
+                        }
+
+                    return! page 0L []
             with error ->
                 match S2Errors.classify error with
                 | S2Errors.RangeNotSatisfiable _ -> return []
