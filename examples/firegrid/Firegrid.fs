@@ -26,6 +26,7 @@
 /// ═══════════════════════════════════════════════════════════════════════
 namespace Firegrid
 
+open Firegrid.Log // S2.Basin — the connection type in Grid.connect/serve
 open Firegrid.Durable
 
 [<AutoOpen>]

@@ -1,0 +1,10 @@
+# T1 golden wire fixture — the derived formats, pinned. Seeded from the
+# SPIKE-FINDINGS.md T3 evidence (spike/s0-ergonomics): records encode as
+# {"Field":…} in declaration order; unions encode case-NAME-tagged as
+# ["CaseName",…fields] (renaming a case is a wire-breaking change unless the
+# case is pinned with [<WireName "…">]); lists encode as arrays; Timestamp is
+# float. Editing this file after ratification is a gate.
+["Noted","hello wire"]
+["Tallied",2,"twice"]
+["Snapshotted",{"Total":3,"Tags":["a","b"]}]
+["legacy-name",1.5]
