@@ -39,6 +39,8 @@
     <Compile Include="Runner.fs" />
     <Compile Include="CorpusSupport.fs" />
     <Compile Include="CoreLawProofs.fs" />
+    <Compile Include="StreamLawProofs.fs" />
+    <Compile Include="FlowLawProofs.fs" />
     <Compile Include="HarnessKillDemoProof.fs" />
     <Compile Include="Registry.fs" />
     <Compile Include="Main.fs" />

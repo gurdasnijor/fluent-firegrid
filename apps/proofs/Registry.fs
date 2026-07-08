@@ -17,7 +17,11 @@ module Registry =
           CoreLawProofs.typedStepFailure
           CoreLawProofs.deterministicCurrentTime
           CoreLawProofs.statusAndResultQuery
+          FlowLawProofs.sagaCompensationAcrossKill
+          FlowLawProofs.recoverableCancellation
+          FlowLawProofs.declareImplementRoundtrip
           CoreLawProofs.andbangTeaching
+          StreamLawProofs.goldenWireFixtures
           CoreLawProofs.boundedLoopFlatStack ]
 
     let suites: SuiteSpec list =
@@ -31,4 +35,5 @@ module Registry =
     /// Child scenario hosts for the kill/zombie laws: this same compiled
     /// binary re-entered as `child <scenario>` (corpus Program.fs dispatch).
     let childScenarios: (string * (unit -> Async<int>)) list =
-        [ "replay-host", ReplayScenario.childHost ]
+        [ "replay-host", ReplayScenario.childHost
+          "saga-host", SagaScenario.childHost ]
