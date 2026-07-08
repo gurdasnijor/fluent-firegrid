@@ -25,7 +25,10 @@ type DurableHostTickOptions =
       MaxMailboxRecords: int
       MaxActivityCommands: int
       MaxTimerCommands: int
-      MaxDispatchCommands: int }
+      MaxDispatchCommands: int
+      /// How many due activity commands may execute concurrently within one
+      /// tick. Defaults to the whole due batch.
+      MaxConcurrentActivities: int }
 
 type DurableHostTickReport<'a> =
     { Key: StorageKey
@@ -94,7 +97,8 @@ module DurableHostTickOptions =
           MaxMailboxRecords = 100
           MaxActivityCommands = 100
           MaxTimerCommands = 100
-          MaxDispatchCommands = 100 }
+          MaxDispatchCommands = 100
+          MaxConcurrentActivities = System.Int32.MaxValue }
 
 [<RequireQualifiedAccess>]
 module DurableHost =
@@ -321,6 +325,7 @@ module DurableHost =
                     StepRecordCodec.encode
                     StepRecordCodec.decode
                     options.MaxActivityCommands
+                    options.MaxConcurrentActivities
                     activities
                     owned
 

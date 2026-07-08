@@ -430,6 +430,7 @@ module FoundationDurableDebtsProof =
                                         StepRecordCodec.encode
                                         StepRecordCodec.decode
                                         100
+                                        100
                                         activities
                                         childOwnedA
 
@@ -762,6 +763,7 @@ module FoundationDurableDebtsProof =
                         ActivityCommandAdapter.runOnce
                             StepRecordCodec.encode
                             StepRecordCodec.decode
+                            100
                             100
                             activities
                             ackedOwned
