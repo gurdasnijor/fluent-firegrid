@@ -74,6 +74,25 @@ Owner: Firegrid Architecture
     in-memory actor libs as invisible L1-shell plumbing and for ephemeral
     concurrency inside applications.
 
+12. **The Restate triad, adopted with one deliberate difference.**
+    Studied restatedev docs (services / virtual objects / workflows).
+    Adopted: **Service** as a named construct (stateless durable
+    request-response; semantically a workflow with an auto id — named
+    because "start here" semantics deserve a name); **entities are full
+    virtual objects**: `Decide` receives the key (`ctx.key`) and returns a
+    *reply* committed atomically with the events (Equinox
+    decide-with-result), `entity.Call` = exclusive request-response,
+    `entity.Send` = fire-and-forget, `entity.State grade` = shared handlers
+    with the consistency grade explicit (Restate's shared handlers leave it
+    implicit). The single-writer constraint is enforced below the API —
+    durable inbox admission + epoch fencing at commit — which holds across
+    host kills and split-brain (stronger than partition-ownership).
+    **Deliberate difference:** Restate fuses effectful multi-step logic
+    into exclusive object handlers; we keep `Decide` pure and route
+    multi-step keyed logic through a workflow the entity starts — compose,
+    don't fuse (replay-safety of entity state stays by-construction).
+    Recorded as a candidate future sugar if composition proves noisy.
+
 ## Stress-test findings (Restate tutorial; choreography-agent mapping)
 
 Adopted surface additions: `Step.declare`/`Workflow.declare` +
