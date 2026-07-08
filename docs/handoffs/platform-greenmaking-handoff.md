@@ -85,8 +85,14 @@ the work looks. The order below is the queue, not a menu.
    in `InternalChildren.fs`; ceremony precedents in PR #119/#121 bodies.
 
 Serial queue: G3 (finish ruling → merge, 17/22) → G2 (rebase → merge,
-20/22) → G4 (redispatch → merge, **22/22**). Each step fully lands — merged,
-main CI green — before the next begins.
+20/22) → G4 (redispatch → merge, **22/22**) → **A-final: repo-layout move
+(human-ruled 2026-07-08)**: proof/corpus code does NOT belong in `src/` —
+relocate `src/Firegrid.Durable.Corpus/` AND `src/Firegrid.Foundation.Proofs/`
+to a root-level `proofs/` tree (`src/` = product only). Mechanical but
+wide-touching (slnx, fsproj refs, CI paths, `targets.json` suite commands →
+new dist paths), which is why it is sequenced AFTER all in-flight branches
+merge — doing it earlier conflicts with every open packet. Each step fully
+lands — merged, main CI green — before the next begins.
 
 ### Operating rules that were learned the hard way (follow them)
 
