@@ -1,9 +1,9 @@
 # SDD: The Firegrid Platform — API Layers & Target Surfaces
 
 Doc-Class: sdd
-Status: draft — architect-authored; **pending human ratification** (nothing
-in the execution plan dispatches until ratified)
-Date: 2026-07-07
+Status: **active — ratified 2026-07-08** (contract: `src/Firegrid.Durable/`
++ `examples/firegrid/`, merged via PR #115; the T-plan is live)
+Date: 2026-07-08
 Owner: Firegrid Architecture
 Companions: [`api-layering-decisions.md`](./api-layering-decisions.md) (all
 rationale, rejected alternatives, and audit history — deliberately kept out
