@@ -201,6 +201,27 @@ lineage deliberately mirrors). Decided:
     reuse: in-memory actor libs as L1-shell plumbing (invisible) and freely
     inside L4 applications for ephemeral concurrency; never as the entity
     authoring contract.
+    **The "S2-backed mailbox platform" variant** (plugging S2 in under an
+    actor library's platform seam, e.g. Fable.Actor `Platform.fs`) was
+    evaluated and is understood precisely: the seam abstracts transport
+    between *live processes* and has no slots for the five things
+    durability consists of — state (closure-held, never crosses the seam ⇒
+    recovery = full re-execution with unjournaled duplicated effects),
+    identity (Pid = live process; no claim/fence vocabulary ⇒ split brain),
+    **selective receive** (skip-and-return is incompatible with a durable
+    FIFO without persisted skip sets — why durable systems use explicit
+    event keys, and why even BEAM/OTP has no durable actors: supervision
+    restarts with lost state and defers persistence to a store),
+    ref-correlated replies (assume a live caller; durable replies are
+    journaled results attached by id), and provenance-less sends
+    (at-least-once redelivery duplicates them). Threading those five
+    through the seam rebuilds `Processor`/`Mailbox`/`Host` — the kernel
+    *is* the S2 actor platform, with the authoring contract narrowed to
+    the programs recovery can honor. **Sanctioned as a possible L4
+    ecosystem utility:** durable-*delivery* actors — the actor programming
+    model over an S2 inbox for stateless/idempotent ephemeral consumers
+    (work queues, fan-in, adapter glue; at-least-once, no claims), a small
+    package over `client.Logs` + a cursor.
 
 #### Stress-test findings (2026-07-07 — Restate tutorial + choreography-agent mapping)
 
