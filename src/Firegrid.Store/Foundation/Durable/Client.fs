@@ -16,6 +16,7 @@ type DurableInstanceStatus =
     | InstanceRunning of WorkflowName
     | InstanceWaiting of WorkflowName * OpId * Need
     | InstanceCompleted of WorkflowName * Payload
+    | InstanceContinuedAsNew of WorkflowName * nextInput: Payload * next: InstanceId
 
 [<RequireQualifiedAccess>]
 type DurableClientFailure =
@@ -50,7 +51,7 @@ module DurableClient =
 
     let instanceKey instanceId = StorageKey(InstanceId.value instanceId)
 
-    let startWith basin instanceId workflowName input =
+    let private appendStart basin instanceId message =
         async {
             try
                 let key = instanceKey instanceId
@@ -59,12 +60,7 @@ module DurableClient =
 
                 let pair = S2Substrate.streams basin key
 
-                let envelope =
-                    { Source = startSource
-                      SourceSeqNum = 0L
-                      Message = StartWorkflow(workflowName, input) }
-
-                let! ack = S2Substrate.appendMailboxText [ "kind", "start" ] (MailboxEnvelopeCodec.encode envelope) pair
+                let! ack = S2Substrate.appendMailboxText [ "kind", "start" ] (MailboxEnvelopeCodec.encode message) pair
 
                 return
                     DurableClientStartStatus.Accepted
@@ -73,6 +69,29 @@ module DurableClient =
             with error ->
                 return DurableClientStartStatus.Failed(DurableClientFailure.StartAppendFailed error.Message)
         }
+
+    /// Append a StartWorkflow message with explicit provenance — the receiving
+    /// mailbox dedupes on (source, sourceSeqNum), so redelivery is harmless.
+    let startFrom basin instanceId source sourceSeqNum workflowName input =
+        appendStart
+            basin
+            instanceId
+            { Source = source
+              SourceSeqNum = sourceSeqNum
+              Message = StartWorkflow(workflowName, input) }
+
+    /// Append a child StartWorkflow carrying the parent binding; the child's
+    /// journal records WorkflowParent so its terminal result can be delivered.
+    let startChildFrom basin instanceId source sourceSeqNum workflowName input parent parentOpId =
+        appendStart
+            basin
+            instanceId
+            { Source = source
+              SourceSeqNum = sourceSeqNum
+              Message = StartChildWorkflow(workflowName, input, parent, parentOpId) }
+
+    let startWith basin instanceId workflowName input =
+        startFrom basin instanceId startSource 0L workflowName input
 
     let raiseSignalFrom basin instanceId source sourceSeqNum name payload =
         async {
@@ -167,9 +186,29 @@ module DurableClient =
                                 match DurableStepper.plan 0L history (factory input) with
                                 | Complete value ->
                                     DurableClientStatusRead.Succeeded(InstanceCompleted(workflowName, value))
+                                | Continued nextInput ->
+                                    DurableClientStatusRead.Succeeded(
+                                        InstanceContinuedAsNew(workflowName, nextInput, Generation.next instanceId)
+                                    )
                                 | Waiting(opId, need) ->
                                     DurableClientStatusRead.Succeeded(InstanceWaiting(workflowName, opId, need))
                                 | Commit _ -> DurableClientStatusRead.Succeeded(InstanceRunning workflowName)
             with error ->
                 return DurableClientStatusRead.Failed(DurableClientStatusFailure.StatusReadFailed error.Message)
         }
+
+    /// Status following the ContinueAsNew chain: hops generation pointers until
+    /// the live (non-continued) generation and reports its status. Terminates
+    /// because generation numbers strictly increase and an undispatched next
+    /// generation reads as InstanceNotFound.
+    let getStatusFollowingWith basin workflows instanceId =
+        let rec follow current =
+            async {
+                let! status = getStatusWith basin workflows current
+
+                match status with
+                | DurableClientStatusRead.Succeeded(InstanceContinuedAsNew(_, _, next)) -> return! follow next
+                | other -> return other
+            }
+
+        follow instanceId

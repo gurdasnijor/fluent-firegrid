@@ -95,7 +95,10 @@ module TimerCommandAdapter =
                                         | StartWorkflow _
                                         | RaiseSignal _
                                         | CompleteActivity _
-                                        | FireTimer _ -> state
+                                        | FireTimer _
+                                        | StartChildWorkflow _
+                                        | CompleteChild _
+                                        | AckSend _ -> state
 
                                     decodeRecords (record.SeqNum + 1L) state rest
                                 | Error error ->

@@ -29,6 +29,7 @@ module Program =
           FoundationCheckpointTrimSafetyProof.proof
           FoundationCheckpointRaceProof.proof
           FoundationDurableKernelProof.proof
+          FoundationDurableDebtsProof.proof
           FoundationTurnStreamProof.proof
           FoundationSessionLifecycleProof.proof
           FoundationResumeArtifactProof.proof

@@ -86,6 +86,9 @@ type DurableAppNeed =
     | TimerCancellation of count: int
     | CurrentTime
     | Log of message: string
+    | Send of name: string
+    | ChildWorkflow of workflow: string
+    | Rollover
 
 [<RequireQualifiedAccess>]
 type DurableAppWorkflowStatus =
@@ -93,6 +96,7 @@ type DurableAppWorkflowStatus =
     | Running of workflow: string
     | Waiting of workflow: string * need: DurableAppNeed
     | Completed of workflow: string * output: string
+    | ContinuedAsNew of workflow: string * next: InstanceId
     | Failed of DurableAppStatusFailure
 
 [<RequireQualifiedAccess>]
@@ -101,6 +105,7 @@ type DurableAppTypedWorkflowStatus<'output> =
     | Running
     | Waiting of DurableAppNeed
     | Completed of 'output
+    | ContinuedAsNew of next: InstanceId
     | Failed of DurableAppStatusFailure
 
 type DurableAppWorkerInstanceResult =
@@ -153,6 +158,9 @@ type DurableAppClient internal (runtime: DurableRuntime) =
         | NeedsTimerCancellation timers -> DurableAppNeed.TimerCancellation timers.Length
         | NeedsCurrentTime -> DurableAppNeed.CurrentTime
         | NeedsLog message -> DurableAppNeed.Log message
+        | NeedsSend activity -> DurableAppNeed.Send activity.Name
+        | NeedsChildWorkflow(workflow, _) -> DurableAppNeed.ChildWorkflow workflow
+        | NeedsRollover _ -> DurableAppNeed.Rollover
 
     static member private StatusFailure =
         function
@@ -171,6 +179,8 @@ type DurableAppClient internal (runtime: DurableRuntime) =
             DurableAppWorkflowStatus.Waiting(WorkflowName.value workflow, DurableAppClient.NeedSummary need)
         | DurableClientStatusRead.Succeeded(InstanceCompleted(workflow, payload)) ->
             DurableAppWorkflowStatus.Completed(WorkflowName.value workflow, payload)
+        | DurableClientStatusRead.Succeeded(InstanceContinuedAsNew(workflow, _, next)) ->
+            DurableAppWorkflowStatus.ContinuedAsNew(WorkflowName.value workflow, next)
         | DurableClientStatusRead.Failed failure ->
             DurableAppWorkflowStatus.Failed(DurableAppClient.StatusFailure failure)
 
@@ -205,6 +215,11 @@ type DurableAppClient internal (runtime: DurableRuntime) =
                 | Error failure -> DurableAppTypedWorkflowStatus.Failed failure
             else
                 DurableAppTypedWorkflowStatus.Failed(mismatch actual)
+        | DurableAppWorkflowStatus.ContinuedAsNew(actual, next) ->
+            if actual = expected then
+                DurableAppTypedWorkflowStatus.ContinuedAsNew next
+            else
+                DurableAppTypedWorkflowStatus.Failed(mismatch actual)
         | DurableAppWorkflowStatus.Failed failure -> DurableAppTypedWorkflowStatus.Failed failure
 
     member _.start (workflow: Workflow<'input, 'output>) (input: 'input) =
@@ -228,6 +243,14 @@ type DurableAppClient internal (runtime: DurableRuntime) =
     member _.status instanceId =
         async {
             let! result = runtime.Client.GetStatus instanceId
+            return DurableAppClient.WorkflowStatus result
+        }
+
+    /// Status following the ContinueAsNew generation chain to the live
+    /// generation.
+    member _.statusFollowing instanceId =
+        async {
+            let! result = runtime.Client.GetStatusFollowing instanceId
             return DurableAppClient.WorkflowStatus result
         }
 
@@ -343,6 +366,22 @@ module Durable =
     let currentTime = Firegrid.Store.Foundation.Durable.Workflow.currentTime
 
     let log = Firegrid.Store.Foundation.Durable.Workflow.log
+
+    /// Journaled fire-and-forget: dispatch the activity, never await it.
+    let send (activity: Activity<'input, 'output>) (input: 'input) =
+        Firegrid.Store.Foundation.Durable.Workflow.send (ActivityName.value activity.Name) (activity.EncodeInput input)
+
+    /// Durable child workflow: journaled start, parent parks until the child's
+    /// terminal result is delivered back.
+    let callChild (workflow: Workflow<'input, 'output>) (input: 'input) =
+        Firegrid.Store.Foundation.Durable.Workflow.callChild
+            (WorkflowName.value workflow.Name)
+            (workflow.EncodeInput input)
+        |> Firegrid.Store.Foundation.Durable.Durable.map workflow.DecodeOutput
+
+    /// Terminal generation rollover carrying the next generation's input.
+    let continueAsNew (workflow: Workflow<'input, 'output>) (input: 'input) =
+        Firegrid.Store.Foundation.Durable.Workflow.continueAsNew (workflow.EncodeInput input)
 
 [<RequireQualifiedAccess>]
 module DurableStorage =
@@ -485,7 +524,9 @@ module DurableApp =
 
     let private activityReportActive (report: ActivityCommandAdapterReport) =
         not (List.isEmpty report.Completed)
+        || not (List.isEmpty report.Sent)
         || report.AlreadyPublished > 0
+        || report.AlreadySent > 0
         || report.Ignored > 0
         || checkpointed report.Checkpoint
 
@@ -495,6 +536,15 @@ module DurableApp =
         || report.Canceled > 0
         || report.Ignored > 0
         || checkpointed report.Checkpoint
+
+    let private childStartReportActive (report: ChildStartAdapterReport) =
+        not (List.isEmpty report.Dispatched) || checkpointed report.Checkpoint
+
+    let private childResultReportActive (report: ChildResultAdapterReport) =
+        not (List.isEmpty report.Delivered) || checkpointed report.Checkpoint
+
+    let private generationReportActive (report: GenerationAdapterReport) =
+        not (List.isEmpty report.Dispatched) || checkpointed report.Checkpoint
 
     let private tickReportActive (report: DurableHostTickReport<Payload>) =
         match report.Inbox with
@@ -511,12 +561,22 @@ module DurableApp =
                     | _ ->
                         match report.Timers with
                         | Some timer when timerReportActive timer -> true
-                        | _ -> false
+                        | _ ->
+                            match report.ChildStarts with
+                            | Some childStart when childStartReportActive childStart -> true
+                            | _ ->
+                                match report.ChildResults with
+                                | Some childResult when childResultReportActive childResult -> true
+                                | _ ->
+                                    match report.Generations with
+                                    | Some generation when generationReportActive generation -> true
+                                    | _ -> false
 
     let private tickActive =
         function
         | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Advanced report) -> tickReportActive report
         | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Completed(_, report))
+        | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.ContinuedAsNew(_, report))
         | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Waiting(_, _, report))
         | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Deposed(_, report))
         | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Failed(_, report)) -> tickReportActive report

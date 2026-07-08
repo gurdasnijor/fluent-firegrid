@@ -44,6 +44,40 @@ module InstanceId =
 
     let value (InstanceId value) = value
 
+/// Generation-aware instance identity for ContinueAsNew rollover. Generation 0
+/// is the bare instance id; generation N > 0 is "<base>/gen/<N>". Each
+/// generation is a fresh instance (fresh stream pair, fresh journal), so prior
+/// generations are never replayed.
+[<RequireQualifiedAccess>]
+module Generation =
+    let private separator = "/gen/"
+
+    let parse (InstanceId value) : string * int =
+        let index = value.LastIndexOf separator
+
+        if index < 0 then
+            value, 0
+        else
+            let suffix = value.Substring(index + separator.Length)
+
+            match System.Int32.TryParse suffix with
+            | true, number when number > 0 -> value.Substring(0, index), number
+            | _ -> value, 0
+
+    let baseId instanceId = parse instanceId |> fst |> InstanceId
+
+    let number instanceId = parse instanceId |> snd
+
+    let next instanceId =
+        let basePart, generation = parse instanceId
+        InstanceId(basePart + separator + string (generation + 1))
+
+/// Deterministic child instance identity: a child started at the parent's
+/// OpId N lives at "<parent>/child/<N>" — stable across replay by construction.
+[<RequireQualifiedAccess>]
+module ChildInstance =
+    let idFor (InstanceId parent) (OpId opId) = InstanceId(parent + "/child/" + string opId)
+
 [<RequireQualifiedAccess>]
 module ActivityRegistry =
     let empty = ActivityRegistry Map.empty

@@ -13,6 +13,7 @@ type DurableHostFailure =
 [<RequireQualifiedAccess>]
 type DurableHostStatus<'a> =
     | Completed of 'a
+    | ContinuedAsNew of nextInput: Payload
     | Committed of S2.AppendAck
     | Waiting of OpId * Need
     | Deposed of expectedFence: string
@@ -23,7 +24,8 @@ type DurableHostTickOptions =
       Timestamp: int64
       MaxMailboxRecords: int
       MaxActivityCommands: int
-      MaxTimerCommands: int }
+      MaxTimerCommands: int
+      MaxDispatchCommands: int }
 
 type DurableHostTickReport<'a> =
     { Key: StorageKey
@@ -32,7 +34,10 @@ type DurableHostTickReport<'a> =
       Step: DurableHostStatus<'a> option
       Signals: SignalDeliveryReport option
       Activities: ActivityCommandAdapterReport option
-      Timers: TimerCommandAdapterReport option }
+      Timers: TimerCommandAdapterReport option
+      ChildStarts: ChildStartAdapterReport option
+      ChildResults: ChildResultAdapterReport option
+      Generations: GenerationAdapterReport option }
 
 and SignalDelivery =
     { Source: string
@@ -54,10 +59,14 @@ type DurableHostTickFailure =
     | SignalFailed of DurableHostFailure
     | ActivityFailed of ActivityCommandAdapterFailure
     | TimerFailed of TimerCommandAdapterFailure
+    | ChildStartFailed of ChildStartAdapterFailure
+    | ChildResultFailed of ChildResultAdapterFailure
+    | GenerationFailed of GenerationAdapterFailure
 
 [<RequireQualifiedAccess>]
 type DurableHostTickStatus<'a> =
     | Completed of value: 'a * report: DurableHostTickReport<'a>
+    | ContinuedAsNew of nextInput: Payload * report: DurableHostTickReport<'a>
     | Waiting of opId: OpId * need: Need * report: DurableHostTickReport<'a>
     | Advanced of DurableHostTickReport<'a>
     | Deposed of expectedFence: string * report: DurableHostTickReport<'a>
@@ -84,7 +93,8 @@ module DurableHostTickOptions =
           Timestamp = timestamp
           MaxMailboxRecords = 100
           MaxActivityCommands = 100
-          MaxTimerCommands = 100 }
+          MaxTimerCommands = 100
+          MaxDispatchCommands = 100 }
 
 [<RequireQualifiedAccess>]
 module DurableHost =
@@ -95,7 +105,10 @@ module DurableHost =
           Step = None
           Signals = None
           Activities = None
-          Timers = None }
+          Timers = None
+          ChildStarts = None
+          ChildResults = None
+          Generations = None }
 
     let private decodeLog decoded =
         let rec loop records =
@@ -130,6 +143,7 @@ module DurableHost =
 
                         match DurableStepper.plan timestamp history program with
                         | Complete value -> return DurableHostStatus.Completed value
+                        | Continued nextInput -> return DurableHostStatus.ContinuedAsNew nextInput
                         | Waiting(opId, need) -> return DurableHostStatus.Waiting(opId, need)
                         | Commit _ as plan ->
                             let! commit = DurableStepper.commit encode owned plan
@@ -155,7 +169,9 @@ module DurableHost =
 
     let private activitiesMadeProgress (report: ActivityCommandAdapterReport) =
         not (List.isEmpty report.Completed)
+        || not (List.isEmpty report.Sent)
         || report.AlreadyPublished > 0
+        || report.AlreadySent > 0
         || report.Ignored > 0
         || match report.Checkpoint with
            | CommandDispatchCheckpointResult.Checkpointed _ -> true
@@ -168,6 +184,14 @@ module DurableHost =
         || report.AlreadyPublished > 0
         || report.Canceled > 0
         || report.Ignored > 0
+        || match report.Checkpoint with
+           | CommandDispatchCheckpointResult.Checkpointed _ -> true
+           | CommandDispatchCheckpointResult.NotRequired
+           | CommandDispatchCheckpointResult.Deposed _
+           | CommandDispatchCheckpointResult.Failed _ -> false
+
+    let private childStartsMadeProgress (report: ChildStartAdapterReport) =
+        not (List.isEmpty report.Dispatched)
         || match report.Checkpoint with
            | CommandDispatchCheckpointResult.Checkpointed _ -> true
            | CommandDispatchCheckpointResult.NotRequired
@@ -206,7 +230,10 @@ module DurableHost =
                 | RaiseSignal(name, payload) -> Some(envelope.Source, envelope.SourceSeqNum, name, payload)
                 | StartWorkflow _
                 | CompleteActivity _
-                | FireTimer _ -> None
+                | FireTimer _
+                | StartChildWorkflow _
+                | CompleteChild _
+                | AckSend _ -> None
             | _ -> None)
 
     let private tryDeliverSignal owned step =
@@ -282,6 +309,7 @@ module DurableHost =
     let private runAdapters
         (options: DurableHostTickOptions)
         (activities: ActivityRegistry)
+        basin
         (owned: OwnedKey)
         (mailboxReport: MailboxReport)
         (step: DurableHostStatus<'a>)
@@ -316,21 +344,103 @@ module DurableHost =
                     return
                         DurableHostTickStatus.Failed(DurableHostTickFailure.TimerFailed failure, reportAfterActivities)
                 | TimerCommandAdapterStatus.Processed timerReport ->
-                    let report =
+                    let reportAfterTimers =
                         { reportAfterActivities with
                             Timers = Some timerReport }
 
-                    match step with
-                    | DurableHostStatus.Waiting(opId, need) when
-                        not (mailboxMadeProgress mailboxReport)
-                        && not (activitiesMadeProgress activityReport)
-                        && not (timersMadeProgress timerReport)
-                        ->
-                        return DurableHostTickStatus.Waiting(opId, need, report)
-                    | _ -> return DurableHostTickStatus.Advanced report
+                    let! childStart =
+                        ChildStartAdapter.runOnce
+                            StepRecordCodec.encode
+                            StepRecordCodec.decode
+                            options.MaxDispatchCommands
+                            basin
+                            owned
+
+                    match childStart with
+                    | ChildStartAdapterStatus.Deposed expected ->
+                        return DurableHostTickStatus.Deposed(expected, reportAfterTimers)
+                    | ChildStartAdapterStatus.Failed failure ->
+                        return
+                            DurableHostTickStatus.Failed(
+                                DurableHostTickFailure.ChildStartFailed failure,
+                                reportAfterTimers
+                            )
+                    | ChildStartAdapterStatus.Processed childStartReport ->
+                        let report =
+                            { reportAfterTimers with
+                                ChildStarts = Some childStartReport }
+
+                        match step with
+                        | DurableHostStatus.Waiting(opId, need) when
+                            not (mailboxMadeProgress mailboxReport)
+                            && not (activitiesMadeProgress activityReport)
+                            && not (timersMadeProgress timerReport)
+                            && not (childStartsMadeProgress childStartReport)
+                            ->
+                            return DurableHostTickStatus.Waiting(opId, need, report)
+                        | _ -> return DurableHostTickStatus.Advanced report
         }
 
-    let runOwnedTick options activities (owned: OwnedKey) program =
+    /// A completed instance with a WorkflowParent binding must deliver its
+    /// terminal result to the parent: commit the DeliverChildResult command
+    /// once (fenced), then dispatch it (checkpointed, receiver-deduped). Both
+    /// halves are idempotent, so a kill anywhere is recovered by the next tick.
+    let private deliverChildResult options basin (owned: OwnedKey) value report =
+        async {
+            let! ensured = ChildResultAdapter.ensureCommand StepRecordCodec.encode StepRecordCodec.decode owned value
+
+            match ensured with
+            | ChildResultCommandStatus.Deposed expected -> return Error(DurableHostTickStatus.Deposed(expected, report))
+            | ChildResultCommandStatus.Failed failure ->
+                return Error(DurableHostTickStatus.Failed(DurableHostTickFailure.ChildResultFailed failure, report))
+            | ChildResultCommandStatus.NotChild -> return Ok report
+            | ChildResultCommandStatus.AlreadyCommitted
+            | ChildResultCommandStatus.Committed _ ->
+                let! dispatched =
+                    ChildResultAdapter.runOnce
+                        StepRecordCodec.encode
+                        StepRecordCodec.decode
+                        options.MaxDispatchCommands
+                        basin
+                        owned
+
+                match dispatched with
+                | ChildResultAdapterStatus.Deposed expected ->
+                    return Error(DurableHostTickStatus.Deposed(expected, report))
+                | ChildResultAdapterStatus.Failed failure ->
+                    return
+                        Error(DurableHostTickStatus.Failed(DurableHostTickFailure.ChildResultFailed failure, report))
+                | ChildResultAdapterStatus.Processed childResultReport ->
+                    return
+                        Ok
+                            { report with
+                                ChildResults = Some childResultReport }
+        }
+
+    /// A rolled-over instance must dispatch the next generation's deduped
+    /// start before reporting terminal ContinuedAsNew.
+    let private dispatchNextGeneration options basin (owned: OwnedKey) report =
+        async {
+            let! generation =
+                GenerationAdapter.runOnce
+                    StepRecordCodec.encode
+                    StepRecordCodec.decode
+                    options.MaxDispatchCommands
+                    basin
+                    owned
+
+            match generation with
+            | GenerationAdapterStatus.Deposed expected -> return Error(DurableHostTickStatus.Deposed(expected, report))
+            | GenerationAdapterStatus.Failed failure ->
+                return Error(DurableHostTickStatus.Failed(DurableHostTickFailure.GenerationFailed failure, report))
+            | GenerationAdapterStatus.Processed generationReport ->
+                return
+                    Ok
+                        { report with
+                            Generations = Some generationReport }
+        }
+
+    let runOwnedTick options activities basin (owned: OwnedKey) program =
         async {
             let initial = emptyTickReport owned
 
@@ -361,9 +471,20 @@ module DurableHost =
                 | DurableHostStatus.Deposed expected -> return DurableHostTickStatus.Deposed(expected, reportAfterStep)
                 | DurableHostStatus.Failed failure ->
                     return DurableHostTickStatus.Failed(DurableHostTickFailure.StepFailed failure, reportAfterStep)
-                | DurableHostStatus.Completed value -> return DurableHostTickStatus.Completed(value, reportAfterStep)
+                | DurableHostStatus.Completed value ->
+                    let! delivered = deliverChildResult options basin owned value reportAfterStep
+
+                    match delivered with
+                    | Error status -> return status
+                    | Ok report -> return DurableHostTickStatus.Completed(value, report)
+                | DurableHostStatus.ContinuedAsNew nextInput ->
+                    let! dispatched = dispatchNextGeneration options basin owned reportAfterStep
+
+                    match dispatched with
+                    | Error status -> return status
+                    | Ok report -> return DurableHostTickStatus.ContinuedAsNew(nextInput, report)
                 | DurableHostStatus.Committed _ ->
-                    return! runAdapters options activities owned mailboxReport step reportAfterStep
+                    return! runAdapters options activities basin owned mailboxReport step reportAfterStep
                 | DurableHostStatus.Waiting _ ->
                     let! signal = tryDeliverSignal owned step
 
@@ -378,6 +499,7 @@ module DurableHost =
                             runAdapters
                                 options
                                 activities
+                                basin
                                 owned
                                 mailboxReport
                                 step
@@ -399,10 +521,10 @@ module DurableHost =
                             )
         }
 
-    let claimAndRunTick options activities pair program =
+    let claimAndRunTick options activities basin pair program =
         async {
             let! owned = S2Substrate.claim options.HostId pair
-            return! runOwnedTick options activities owned program
+            return! runOwnedTick options activities basin owned program
         }
 
     let private startedWorkflow decode owned =
@@ -422,7 +544,7 @@ module DurableHost =
                 return Error(DurableWorkflowHostFailure.LogReadFailed error.Message)
         }
 
-    let runWorkflowTick options workflows activities owned =
+    let runWorkflowTick options workflows activities basin owned =
         async {
             let! startFold =
                 Mailbox.runOnce
@@ -449,12 +571,12 @@ module DurableHost =
                     | Error error ->
                         return DurableWorkflowHostStatus.Failed(DurableWorkflowHostFailure.LogReadFailed(string error))
                     | Ok factory ->
-                        let! tick = runOwnedTick options activities owned (factory input)
+                        let! tick = runOwnedTick options activities basin owned (factory input)
                         return DurableWorkflowHostStatus.Ticked tick
         }
 
-    let claimAndRunWorkflowTick options workflows activities pair =
+    let claimAndRunWorkflowTick options workflows activities basin pair =
         async {
             let! owned = S2Substrate.claim options.HostId pair
-            return! runWorkflowTick options workflows activities owned
+            return! runWorkflowTick options workflows activities basin owned
         }

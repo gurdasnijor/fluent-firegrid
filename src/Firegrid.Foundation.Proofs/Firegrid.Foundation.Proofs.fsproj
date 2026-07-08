@@ -39,6 +39,7 @@
     <Compile Include="FoundationCheckpointTrimSafetyProof.fs" />
     <Compile Include="FoundationCheckpointRaceProof.fs" />
     <Compile Include="FoundationDurableKernelProof.fs" />
+    <Compile Include="FoundationDurableDebtsProof.fs" />
     <Compile Include="FoundationTurnStreamProof.fs" />
     <Compile Include="FoundationSessionLifecycleProof.fs" />
     <Compile Include="FoundationResumeArtifactProof.fs" />

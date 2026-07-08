@@ -92,8 +92,11 @@ module Mailbox =
         function
         | CompleteActivity(opId, value) -> [ ActivityCompleted(opId, value) ]
         | FireTimer(opId, _) -> [ TimerFired opId ]
+        | CompleteChild(opId, output) -> [ ChildWorkflowCompleted(opId, output) ]
         | StartWorkflow _
-        | RaiseSignal _ -> []
+        | StartChildWorkflow _
+        | RaiseSignal _
+        | AckSend _ -> []
 
     let private recordsFor mailboxSeqNum (envelope: MailboxEnvelope) =
         let events = eventsFor envelope.Message
@@ -103,9 +106,14 @@ module Mailbox =
         let startRecords =
             match envelope.Message with
             | StartWorkflow(name, input) -> [ Incoming(WorkflowStarted(name, input)) ]
+            | StartChildWorkflow(name, input, parent, parentOpId) ->
+                [ Incoming(WorkflowStarted(name, input))
+                  Incoming(WorkflowParent(parent, parentOpId)) ]
             | RaiseSignal _
             | CompleteActivity _
-            | FireTimer _ -> []
+            | FireTimer _
+            | CompleteChild _
+            | AckSend _ -> []
 
         let accepted: MailboxAdmittedMessage =
             { MailboxSeqNum = mailboxSeqNum

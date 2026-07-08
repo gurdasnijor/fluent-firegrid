@@ -7,12 +7,19 @@ type StepCommand =
     | ScheduleTimer of OpId * deadline: int64
     | CancelTimer of OpId
     | WriteLog of OpId * message: string
+    | SendActivity of OpId * Activity
+    | CallChildWorkflow of OpId * workflow: string * input: Payload
+    | DeliverChildResult of parent: string * parentOpId: OpId * output: Payload
+    | StartNextGeneration of OpId * nextInput: Payload
 
 type MailboxMessage =
     | StartWorkflow of WorkflowName * Payload
     | RaiseSignal of name: string * payload: Payload
     | CompleteActivity of OpId * Payload
     | FireTimer of OpId * deadline: int64
+    | StartChildWorkflow of WorkflowName * input: Payload * parent: string * parentOpId: OpId
+    | CompleteChild of OpId * output: Payload
+    | AckSend of OpId
 
 type MailboxEnvelope =
     { Source: string
@@ -21,6 +28,7 @@ type MailboxEnvelope =
 
 type StepRecord =
     | WorkflowStarted of WorkflowName * Payload
+    | WorkflowParent of parent: string * parentOpId: OpId
     | HistoryEvent of Event
     | Command of StepCommand
     | SignalDelivered of source: string * sourceSeqNum: int64 * opId: OpId
@@ -33,6 +41,7 @@ type StepPlan<'a> =
     | Complete of 'a
     | Commit of HistoryEntry<StepRecord> list
     | Waiting of OpId * Need
+    | Continued of nextInput: Payload
 
 type StepCommitResult =
     | StepCommitted of S2.AppendAck
@@ -63,6 +72,23 @@ module DurableStepper =
 
     let private hasTimerCanceled opId history = History.timerCanceled opId history
 
+    let private hasActivitySent opId activity history =
+        events history
+        |> List.exists (function
+            | ActivitySent(id, sent) when id = opId && sent = activity -> true
+            | _ -> false)
+
+    let private hasChildCall opId workflow input history =
+        events history
+        |> List.exists (function
+            | ChildWorkflowCalled(id, calledWorkflow, calledInput) when
+                id = opId && calledWorkflow = workflow && calledInput = input
+                ->
+                true
+            | _ -> false)
+
+    let private hasContinuedAsNew opId history = History.continuedAsNew opId history
+
     let private history event = Incoming(HistoryEvent event)
 
     let private command cmd = Outgoing(Command cmd)
@@ -83,6 +109,18 @@ module DurableStepper =
 
     let private logRecords opId message =
         [ history (LogEmitted(opId, message)); command (WriteLog(opId, message)) ]
+
+    let private sendRecords opId activity =
+        [ history (ActivitySent(opId, activity))
+          command (SendActivity(opId, activity)) ]
+
+    let private childRecords opId workflow input =
+        [ history (ChildWorkflowCalled(opId, workflow, input))
+          command (CallChildWorkflow(opId, workflow, input)) ]
+
+    let private rolloverRecords opId nextInput =
+        [ history (WorkflowContinuedAsNew(opId, nextInput))
+          command (StartNextGeneration(opId, nextInput)) ]
 
     let private missingForTask history (opId, task) =
         match task with
@@ -136,10 +174,26 @@ module DurableStepper =
                 []
             else
                 logRecords opId message
+        | NeedsSend requested ->
+            if hasActivitySent opId requested history then
+                []
+            else
+                sendRecords opId requested
+        | NeedsChildWorkflow(workflow, input) ->
+            if hasChildCall opId workflow input history then
+                []
+            else
+                childRecords opId workflow input
+        | NeedsRollover nextInput ->
+            if hasContinuedAsNew opId history then
+                []
+            else
+                rolloverRecords opId nextInput
 
     let plan timestamp history program =
         match Durable.replay history program with
         | Done value -> Complete value
+        | ContinuedAsNew nextInput -> Continued nextInput
         | Blocked(opId, need) ->
             match missingForNeed timestamp history opId need with
             | [] -> Waiting(opId, need)
@@ -164,5 +218,6 @@ module DurableStepper =
                     | Deposed expected -> StepDeposed expected
                     | CommitFailed failure -> StepCommitFailed failure
             | Complete _
-            | Waiting _ -> return StepNotRequired
+            | Waiting _
+            | Continued _ -> return StepNotRequired
         }

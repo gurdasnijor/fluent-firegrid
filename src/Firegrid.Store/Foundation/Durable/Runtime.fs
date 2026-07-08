@@ -9,6 +9,7 @@ type DurableRuntimeOptions =
       MaxMailboxRecords: int
       MaxActivityCommands: int
       MaxTimerCommands: int
+      MaxDispatchCommands: int
       MaxRunUntilIdleTicks: int }
 
 type DurableRuntimeClient =
@@ -16,7 +17,8 @@ type DurableRuntimeClient =
       StartWith: InstanceId -> WorkflowName -> Payload -> Async<DurableClientStartStatus>
       RaiseSignal: InstanceId -> string -> Payload -> Async<DurableClientSignalStatus>
       RaiseSignalWith: InstanceId -> int64 -> string -> Payload -> Async<DurableClientSignalStatus>
-      GetStatus: InstanceId -> Async<DurableClientStatusRead> }
+      GetStatus: InstanceId -> Async<DurableClientStatusRead>
+      GetStatusFollowing: InstanceId -> Async<DurableClientStatusRead> }
 
 type DurableRuntimeHost =
     { RunOnce: InstanceId -> Async<DurableWorkflowHostStatus>
@@ -40,6 +42,7 @@ module DurableRuntimeOptions =
           MaxMailboxRecords = 100
           MaxActivityCommands = 100
           MaxTimerCommands = 100
+          MaxDispatchCommands = 100
           MaxRunUntilIdleTicks = 100 }
 
 [<RequireQualifiedAccess>]
@@ -55,12 +58,14 @@ module DurableRuntime =
           Timestamp = options.Timestamp()
           MaxMailboxRecords = options.MaxMailboxRecords
           MaxActivityCommands = options.MaxActivityCommands
-          MaxTimerCommands = options.MaxTimerCommands }
+          MaxTimerCommands = options.MaxTimerCommands
+          MaxDispatchCommands = options.MaxDispatchCommands }
 
     let private shouldStop =
         function
         | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Advanced _) -> false
         | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Completed _)
+        | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.ContinuedAsNew _)
         | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Waiting _)
         | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Deposed _)
         | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Failed _)
@@ -82,7 +87,7 @@ module DurableRuntime =
                 let key = DurableClient.instanceKey instanceId
                 do! S2Substrate.ensureStreams basin key
                 let pair = S2Substrate.streams basin key
-                return! DurableHost.claimAndRunWorkflowTick (tickOptions options) workflows activities pair
+                return! DurableHost.claimAndRunWorkflowTick (tickOptions options) workflows activities basin pair
             }
 
         let runUntilIdleWith maxTicks instanceId =
@@ -126,7 +131,8 @@ module DurableRuntime =
               RaiseSignalWith =
                 fun instanceId sourceSeqNum name payload ->
                     DurableClient.raiseSignalFrom basin instanceId signalSource sourceSeqNum name payload
-              GetStatus = DurableClient.getStatusWith basin workflows }
+              GetStatus = DurableClient.getStatusWith basin workflows
+              GetStatusFollowing = DurableClient.getStatusFollowingWith basin workflows }
           Host =
             { RunOnce = runOnce
               RunUntilIdle = runUntilIdleWith options.MaxRunUntilIdleTicks
