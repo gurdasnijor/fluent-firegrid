@@ -446,11 +446,16 @@ module internal Node =
 
 /// String-typed entity runtime: the contract's Wiring closes the Decider's
 /// generics into these closures at define time.
+/// `Drive` is the key's admission pass, self-passed (G2: the full
+/// virtual-object drive lives in `InternalEntity.fs`, which compiles after
+/// this file — the field lets the worker loop dispatch to it without a
+/// forward reference).
 type internal EntityRuntimeSpec =
     { Name: string
       Initial: obj
       Evolve: obj -> string -> obj // state, encoded event → state
-      Decide: string -> string -> obj -> string * string list } // key, encoded cmd, state → encoded reply, encoded events
+      Decide: string -> string -> obj -> string * string list // key, encoded cmd, state → encoded reply, encoded events
+      Drive: EntityRuntimeSpec -> S2.Basin -> string -> Async<bool> } // one admission pass for one key; true = made progress
 
 type internal RegBag =
     { App: DurableApp
@@ -842,7 +847,7 @@ module internal WorkerLoop =
                         match bag.Entities |> List.tryFind (fun spec -> key.StartsWith(spec.Name + "/")) with
                         | Some spec ->
                             let entityKey = key.Substring(spec.Name.Length + 1)
-                            let! entityActive = EntityRun.drive spec basin entityKey
+                            let! entityActive = spec.Drive spec basin entityKey
                             if entityActive then active <- true
                         | None ->
                             let! workflowActive = driveWorkflow key
