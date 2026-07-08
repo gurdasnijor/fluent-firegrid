@@ -487,15 +487,37 @@ module internal EntityRun =
         record.Headers |> List.exists (fun (hk, hv) -> hk = key && hv = value)
 
     /// Full contents of a stream (empty when the stream has no records yet).
+    /// checkTail-guarded (no 416 reads on empty streams) and PAGINATED — a
+    /// single S2 read returns at most one batch (1000 records).
     let readAllRecords (stream: S2.Stream) : Async<S2.ReadRecord list> =
         async {
             try
-                return!
-                    stream
-                    |> S2.readWith
-                        { S2.ReadOptions.empty with
-                            Start = Some(S2.FromSeqNum 0L)
-                            IgnoreCommandRecords = true }
+                let! tail = stream |> S2.checkTail
+
+                if tail.SeqNum <= 0L then
+                    return []
+                else
+                    let rec page (from: int64) acc =
+                        async {
+                            if from >= tail.SeqNum then
+                                return List.rev acc
+                            else
+                                let! records =
+                                    stream
+                                    |> S2.readWith
+                                        { S2.ReadOptions.empty with
+                                            Start = Some(S2.FromSeqNum from)
+                                            Clamp = true
+                                            IgnoreCommandRecords = true }
+
+                                match List.rev records with
+                                | [] -> return List.rev acc // only command records remain
+                                | (last: S2.ReadRecord) :: _ ->
+                                    let acc = (acc, records) ||> List.fold (fun state record -> record :: state)
+                                    return! page (last.SeqNum + 1L) acc
+                        }
+
+                    return! page 0L []
             with error ->
                 match S2Errors.classify error with
                 | S2Errors.RangeNotSatisfiable _ -> return []
@@ -641,17 +663,25 @@ module internal OutStream =
     let private readAttempt (basin: S2.Basin) (key: string) : Async<Result<string option, exn>> =
         async {
             try
-                let! records =
-                    basin
-                    |> S2.stream (outName key)
-                    |> S2.readWith
-                        { S2.ReadOptions.empty with
-                            Start = Some(S2.FromSeqNum 0L)
-                            Count = Some 1
-                            Clamp = true
-                            IgnoreCommandRecords = true }
+                // checkTail first: polling an EMPTY stream must not issue a
+                // read at all (a 416 per poll; under load the SDK has leaked
+                // one as an unhandled rejection, killing the process).
+                let stream = basin |> S2.stream (outName key)
+                let! tail = stream |> S2.checkTail
 
-                return Ok(records |> List.tryHead |> Option.map (fun record -> record.Body))
+                if tail.SeqNum <= 0L then
+                    return Ok None
+                else
+                    let! records =
+                        stream
+                        |> S2.readWith
+                            { S2.ReadOptions.empty with
+                                Start = Some(S2.FromSeqNum 0L)
+                                Count = Some 1
+                                Clamp = true
+                                IgnoreCommandRecords = true }
+
+                    return Ok(records |> List.tryHead |> Option.map (fun record -> record.Body))
             with error ->
                 match S2Errors.classify error with
                 | S2Errors.RangeNotSatisfiable _ -> return Ok None
@@ -725,28 +755,71 @@ module internal WorkerLoop =
         let mutable finished = false
         let written = System.Collections.Generic.HashSet<string>()
 
+        // REAL workflow progress only. The kernel's own idle detection counts
+        // adapter checkpoints as progress, and the activity/timer adapters
+        // re-checkpoint whenever the OTHER adapter's checkpoint record lands
+        // past their cursor — mutual ping-pong, so `runUntilIdle` never
+        // idles: it spins its full tick budget on every parked instance and
+        // bloats the journal with checkpoint records (observed: 52k records
+        // for 55 loop iterations). We drive `runOnce` ourselves and continue
+        // only on mailbox folds, step commits, signal deliveries, executed
+        // activities, or fired timers.
+        let realProgress (report: DurableHostTickReport<Payload>) =
+            (match report.Inbox with
+             | Some inbox -> inbox.Commit.IsSome
+             | None -> false)
+            || (match report.Step with
+                | Some(DurableHostStatus.Committed _) -> true
+                | _ -> false)
+            || (match report.Signals with
+                | Some signals -> signals.Delivered.IsSome
+                | None -> false)
+            || (match report.Activities with
+                | Some activities -> not (List.isEmpty activities.Completed)
+                | None -> false)
+            || (match report.Timers with
+                | Some timers -> not (List.isEmpty timers.Published)
+                | None -> false)
+
         let driveWorkflow (key: string) : Async<bool> =
             async {
-                let! ticks = worker.runUntilIdle (InstanceId.create key)
+                let instanceId = InstanceId.create key
+                let mutable keepTicking = true
+                let mutable budget = 300
+                let mutable active = false
+                let mutable completion = None
 
-                let active =
-                    ticks
-                    |> List.exists (function
-                        | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Advanced _) -> true
-                        | _ -> false)
+                while keepTicking && budget > 0 && not stopRequested do
+                    budget <- budget - 1
+                    let! tick = worker.runOnce instanceId
 
-                let completion =
-                    ticks
-                    |> List.tryPick (function
-                        | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Completed(value, _)) -> Some value
-                        | _ -> None)
+                    match tick with
+                    | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Completed(value, _)) ->
+                        completion <- Some value
+                        // Already-recorded completions are idle, not progress:
+                        // a finished instance must not hot-loop the worker.
+                        if not (written.Contains key) then
+                            active <- true
+
+                        keepTicking <- false
+                    | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Advanced report) ->
+                        if realProgress report then
+                            active <- true
+                        else
+                            keepTicking <- false
+                    | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Waiting _)
+                    | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Deposed _)
+                    | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Failed _)
+                    | DurableWorkflowHostStatus.Deposed _
+                    | DurableWorkflowHostStatus.Failed _ -> keepTicking <- false
 
                 match completion with
                 | Some payload when not (written.Contains key) ->
                     do! OutStream.writeOnce basin key payload
                     written.Add key |> ignore
-                    return true
-                | _ -> return active
+                | _ -> ()
+
+                return active
             }
 
         let pass () =
