@@ -46,7 +46,60 @@ parallel completions; adapters' mutual re-checkpointing counted as progress
 so `runUntilIdle` never idles (worked around in L2 — kernel cleanup still
 owed, see Phase B).
 
-## HALTED in flight — resume exactly here (Phase A: finish 22/22)
+## PHASE 0 — get the house in order (human directive 2026-07-08; PRECEDES everything below)
+
+The verification estate is fragmented and partly wrong-shaped: `apps/proofs`
+is TS (in an F#/Fable codebase), F# proofs sit in `src/` next to product
+code (`src/Firegrid.Foundation.Proofs/`, `src/Firegrid.Durable.Corpus/`),
+and proof styles vary from black-box corpus laws to white-box kernel pokes.
+Phase 0 unifies ALL of it, serially:
+
+**0.1 — Rebuild `apps/proofs` as the single F#/Fable verification harness.**
+Guideline: `~/gurdasnijor/eff-firegrid/docs/proof-runner-proposal.md` (a
+full SDD; its "Prior Art" section literally names this repo's apps/proofs —
+the shape is coming home in F#). Working MVP to port from:
+`~/gurdasnijor/eff-firegrid/src/Proofs/` (~8k lines: `Proof/Property/
+ProofBuilder` CE declarations, `Runner/Registry/Reports` with trial roots +
+`report.json`, `S2Lite`/`ProcessHost` runner-owned resources with readiness
++ `KillHost` faults, `Expect`/`TraceSql`/`TraceProof`/`Verification` —
+OTel-span JSONL evidence queried through chdb, read-only normalized,
+negative controls first-class). Port selectively and Fable-adapt; this repo
+already has a chdb driver (`packages/trace`). Keep the ratchet exactly as
+is: the new runner emits the `targets.json` JSONL protocol per suite —
+`targets.json` stays the scoreboard, `report.json` becomes the evidence.
+
+**0.2 — Migrate the 22 corpus laws black-box style.** Inspiration:
+https://github.com/s2-streamstore/s2-verification (drive ONLY public
+surfaces; collect operation histories; verify from evidence, not in-process
+asserts; linearizability via model checking — their constant-space
+hash-chain state machine is the direct template for upgrading
+`t1.entity-exclusive-serialization` from result-equality to
+history-checking). The laws already import only `Firegrid.Durable` — the
+migration is re-expression as `property { workload …; verify … }` with
+trace-backed evidence + a negative control per family (a green proof must
+also demonstrably fail under a known-bad variant).
+
+**0.3 — Migrate the kernel proofs** (`src/Firegrid.Foundation.Proofs/` —
+turn streams, checkpoint, lifecycle, wake path, durable kernel, K1 debts,
+K2 parallelism) into the harness; re-express through public module surfaces
+where possible; whatever is legitimately white-box is still declared in the
+harness tree, never in `src/`.
+
+**0.4 — Retire or migrate the legacy TS proofs** in today's `apps/proofs`
+(wave-era store/substrate/l1 proofs): migrate the load-bearing lineage
+(live-fencing et al.), retire the superseded, record dispositions.
+
+**0.5 — `src/` becomes product-only** (subsumes the earlier A-final layout
+ruling): `Firegrid.Durable.Corpus` and `Firegrid.Foundation.Proofs` dissolve
+into the rebuilt `apps/proofs`; slnx/CI/`targets.json` suite commands
+repointed.
+
+Phase 0 exit criteria: one harness, one authoring shape, every existing
+green law re-expressed and still green (the ratchet catches any silent
+loss — a migrated law that stops running = manifest drift = red CI), `src/`
+contains only product code.
+
+## Phase A (AFTER Phase 0) — land the halted in-flight implementations
 
 The human stopped all agents. Their branches are pushed and intact. The old
 session's agent ids are dead — **dispatch fresh agents (worktree isolation)
@@ -85,14 +138,12 @@ the work looks. The order below is the queue, not a menu.
    in `InternalChildren.fs`; ceremony precedents in PR #119/#121 bodies.
 
 Serial queue: G3 (finish ruling → merge, 17/22) → G2 (rebase → merge,
-20/22) → G4 (redispatch → merge, **22/22**) → **A-final: repo-layout move
-(human-ruled 2026-07-08)**: proof/corpus code does NOT belong in `src/` —
-relocate `src/Firegrid.Durable.Corpus/` AND `src/Firegrid.Foundation.Proofs/`
-to a root-level `proofs/` tree (`src/` = product only). Mechanical but
-wide-touching (slnx, fsproj refs, CI paths, `targets.json` suite commands →
-new dist paths), which is why it is sequenced AFTER all in-flight branches
-merge — doing it earlier conflicts with every open packet. Each step fully
-lands — merged, main CI green — before the next begins.
+20/22) → G4 (redispatch → merge, **22/22**) Each step fully lands — merged, main CI green — before the next begins.
+(The earlier A-final layout ruling is SUBSUMED by Phase 0.5.) NOTE: the
+G2/G3 implementation code (`InternalEntity.fs`, `InternalStreams.fs`) is
+product code and survives Phase 0 untouched; their three-laws-each get
+re-expressed in the new harness during 0.2, and the branches then rebase
+and land verified by the migrated laws.
 
 ### Operating rules that were learned the hard way (follow them)
 
