@@ -200,6 +200,16 @@ for ev in (client.Logs [ "agent"; sid; "turns"; tid ]).Attach() do render ev
 let! history = client.Read sessionHistoryFold ReadGrade.Eventual
 ```
 
+**Loop discipline (the framework-standard rule):** bounded loops recurse
+in-instance — guarded `Delay` + the iterative Stepper keep the stack flat,
+and a few hundred journal records replay cheaply. Unbounded loops must
+**`ContinueAsNew`** (return a new-generation value carrying state; the
+journal resets per generation — the DF/Temporal history-cap discipline).
+This architecture has the generation structure built in: each *turn* is its
+own instance and the *session* is a checkpointed entity, so session-level
+unboundedness never accumulates in any single journal; only a marathon
+single turn rolls over explicitly every N iterations.
+
 Two structural properties fall out for free: a parked wait is journal state
 (no process pinned; the sweep + wake floor guarantees resume), and the
 journal *is* the trace — including the hours a session was suspended with
@@ -294,7 +304,7 @@ resumes at the frontier. An L3 author never sees any of it.
 | WP | Deliverable | Gate |
 | --- | --- | --- |
 | T0 | Ratchet: manifest runner + strict target suite in CI (F# + TS runners) | None (mechanical) |
-| T1 | `Firegrid.Durable` skeleton + red corpus + prose companion. Corpus: replay determinism across a host kill; fan-out/fan-in; races (incl. tagged `select`); signal to a parked workflow across restart; durable timer across restart; entity op serialization; typed step failure; deterministic `currentTime`; status/result query; log attach (byte-faithful, prefix→tail→terminal); entity table state (no double-apply; fenced stale writer); three read grades; CEL table wait; saga compensation across a mid-compensation kill; recoverable cancellation; declare/implement round-trip; child spawn; `and!`-vs-`let!` teaching test; golden wire fixtures | **Human ratifies** |
+| T1 | `Firegrid.Durable` skeleton + red corpus + prose companion. Corpus: replay determinism across a host kill; fan-out/fan-in; races (incl. tagged `select`); signal to a parked workflow across restart; durable timer across restart; entity op serialization; typed step failure; deterministic `currentTime`; status/result query; log attach (byte-faithful, prefix→tail→terminal); entity table state (no double-apply; fenced stale writer); three read grades; CEL table wait; saga compensation across a mid-compensation kill; recoverable cancellation; declare/implement round-trip; child spawn; `and!`-vs-`let!` teaching test; golden wire fixtures; **eternal workflow** (`ContinueAsNew` rolls the generation: state carried, prior journal not replayed, bounded-history law); bounded-loop flat-stack under Fable | **Human ratifies** |
 | T2 | Reference-app red corpus (the worked example above) against L2 — the platform's integration acceptance | **Human ratifies** |
 | T3 | Harness-adapter contract as plain TS + red fixture-replay corpus | **Human ratifies** |
 | T4 | **(Dormant)** Fable emission + `@firegrid/durable` plain-TS wrapper + TS corpus mirror — scheduled only when a TS consumer (e.g. agent-ui) is prioritized | **Human schedules + ratifies** |
