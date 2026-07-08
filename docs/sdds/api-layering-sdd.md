@@ -28,7 +28,7 @@ application.
 
 **The primary interface is an F#/Fable library** — `Firegrid.Durable`, the
 curated public API over the kernel, authored and consumed in idiomatic F#
-(the `durable { }` CE is the orchestration surface). TypeScript is a
+(the `workflow { }` CE is the orchestration surface). TypeScript is a
 **future cross-compilation target**: every L3 module stays Fable-green so a
 `@firegrid/durable` emission + thin plain-TS wrapper can ship when a TS
 consumer is prioritized — a build decision then, not a rewrite.
@@ -41,7 +41,7 @@ consumer is prioritized — a build decision then, not a rewrite.
        · agent-ui (TS — consumes the future emission)
         │
  L3  Firegrid.Durable — THE platform library (F#/Fable, public API)
-       activities · orchestrations (durable { }) · entities
+       activities · orchestrations (workflow { }) · entities
        · timers/signals · log attach · projections · table state & waits
         │
         ├─ FUTURE: Fable emission seam → @firegrid/durable (plain-TS wrapper)
@@ -67,35 +67,63 @@ consumer is prioritized — a build decision then, not a rewrite.
 ### L3 — `Firegrid.Durable` (the platform library)
 
 Idiomatic F# per the evaluation SDD: `Async` + `Result` + DU-typed errors,
-zero S2 or codec assembly required of the consumer, EffSharp-free, and
-**Fable-green as a standing build gate** (the TS option must never rot).
-The kernel's `durable { }` CE is the orchestration authoring surface;
-`Firegrid.Durable` curates it together with host, client, entity-state, and
-read primitives into the platform's one public API. Indicative shape (T1's
-corpus refines and freezes it):
+zero S2 assembly required of the consumer, EffSharp-free, and **Fable-green
+as a standing build gate** (the TS option must never rot). The authoring
+surface is the `workflow { }` CE over the kernel's program-as-data monad
+(the kernel's `durable { }` builder re-exported; the old name kept as a
+deprecated alias). Indicative shape (T1's corpus refines and freezes it):
 
 ```fsharp
 open Firegrid.Durable   // the platform's one public API
 
-// Host side (Pulsar-style): register functions, run a namespace worker.
-let worker =
-    Host.create basin "prod"
-    |> Host.activity "charge" (fun (input: ChargeInput) -> async { (* … *) })
-    |> Host.orchestration "checkout" (fun input -> durable {
-        let! paid = Workflow.call "charge" input          // journaled; replay-served
-        let! results = Workflow.all [ shipIt; notify ]    // fan-out/fan-in
-        let! winner =
-            Workflow.any [ DurableTask.timer deadline     // races
-                           DurableTask.signal "approved" ]
-        return receipt })
-    |> Host.entity "counter" counterHandler               // keyed entity; state = fold
-    |> Host.run
+// Durable operations: TYPED DESCRIPTORS, defined once as values.
+// Names are two-segment ("service/handler") from day one — names land in
+// journals and instance addresses, so the scheme freezes before the first
+// record is written. Codecs are explicit (reflection JSON is Fable-unsafe).
+let reserve : Step<OrderId, Reservation> =
+    Step.defineAsync "orders/reserve" Codec.orderId Codec.reservation reserveAsync
+let notify : Step<OrderId, unit> =
+    Step.defineAsync "orders/notify" Codec.orderId Codec.unit notifyAsync
+let approved : Signal<Decision> =
+    Signal.define "orders/approved" Codec.decision
 
-// Client side.
+// Orchestrations: workflow {} — let! sequences, and! fans out, no arbitrary
+// task binds. External effects go through Step.call; deterministic local
+// work through Workflow.local; waits time out as Results, not exceptions.
+let checkout =
+    Workflow.define "orders/checkout" Codec.order Codec.receipt (fun order -> workflow {
+        let! reservation = Step.call reserve order.Id
+        and! ()          = Step.call notify order.Id            // independent → fan-out
+        match! Wait.signal approved |> Wait.timeout (Duration.hours 48) with
+        | Ok d when d.Accepted -> return Receipt.confirmed reservation
+        | _                    -> return Receipt.rejected order.Id })
+
+// Entities: the Decider shape — initial / evolve / decide (the kernel
+// Handler, Equinox-proven). Typed command + event DUs; state = fold of own log.
+module Counter =
+    type Command = Add of int
+    type Event   = Added of int
+    let initial = 0
+    let evolve state (Added n) = state + n
+    let decide (Add n) _state = [ Added n ]
+let counter =
+    Entity.define "app/counter" Codec.counterEvent
+        { Initial = Counter.initial; Evolve = Counter.evolve; Decide = Counter.decide }
+
+// Host: registration is DATA — a flat list of definitions. (A service {}
+// grouping CE can arrive later as sugar emitting the same registrations.)
+let worker =
+    Worker.run basin "prod"
+        [ Worker.step reserve
+          Worker.step notify
+          Worker.workflow checkout
+          Worker.entity counter ]
+
+// Client: typed handles from the same descriptors — no stringly addressing.
 let client = Client.connect basin
-do! Client.start client "checkout" input (InstanceId "order-42")
-do! Client.signal client (InstanceId "order-42") "approved" payload
-let! status = Client.status client (InstanceId "order-42")
+let! instance = Client.start client checkout order (InstanceId "order-42")  // Instance<Receipt>
+do! Client.signal client instance approved decision
+let! receipt = Instance.result instance                                     // typed result
 
 // Stream-native primitives (beyond the DF trio):
 let log = Logs.openLog client [ "invoices"; "2026-07" ]        // sealed durable log
@@ -103,10 +131,40 @@ do! Logs.attach log observe                                    // prefix → tai
 let! view = Projections.read client myFold ReadGrade.Eventual  // lag = data
 ```
 
+#### Authoring-ergonomics decision record (2026-07-07)
+
+Sources: the evaluation SDD's DurableFunctions.FSharp lessons (typed
+descriptors, the CE feature table, no-arbitrary-binds, Result-shaped waits),
+DurableFunctions.FSharp itself (define-once activities, list-pipeline
+fan-out, DU retry policies, `ContinueAsNew` eternal orchestrations — all
+adopted), and Equinox's Decider pattern (entities as
+`initial`/`evolve`/`decide`, structurally identical to the kernel Handler).
+Decided:
+
+1. **Typed descriptors with explicit codecs.** `Step<'i,'o>` / `Signal<'t>`
+   / `Workflow.define` carry codecs explicitly — reflection-based JSON is
+   Fable-unsafe and banned. This is the deliberate tax of the typed layer.
+2. **Two-segment names (`service/handler`) from day one.** Names land in
+   journals and instance addresses — the one durable commitment in this
+   section. Freezing the scheme now keeps future grouping sugar a no-op on
+   persisted data.
+3. **Flat registration list.** The `service { }` custom-ops CE (the
+   evaluation SDD's sketch) is deferred to the service-RPC parity work —
+   additive later, expensive to design now. The builder-pipe host is
+   rejected as dominated.
+4. **`workflow { }`**, aligned with the kernel's journaled vocabulary
+   (`WorkflowStarted`/`WorkflowName` in `Stepper` records); `durable { }`
+   remains a deprecated alias.
+5. **`and!` = fan-out** (doctrine-ratified applicative independence); T1's
+   corpus includes a teaching test pinning that `let!` sequences and `and!`
+   parallelizes.
+6. Retry policies as DUs; eternal orchestrations as returned
+   `ContinueAsNew` values.
+
 **Future TS target (dormant until a TS consumer is prioritized):** the
 library's Fable emission plus a thin `@firegrid/durable` wrapper — plain TS
 only (Promise, `AsyncIterable`, tagged unions mirroring the DU errors; an
-async/await `ctx` mirroring `durable { }`, DF-SDK style). No `effect` in its
+async/await `ctx` mirroring `workflow { }`, DF-SDK style). No `effect` in its
 exported types or dependencies; an optional `/effect` subpath may wrap it.
 Shipping it is a build-and-wrap decision, not a redesign — that is what the
 standing Fable-green gate buys.
@@ -143,7 +201,7 @@ simplification and one authoring change:
   path, replay-served from the recorded resolution. The finish-line SDD's
   design carries over nearly verbatim because it already banned closures.
 - The finish-line SDD's "Effect-native generators" authoring direction is
-  **superseded**: the authoring surface is the F# `durable { }` CE
+  **superseded**: the authoring surface is the F# `workflow { }` CE
   (program-as-data; determinism from journaling). The future TS emission
   authors async/await + `ctx` (DF-SDK/Restate-SDK style) — never `effect`
   generators.
@@ -209,7 +267,7 @@ Fable-green build gate on L3 is what keeps this layer cheap to open.
 | WP | Deliverable | Gate |
 | --- | --- | --- |
 | T0 | Ratchet: manifest runner + strict target suite in CI, spanning **both** runners (F# corpus project + TS suite) | None (mechanical) |
-| T1 | **`Firegrid.Durable` library skeleton (F#) + red corpus (F# consumer tests) + platform prose companion.** Corpus: replay determinism across a host kill (activities not re-executed); fan-out/fan-in; `any` races; signal to a parked orchestration across restart; durable timer across restart; entity op serialization; typed activity failure; deterministic `currentTime`; status/result query; log attach (prefix/tail/terminal, byte-faithful); **entity table state** (get/set/delete; crash after mutation → no double-apply; deposed writer's state write fenced); **three read grades** (eventual with observable lag, latest linearizable, read-your-writes through an ack version); **CEL table wait** (immediate-if-true; park → mutate → resume; unrelated row does not resume an indexed wait; replay serves the recorded resolution) | **Human ratifies** |
+| T1 | **`Firegrid.Durable` library skeleton (F#) + red corpus (F# consumer tests) + platform prose companion.** Corpus: replay determinism across a host kill (activities not re-executed); fan-out/fan-in; `any` races; signal to a parked orchestration across restart; durable timer across restart; entity op serialization; typed activity failure; deterministic `currentTime`; status/result query; log attach (prefix/tail/terminal, byte-faithful); **entity table state** (get/set/delete; crash after mutation → no double-apply; deposed writer's state write fenced); **three read grades** (eventual with observable lag, latest linearizable, read-your-writes through an ack version); **CEL table wait** (immediate-if-true; park → mutate → resume; unrelated row does not resume an indexed wait; replay serves the recorded resolution); **`and!`-vs-`let!` teaching test** (sequencing vs fan-out semantics pinned); **typed-descriptor round-trip** (explicit codecs; two-segment `service/handler` name scheme enforced at registration) | **Human ratifies** |
 | T2 | Reference-app red corpus (F#) against `Firegrid.Durable`: start turn / cancel from an unprivileged second client / duplicate-cancel idempotence / single-writer with typed rejection / deposed-writer rejection / attach semantics / history with cause and lag | **Human ratifies** |
 | T3 | Harness-adapter contract as plain TS + red fixture-replay conformance corpus | **Human ratifies** |
 | T4 | **(Dormant — schedule when a TS consumer is prioritized, e.g. agent-ui integration.)** Fable emission seam + `@firegrid/durable` plain-TS wrapper + TS mirror of the T1 corpus | **Human schedules + ratifies** |
