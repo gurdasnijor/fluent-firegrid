@@ -63,7 +63,9 @@ module FencingLaw =
           Setup: WorkloadContext -> Async<'world>
           OwnerAct: WorkloadContext -> 'world -> Async<'owner>
           Supersede: WorkloadContext -> 'world -> 'owner -> Async<'super>
-          StaleAttempt: WorkloadContext -> 'world -> 'owner -> 'super -> Async<StaleOutcome>
+          /// Returns the outcome plus any stale-phase facts (e.g. details the
+          /// typed rejection must carry).
+          StaleAttempt: WorkloadContext -> 'world -> 'owner -> 'super -> Async<StaleOutcome * (string * bool) list>
           Observe: WorkloadContext -> 'world -> 'owner -> 'super -> StaleOutcome -> Async<FencingObservation> }
 
     type FencingEvidence =
@@ -92,7 +94,7 @@ module FencingLaw =
                 let! world = surface.Setup ctx
                 let! owner = surface.OwnerAct ctx world
                 let! super = surface.Supersede ctx world owner
-                let! stale = surface.StaleAttempt ctx world owner super
+                let! stale, staleFacts = surface.StaleAttempt ctx world owner super
                 let! observation = surface.Observe ctx world owner super stale
 
                 let staleFenced, staleLabel =
@@ -109,7 +111,7 @@ module FencingLaw =
                       StaleLabel = staleLabel
                       StaleEffectVisible = observation.StaleEffectVisible
                       PostStateConsistent = observation.PostStateConsistent
-                      Facts = observation.Facts }
+                      Facts = staleFacts @ observation.Facts }
 
                 do!
                     ctx.EmitSpan

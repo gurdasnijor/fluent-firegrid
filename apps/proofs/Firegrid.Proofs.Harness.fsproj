@@ -54,14 +54,13 @@
     <Compile Include="FoundationKvStoreProof.fs" />
     <Compile Include="FoundationCheckpointProof.fs" />
     <Compile Include="FoundationCheckpointTrimSafetyProof.fs" />
-    <Compile Include="FoundationCheckpointRaceProof.fs" />
     <Compile Include="FoundationDurableKernelProof.fs" />
     <Compile Include="FoundationDurableDebtsProof.fs" />
     <Compile Include="FoundationParallelActivitiesProof.fs" />
     <Compile Include="FoundationTurnStreamProof.fs" />
     <Compile Include="FoundationSessionLifecycleProof.fs" />
-    <Compile Include="FoundationResumeArtifactProof.fs" />
     <Compile Include="FoundationWakePathProof.fs" />
+    <Compile Include="FoundationFencingProof.fs" />
     <Compile Include="Registry.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>
