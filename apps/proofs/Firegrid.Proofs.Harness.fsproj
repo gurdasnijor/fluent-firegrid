@@ -38,6 +38,9 @@
     <Compile Include="Property.fs" />
     <Compile Include="ProofBuilder.fs" />
     <Compile Include="Runner.fs" />
+    <Compile Include="FencingLaw.fs" />
+    <Compile Include="CrashWindowLaw.fs" />
+    <Compile Include="RebuildLaw.fs" />
     <Compile Include="CorpusSupport.fs" />
     <Compile Include="CoreLawProofs.fs" />
     <Compile Include="EntityLawProofs.fs" />
