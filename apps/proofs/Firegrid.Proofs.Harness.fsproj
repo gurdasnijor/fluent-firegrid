@@ -34,6 +34,10 @@
     <Compile Include="Verification.fs" />
     <Compile Include="Property.fs" />
     <Compile Include="ProofBuilder.fs" />
+    <Compile Include="Runner.fs" />
+    <Compile Include="HarnessKillDemoProof.fs" />
+    <Compile Include="Registry.fs" />
+    <Compile Include="Main.fs" />
   </ItemGroup>
 
 </Project>

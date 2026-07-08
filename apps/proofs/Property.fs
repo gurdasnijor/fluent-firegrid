@@ -338,7 +338,12 @@ module Property =
                   Faults = List.ofSeq faults
                   Checks = checks
                   NegativeControls = Array.toList negativeControls
-                  ReplayCommand = sprintf "npm run proofs -- --proof %s --trial-id %s --preserve" spec.Name trialId
+                  ReplayCommand =
+                    sprintf
+                        "node apps/proofs/dist/Main.js proof run %s --report-dir %s --trial-id %s"
+                        spec.Name
+                        config.Root
+                        trialId
                   ReportPath = reportPath }
 
             Reports.writePropertyReport report
