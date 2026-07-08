@@ -32,10 +32,43 @@ module Registry =
           FlowLawProofs.eternalContinueAsNew
           CoreLawProofs.boundedLoopFlatStack ]
 
+    /// The 28 foundation proofs (Packet 0.3a, migrated 1:1 from
+    /// src/Firegrid.Foundation.Proofs). The source files declare 15
+    /// ProofSpecs whose 28 property names are the ratchet ids
+    /// (docs/proofs-inventory.md section B), so the suite registers one
+    /// single-property ProofSpec per property: `proof targets foundation`
+    /// then emits one { id, pass } line per ratchet id. Proof bodies are
+    /// untouched — this is registry hookup only.
+    let private perProperty (spec: ProofSpec) : ProofSpec list =
+        spec.Properties
+        |> List.map (fun property ->
+            { Name = property.Name
+              Description = spec.Description
+              Properties = [ property ] })
+
+    let foundationProofs: ProofSpec list =
+        [ FoundationSubjectHistoryProof.proof
+          FoundationStateViewProof.proof
+          FoundationStateReadsProof.proof
+          FoundationSessionHistoryProof.proof
+          FoundationKvStoreProof.proof
+          FoundationCheckpointProof.proof
+          FoundationCheckpointTrimSafetyProof.proof
+          FoundationCheckpointRaceProof.proof
+          FoundationDurableKernelProof.proof
+          FoundationDurableDebtsProof.proof
+          FoundationParallelActivitiesProof.proof
+          FoundationTurnStreamProof.proof
+          FoundationSessionLifecycleProof.proof
+          FoundationResumeArtifactProof.proof
+          FoundationWakePathProof.proof ]
+        |> List.collect perProperty
+
     let suites: SuiteSpec list =
         [ { Suite = "p0-harness"
             Proofs = [ HarnessKillDemoProof.proof ] }
-          { Suite = "t1-durable"; Proofs = corpusProofs } ]
+          { Suite = "t1-durable"; Proofs = corpusProofs }
+          { Suite = "foundation"; Proofs = foundationProofs } ]
 
     let all: ProofSpec list =
         suites |> List.collect (fun suite -> suite.Proofs)

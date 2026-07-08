@@ -5,9 +5,6 @@
   <Folder Name="/src/Firegrid.Durable/">
     <Project Path="src/Firegrid.Durable/Firegrid.Durable.fsproj" />
   </Folder>
-  <Folder Name="/src/Firegrid.Foundation.Proofs/">
-    <Project Path="src/Firegrid.Foundation.Proofs/Firegrid.Foundation.Proofs.fsproj" />
-  </Folder>
   <Folder Name="/src/Firegrid.Store/">
     <Project Path="src/Firegrid.Store/Firegrid.Store.fsproj" />
   </Folder>

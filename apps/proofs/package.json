@@ -15,6 +15,7 @@
   "dependencies": {
     "@firegrid/durable": "workspace:*",
     "@firegrid/log": "workspace:*",
+    "@firegrid/store": "workspace:*",
     "@s2-dev/streamstore": "0.24.1",
     "chdb": "^3.1.0"
   },
