@@ -41,7 +41,14 @@ jobs:
 
       - name: Install S2 CLI
         run: |
-          curl -fsSL https://raw.githubusercontent.com/s2-streamstore/s2/main/install.sh | bash
+          # Download-then-execute (not curl|bash): a failed/rate-limited
+          # download must fail THIS step, not surface later as
+          # `spawn s2 ENOENT` mid-proof-run.
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 \
+            -o /tmp/s2-install.sh \
+            https://raw.githubusercontent.com/s2-streamstore/s2/main/install.sh
+          bash /tmp/s2-install.sh
+          test -x "$HOME/.s2/bin/s2"
           echo "$HOME/.s2/bin" >> "$GITHUB_PATH"
 
       - name: Check
