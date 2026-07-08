@@ -76,30 +76,31 @@ deprecated alias). Indicative shape (T1's corpus refines and freezes it):
 ```fsharp
 open Firegrid.Durable   // the platform's one public API
 
-// Durable operations: TYPED DESCRIPTORS, defined once as values.
-// Names are two-segment ("service/handler") from day one — names land in
-// journals and instance addresses, so the scheme freezes before the first
-// record is written. Codecs are explicit (reflection JSON is Fable-unsafe).
-let reserve : Step<OrderId, Reservation> =
-    Step.defineAsync "orders/reserve" Codec.orderId Codec.reservation reserveAsync
-let notify : Step<OrderId, unit> =
-    Step.defineAsync "orders/notify" Codec.orderId Codec.unit notifyAsync
-let approved : Signal<Decision> =
-    Signal.define "orders/approved" Codec.decision
+// ── Define ───────────────────────────────────────────────────────────────
+// Serialization is DERIVED from the types at compile time (records/DUs of
+// plain data just work; Fable-safe inline derivation — no runtime
+// reflection). Pinned codecs are an opt-in (`Step.defineWith`) for
+// evolution-sensitive types. Names are two-segment ("service/handler") and
+// land in journals — the one durable commitment, frozen from day one.
+let reserve  = Step.define "orders/reserve" (fun (id: OrderId) -> async { (* … *) })
+let notify   = Step.define "orders/notify"  (fun (id: OrderId) -> async { (* … *) })
+let approved = Signal.define<Decision> "orders/approved"
 
-// Orchestrations: workflow {} — let! sequences, and! fans out, no arbitrary
-// task binds. External effects go through Step.call; deterministic local
-// work through Workflow.local; waits time out as Results, not exceptions.
-let checkout =
-    Workflow.define "orders/checkout" Codec.order Codec.receipt (fun order -> workflow {
-        let! reservation = Step.call reserve order.Id
-        and! ()          = Step.call notify order.Id            // independent → fan-out
-        match! Wait.signal approved |> Wait.timeout (Duration.hours 48) with
-        | Ok d when d.Accepted -> return Receipt.confirmed reservation
-        | _                    -> return Receipt.rejected order.Id })
+// ── Orchestrate ──────────────────────────────────────────────────────────
+// workflow {} is the ONLY place durable ops bind: a stray Async.Sleep or
+// DateTime.Now does not compile (the restate-sdk-gen lesson — its generator
+// DSL exists because raw async "gets awkward as concurrency multiplies";
+// restricted bind is the point). Descriptors expose their ops as methods,
+// so discovery is dot-completion. Fan-out (`and!`, `Step.all`, tagged
+// `select`) is the concurrency vocabulary — see T1's corpus.
+let checkout = Workflow.define "orders/checkout" (fun (order: Order) -> workflow {
+    let! reservation = reserve.Call order.Id
+    do! notify.Send order.Id                          // journaled fire-and-forget
+    match! approved.Await (Duration.hours 48) with    // Ok decision | Error Timeout
+    | Ok d when d.Accepted -> return Receipt.confirmed reservation
+    | _                    -> return Receipt.rejected order.Id })
 
-// Entities: the Decider shape — initial / evolve / decide (the kernel
-// Handler, Equinox-proven). Typed command + event DUs; state = fold of own log.
+// ── Entities: the Decider shape — initial / evolve / decide ─────────────
 module Counter =
     type Command = Add of int
     type Event   = Added of int
@@ -107,28 +108,22 @@ module Counter =
     let evolve state (Added n) = state + n
     let decide (Add n) _state = [ Added n ]
 let counter =
-    Entity.define "app/counter" Codec.counterEvent
+    Entity.define "app/counter"
         { Initial = Counter.initial; Evolve = Counter.evolve; Decide = Counter.decide }
 
-// Host: registration is DATA — a flat list of definitions. (A service {}
-// grouping CE can arrive later as sugar emitting the same registrations.)
-let worker =
-    Worker.run basin "prod"
-        [ Worker.step reserve
-          Worker.step notify
-          Worker.workflow checkout
-          Worker.entity counter ]
+// ── Run: registration is data ────────────────────────────────────────────
+let worker = Worker.run basin "prod" [ reg reserve; reg notify; reg checkout; reg counter ]
 
-// Client: typed handles from the same descriptors — no stringly addressing.
+// ── Call: typed handles from the same descriptors ────────────────────────
 let client = Client.connect basin
-let! instance = Client.start client checkout order (InstanceId "order-42")  // Instance<Receipt>
-do! Client.signal client instance approved decision
-let! receipt = Instance.result instance                                     // typed result
+let! run = checkout.Start client order (Id "order-42")    // Run<Receipt>
+do! run.Signal approved decision
+let! receipt = run.Result
 
-// Stream-native primitives (beyond the DF trio):
-let log = Logs.openLog client [ "invoices"; "2026-07" ]        // sealed durable log
-do! Logs.attach log observe                                    // prefix → tail → terminal
-let! view = Projections.read client myFold ReadGrade.Eventual  // lag = data
+// ── Stream-native primitives (beyond the DF trio) ────────────────────────
+let log = client.Logs [ "invoices"; "2026-07" ]           // sealed durable log
+for ev in log.Attach() do observe ev                       // async seq: prefix → tail → terminal
+let! view = client.Read myFold ReadGrade.Eventual          // lag = data
 ```
 
 #### Authoring-ergonomics decision record (2026-07-07)
@@ -137,29 +132,60 @@ Sources: the evaluation SDD's DurableFunctions.FSharp lessons (typed
 descriptors, the CE feature table, no-arbitrary-binds, Result-shaped waits),
 DurableFunctions.FSharp itself (define-once activities, list-pipeline
 fan-out, DU retry policies, `ContinueAsNew` eternal orchestrations — all
-adopted), and Equinox's Decider pattern (entities as
-`initial`/`evolve`/`decide`, structurally identical to the kernel Handler).
-Decided:
+adopted), Equinox's Decider pattern (entities as `initial`/`evolve`/
+`decide`, structurally identical to the kernel Handler), and
+**restate-sdk-gen** (DESIGN/guide/README — the surface this engine's
+lineage deliberately mirrors). Decided:
 
-1. **Typed descriptors with explicit codecs.** `Step<'i,'o>` / `Signal<'t>`
-   / `Workflow.define` carry codecs explicitly — reflection-based JSON is
-   Fable-unsafe and banned. This is the deliberate tax of the typed layer.
+1. **Serialization is derived; codecs are opt-in.** Wire formats are
+   derived from `'in`/`'out` at compile time via inline derivation
+   (Thoth-`Auto`-style — Fable-safe; what is banned is *runtime*
+   reflection serialization). Users never see a codec. `defineWith` pins an
+   explicit codec for evolution-sensitive types (journaled wire formats
+   couple to type shape); the corpus pins **golden wire fixtures** so a
+   refactor that silently changes a derived format goes red.
 2. **Two-segment names (`service/handler`) from day one.** Names land in
    journals and instance addresses — the one durable commitment in this
    section. Freezing the scheme now keeps future grouping sugar a no-op on
    persisted data.
-3. **Flat registration list.** The `service { }` custom-ops CE (the
-   evaluation SDD's sketch) is deferred to the service-RPC parity work —
-   additive later, expensive to design now. The builder-pipe host is
-   rejected as dominated.
-4. **`workflow { }`**, aligned with the kernel's journaled vocabulary
-   (`WorkflowStarted`/`WorkflowName` in `Stepper` records); `durable { }`
-   remains a deprecated alias.
-5. **`and!` = fan-out** (doctrine-ratified applicative independence); T1's
-   corpus includes a teaching test pinning that `let!` sequences and `and!`
-   parallelizes.
-6. Retry policies as DUs; eternal orchestrations as returned
+3. **Flat registration list** via a single `reg` function. The
+   `service { }` custom-ops CE is deferred to the service-RPC parity work;
+   the builder-pipe host is rejected as dominated.
+4. **`workflow { }` — settled by the lineage itself.** restate-sdk-gen
+   exists because raw async+ctx "gets awkward as concurrency patterns
+   multiply"; its generator DSL (yield* as the only bind, factory-per-run =
+   our Delay/Run) is a CE in JavaScript clothing. The restricted bind is
+   the product: a stray `Async.Sleep`/`DateTime.Now` is a compile error,
+   not a replay corruption discovered weeks later. Aligned with the
+   kernel's journaled vocabulary (`WorkflowStarted`); `durable { }` remains
+   a deprecated alias. Raw async+ctx is rejected as the model sdk-gen was
+   built to escape.
+5. **Dot-method descriptors.** Ops hang off the descriptor
+   (`reserve.Call`, `notify.Send`, `approved.Await`, `checkout.Start`,
+   `run.Result`) so discovery is dot-completion; module functions remain
+   underneath as the stable core (members are thin sugar).
+6. **Cancellation semantics (lifted from sdk-gen verbatim).** Cancellation
+   is observed at bind boundaries, never mid-statement, and is
+   *recoverable*: catch the durable-cancelled failure inside `workflow {}`,
+   perform more journaled work (compensation), return any value; uncaught →
+   the typed `Cancelled` terminal. Step implementations receive
+   cancellation through `Async`'s native `CancellationToken`.
+7. **Tagged `select`** over the kernel's `WhenAny`, returning a
+   caller-supplied DU consumed by `match!`; `Await`-with-timeout returning
+   `Result` stays as the simple binary case. `and!` = applicative fan-out
+   (teaching test in T1); `and!` is concurrency vocabulary, not quickstart
+   material.
+8. **Log attach is an async sequence** (`AsyncSeq` semantics on .NET; a JS
+   async iterable under the future emission) — prefix → live tail →
+   terminal as one `for … do` loop.
+9. Retry policies as DUs; eternal orchestrations as returned
    `ContinueAsNew` values.
+10. **Deferred, recorded, not designed here:** the sdk-gen
+    `Operation`/`Future` split — `spawn` returning held, memoized futures
+    with per-routine `interrupt`, `any`/`allSettled`, and abandon/join
+    on-exit policies. A v2 kernel-semantics extension (our lazy
+    `Workflow<'a>` programs already are the `Operation` half); adopt when
+    a use case demands it, copying the proven design.
 
 #### Stress-test findings (2026-07-07 — Restate tutorial + choreography-agent mapping)
 
@@ -214,7 +240,7 @@ layer ([`fluent-firegrid-state-materialization-sdd.md`](./fluent-firegrid-state-
 simplification and one authoring change:
 
 - **Entity state is the fold of the entity's own log.** Table-shaped
-  authoring survives in F# (a `Table` schema record owning codec + primary
+  authoring survives in F# (a `Table` schema record owning identity + primary
   key; `State.get`/`State.set`/`State.delete` inside entity handlers):
   mutations lower to journaled state-change facts, `get` reads the fold.
   Because handler state is a pure function of the log prefix,
@@ -303,7 +329,7 @@ Fable-green build gate on L3 is what keeps this layer cheap to open.
 | WP | Deliverable | Gate |
 | --- | --- | --- |
 | T0 | Ratchet: manifest runner + strict target suite in CI, spanning **both** runners (F# corpus project + TS suite) | None (mechanical) |
-| T1 | **`Firegrid.Durable` library skeleton (F#) + red corpus (F# consumer tests) + platform prose companion.** Corpus: replay determinism across a host kill (activities not re-executed); fan-out/fan-in; `any` races; signal to a parked orchestration across restart; durable timer across restart; entity op serialization; typed activity failure; deterministic `currentTime`; status/result query; log attach (prefix/tail/terminal, byte-faithful); **entity table state** (get/set/delete; crash after mutation → no double-apply; deposed writer's state write fenced); **three read grades** (eventual with observable lag, latest linearizable, read-your-writes through an ack version); **CEL table wait** (immediate-if-true; park → mutate → resume; unrelated row does not resume an indexed wait; replay serves the recorded resolution); **`and!`-vs-`let!` teaching test** (sequencing vs fan-out semantics pinned); **typed-descriptor round-trip** (explicit codecs; two-segment `service/handler` name scheme enforced at registration); **saga compensation across a mid-compensation host kill**; **instance cancel** (parked orchestration → typed `Cancelled` terminal observed via attach); **step timeout race** (`WhenAny` activity-vs-timer as `Result`); **declare/implement split** (remote client drives a workflow through the declaration only); **child spawn** (`callChild` + `ChildTerminal` completion, incl. fan-out) | **Human ratifies** |
+| T1 | **`Firegrid.Durable` library skeleton (F#) + red corpus (F# consumer tests) + platform prose companion.** Corpus: replay determinism across a host kill (activities not re-executed); fan-out/fan-in; `any` races; signal to a parked orchestration across restart; durable timer across restart; entity op serialization; typed activity failure; deterministic `currentTime`; status/result query; log attach (prefix/tail/terminal, byte-faithful); **entity table state** (get/set/delete; crash after mutation → no double-apply; deposed writer's state write fenced); **three read grades** (eventual with observable lag, latest linearizable, read-your-writes through an ack version); **CEL table wait** (immediate-if-true; park → mutate → resume; unrelated row does not resume an indexed wait; replay serves the recorded resolution); **`and!`-vs-`let!` teaching test** (sequencing vs fan-out semantics pinned); **golden wire fixtures** (derived serialization pinned — a refactor that changes a wire format goes red; two-segment `service/handler` name scheme enforced at registration); **saga compensation across a mid-compensation host kill**; **recoverable cancellation** (observed at a bind boundary, never mid-statement; caught → journaled compensation → return; uncaught → typed `Cancelled` terminal observed via attach); **step timeout race** (`WhenAny` activity-vs-timer as `Result`); **tagged `select`** (caller-DU race, `match!`-consumed); **declare/implement split** (remote client drives a workflow through the declaration only); **child spawn** (`callChild` + `ChildTerminal` completion, incl. fan-out) | **Human ratifies** |
 | T2 | Reference-app red corpus (F#) against `Firegrid.Durable`: start turn / cancel from an unprivileged second client / duplicate-cancel idempotence / single-writer with typed rejection / deposed-writer rejection / attach semantics / history with cause and lag | **Human ratifies** |
 | T3 | Harness-adapter contract as plain TS + red fixture-replay conformance corpus | **Human ratifies** |
 | T4 | **(Dormant — schedule when a TS consumer is prioritized, e.g. agent-ui integration.)** Fable emission seam + `@firegrid/durable` plain-TS wrapper + TS mirror of the T1 corpus | **Human schedules + ratifies** |
