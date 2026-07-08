@@ -89,6 +89,13 @@ module ProcessHost =
                         running.Value <- false
                         let accepted = proc.kill signal
 
+                        // A SIGTERM cannot reach a SIGSTOPped host: chase it
+                        // with SIGCONT so a paused host wakes to act on the
+                        // pending TERM (no-op for a running host). SIGKILL
+                        // needs no chaser — it acts on stopped processes.
+                        if signal = "SIGTERM" then
+                            proc.kill "SIGCONT" |> ignore
+
                         do!
                             Reports.emitSpan
                                 store

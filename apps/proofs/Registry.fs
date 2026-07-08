@@ -14,14 +14,22 @@ module Registry =
           CoreLawProofs.taggedSelectRace
           CoreLawProofs.signalToParkedAcrossRestart
           CoreLawProofs.timerAcrossRestart
+          EntityLawProofs.entityExclusiveSerialization
+          EntityLawProofs.entityZombieFenced
+          EntityLawProofs.entitySharedReadNonblocking
           CoreLawProofs.typedStepFailure
           CoreLawProofs.deterministicCurrentTime
           CoreLawProofs.statusAndResultQuery
+          StreamLawProofs.logAttachByteFaithful
+          StreamLawProofs.threeReadGrades
+          StreamLawProofs.celWait
           FlowLawProofs.sagaCompensationAcrossKill
           FlowLawProofs.recoverableCancellation
           FlowLawProofs.declareImplementRoundtrip
+          FlowLawProofs.childSpawn
           CoreLawProofs.andbangTeaching
           StreamLawProofs.goldenWireFixtures
+          FlowLawProofs.eternalContinueAsNew
           CoreLawProofs.boundedLoopFlatStack ]
 
     let suites: SuiteSpec list =
@@ -36,4 +44,5 @@ module Registry =
     /// binary re-entered as `child <scenario>` (corpus Program.fs dispatch).
     let childScenarios: (string * (unit -> Async<int>)) list =
         [ "replay-host", ReplayScenario.childHost
+          "zombie-host", CounterEntity.childHost
           "saga-host", SagaScenario.childHost ]

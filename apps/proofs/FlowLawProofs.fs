@@ -390,3 +390,172 @@ module FlowLawProofs =
 
             property lawProperty
         }
+    // ── t1.child-spawn (RED) ──────────────────────────────────────────────
+    // Durable children: `CallChild` journals the parent/child link and waits
+    // for the child's result; fan-out composes as `Workflow.all` over
+    // children, results in order, each child executed exactly once.
+    type ChildSpawnObs =
+        { Outcome: Result<string, RunFailure>
+          ChildRuns: (string * int) list }
+
+    let private childSpawnWorkload (ctx: WorkloadContext) : Async<ChildSpawnObs> =
+        ProofOperation.run
+            ctx
+            "t1.child-spawn"
+            {| Children = 4 |}
+            { ProofOperationOptions.empty with
+                Key = Some "child-spawn" }
+            (async {
+                let scratch = CorpusSupport.scratchOf ctx
+
+                let childStep =
+                    Step.define "corpus/child-step" (fun (tag: string) ->
+                        async {
+                            Counter.bump scratch ("child-" + tag)
+                            return "child:" + tag
+                        })
+
+                let childWf =
+                    Workflow.define "corpus/child-wf" (fun (tag: string) ->
+                        workflow {
+                            let! value = childStep.Call tag
+                            return value
+                        })
+
+                let parentWf =
+                    Workflow.define "corpus/parent-wf" (fun (_: string) ->
+                        workflow {
+                            let! one = childWf.CallChild "one"
+                            let! fanned = Workflow.all [ for tag in [ "a"; "b"; "c" ] -> childWf.CallChild tag ]
+                            return one + "|" + String.concat "," fanned
+                        })
+
+                let! basin = CorpusSupport.workloadBasin ctx "t1-child"
+                let! worker = Worker.run basin "t1-child" [ reg childStep; reg childWf; reg parentWf ]
+                let client = Client.connect basin
+                let! run = parentWf.Start client "go" (Id "parent-1")
+                let! result = run.Result
+
+                let observed =
+                    { Outcome = result
+                      ChildRuns =
+                        [ for tag in [ "one"; "a"; "b"; "c" ] -> tag, Counter.read scratch ("child-" + tag) ] }
+
+                do! worker.Stop()
+                return observed
+            })
+
+    let private childSpawnChecks (v: Verifiers<ChildSpawnObs>) : Check<ChildSpawnObs> list =
+        [ LawCheck.equal
+              "children ran and fan-out preserved list order"
+              (fun o -> o.Outcome)
+              (Ok "child:one|child:a,child:b,child:c")
+          LawCheck.equal
+              "every child executed exactly once"
+              (fun o -> o.ChildRuns)
+              [ "one", 1; "a", 1; "b", 1; "c", 1 ]
+          v.Trace.Operation "law operation recorded ok" (CorpusSupport.lawOp "t1.child-spawn") ]
+
+    let childSpawn =
+        let lawProperty =
+            property "t1.child-spawn" {
+                s2Lite ""
+                timeoutMs 180_000
+                workload childSpawnWorkload
+                verify childSpawnChecks
+            }
+
+        proof "t1.child-spawn" {
+            describedAs
+                "Durable children run exactly once: CallChild journals the parent/child link and waits for the result; fan-out over children preserves declaration order."
+
+            property lawProperty
+        }
+
+    // ── t1.eternal-continueasnew (RED) ────────────────────────────────────
+    // Eternal workflows roll generations: `ContinueAsNew state` carries the
+    // state into a fresh generation (whose journal does not replay its
+    // predecessors'), `Stop` terminates the chain, and the original handle's
+    // Result follows the chain. Each generation observes the ROLLED state
+    // and executes its step exactly once — pinned via the side-channel
+    // progression. (Per-generation journal length is sub-public; the
+    // bounded-history half of the law is enforced at the kernel row.)
+    type GenState = { Remaining: int; Applied: int }
+
+    type EternalObs =
+        { Outcome: Result<unit, RunFailure>
+          Generations: string list
+          FinalStatus: RunStatus }
+
+    let private eternalWorkload (ctx: WorkloadContext) : Async<EternalObs> =
+        ProofOperation.run
+            ctx
+            "t1.eternal-continueasnew"
+            {| Generations = 3 |}
+            { ProofOperationOptions.empty with
+                Key = Some "eternal" }
+            (async {
+                let scratch = CorpusSupport.scratchOf ctx
+
+                let tick =
+                    Step.define "corpus/gen-tick" (fun (gen: GenState) ->
+                        async {
+                            Counter.appendLine scratch "generations" (sprintf "%d:%d" gen.Remaining gen.Applied)
+                            return gen.Applied + 1
+                        })
+
+                let eternal =
+                    Workflow.defineEternal "corpus/eternal" (fun (gen: GenState) ->
+                        workflow {
+                            let! applied = tick.Call gen
+
+                            if gen.Remaining <= 1 then
+                                return Stop
+                            else
+                                return
+                                    ContinueAsNew
+                                        { Remaining = gen.Remaining - 1
+                                          Applied = applied }
+                        })
+
+                let! basin = CorpusSupport.workloadBasin ctx "t1-eternal"
+                let! worker = Worker.run basin "t1-eternal" [ reg tick; reg eternal ]
+                let client = Client.connect basin
+
+                let! run = eternal.Start client { Remaining = 3; Applied = 0 } (Id "eternal-1")
+                let! result = run.Result
+                let! status = run.Status
+
+                let observed =
+                    { Outcome = result
+                      Generations = Counter.readLines scratch "generations"
+                      FinalStatus = status }
+
+                do! worker.Stop()
+                return observed
+            })
+
+    let private eternalChecks (v: Verifiers<EternalObs>) : Check<EternalObs> list =
+        [ LawCheck.equal "the generation chain terminates on Stop" (fun o -> o.Outcome) (Ok())
+          LawCheck.equal
+              "each generation ran once with the CARRIED state (no replayed predecessors)"
+              (fun o -> o.Generations)
+              [ "3:0"; "2:1"; "1:2" ]
+          LawCheck.equal "the original handle follows the chain to Completed" (fun o -> o.FinalStatus) Completed
+          v.Trace.Operation "law operation recorded ok" (CorpusSupport.lawOp "t1.eternal-continueasnew") ]
+
+    let eternalContinueAsNew =
+        let lawProperty =
+            property "t1.eternal-continueasnew" {
+                s2Lite ""
+                timeoutMs 180_000
+                workload eternalWorkload
+                verify eternalChecks
+            }
+
+        proof "t1.eternal-continueasnew" {
+            describedAs
+                "ContinueAsNew rolls a fresh-generation journal carrying the state forward; Stop terminates the chain; the original handle's Result follows the chain."
+
+            property lawProperty
+        }
