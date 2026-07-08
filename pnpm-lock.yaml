@@ -51,6 +51,9 @@ importers:
       '@firegrid/log':
         specifier: workspace:*
         version: link:../../src/Firegrid.Log
+      '@firegrid/store':
+        specifier: workspace:*
+        version: link:../../src/Firegrid.Store
       '@s2-dev/streamstore':
         specifier: 0.24.1
         version: 0.24.1

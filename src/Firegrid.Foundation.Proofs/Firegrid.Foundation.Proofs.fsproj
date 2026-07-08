@@ -20,14 +20,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="FoundationSubjectHistoryProof.fs" />
-    <Compile Include="FoundationStateViewProof.fs" />
-    <Compile Include="FoundationStateReadsProof.fs" />
-    <Compile Include="FoundationSessionHistoryProof.fs" />
-    <Compile Include="FoundationKvStoreProof.fs" />
-    <Compile Include="FoundationCheckpointProof.fs" />
-    <Compile Include="FoundationCheckpointTrimSafetyProof.fs" />
-    <Compile Include="FoundationCheckpointRaceProof.fs" />
     <Compile Include="FoundationDurableKernelProof.fs" />
     <Compile Include="FoundationDurableDebtsProof.fs" />
     <Compile Include="FoundationParallelActivitiesProof.fs" />

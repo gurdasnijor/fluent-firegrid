@@ -20,15 +20,7 @@ module Program =
     let private error (_message: string) : unit = jsNative
 
     let private proofs =
-        [ FoundationSubjectHistoryProof.proof
-          FoundationStateViewProof.proof
-          FoundationStateReadsProof.proof
-          FoundationSessionHistoryProof.proof
-          FoundationKvStoreProof.proof
-          FoundationCheckpointProof.proof
-          FoundationCheckpointTrimSafetyProof.proof
-          FoundationCheckpointRaceProof.proof
-          FoundationDurableKernelProof.proof
+        [ FoundationDurableKernelProof.proof
           FoundationDurableDebtsProof.proof
           FoundationParallelActivitiesProof.proof
           FoundationTurnStreamProof.proof
