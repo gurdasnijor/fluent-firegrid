@@ -26,6 +26,7 @@
     <Compile Include="Proof.fs" />
     <Compile Include="Reports.fs" />
     <Compile Include="S2Lite.fs" />
+    <Compile Include="ProcessHost.fs" />
     <Compile Include="ProofOperation.fs" />
     <Compile Include="Expect.fs" />
     <Compile Include="TraceSql.fs" />

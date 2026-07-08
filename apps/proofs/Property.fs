@@ -22,13 +22,6 @@ module Property =
           Releases: (unit -> Async<unit>) list }
 
     let private unsupportedResources resources =
-        let unsupported =
-            resources
-            |> List.choose (function
-                | ProcessHost host -> Some(sprintf "processHost '%s' is not part of the foundation proof runner" host.Name)
-                | S2LiveFromEnv
-                | S2Lite _ -> None)
-
         let s2ResourceCount =
             resources
             |> List.filter (function
@@ -51,9 +44,9 @@ module Property =
 
         let unsupported =
             if s2ResourceCount > 1 then
-                "only one S2 resource can be declared per property" :: unsupported
+                [ "only one S2 resource can be declared per property" ]
             else
-                unsupported
+                []
 
         unsupported @ duplicateHosts
 
@@ -126,8 +119,17 @@ module Property =
                         { resolved with
                             S2 = Some s2Lite.Resource
                             Releases = s2Lite.Stop :: resolved.Releases }
-                | ProcessHost host ->
-                    failwithf "processHost '%s' is not part of the foundation proof runner" host.Name
+                | ProcessHost hostSpec ->
+                    // Hosts see the S2 endpoint only when the S2 resource is
+                    // declared before them (declaration order is resolution
+                    // order, matching the SDD's Runner Order).
+                    let! host = ProcessHost.start store resolved.S2 hostSpec
+
+                    resolved <-
+                        { resolved with
+                            Hosts = resolved.Hosts |> Map.add hostSpec.Name host.Resource
+                            KillHosts = resolved.KillHosts |> Map.add hostSpec.Name host.Kill
+                            Releases = host.Stop :: resolved.Releases }
 
             return resolved
         }
