@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <AssemblyName>Firegrid.Proofs.Harness</AssemblyName>
+    <!-- Namespace stays Firegrid.Foundation.Proofs for now: the 28 frozen
+         foundation proof bodies (Packet 0.3 migrates them) compile against it
+         unqualified, and this packet is forbidden from editing them. The
+         rename to a harness-owned namespace lands with the 0.3/0.5 body
+         migrations. -->
+    <RootNamespace>Firegrid.Foundation.Proofs</RootNamespace>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <DefineConstants>$(DefineConstants);FABLE_COMPILER</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Fable.Core" Version="5.1.0" />
+    <PackageReference Include="Fable.Promise" Version="3.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Firegrid.Log/Firegrid.Log.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Proof.fs" />
+    <Compile Include="Reports.fs" />
+    <Compile Include="S2Lite.fs" />
+    <Compile Include="ProofOperation.fs" />
+    <Compile Include="Expect.fs" />
+    <Compile Include="TraceSql.fs" />
+    <Compile Include="TraceExpect.fs" />
+    <Compile Include="TraceProof.fs" />
+    <Compile Include="Verification.fs" />
+    <Compile Include="Property.fs" />
+    <Compile Include="ProofBuilder.fs" />
+  </ItemGroup>
+
+</Project>

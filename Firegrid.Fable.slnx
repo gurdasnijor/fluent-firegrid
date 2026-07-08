@@ -14,6 +14,9 @@
   <Folder Name="/src/Firegrid.Store/">
     <Project Path="src/Firegrid.Store/Firegrid.Store.fsproj" />
   </Folder>
+  <Folder Name="/apps/proofs/">
+    <Project Path="apps/proofs/Firegrid.Proofs.Harness.fsproj" />
+  </Folder>
   <Folder Name="/examples/firegrid/">
     <Project Path="examples/firegrid/Firegrid.Examples.fsproj" />
   </Folder>

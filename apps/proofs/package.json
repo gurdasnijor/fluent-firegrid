@@ -1,0 +1,23 @@
+{
+  "name": "@firegrid/proofs",
+  "version": "0.0.0",
+  "private": true,
+  "description": "F#/Fable proof harness: compiled property runner, trial evidence (spans.jsonl queried through chdb), runner-owned resources (s2-lite, process hosts), fault injection, and the ratchet targets mode.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet tool run fable -- Firegrid.Proofs.Harness.fsproj -o dist --optimize --noCache --noRestore",
+    "diagnostics": "echo '@firegrid/proofs diagnostics are covered by F# compile'",
+    "lint": "echo '@firegrid/proofs lint is covered by F# compile'",
+    "test": "pnpm run typecheck",
+    "typecheck": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet build Firegrid.Proofs.Harness.fsproj -v:q"
+  },
+  "dependencies": {
+    "@firegrid/log": "workspace:*",
+    "@s2-dev/streamstore": "0.24.1",
+    "chdb": "^3.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0"
+  }
+}
