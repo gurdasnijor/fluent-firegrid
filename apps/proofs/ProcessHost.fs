@@ -22,7 +22,9 @@ module ProcessHost =
     type Instance =
         { Resource: HostResource
           Stop: unit -> Async<unit>
-          Kill: unit -> Async<bool> }
+          Kill: unit -> Async<bool>
+          Pause: unit -> Async<bool>
+          Resume: unit -> Async<bool> }
 
     [<Import("spawn", "node:child_process")>]
     let private spawn (_command: string) (_args: string array) (_options: obj) : ChildProcess = jsNative
@@ -101,6 +103,28 @@ module ProcessHost =
                         return false
                 }
 
+            // Pause/Resume (SIGSTOP/SIGCONT) follow the kill pattern but do
+            // NOT mark the host stopped: a paused host is still supervised
+            // (Stop/Kill at release must still reach it).
+            let signalHost spanName signal =
+                async {
+                    if running.Value then
+                        let accepted = proc.kill signal
+
+                        do!
+                            Reports.emitSpan
+                                store
+                                spanName
+                                [ "host.name", spec.Name
+                                  "host.pid", string proc.pid
+                                  "verification.signal", signal
+                                  "verification.accepted", string accepted ]
+
+                        return accepted
+                    else
+                        return false
+                }
+
             do!
                 Reports.emitSpan
                     store
@@ -139,7 +163,9 @@ module ProcessHost =
                                 let! _ = terminate "verification.host.stop" "SIGTERM"
                                 return ()
                             }
-                      Kill = fun () -> terminate "verification.host.kill" "SIGKILL" }
+                      Kill = fun () -> terminate "verification.host.kill" "SIGKILL"
+                      Pause = fun () -> signalHost "verification.host.pause" "SIGSTOP"
+                      Resume = fun () -> signalHost "verification.host.resume" "SIGCONT" }
             with error ->
                 running.Value <- false
                 proc.kill "SIGKILL" |> ignore

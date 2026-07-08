@@ -120,12 +120,21 @@ module Runner =
                 let mutable pass = true
 
                 for property in proof.Properties do
-                    let! report = property.RunProperty config proof.Name
+                    // A property that CRASHES the runner (outside the
+                    // workload/check paths, which already catch) still fails
+                    // as a law — the suite must run to completion and emit
+                    // one result line per registered proof.
+                    let! outcome = Async.Catch(property.RunProperty config proof.Name)
 
-                    if not report.Passed then
+                    match outcome with
+                    | Choice1Of2 report ->
+                        if not report.Passed then
+                            pass <- false
+
+                        reportProperty stderr report
+                    | Choice2Of2 error ->
                         pass <- false
-
-                    reportProperty stderr report
+                        stderr (sprintf "  x property '%s' crashed: %s" property.Name error.Message)
 
                 stdout (sprintf "{ \"id\": \"%s\", \"pass\": %b }" proof.Name pass)
 

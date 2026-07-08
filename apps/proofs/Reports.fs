@@ -34,6 +34,13 @@ module Reports =
     [<Emit("Date.now()")>]
     let nowMillis () : float = jsNative
 
+    /// Race a unit of work against a wall-clock deadline. Resolves null on
+    /// completion (or rejection — the caller re-awaits for the value), the
+    /// marker string on timeout. The timer is unref'd so a finished run never
+    /// lingers on pending deadlines (ratchet suites must exit promptly).
+    [<Emit("Promise.race([$0.then(() => null, () => null), new Promise(resolve => { const t = setTimeout(() => resolve('timeout'), $1); if (t.unref) t.unref(); })])")>]
+    let raceTimeout (_work: JS.Promise<'a>) (_millis: int) : JS.Promise<obj> = jsNative
+
     let join parts = joinPath path (parts |> List.toArray)
 
     let ensureDir dir = mkdirp fs dir

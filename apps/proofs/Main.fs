@@ -25,7 +25,7 @@ module Main =
     let private stderr (_message: string) : unit = jsNative
 
     let private usage =
-        "Usage: node dist/Main.js proof list | proof run <all|filter> [--report-dir <dir>] [--trial-id <id>] [--seed <n>] | proof replay <report.json> | proof targets p0-harness"
+        "Usage: node dist/Main.js proof list | proof run <all|filter> [--report-dir <dir>] [--trial-id <id>] [--seed <n>] | proof replay <report.json> | proof targets <suite>"
 
     let private argValue name (args: string list) =
         args
@@ -72,10 +72,23 @@ module Main =
             | "proof" :: "replay" :: reportPath :: rest ->
                 return! Runner.replay (config None rest) reportPath Registry.all
             | [ "proof"; "targets"; suite ] ->
-                if suite = "p0-harness" then
-                    return! Runner.targets (config None []) Registry.all
-                else
-                    stderr ("unknown targets suite: " + suite)
+                match Registry.suites |> List.tryFind (fun spec -> spec.Suite = suite) with
+                | Some spec ->
+                    let root = Reports.join [ cwd (); ".verification-reports"; suite ]
+
+                    return!
+                        Runner.targets
+                            { Root = root
+                              ProofFilter = None
+                              TrialId = None
+                              Preserve = true
+                              Seed = 0 }
+                            spec.Proofs
+                | None ->
+                    let known =
+                        Registry.suites |> List.map (fun spec -> spec.Suite) |> String.concat ", "
+
+                    stderr ("unknown targets suite: " + suite + " (known: " + known + ")")
                     return 1
             | _ ->
                 stderr usage
