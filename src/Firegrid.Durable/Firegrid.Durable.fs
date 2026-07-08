@@ -276,6 +276,13 @@ and DurableLog =
 and LogEvent = Chunk of data: string | Terminal of reason: string
 and AsyncSeq<'t> = internal AsyncSeq of unit   // async sequence; a JS async iterable under the future TS emission
 
+[<RequireQualifiedAccess>]
+module AsyncSeq =
+    /// Consume a sequence to its end (for a log: prefix → tail → terminal).
+    let iter (f: 't -> unit) (source: AsyncSeq<'t>) : Async<unit> = notYet
+    /// Stop consuming when `f` returns Some; yields that value.
+    let pick (f: 't -> 'r option) (source: AsyncSeq<'t>) : Async<'r> = notYet
+
 /// A named fold over durable records — history views, indexes, dashboards.
 and Projection<'state> = internal Projection of unit
 
