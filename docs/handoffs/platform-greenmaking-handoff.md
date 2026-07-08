@@ -53,6 +53,11 @@ session's agent ids are dead — **dispatch fresh agents (worktree isolation)
 onto the existing branches**; old worktrees under `.claude/worktrees/` can
 be pruned (`git worktree prune` + delete dirs; the directory is gitignored).
 
+**EXECUTION MODE IS NOW SERIAL — human directive (2026-07-08).** One packet
+in flight at a time, ever: dispatch → watch → review → merge → verify main
+CI → only then dispatch the next. No fan-out, regardless of how parallel
+the work looks. The order below is the queue, not a menu.
+
 1. **G3 — streams (`g3/streams`, draft PR #121): 3 laws green locally**
    (`log-attach-byte-faithful`, `three-read-grades`, `cel-wait`).
    An architect ruling was delivered and was MID-IMPLEMENTATION at the halt:
@@ -79,7 +84,9 @@ be pruned (`git worktree prune` + delete dirs; the directory is gitignored).
    the contract doc; already-green laws are the regression guard). New code
    in `InternalChildren.fs`; ceremony precedents in PR #119/#121 bodies.
 
-Merge arithmetic: 14 + 3 (G3) + 3 (G2) + 2 (G4) = **22/22**.
+Serial queue: G3 (finish ruling → merge, 17/22) → G2 (rebase → merge,
+20/22) → G4 (redispatch → merge, **22/22**). Each step fully lands — merged,
+main CI green — before the next begins.
 
 ### Operating rules that were learned the hard way (follow them)
 
@@ -98,9 +105,11 @@ Merge arithmetic: 14 + 3 (G3) + 3 (G2) + 2 (G4) = **22/22**.
   `tail -c 20000 <output> | grep -o '"timestamp":"2026[^"]*"' | tail -1`.
 - **Ratchet unexpected-pass turns main red on purpose** — that is a demand
   for an explicit promotion commit, not a failure to debug.
-- Anti-collision: one `Internal<Area>.fs` per packet; contract-file touches
-  only in the packet's own section bodies; expect only `targets.json`
-  conflicts between sibling packets.
+- **Serial execution (standing human directive):** one packet in flight at
+  a time; next dispatch only after the previous is merged and main CI is
+  green. The per-packet file discipline stays (one `Internal<Area>.fs` per
+  packet; contract-file touches only in the packet's own section bodies) —
+  it keeps history reviewable even without parallelism.
 - Commit with `SKIP_SIMPLE_GIT_HOOKS=1`; never `git add -A` near
   `.claude/worktrees/`.
 
@@ -136,7 +145,7 @@ Shape it as the corpus pattern again: a T2 scenario corpus from
 approval; researcher/writer choreography where sessions never meet;
 scheduled self-prompts; spawn_all fan-out; webhook ingress; live watch +
 trace-as-schedule ops; cancel), registered in `targets.json` as a `t2-*`
-suite, red first, ratified by the human, then greened. Note: the harness
+suite, red first, ratified by the human, then greened — serially, one packet at a time. Note: the harness
 step (`agent/model`) should be stubbed/fake for T2 (a scripted ModelSays
 sequence) — real Claude-adapter integration is T3 territory.
 
