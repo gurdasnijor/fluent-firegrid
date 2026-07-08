@@ -227,6 +227,33 @@ module Service =
 // CONSTRUCTION. Multi-step effectful logic under a key belongs in a
 // workflow the entity starts — compose, don't fuse.
 
+// HOW THE CONSTRAINT IS ENFORCED (the lowering — every promise above maps
+// to kernel machinery that exists on main and is already proven):
+//
+//   entity.Call / Send          → append to the key's durable inbox stream
+//                                 (kernel Mailbox: FIFO, provenance-deduped —
+//                                 duplicate sends fold once; proven by the
+//                                 turn/lifecycle idempotency proofs)
+//   "at most one Decide per key"→ the key's Processor drive: exactly one
+//                                 fenced holder folds the journal, runs
+//                                 Decide, and commits — cross-host, via
+//                                 Authority epoch fencing (proven:
+//                                 store.object-live-fencing lineage;
+//                                 session.lifecycle-deposed-producer — a
+//                                 deposed writer computes but CANNOT commit)
+//   reply + events atomically   → one fenced append (kernel Decision commit);
+//                                 the reply is journaled with the events, so
+//                                 a crash between "decided" and "answered"
+//                                 cannot double-apply on retry
+//   entity.State grade          → StateReads over the same journal (proven:
+//                                 state.stateview-strong-read; lag-as-data)
+//
+// None of that machinery is new. What IS new — and only real once the red
+// corpus pins it — are these laws driven through THIS surface:
+//   • two hosts race Call on one key → serialized; both effects exactly once
+//   • zombie writer's reply and events fenced out after takeover
+//   • shared State read during an exclusive write: never blocks, never torn
+
 /// The key addressing one entity instance (Restate: `ctx.key`).
 type Key = Key of string
 
