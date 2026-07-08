@@ -14,22 +14,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../../apps/proofs/Firegrid.Proofs.Harness.fsproj" />
     <ProjectReference Include="../Firegrid.Log/Firegrid.Log.fsproj" />
     <ProjectReference Include="../Firegrid.Store/Firegrid.Store.fsproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="Proof.fs" />
-    <Compile Include="Reports.fs" />
-    <Compile Include="S2Lite.fs" />
-    <Compile Include="ProofOperation.fs" />
-    <Compile Include="Expect.fs" />
-    <Compile Include="TraceSql.fs" />
-    <Compile Include="TraceExpect.fs" />
-    <Compile Include="TraceProof.fs" />
-    <Compile Include="Verification.fs" />
-    <Compile Include="Property.fs" />
-    <Compile Include="ProofBuilder.fs" />
     <Compile Include="FoundationSubjectHistoryProof.fs" />
     <Compile Include="FoundationStateViewProof.fs" />
     <Compile Include="FoundationStateReadsProof.fs" />

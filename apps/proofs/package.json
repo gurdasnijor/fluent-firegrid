@@ -1,46 +1,23 @@
 {
   "name": "@firegrid/proofs",
   "version": "0.0.0",
-  "description": "Trace-native verification harness for Firegrid distributed-system properties.",
-  "license": "Apache-2.0",
   "private": true,
+  "description": "F#/Fable proof harness: compiled property runner, trial evidence (spans.jsonl queried through chdb), runner-owned resources (s2-lite, process hosts), fault injection, and the ratchet targets mode.",
+  "license": "Apache-2.0",
   "type": "module",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
-  "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "default": "./src/index.ts"
-    }
-  },
-  "files": [
-    "src",
-    "proofs",
-    "README.md"
-  ],
   "scripts": {
-    "proofs": "pnpm --dir ../../src/Firegrid.Log build && tsx proofs/main.ts proof run all --report-dir ../../.verification-reports/apps-proofs"
+    "build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet tool run fable -- Firegrid.Proofs.Harness.fsproj -o dist --optimize --noCache --noRestore",
+    "diagnostics": "echo '@firegrid/proofs diagnostics are covered by F# compile'",
+    "lint": "echo '@firegrid/proofs lint is covered by F# compile'",
+    "test": "pnpm run typecheck",
+    "typecheck": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet build Firegrid.Proofs.Harness.fsproj -v:q"
   },
   "dependencies": {
-    "@effect/opentelemetry": "4.0.0-beta.87",
-    "@effect/platform-node": "4.0.0-beta.87",
-    "@firegrid/claude-adapter": "workspace:*",
-    "@firegrid/fluent": "workspace:*",
-    "@firegrid/harness-adapter": "workspace:*",
-    "@firegrid/l1-vocabulary": "workspace:*",
     "@firegrid/log": "workspace:*",
-    "@firegrid/trace": "workspace:*",
     "@s2-dev/streamstore": "0.24.1",
-    "@opentelemetry/api-logs": "^0.208.0",
-    "@opentelemetry/resources": "^2.8.0",
-    "@opentelemetry/sdk-logs": "^0.208.0",
-    "@opentelemetry/sdk-metrics": "^2.8.0",
-    "@opentelemetry/sdk-trace-base": "^2.8.0",
-    "@opentelemetry/sdk-trace-node": "^2.8.0",
-    "effect": "4.0.0-beta.87"
+    "chdb": "^3.1.0"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
-    "tsx": "^4.21.0"
+    "@types/node": "^22.10.0"
   }
 }

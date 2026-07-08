@@ -9,9 +9,9 @@
     "check": "pnpm run fable:build && pnpm run proofs && pnpm run check:targets",
     "check:targets": "node scripts/targets/run-targets.mjs",
     "corpus": "pnpm --filter @firegrid/durable-corpus corpus",
-    "fable:build": "export NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/.nuget/packages}; dotnet restore Firegrid.Fable.slnx ${NUGET_CONFIG:+--configfile \"$NUGET_CONFIG\"} -v:q && dotnet build Firegrid.Fable.slnx --no-restore -v:q && pnpm --dir src/Firegrid.Log build && pnpm --dir src/Firegrid.Store build && pnpm --dir src/Firegrid.Durable build && pnpm --dir src/Firegrid.Durable.Corpus build",
+    "fable:build": "export NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/.nuget/packages}; dotnet restore Firegrid.Fable.slnx ${NUGET_CONFIG:+--configfile \"$NUGET_CONFIG\"} -v:q && dotnet build Firegrid.Fable.slnx --no-restore -v:q && pnpm --dir src/Firegrid.Log build && pnpm --dir src/Firegrid.Store build && pnpm --dir src/Firegrid.Durable build && pnpm --dir src/Firegrid.Durable.Corpus build && pnpm --dir apps/proofs build",
     "preflight": "pnpm run check",
-    "proofs": "pnpm --filter @firegrid/proofs proofs && pnpm --filter @firegrid/foundation-proofs proofs",
+    "proofs": "pnpm --filter @firegrid/proofs-legacy proofs && pnpm --filter @firegrid/foundation-proofs proofs",
     "test": "pnpm run check",
     "verify": "pnpm run check"
   },

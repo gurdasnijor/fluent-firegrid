@@ -17,6 +17,16 @@
         "run",
         "all"
       ]
+    },
+    {
+      "corpus": "p0-harness",
+      "command": [
+        "node",
+        "apps/proofs/dist/Main.js",
+        "proof",
+        "targets",
+        "p0-harness"
+      ]
     }
   ],
   "targets": [
@@ -30,6 +40,12 @@
       "id": "t0.wiring-green",
       "wp": "T0",
       "corpus": "t0-wiring",
+      "status": "green"
+    },
+    {
+      "id": "p0.harness-kill-demo",
+      "wp": "P0",
+      "corpus": "p0-harness",
       "status": "green"
     },
     {
