@@ -20,13 +20,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="FoundationDurableKernelProof.fs" />
-    <Compile Include="FoundationDurableDebtsProof.fs" />
-    <Compile Include="FoundationParallelActivitiesProof.fs" />
-    <Compile Include="FoundationTurnStreamProof.fs" />
-    <Compile Include="FoundationSessionLifecycleProof.fs" />
-    <Compile Include="FoundationResumeArtifactProof.fs" />
-    <Compile Include="FoundationWakePathProof.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

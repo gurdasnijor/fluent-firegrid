@@ -54,7 +54,14 @@ module Registry =
           FoundationKvStoreProof.proof
           FoundationCheckpointProof.proof
           FoundationCheckpointTrimSafetyProof.proof
-          FoundationCheckpointRaceProof.proof ]
+          FoundationCheckpointRaceProof.proof
+          FoundationDurableKernelProof.proof
+          FoundationDurableDebtsProof.proof
+          FoundationParallelActivitiesProof.proof
+          FoundationTurnStreamProof.proof
+          FoundationSessionLifecycleProof.proof
+          FoundationResumeArtifactProof.proof
+          FoundationWakePathProof.proof ]
         |> List.collect perProperty
 
     let suites: SuiteSpec list =

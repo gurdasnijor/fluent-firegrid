@@ -19,14 +19,9 @@ module Program =
     [<Emit("console.error($0)")>]
     let private error (_message: string) : unit = jsNative
 
-    let private proofs =
-        [ FoundationDurableKernelProof.proof
-          FoundationDurableDebtsProof.proof
-          FoundationParallelActivitiesProof.proof
-          FoundationTurnStreamProof.proof
-          FoundationSessionLifecycleProof.proof
-          FoundationResumeArtifactProof.proof
-          FoundationWakePathProof.proof ]
+    // All 15 proof files migrated to apps/proofs (Packet 0.3a M1+M2); this
+    // residual runner is deleted in the M3 atomic swap.
+    let private proofs: ProofSpec list = []
 
     let private usage =
         "Usage: node dist/Program.js proof list | proof run <all|proof-name> [--report-dir <dir>] [--trial-id <id>] [--seed <n>]"
