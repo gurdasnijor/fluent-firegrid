@@ -1,0 +1,23 @@
+{
+  "_comment": "Red/green ratchet manifest (docs/sdds/api-layering-sdd.md, 'Execution: the top-down red/green loop'). Schema and strict rules: targets-README.md. targets[]: { id, wp, corpus, status: 'red' | 'green' }. suites[]: { corpus, command[] } — command runs from the repo root, prints one JSON line { \"id\": \"...\", \"pass\": true|false } per target on stdout, and exits 0.",
+  "suites": [
+    {
+      "corpus": "t0-wiring",
+      "command": ["node", "scripts/targets/t0-wiring-suite.mjs"]
+    }
+  ],
+  "targets": [
+    {
+      "id": "t0.wiring-red",
+      "wp": "T0",
+      "corpus": "t0-wiring",
+      "status": "red"
+    },
+    {
+      "id": "t0.wiring-green",
+      "wp": "T0",
+      "corpus": "t0-wiring",
+      "status": "green"
+    }
+  ]
+}
