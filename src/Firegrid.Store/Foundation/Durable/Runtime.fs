@@ -10,6 +10,9 @@ type DurableRuntimeOptions =
       MaxActivityCommands: int
       MaxTimerCommands: int
       MaxDispatchCommands: int
+      /// How many due activity commands may execute concurrently within one
+      /// tick. Defaults to the whole due batch.
+      MaxConcurrentActivities: int
       MaxRunUntilIdleTicks: int }
 
 type DurableRuntimeClient =
@@ -43,6 +46,7 @@ module DurableRuntimeOptions =
           MaxActivityCommands = 100
           MaxTimerCommands = 100
           MaxDispatchCommands = 100
+          MaxConcurrentActivities = System.Int32.MaxValue
           MaxRunUntilIdleTicks = 100 }
 
 [<RequireQualifiedAccess>]
@@ -59,7 +63,8 @@ module DurableRuntime =
           MaxMailboxRecords = options.MaxMailboxRecords
           MaxActivityCommands = options.MaxActivityCommands
           MaxTimerCommands = options.MaxTimerCommands
-          MaxDispatchCommands = options.MaxDispatchCommands }
+          MaxDispatchCommands = options.MaxDispatchCommands
+          MaxConcurrentActivities = options.MaxConcurrentActivities }
 
     let private shouldStop =
         function
