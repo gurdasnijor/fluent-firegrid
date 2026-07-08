@@ -45,6 +45,9 @@ importers:
 
   apps/proofs:
     dependencies:
+      '@firegrid/durable':
+        specifier: workspace:*
+        version: link:../../src/Firegrid.Durable
       '@firegrid/log':
         specifier: workspace:*
         version: link:../../src/Firegrid.Log

@@ -71,6 +71,12 @@ module Main =
                 return! Runner.run (config filter rest) Registry.all
             | "proof" :: "replay" :: reportPath :: rest ->
                 return! Runner.replay (config None rest) reportPath Registry.all
+            | [ "child"; scenario ] ->
+                match Registry.childScenarios |> List.tryFind (fun (name, _) -> name = scenario) with
+                | Some(_, run) -> return! run ()
+                | None ->
+                    stderr ("unknown child scenario: " + scenario)
+                    return 1
             | [ "proof"; "targets"; suite ] ->
                 match Registry.suites |> List.tryFind (fun spec -> spec.Suite = suite) with
                 | Some spec ->
