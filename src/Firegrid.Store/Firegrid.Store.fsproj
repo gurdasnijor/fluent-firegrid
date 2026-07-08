@@ -38,6 +38,8 @@
     <Compile Include="Foundation/Durable/Client.fs" />
     <Compile Include="Foundation/Durable/CommandDispatch.fs" />
     <Compile Include="Foundation/Durable/ActivityAdapter.fs" />
+    <Compile Include="Foundation/Durable/ChildWorkflowAdapter.fs" />
+    <Compile Include="Foundation/Durable/GenerationAdapter.fs" />
     <Compile Include="Foundation/Durable/Mailbox.fs" />
     <Compile Include="Foundation/Durable/Processor.fs" />
     <Compile Include="Foundation/Durable/WakeShard.fs" />

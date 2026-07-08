@@ -27,6 +27,9 @@ type Durable<'a> =
     | WhenAny of RaceTask list * k: (RaceResult -> Durable<'a>)
     | CurrentTime of k: (int64 -> Durable<'a>)
     | Log of message: string * k: (unit -> Durable<'a>)
+    | Send of Activity * k: (unit -> Durable<'a>)
+    | PerformChild of workflow: string * input: Value * k: (Value -> Durable<'a>)
+    | ContinueAsNew of nextInput: Value
 
 type Event =
     | ActivityCalled of OpId * Activity
@@ -37,6 +40,10 @@ type Event =
     | TimerFired of OpId
     | TimerCanceled of OpId
     | SignalReceived of OpId * name: string * payload: Value
+    | ActivitySent of OpId * Activity
+    | ChildWorkflowCalled of OpId * workflow: string * input: Value
+    | ChildWorkflowCompleted of OpId * output: Value
+    | WorkflowContinuedAsNew of OpId * nextInput: Value
 
 type History = private History of Event list
 
@@ -48,10 +55,14 @@ type Need =
     | NeedsTimerCancellation of OpId list
     | NeedsCurrentTime
     | NeedsLog of message: string
+    | NeedsSend of Activity
+    | NeedsChildWorkflow of workflow: string * input: Value
+    | NeedsRollover of nextInput: Value
 
 type Outcome<'a> =
     | Done of 'a
     | Blocked of OpId * Need
+    | ContinuedAsNew of nextInput: Value
 
 [<RequireQualifiedAccess>]
 module OpId =
@@ -108,6 +119,24 @@ module History =
             | TimerCanceled id when id = opId -> true
             | _ -> false)
 
+    let sent opId (History events) =
+        events
+        |> List.exists (function
+            | ActivitySent(id, _) when id = opId -> true
+            | _ -> false)
+
+    let childCompleted opId (History events) =
+        events
+        |> List.tryPick (function
+            | ChildWorkflowCompleted(id, output) when id = opId -> Some output
+            | _ -> None)
+
+    let continuedAsNew opId (History events) =
+        events
+        |> List.exists (function
+            | WorkflowContinuedAsNew(id, _) when id = opId -> true
+            | _ -> false)
+
     let raceWinner (tasks: (int * OpId * RaceTask) list) (History events) =
         let tryMatch event =
             tasks
@@ -135,6 +164,10 @@ module Durable =
             | WhenAny(tasks, k) -> WhenAny(tasks, k >> loop)
             | CurrentTime k -> CurrentTime(k >> loop)
             | Log(message, k) -> Log(message, k >> loop)
+            | Send(activity, k) -> Send(activity, k >> loop)
+            | PerformChild(workflow, input, k) -> PerformChild(workflow, input, k >> loop)
+            // ContinueAsNew is terminal: nothing bound after it ever runs.
+            | ContinueAsNew nextInput -> ContinueAsNew nextInput
 
         loop program
 
@@ -151,6 +184,12 @@ module Durable =
     let currentTime = CurrentTime Return
 
     let log message = Log(message, Return)
+
+    let send activity = Send(activity, Return)
+
+    let performChild workflow input = PerformChild(workflow, input, Return)
+
+    let continueAsNew nextInput = ContinueAsNew nextInput
 
     let replay history program =
         let rec loop opId current =
@@ -221,5 +260,22 @@ module Durable =
                     loop (OpId.next opId) (k ())
                 else
                     Blocked(opId, NeedsLog message)
+            | Send(activity, k) ->
+                // Fire-and-forget: replay proceeds once the send is journaled;
+                // it never waits for (and never observes) the handler's result.
+                if History.sent opId history then
+                    loop (OpId.next opId) (k ())
+                else
+                    Blocked(opId, NeedsSend activity)
+            | PerformChild(workflow, input, k) ->
+                match History.childCompleted opId history with
+                | Some output -> loop (OpId.next opId) (k output)
+                | None -> Blocked(opId, NeedsChildWorkflow(workflow, input))
+            | ContinueAsNew nextInput ->
+                // Terminal: once the rollover is journaled the generation is over.
+                if History.continuedAsNew opId history then
+                    ContinuedAsNew nextInput
+                else
+                    Blocked(opId, NeedsRollover nextInput)
 
         loop OpId.zero program

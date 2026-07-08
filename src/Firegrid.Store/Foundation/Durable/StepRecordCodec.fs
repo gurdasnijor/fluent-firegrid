@@ -43,19 +43,16 @@ module MailboxEnvelopeCodec =
                     else
                         Ok(text.Substring(start, length), finish)
 
-    let private readFields count text index =
-        let rec loop remaining next acc =
-            if remaining = 0 then
-                if next = String.length text then
-                    Ok(List.rev acc)
-                else
-                    Error "trailing envelope data"
+    let private readAllFields text index =
+        let rec loop next acc =
+            if next = String.length text then
+                Ok(List.rev acc)
             else
                 match readField text next with
-                | Ok(value, finish) -> loop (remaining - 1) finish (value :: acc)
+                | Ok(value, finish) -> loop finish (value :: acc)
                 | Error error -> Error error
 
-        loop count index []
+        loop index []
 
     let private workflowNameText (WorkflowName name) = name
 
@@ -65,6 +62,10 @@ module MailboxEnvelopeCodec =
         | RaiseSignal(name, payload) -> [ "signal"; name; payload ]
         | CompleteActivity(opId, value) -> [ "activity-completed"; opText opId; value ]
         | FireTimer(opId, deadline) -> [ "timer-fired"; opText opId; string deadline ]
+        | StartChildWorkflow(name, input, parent, parentOpId) ->
+            [ "start-child"; workflowNameText name; input; parent; opText parentOpId ]
+        | CompleteChild(opId, output) -> [ "child-completed"; opText opId; output ]
+        | AckSend opId -> [ "ack-send"; opText opId ]
 
     let encode envelope =
         fields (
@@ -82,11 +83,17 @@ module MailboxEnvelopeCodec =
         | "timer-fired" :: opId :: deadline :: [] ->
             parseOp opId
             |> Result.bind (fun id -> parseInt64 "deadline" deadline |> Result.map (fun value -> FireTimer(id, value)))
+        | "start-child" :: workflowName :: input :: parent :: parentOpId :: [] ->
+            parseOp parentOpId
+            |> Result.map (fun id -> StartChildWorkflow(WorkflowName workflowName, input, parent, id))
+        | "child-completed" :: opId :: output :: [] ->
+            parseOp opId |> Result.map (fun id -> CompleteChild(id, output))
+        | "ack-send" :: opId :: [] -> parseOp opId |> Result.map AckSend
         | tag :: _ -> Error("unknown inbox message tag: " + tag)
         | [] -> Error "missing inbox message tag"
 
     let decode body =
-        readFields 5 body 0
+        readAllFields body 0
         |> Result.bind (function
             | source :: sourceSeqNum :: messageFields ->
                 parseInt64 "source seq num" sourceSeqNum
@@ -170,6 +177,13 @@ module StepRecordCodec =
         | TimerFired opId -> prefixed "event.timer-fired" (fields [ opText opId ])
         | TimerCanceled opId -> prefixed "event.timer-canceled" (fields [ opText opId ])
         | SignalReceived(opId, name, payload) -> prefixed "event.signal" (fields [ opText opId; name; payload ])
+        | ActivitySent(opId, activity) ->
+            prefixed "event.activity-sent" (fields [ opText opId; activity.Name; activity.Input ])
+        | ChildWorkflowCalled(opId, workflow, input) ->
+            prefixed "event.child-called" (fields [ opText opId; workflow; input ])
+        | ChildWorkflowCompleted(opId, output) -> prefixed "event.child-completed" (fields [ opText opId; output ])
+        | WorkflowContinuedAsNew(opId, nextInput) ->
+            prefixed "event.continued-as-new" (fields [ opText opId; nextInput ])
 
     let private commandPrefix =
         function
@@ -178,6 +192,14 @@ module StepRecordCodec =
         | ScheduleTimer(opId, deadline) -> prefixed "command.timer" (fields [ opText opId; string deadline ])
         | CancelTimer opId -> prefixed "command.cancel-timer" (fields [ opText opId ])
         | WriteLog(opId, message) -> prefixed "command.log" (fields [ opText opId; message ])
+        | SendActivity(opId, activity) ->
+            prefixed "command.send-activity" (fields [ opText opId; activity.Name; activity.Input ])
+        | CallChildWorkflow(opId, workflow, input) ->
+            prefixed "command.call-child" (fields [ opText opId; workflow; input ])
+        | DeliverChildResult(parent, parentOpId, output) ->
+            prefixed "command.deliver-child-result" (fields [ parent; opText parentOpId; output ])
+        | StartNextGeneration(opId, nextInput) ->
+            prefixed "command.start-next-generation" (fields [ opText opId; nextInput ])
 
     let private workflowNameText (WorkflowName name) = name
 
@@ -187,6 +209,10 @@ module StepRecordCodec =
         | RaiseSignal(name, payload) -> "signal" :: [ name; payload ]
         | CompleteActivity(opId, value) -> "activity-completed" :: [ opText opId; value ]
         | FireTimer(opId, deadline) -> "timer-fired" :: [ opText opId; string deadline ]
+        | StartChildWorkflow(name, input, parent, parentOpId) ->
+            "start-child" :: [ workflowNameText name; input; parent; opText parentOpId ]
+        | CompleteChild(opId, output) -> "child-completed" :: [ opText opId; output ]
+        | AckSend opId -> "ack-send" :: [ opText opId ]
 
     let private inboxEnvelopeFields envelope =
         envelope.Source
@@ -199,6 +225,7 @@ module StepRecordCodec =
     let private encodeStepRecord =
         function
         | WorkflowStarted(name, input) -> prefixed "workflow.started" (fields [ workflowNameText name; input ])
+        | WorkflowParent(parent, parentOpId) -> prefixed "workflow.parent" (fields [ parent; opText parentOpId ])
         | HistoryEvent event -> eventPrefix event
         | Command command -> commandPrefix command
         | SignalDelivered(source, sourceSeqNum, opId) ->
@@ -276,6 +303,26 @@ module StepRecordCodec =
             |> Result.bind (function
                 | [ opId; name; payload ] -> parseOp opId |> Result.map (fun id -> SignalReceived(id, name, payload))
                 | _ -> Error "bad signal field count")
+        | "event.activity-sent" ->
+            readFields 3 body start
+            |> Result.bind decodeActivity
+            |> Result.map ActivitySent
+        | "event.child-called" ->
+            readFields 3 body start
+            |> Result.bind (function
+                | [ opId; workflow; input ] ->
+                    parseOp opId |> Result.map (fun id -> ChildWorkflowCalled(id, workflow, input))
+                | _ -> Error "bad child-called field count")
+        | "event.child-completed" ->
+            readFields 2 body start
+            |> Result.bind (function
+                | [ opId; output ] -> parseOp opId |> Result.map (fun id -> ChildWorkflowCompleted(id, output))
+                | _ -> Error "bad child-completed field count")
+        | "event.continued-as-new" ->
+            readFields 2 body start
+            |> Result.bind (function
+                | [ opId; nextInput ] -> parseOp opId |> Result.map (fun id -> WorkflowContinuedAsNew(id, nextInput))
+                | _ -> Error "bad continued-as-new field count")
         | _ -> Error("unknown event prefix: " + prefix)
 
     let private decodeCommand prefix body start =
@@ -300,6 +347,28 @@ module StepRecordCodec =
             |> Result.bind (function
                 | [ opId; message ] -> parseOp opId |> Result.map (fun id -> WriteLog(id, message))
                 | _ -> Error "bad command log field count")
+        | "command.send-activity" ->
+            readFields 3 body start
+            |> Result.bind decodeActivity
+            |> Result.map SendActivity
+        | "command.call-child" ->
+            readFields 3 body start
+            |> Result.bind (function
+                | [ opId; workflow; input ] ->
+                    parseOp opId |> Result.map (fun id -> CallChildWorkflow(id, workflow, input))
+                | _ -> Error "bad call-child field count")
+        | "command.deliver-child-result" ->
+            readFields 3 body start
+            |> Result.bind (function
+                | [ parent; parentOpId; output ] ->
+                    parseOp parentOpId
+                    |> Result.map (fun id -> DeliverChildResult(parent, id, output))
+                | _ -> Error "bad deliver-child-result field count")
+        | "command.start-next-generation" ->
+            readFields 2 body start
+            |> Result.bind (function
+                | [ opId; nextInput ] -> parseOp opId |> Result.map (fun id -> StartNextGeneration(id, nextInput))
+                | _ -> Error "bad start-next-generation field count")
         | _ -> Error("unknown command prefix: " + prefix)
 
     let private decodeMailboxMessage fields =
@@ -311,11 +380,28 @@ module StepRecordCodec =
         | "timer-fired" :: opId :: deadline :: [] ->
             parseOp opId
             |> Result.bind (fun id -> parseInt64 "deadline" deadline |> Result.map (fun value -> FireTimer(id, value)))
+        | "start-child" :: workflowName :: input :: parent :: parentOpId :: [] ->
+            parseOp parentOpId
+            |> Result.map (fun id -> StartChildWorkflow(WorkflowName workflowName, input, parent, id))
+        | "child-completed" :: opId :: output :: [] ->
+            parseOp opId |> Result.map (fun id -> CompleteChild(id, output))
+        | "ack-send" :: opId :: [] -> parseOp opId |> Result.map AckSend
         | tag :: _ -> Error("unknown inbox message tag: " + tag)
         | [] -> Error "missing inbox message tag"
 
+    let private readAllFields (text: string) index =
+        let rec loop next acc =
+            if next = String.length text then
+                Ok(List.rev acc)
+            else
+                match readField text next with
+                | Ok(value, finish) -> loop finish (value :: acc)
+                | Error error -> Error error
+
+        loop index []
+
     let private decodeMailboxEnvelope body start =
-        readFields 5 body start
+        readAllFields body start
         |> Result.bind (function
             | source :: sourceSeqNum :: messageFields ->
                 parseInt64 "source seq num" sourceSeqNum
@@ -342,6 +428,13 @@ module StepRecordCodec =
             |> Result.bind (function
                 | [ name; input ] -> Ok(WorkflowStarted(WorkflowName name, input))
                 | _ -> Error "bad workflow started field count")
+        | Ok(prefix, _, start) when prefix = "workflow.parent" ->
+            readFields 2 text start
+            |> Result.bind (function
+                | [ parent; parentOpId ] ->
+                    parseOp parentOpId
+                    |> Result.map (fun id -> WorkflowParent(parent, id))
+                | _ -> Error "bad workflow parent field count")
         | Ok(prefix, _, start) when prefix = "signal.delivered" ->
             readFields 3 text start
             |> Result.bind (function
