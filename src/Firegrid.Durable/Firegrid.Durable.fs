@@ -22,6 +22,12 @@
 /// while sections reference each other (e.g. `EntityDef.State` uses
 /// `ReadGrade` from section 9); `and` chains that followed a `module` are
 /// re-rooted as `type` (identical declarations, legal F#).
+///
+/// Ratified amendments (architect ruling on PR #117 — internal
+/// inconsistencies the T1 corpus exposed):
+///   • `DurableLog.Seal`         — a terminal was promised; nothing could seal
+///   • `Append : Async<Version>` — `Through v` requires the writer to HOLD an ack
+///   • `Step.terminal`           — `StepError.Terminal` was unreachable from handlers
 /// ═══════════════════════════════════════════════════════════════════════
 namespace rec Firegrid.Durable
 
@@ -58,7 +64,10 @@ type Timestamp = float
 /// Why a step failed, as a value. `Terminal` failures stop retrying.
 type StepError =
     | Failed of message: string          // retries exhausted
-    | Terminal of message: string        // the step itself said "don't retry"
+    | Terminal of message: string        // the step itself said "don't retry":
+                                         // raised via `Step.terminal message` —
+                                         // one attempt, retries bypassed
+                                         // whatever the policy says
 
 /// Retry policy for a step. Applied by the platform, journaled with the step.
 type Retry =
@@ -93,6 +102,11 @@ module Step =
     /// Declare a step you don't implement here — share the contract with a
     /// process that only *calls* it. `Worker.implement` binds the body.
     let declare<'input, 'output> (name: string) : Step<'input, 'output> = notYet
+    /// Mark a failure TERMINAL from inside a step implementation: raising the
+    /// returned exception fails the step as `StepError.Terminal message`
+    /// after this one attempt — retries are bypassed regardless of policy.
+    /// (Ratified amendment: `Terminal` was otherwise unreachable.)
+    let terminal (message: string) : exn = notYet
 
 type Codecs<'i, 'o> = { EncodeIn: 'i -> string; DecodeIn: string -> 'i; EncodeOut: 'o -> string; DecodeOut: string -> 'o }
 
@@ -351,7 +365,15 @@ module Client =
 /// tail, then the terminal. One loop, no polling.
 type DurableLog =
     member _.Attach () : AsyncSeq<LogEvent> = notYet
-    member _.Append (data: string) : Async<unit> = notYet
+    /// Append one record. The ack is the version to hand `Through` for
+    /// read-your-writes. (Ratified amendment: was `Async<unit>`, which
+    /// contradicted the read-grade doctrine — no way to hold an append ack.)
+    member _.Append (data: string) : Async<Version> = notYet
+    /// Seal the log: every attach — current and future — ends with
+    /// `Terminal reason` after the recorded prefix and live tail; further
+    /// appends are refused. (Ratified amendment: the terminal was promised
+    /// but nothing could seal.)
+    member _.Seal (reason: string) : Async<unit> = notYet
 
 and LogEvent = Chunk of data: string | Terminal of reason: string
 and AsyncSeq<'t> = internal AsyncSeq of unit   // async sequence; a JS async iterable under the future TS emission

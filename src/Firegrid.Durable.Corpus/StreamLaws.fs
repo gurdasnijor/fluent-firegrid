@@ -11,10 +11,9 @@ module StreamLaws =
 
     // ── t1.log-attach-byte-faithful ───────────────────────────────────────
     // One attach loop delivers the recorded prefix, then the live tail, then
-    // the terminal — byte-faithful and in order, with no polling. NOTE (for
-    // the ratifier): the surface exposes no way to SEAL a log, so the
-    // terminal leg of this law is unreachable until sealing semantics land —
-    // reported as a surface gap in the T1 PR.
+    // the terminal — byte-faithful and in order, with no polling. The seal is
+    // the ratified `DurableLog.Seal` amendment (architect ruling, PR #117):
+    // sealing ends every attach with `Terminal reason` as the LAST event.
     let logAttachByteFaithful: Law =
         { Id = "t1.log-attach-byte-faithful"
           TimeoutMs = 120_000
@@ -32,7 +31,7 @@ module StreamLaws =
 
                                 // Recorded prefix, appended before anyone listens.
                                 for data in prefix do
-                                    do! log.Append data
+                                    do! log.Append data |> Async.Ignore
 
                                 let events = ResizeArray<LogEvent>()
                                 let mutable iterCompleted = false
@@ -49,7 +48,7 @@ module StreamLaws =
                                 do! Node.sleep 250
 
                                 for data in tail do
-                                    do! log.Append data
+                                    do! log.Append data |> Async.Ignore
 
                                 let chunks () =
                                     events
@@ -68,8 +67,9 @@ module StreamLaws =
                                     (prefix @ tail)
                                     (chunks ())
 
-                                // The terminal: the attach loop must END with the
-                                // log's terminal once the log is sealed.
+                                // Seal — the terminal must END the attach loop.
+                                do! log.Seal "corpus-sealed"
+
                                 do!
                                     Harness.until "attach delivered the terminal and completed" 30_000 (fun () ->
                                         async {
@@ -85,7 +85,8 @@ module StreamLaws =
                                         })
 
                                 match List.tryLast (List.ofSeq events) with
-                                | Some (Terminal _) -> ()
+                                | Some (Terminal reason) ->
+                                    Expect.equal "the terminal carries the seal reason" "corpus-sealed" reason
                                 | other -> failwith (sprintf "the terminal must be the LAST delivered event, got %A" other)
                             })
                 } }
@@ -93,7 +94,9 @@ module StreamLaws =
     // ── t1.three-read-grades ──────────────────────────────────────────────
     // Eventual: a valid fold prefix with the lag exposed as data (Behind).
     // Latest: linearizable at the checked tail. Through v: read-your-writes
-    // for a reader holding a version (here: the AsOf of a Latest view).
+    // for a writer holding its own append ack (the ratified
+    // `Append : Async<Version>` amendment), or any handed-off version
+    // (e.g. the AsOf of a Latest view).
     let threeReadGrades: Law =
         { Id = "t1.three-read-grades"
           TimeoutMs = 120_000
@@ -110,7 +113,7 @@ module StreamLaws =
                                 let log = client.Logs [ "corpus"; "grades"; "g-1" ]
 
                                 for i in 1..5 do
-                                    do! log.Append (sprintf "record-%d" i)
+                                    do! log.Append (sprintf "record-%d" i) |> Async.Ignore
 
                                 // Latest: linearizable — sees everything appended.
                                 let! latest = client.Read counting Latest
@@ -129,15 +132,19 @@ module StreamLaws =
                                     5
                                     (eventual.State + int eventual.Behind)
 
-                                // Through v: read-your-writes via version handoff.
-                                for i in 6..7 do
-                                    do! log.Append (sprintf "record-%d" i)
+                                // Through v — leg 1: the WRITER's own append ack.
+                                let! _ack6 = log.Append "record-6"
+                                let! ack7 = log.Append "record-7"
 
+                                let! viaAck = client.Read counting (Through ack7)
+                                Expect.equal "Through(own append ack) reads your write — no prior read needed" 7 viaAck.State
+
+                                // Through v — leg 2: a handed-off version (Latest's AsOf).
                                 let! latest2 = client.Read counting Latest
                                 Expect.equal "Latest sees the new writes" 7 latest2.State
 
                                 let! through = client.Read counting (Through latest2.AsOf)
-                                Expect.equal "Through(ack) reads your writes at that version" 7 through.State
+                                Expect.equal "Through(handed-off AsOf) reads at that version" 7 through.State
 
                                 let! throughOld = client.Read counting (Through latest.AsOf)
 
@@ -184,7 +191,7 @@ module StreamLaws =
                                 let log = client.Logs [ "corpus"; "cel"; "c-1" ]
 
                                 // Predicate false (Count = 1): the workflow parks.
-                                do! log.Append "bump"
+                                do! log.Append "bump" |> Async.Ignore
                                 let! runA = waiter.Start client "go" (Id "cel-parked")
 
                                 do!
@@ -196,13 +203,13 @@ module StreamLaws =
 
                                 // Unrelated change: the projection folds it but the
                                 // state is unchanged — the waiter must NOT resume.
-                                do! log.Append "noise"
+                                do! log.Append "noise" |> Async.Ignore
                                 do! Node.sleep 1_500
                                 let! stillParked = runA.Status
                                 Expect.equal "unrelated change does not resume the wait" Running stillParked
 
                                 // Satisfying change (Count = 2): park → resume.
-                                do! log.Append "bump"
+                                do! log.Append "bump" |> Async.Ignore
                                 let! resultA = runA.Result
                                 Expect.equal "the wait resumes with the satisfying state" (Ok 2) resultA
 
@@ -214,7 +221,7 @@ module StreamLaws =
                                 // Replay-served: mutate the state PAST the recorded
                                 // resolution, restart the host, reattach — history
                                 // does not change.
-                                do! log.Append "bump"
+                                do! log.Append "bump" |> Async.Ignore
                                 do! worker.Stop ()
                                 let! worker2 = Worker.run env.Basin ns [ reg waiter ]
                                 let reattached = Client.attach<int> client (Id "cel-parked")

@@ -317,10 +317,14 @@ module CoreLaws =
                 } }
 
     // ── t1.typed-step-failure ─────────────────────────────────────────────
-    // Retry exhaustion surfaces as a VALUE: `DurableStepFailed` carrying
-    // `StepError.Failed` is catchable in-workflow (compensate, return); an
-    // uncaught step failure terminates the run as `Failed(StepError)` in
-    // both `Status` and `Result`. Retry policies bound handler attempts.
+    // Every step failure is a VALUE. Failed leg: retry exhaustion surfaces
+    // as `DurableStepFailed(StepError.Failed _)` — catchable in-workflow;
+    // uncaught it terminates the run as `Failed(StepError)` in both `Status`
+    // and `Result`; retry policies bound handler attempts. Terminal leg
+    // (ratified `Step.terminal` amendment): a handler that raises
+    // `Step.terminal msg` surfaces as `StepError.Terminal` after exactly ONE
+    // attempt — retries bypassed regardless of policy — equally catchable
+    // and equally visible in Status/Result.
     let typedStepFailure: Law =
         { Id = "t1.typed-step-failure"
           TimeoutMs = 120_000
@@ -334,6 +338,13 @@ module CoreLaws =
                             async {
                                 Counter.bump scratch ("flaky-" + tag)
                                 return (failwith "boom" : string)
+                            })
+
+                    let fatal =
+                        Step.define "corpus/fatal" (fun (tag: string) ->
+                            async {
+                                Counter.bump scratch ("fatal-" + tag)
+                                return (raise (Step.terminal "unrecoverable") : string)
                             })
 
                     let caught =
@@ -353,10 +364,33 @@ module CoreLaws =
                                 return value
                             })
 
+                    let terminalCaught =
+                        Workflow.define "corpus/terminal-caught" (fun (_: string) ->
+                            workflow {
+                                try
+                                    // A GENEROUS policy — Terminal must ignore it.
+                                    let! value = fatal.CallWith (Fixed (5, Duration.seconds 0.2)) "caught"
+                                    return "unreachable:" + value
+                                with DurableStepFailed (StepError.Terminal _) ->
+                                    return "caught-terminal"
+                            })
+
+                    let terminalUncaught =
+                        Workflow.define "corpus/terminal-uncaught" (fun (_: string) ->
+                            workflow {
+                                let! value = fatal.CallWith (Fixed (5, Duration.seconds 0.2)) "uncaught"
+                                return value
+                            })
+
                     do!
                         Harness.withEnv "step-failure" (fun env ->
                             async {
-                                let! worker = Worker.run env.Basin "t1-failure" [ reg flaky; reg caught; reg uncaught ]
+                                let! worker =
+                                    Worker.run
+                                        env.Basin
+                                        "t1-failure"
+                                        [ reg flaky; reg fatal; reg caught; reg uncaught; reg terminalCaught; reg terminalUncaught ]
+
                                 let client = Client.connect env.Basin
 
                                 let! runCaught = caught.Start client "go" (Id "failure-caught-1")
@@ -380,6 +414,40 @@ module CoreLaws =
                                 | other -> failwith (sprintf "uncaught step failure must surface in Status: %A" other)
 
                                 Expect.equal "NoRetry runs the handler exactly once" 1 (Counter.read scratch "flaky-uncaught")
+
+                                // Terminal leg — caught: one attempt, retries bypassed.
+                                let! runTermCaught = terminalCaught.Start client "go" (Id "terminal-caught-1")
+                                let! resultTermCaught = runTermCaught.Result
+
+                                Expect.equal
+                                    "Step.terminal is catchable as StepError.Terminal"
+                                    (Ok "caught-terminal")
+                                    resultTermCaught
+
+                                Expect.equal
+                                    "Terminal bypasses the retry policy: exactly ONE attempt under Fixed(5, …)"
+                                    1
+                                    (Counter.read scratch "fatal-caught")
+
+                                // Terminal leg — uncaught: typed terminal outcome.
+                                let! runTermUncaught = terminalUncaught.Start client "go" (Id "terminal-uncaught-1")
+                                let! resultTermUncaught = runTermUncaught.Result
+
+                                match resultTermUncaught with
+                                | Error (FailedRun (StepError.Terminal _)) -> ()
+                                | other -> failwith (sprintf "uncaught terminal failure must surface as FailedRun(Terminal _): %A" other)
+
+                                let! statusTermUncaught = runTermUncaught.Status
+
+                                match statusTermUncaught with
+                                | RunStatus.Failed (StepError.Terminal _) -> ()
+                                | other -> failwith (sprintf "uncaught terminal failure must surface in Status: %A" other)
+
+                                Expect.equal
+                                    "uncaught terminal also ran exactly once despite Fixed(5, …)"
+                                    1
+                                    (Counter.read scratch "fatal-uncaught")
+
                                 do! worker.Stop ()
                             })
                 } }
