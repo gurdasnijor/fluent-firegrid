@@ -278,6 +278,38 @@ acceptance** — anywhere it must reach around `Firegrid.Durable`, that is a
 platform gap and becomes a platform work packet. (agent-ui, being TS,
 consumes the future emission — see L2.)
 
+Indicatively — note every domain word ("session", "turn") is defined *here*,
+and everything on the right-hand side is a platform op:
+
+```fsharp
+// The session entity: single-live-turn policy as an ordinary Decider.
+module Session =
+    type Command = StartTurn of TurnId * HolderId | CancelTurn of TurnId
+    type Event   = TurnStarted of TurnId | TurnEnded of TurnId * EndCause
+    type State   = { Live: TurnId option }
+    let initial = { Live = None }
+    let evolve state = function
+        | TurnStarted t   -> { Live = Some t }
+        | TurnEnded (t,_) -> if state.Live = Some t then { Live = None } else state
+    let decide cmd state =
+        match cmd, state.Live with
+        | StartTurn (t,_), Some live when live <> t -> []       // AlreadyLive: policy, not mechanism
+        | StartTurn (t,_), _                        -> [ TurnStarted t ]
+        | CancelTurn t,    Some live when live = t  -> [ TurnEnded (t, Cancelled) ]
+        | CancelTurn _,    _                        -> []       // idempotent
+let session = Entity.define "agent/session" { Initial = Session.initial; Evolve = Session.evolve; Decide = Session.decide }
+
+// A turn's execution: an orchestration; its output: a sealed durable log.
+let driveHarness = Step.define "agent/drive-harness" (fun (p: Prompt) -> async { (* … *) })
+let runTurn = Workflow.define "agent/turn" (fun (input: TurnInput) -> workflow {
+    let! artifact = driveHarness.Call input.Prompt
+    return artifact })
+
+// The UI path: attach to the turn log and fold history — platform primitives.
+for ev in (client.Logs [ "agent"; sid; "turns"; tid ]).Attach() do render ev
+let! history = client.Read sessionHistoryFold ReadGrade.Eventual
+```
+
 ### L2 — the emission seam (dormant)
 
 Materializes only when the TS target is prioritized: mechanical Fable
@@ -287,6 +319,92 @@ host/registry, entity admission, activity plumbing, sealed-log
 create/append/seal/attach, checkpoint + read primitives. Application modules
 are never seam mandates. Wake plumbing is not exported. Until then the
 Fable-green build gate on L3 is what keeps this layer cheap to open.
+
+When it opens, a seam export is a mechanical pass-through and the wrapper is
+a thin conversion — nothing more:
+
+```fsharp
+// L2 (F#, generated posture): mechanical, Async is fine here.
+let stepCall (step: Step<'i,'o>) (input: 'i) : Async<'o> = …
+```
+```ts
+// Future @firegrid/durable (plain TS): Promise + tagged unions, no effect.
+const receipt = await checkout.start(client, order, { id: "order-42" }).result()
+```
+
+### L1 — the kernel contracts L3 curates (all real on `main` today)
+
+L3 adds ergonomics; it adds no semantics. These are the internal contracts
+it composes — quoted near-verbatim from merged code:
+
+```fsharp
+// Orchestration semantics (Foundation/Durable/Semantics.fs): a FREE MONAD —
+// the program is data; the interpreter (Stepper) replays it over a journal.
+type Durable<'a> =
+    | Return of 'a
+    | Perform     of Activity * k: (Value -> Durable<'a>)        // one step
+    | PerformAll  of Activity list * k: (Value list -> Durable<'a>) // fan-out
+    | Await       of EventKey * k: (Value -> Durable<'a>)        // Timer | Signal
+    | WhenAny     of RaceTask list * k: (RaceResult -> Durable<'a>) // races
+    | CurrentTime of k: (int64 -> Durable<'a>)                   // deterministic time
+// Stepper journal (StepRecordCodec): WorkflowStarted | HistoryEvent |
+// Command (CallActivity/ScheduleTimer/…) | SignalDelivered | checkpoints.
+// Replay = re-run the program; completed ops return journal values.
+
+// Entity semantics (Foundation/Durable/Processor.fs): the Decider, natively.
+type Handler<'state,'msg,'record,'terminal> =
+    { Initial:    'state
+      Fold:       'state -> StoredRecord<'record> -> 'state       // = evolve
+      OnAdmitted: 'state -> Admitted<'msg> -> Decision<…>         // = decide (command)
+      OnWake:     'state -> WakeReason -> Decision<…> }           // = decide (timer/child)
+// Decision = { State; Append: 'record list; Intents; Seal } — committed
+// atomically under the holder's fence; Intents = SetTimer | Send | Execute.
+
+// Storage primitives (Foundation/*.fs) — every write path is fenced:
+module Authority   = // claim : … -> HolderId -> Async<Result<Holder<'r>, ClaimError>>
+                     // idempotent per epoch; different holder ⇒ epoch+1 deposal
+module DurableLog  = // append/seal → Result<_, Deposed|Sealed|Failed>; attach: reader, no authority
+module Checkpoint  = // latest / resumeFrom / commit (monotonic, race-safe via Authority)
+module StateReads  = // readEventual / readThrough v / readLatest — the 3 read grades
+// Wake path (WakeShard/WakeRouter): pointer records, FencedOwner routers —
+// the liveness accelerator; sweeps remain the correctness floor.
+```
+
+### L0 — the substrate contract (everything above is built from exactly this)
+
+```fsharp
+// S2 (Firegrid.Log). Ordered durable streams — the platform's only dependency.
+module S2 =
+    type Basin                                    // a namespace of streams
+    val ensureStream  : string -> Basin -> Async<unit>
+    val append        : records -> StreamRef -> Async<AppendAck>   // ordered, durable
+    val tryAppendWith : AppendOptions -> records -> StreamRef -> _ // matchSeqNum CAS + fencing
+    val checkTail     : StreamRef -> Async<Tail>                   // linearizable barrier
+    val readWith      : ReadOptions -> StreamRef -> _              // from-seq reads, with-wait tailing
+// AppendAck.End.SeqNum is an EXCLUSIVE upper bound — the version convention
+// every layer above inherits. Fencing + CAS on append is the mechanism under
+// Authority; checkTail is the mechanism under strong reads.
+```
+
+### Composition: one signal, five layers
+
+```
+do! run.Signal approved decision                                   (L4 app / L3 handle)
+ │   L3: encodes Decision via the derived codec; addresses the run's mailbox
+ ▼
+ L1: mailbox ADMISSION (provenance-deduped) → holder's Stepper resumes the
+     journaled program → the parked `Await(Signal "orders/approved", k)` is
+     matched → `SignalDelivered` is journaled → k decision continues
+ ▼
+ L0: every journal append lands via `tryAppendWith` UNDER THE HOLDER'S FENCE
+     — a deposed holder computes but cannot commit
+```
+
+Recovery is the same picture in reverse: a fresh host re-runs the *same*
+program; `Perform`/`Await` return journal values instead of executing;
+execution resumes at the frontier. An L3 user never sees any of this — and
+an L4 author never sees L1 at all: the layering rules are enforced by what
+each layer exports, not by convention.
 
 ## Doctrine (binding on ratification)
 
