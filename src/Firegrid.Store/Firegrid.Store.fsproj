@@ -47,6 +47,7 @@
     <Compile Include="Foundation/Durable/Host.fs" />
     <Compile Include="Foundation/Durable/Runtime.fs" />
     <Compile Include="Foundation/Durable/App.fs" />
+    <Compile Include="FiregridDurable.fs" />
     <Compile Include="SessionLifecycle.fs" />
     <Compile Include="SessionHistory.fs" />
     <Compile Include="ResumeArtifactStore.fs" />

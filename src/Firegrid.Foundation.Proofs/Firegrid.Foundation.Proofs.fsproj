@@ -43,6 +43,7 @@
     <Compile Include="FoundationSessionLifecycleProof.fs" />
     <Compile Include="FoundationResumeArtifactProof.fs" />
     <Compile Include="FoundationWakePathProof.fs" />
+    <Compile Include="SpikeS0.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

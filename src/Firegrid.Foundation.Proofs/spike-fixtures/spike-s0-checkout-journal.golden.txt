@@ -1,0 +1,9 @@
+in|event.activity-called|1:014:orders/reserve19:["OrderId","ord-1"]
+out|command.activity|1:014:orders/reserve19:["OrderId","ord-1"]
+in|event.activity-completed|1:029:{"ReservationId":"res-ord-1"}
+in|event.activity-called|1:113:orders/notify19:["OrderId","ord-1"]
+out|command.activity|1:113:orders/notify19:["OrderId","ord-1"]
+in|event.activity-completed|1:110:"notified"
+in|event.current-time|1:213:1700000000000
+in|event.timer-created|1:413:1700172800000
+out|command.timer|1:413:1700172800000
