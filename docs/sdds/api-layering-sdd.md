@@ -186,6 +186,21 @@ lineage deliberately mirrors). Decided:
     on-exit policies. A v2 kernel-semantics extension (our lazy
     `Workflow<'a>` programs already are the `Operation` half); adopt when
     a use case demands it, copying the proven design.
+11. **Why the entity contract is a Decider, not an actor framework**
+    (evaluated against Fable.Actor, MailboxProcessor, Akka/Akkling).
+    In-memory actor libraries isolate at the *process*; entities isolate at
+    the *stream* — their guarantees end at the crash/host boundary where
+    ours begin (the engine's own history: in-process serialization ⇒ lost
+    updates across a crash; single-writer must be a durable fenced inbox).
+    Deeper: replay requires `state = fold(events)` — receive loops hold
+    state in closures (unrecoverable) and reducer actors transition state
+    without an event log (snapshot-only, no fenced atomic append+intents).
+    Every actor system that adds durability converges on decide/evolve
+    (Akka Persistence, Orleans JournaledGrain, Equinox): the Handler *is*
+    the durable actor, not a hand-rolled alternative to one. Sanctioned
+    reuse: in-memory actor libs as L1-shell plumbing (invisible) and freely
+    inside L4 applications for ephemeral concurrency; never as the entity
+    authoring contract.
 
 #### Stress-test findings (2026-07-07 — Restate tutorial + choreography-agent mapping)
 
