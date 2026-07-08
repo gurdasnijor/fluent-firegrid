@@ -187,33 +187,72 @@ module SelectSyntax =
     /// Tag a branch for `Workflow.select`: `Approved ^| signal.Await ()`.
     let (^|) (tag: 'a -> 'tag) (branch: Workflow<'a>) : SelectBranch<'tag> = notYet
 
-// ── 5. Entities — durable keyed state ─────────────────────────────────────
+// ── 5. Services — stateless durable request-response ─────────────────────
 //
-// An entity is a Decider: pure `decide` (command → events) and `evolve`
-// (state ← event). State is the fold of the entity's own journal — recovery
-// is refold, so read-modify-write is replay-safe BY CONSTRUCTION. One writer
-// per key, enforced across hosts by fencing; commands from anywhere are
-// serialized and deduplicated.
+// The "start here" construct: no key, no state, unlimited concurrency. Each
+// call is its own durable execution — journaled steps, retries, exactly-once
+// effects — and returns a value. (Semantically: a workflow with an
+// auto-generated instance id; named because the semantics deserve a name.)
 
-type Decider<'command, 'event, 'state> =
+type ServiceDef<'input, 'output> =
+    /// Request-response. Durable: if the caller dies awaiting, the execution
+    /// continues regardless; reattach by idempotency key to collect it.
+    member _.Call (client: Client) (input: 'input) : Async<'output> = notYet
+    /// Same call, deduplicated: same key ⇒ same execution, one result.
+    member _.CallIdempotent (client: Client) (idempotencyKey: string) (input: 'input) : Async<'output> = notYet
+
+[<RequireQualifiedAccess>]
+module Service =
+    let define (name: string) (handler: 'input -> Workflow<'output>) : ServiceDef<'input, 'output> = notYet
+    let declare<'input, 'output> (name: string) : ServiceDef<'input, 'output> = notYet
+
+// ── 6. Entities (virtual objects) — durable keyed state ──────────────────
+//
+// Key-addressable, uniquely-identified stateful instances. The address IS
+// the stream identity (entity name + key ⇒ one journal, one writer), so
+// uniqueness is structural, not registry-based.
+//
+// CONCURRENCY CONTRACT (the virtual-object constraint):
+//   • EXCLUSIVE: at most one `Decide` runs per key at any moment, across
+//     all hosts — enforced below the API by durable inbox admission
+//     (serialized + deduplicated) and epoch fencing at commit (a deposed
+//     writer computes but cannot commit, even mid-split-brain).
+//   • SHARED: state reads run concurrently, never block the writer, and
+//     say explicitly what consistency they accept (the grade).
+//
+// `Decide` is pure — full read access to state, the key in scope, a reply
+// for the caller, events to append — with reply + events committed
+// atomically under the key's fence. State = fold of the entity's own
+// journal: recovery is refold, so read-modify-write is replay-safe BY
+// CONSTRUCTION. Multi-step effectful logic under a key belongs in a
+// workflow the entity starts — compose, don't fuse.
+
+/// The key addressing one entity instance (Restate: `ctx.key`).
+type Key = Key of string
+
+type Decider<'command, 'event, 'state, 'reply> =
     { Initial: 'state
       Evolve: 'state -> 'event -> 'state
-      Decide: 'command -> 'state -> 'event list }
+      Decide: Key -> 'command -> 'state -> 'reply * 'event list }
 
-type EntityDef<'command, 'event, 'state> =
-    /// Send a command to a key. Durable, deduplicated, serialized per key.
-    /// Any process may send; no locks, no ownership needed by the sender.
+type EntityDef<'command, 'event, 'state, 'reply> =
+    /// EXCLUSIVE handler, request-response: serialized per key; the reply is
+    /// computed with exclusive state access and returned to the caller.
+    member _.Call (client: Client) (key: string) (command: 'command) : Async<'reply> = notYet
+    /// EXCLUSIVE handler, fire-and-forget (the reply is discarded). Durable,
+    /// deduplicated; any process may send — no locks, no ownership needed.
     member _.Send (client: Client) (key: string) (command: 'command) : Async<unit> = notYet
     /// Send after a delay (durable: fires even if every process restarts).
     member _.SendAfter (client: Client) (key: string) (delay: Duration) (command: 'command) : Async<unit> = notYet
-    /// Read a key's current state. Grades: see Projections.
+    /// SHARED handler: concurrent read of a key's state; never blocks the
+    /// writer; the consistency grade is explicit.
     member _.State (client: Client) (key: string) (grade: ReadGrade) : Async<'state> = notYet
 
 [<RequireQualifiedAccess>]
 module Entity =
-    let define (name: string) (decider: Decider<'command, 'event, 'state>) : EntityDef<'command, 'event, 'state> = notYet
+    let define (name: string) (decider: Decider<'command, 'event, 'state, 'reply>) : EntityDef<'command, 'event, 'state, 'reply> = notYet
 
-// ── 6. Worker — hosting ───────────────────────────────────────────────────
+// ── 7. Worker — hosting ───────────────────────────────────────────────────
 //
 // Registration is data: a list of definitions. `Worker.run` claims work for
 // this namespace and RUNS the host loop until stopped (it does not return
@@ -238,7 +277,7 @@ module Worker =
     /// worker (loop already started); `worker.Stop()` for graceful shutdown.
     let run (basin: S2.Basin) (ns: string) (definitions: Registration list) : Async<Worker> = notYet
 
-// ── 7. Client — start, signal, cancel, observe ────────────────────────────
+// ── 8. Client — start, signal, cancel, observe ────────────────────────────
 
 type Client =
     /// Everything below hangs off a connected client.
@@ -265,7 +304,7 @@ module Client =
     /// Reattach to an instance by id from anywhere.
     let attach<'output> (client: Client) (id: Id) : Run<'output> = notYet
 
-// ── 8. Logs & Projections — stream-native reads ───────────────────────────
+// ── 9. Logs & Projections — stream-native reads ───────────────────────────
 
 /// A sealed durable log: byte-faithful attach — recorded prefix, then live
 /// tail, then the terminal. One loop, no polling.
@@ -298,7 +337,7 @@ and View<'state> = { State: 'state; AsOf: Version; Behind: float }
 module Projection =
     let define (name: string) (source: string list) (initial: 'state) (apply: 'state -> string -> 'state) : Projection<'state> = notYet
 
-// ── 9. Errors ─────────────────────────────────────────────────────────────
+// ── 10. Errors ─────────────────────────────────────────────────────────────
 //
 // Everything above returns Results or raises exactly one catchable durable
 // exception inside `workflow { }`:

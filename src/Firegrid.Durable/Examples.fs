@@ -30,6 +30,24 @@ module Hello =
 
         do! worker.Stop () }
 
+// ══ 1b. Services — stateless durable request-response ═════════════════════
+// The "start here" construct: no key, no state, unlimited concurrency —
+// but every call is a durable execution (journaled steps, retries).
+module Convert =
+
+    let fetchRate = Step.define "fx/fetch-rate" (fun (pair: string) -> async { return 1.09 })
+
+    let convert = Service.define "fx/convert" (fun (amount: float, pair: string) -> workflow {
+        let! rate = fetchRate.CallWith (Backoff (3, Duration.seconds 1.0, 2.0)) pair
+        return amount * rate })
+
+    let demo basin = async {
+        let client = Client.connect basin
+        let! eur = convert.Call client (100.0, "USD/EUR")
+        // Webhook-style dedupe: same key ⇒ same execution, one result.
+        let! once = convert.CallIdempotent client "stripe-evt-819" (100.0, "USD/EUR")
+        return eur, once }
+
 // ══ 2. Checkout — fan-out, a human decision, a deadline ═══════════════════
 module Checkout =
 
@@ -140,30 +158,44 @@ module Inventory =
     type Event   = Reserved of int | Restocked of int | ReservationRefused of int
     type Stock   = { OnHand: int }
 
-    let decider : Decider<Command, Event, Stock> =
+    /// The caller gets an ANSWER, computed under exclusive state access:
+    type Reply = Accepted of remaining: int | Refused of reason: string
+
+    let decider : Decider<Command, Event, Stock, Reply> =
         { Initial = { OnHand = 0 }
           Evolve = fun stock -> function
             | Reserved n  -> { OnHand = stock.OnHand - n }
             | Restocked n -> { OnHand = stock.OnHand + n }
             | ReservationRefused _ -> stock
-          Decide = fun command stock ->
+          // Exclusive handler: at most one Decide per key at a time, across
+          // all hosts. Reply and events commit atomically under the fence.
+          Decide = fun (Key sku) command stock ->
             match command with
-            | Restock n -> [ Restocked n ]
-            | Reserve n when n <= stock.OnHand -> [ Reserved n ]
-            | Reserve n -> [ ReservationRefused n ] }
+            | Restock n -> Accepted (stock.OnHand + n), [ Restocked n ]
+            | Reserve n when n <= stock.OnHand ->
+                Accepted (stock.OnHand - n), [ Reserved n ]
+            | Reserve n ->
+                Refused (sprintf "%s: only %d on hand" sku stock.OnHand),
+                [ ReservationRefused n ] }
 
     let inventory = Entity.define "shop/inventory" decider
 
     let demo basin = async {
         let client = Client.connect basin
-        // Sends from ANY process: serialized per key, deduplicated, durable.
+
+        // EXCLUSIVE handlers — request-response or fire-and-forget; either
+        // way serialized per key, deduplicated, durable, from any process:
+        let! reply = inventory.Call client "sku-123" (Reserve 3)
+        match reply with
+        | Accepted remaining -> printfn "reserved; %d left" remaining
+        | Refused reason     -> printfn "no: %s" reason
         do! inventory.Send client "sku-123" (Restock 10)
-        do! inventory.Send client "sku-123" (Reserve 3)
         do! inventory.SendAfter client "sku-123" (Duration.days 1.0) (Reserve 1)
 
-        // Reads say what staleness they accept:
-        let! quick  = inventory.State client "sku-123" Eventual   // fast, may lag
-        let! exact  = inventory.State client "sku-123" Latest     // linearizable
+        // SHARED handlers — concurrent reads that never block the writer,
+        // with the staleness you're accepting made explicit:
+        let! quick = inventory.State client "sku-123" Eventual   // fast, may lag
+        let! exact = inventory.State client "sku-123" Latest     // linearizable
         return exact }
 
 // ══ 8. Sharing contracts across processes ═════════════════════════════════
@@ -240,12 +272,12 @@ module Agent =
               Evolve = fun s -> function
                 | TurnStarted t   -> { LiveTurn = Some t }
                 | TurnCancelled _ -> { LiveTurn = None }
-              Decide = fun cmd s ->
+              Decide = fun _key cmd s ->
                 match cmd, s.LiveTurn with
-                | StartTurn t, None    -> [ TurnStarted t ]
-                | StartTurn _, Some _  -> []                // single live turn: policy
-                | CancelTurn t, Some live when t = live -> [ TurnCancelled t ]
-                | CancelTurn _, _      -> [] }              // idempotent
+                | StartTurn t, None    -> (), [ TurnStarted t ]
+                | StartTurn _, Some _  -> (), []            // single live turn: policy
+                | CancelTurn t, Some live when t = live -> (), [ TurnCancelled t ]
+                | CancelTurn _, _      -> (), [] }          // idempotent
 
 // ══ 10. Watching it run — logs and projections ════════════════════════════
 module Observability =
