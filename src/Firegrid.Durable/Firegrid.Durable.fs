@@ -364,6 +364,17 @@ and View<'state> = { State: 'state; AsOf: Version; Behind: float }
 module Projection =
     let define (name: string) (source: string list) (initial: 'state) (apply: 'state -> string -> 'state) : Projection<'state> = notYet
 
+/// A serializable predicate (CEL text) — persisted with the wait, evaluated
+/// on relevant state change, never a closure. Registration-time validated.
+and Cel = Cel of string
+
+[<RequireQualifiedAccess>]
+module Wait =
+    /// Park a workflow until a projection's state satisfies the predicate
+    /// (immediately, if it already does). Durable: pins no process; resumes
+    /// via the wake path; replay serves the recorded resolution.
+    let state (projection: Projection<'state>) (predicate: Cel) (timeout: Duration) : Workflow<Result<'state, Timeout>> = notYet
+
 // ── 10. Errors ─────────────────────────────────────────────────────────────
 //
 // Everything above returns Results or raises exactly one catchable durable
