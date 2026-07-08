@@ -1,5 +1,6 @@
 namespace Firegrid.Foundation.Proofs
 
+open Fable.Core
 open Firegrid.Log
 
 module Property =
@@ -13,12 +14,15 @@ module Property =
           Workload: (WorkloadContext -> Async<'result>) option
           Verifiers: Check<'result> list
           NegativeControls: NegativeControlSpec<'result> list
-          RequiresNegativeControl: bool }
+          RequiresNegativeControl: bool
+          TimeoutMs: int option }
 
     type ResolvedResources =
         { S2: S2Resource option
           Hosts: Map<string, HostResource>
           KillHosts: Map<string, unit -> Async<bool>>
+          PauseHosts: Map<string, unit -> Async<bool>>
+          ResumeHosts: Map<string, unit -> Async<bool>>
           Releases: (unit -> Async<unit>) list }
 
     let private unsupportedResources resources =
@@ -70,6 +74,24 @@ module Property =
                 return Error e.Message
         }
 
+    /// Bound a workload by wall clock (corpus-harness mechanic): a
+    /// partially-green surface that parks forever fails the LAW — it must
+    /// never hang the suite. The abandoned promise cannot reject unhandled
+    /// (runWorkload catches), so the race is safe to walk away from.
+    let private runWorkloadBounded (timeoutMs: int option) work ctx =
+        match timeoutMs with
+        | None -> runWorkload work ctx
+        | Some millis ->
+            async {
+                let promise = runWorkload work ctx |> Async.StartAsPromise
+                let! winner = Reports.raceTimeout promise millis |> Async.AwaitPromise
+
+                if isNull winner then
+                    return! Async.AwaitPromise promise
+                else
+                    return Error(sprintf "workload timed out after %dms" millis)
+            }
+
     let private runChecks (trial: CompletedTrial<'result>) (checks: Check<'result> list) =
         async {
             let reports = ResizeArray<CheckReport>()
@@ -85,6 +107,8 @@ module Property =
         { S2 = None
           Hosts = Map.empty
           KillHosts = Map.empty
+          PauseHosts = Map.empty
+          ResumeHosts = Map.empty
           Releases = [] }
 
     let private releaseResources resources =
@@ -96,11 +120,15 @@ module Property =
                     ()
         }
 
-    let private resolveResources (store: TraceStore) resources =
+    /// Resolve declared resources INTO the caller's cell as they come up, so
+    /// a mid-resolution failure leaves the already-started resources visible
+    /// for release (a red law must fail as a law, never leak a child process
+    /// or crash the suite).
+    let private resolveResources (store: TraceStore) resources (cell: ResolvedResources ref) =
         async {
-            let mutable resolved = emptyResources
-
             for resource in resources do
+                let resolved = cell.Value
+
                 match resource with
                 | S2LiveFromEnv ->
                     let s2 =
@@ -109,13 +137,13 @@ module Property =
                           Endpoint = None
                           LocalRoot = None }
 
-                    resolved <- { resolved with S2 = Some s2 }
+                    cell.Value <- { resolved with S2 = Some s2 }
 
                     do! Reports.emitSpan store "verification.s2.live.connected" [ "resource.kind", "s2LiveFromEnv" ]
                 | S2Lite localRoot ->
                     let! s2Lite = Firegrid.Foundation.Proofs.S2Lite.start store localRoot
 
-                    resolved <-
+                    cell.Value <-
                         { resolved with
                             S2 = Some s2Lite.Resource
                             Releases = s2Lite.Stop :: resolved.Releases }
@@ -125,13 +153,13 @@ module Property =
                     // order, matching the SDD's Runner Order).
                     let! host = ProcessHost.start store resolved.S2 hostSpec
 
-                    resolved <-
+                    cell.Value <-
                         { resolved with
                             Hosts = resolved.Hosts |> Map.add hostSpec.Name host.Resource
                             KillHosts = resolved.KillHosts |> Map.add hostSpec.Name host.Kill
+                            PauseHosts = resolved.PauseHosts |> Map.add hostSpec.Name host.Pause
+                            ResumeHosts = resolved.ResumeHosts |> Map.add hostSpec.Name host.Resume
                             Releases = host.Stop :: resolved.Releases }
-
-            return resolved
         }
 
     let private workloadContext
@@ -161,6 +189,16 @@ module Property =
                   Accepted = accepted
                   OperationIndex = counter.Value }
 
+        let hostFault (kind: string) (signal: string) (registry: Map<string, unit -> Async<bool>>) (name: string) =
+            async {
+                match registry |> Map.tryFind name with
+                | Some inject ->
+                    let! accepted = inject ()
+
+                    faults.Add(nextFault kind name (Some signal) (Some accepted))
+                | None -> return failwithf "processHost '%s' is not supervised by the verification runner" name
+            }
+
         { TrialId = trialId
           Root = store.Root
           Traces = store
@@ -168,16 +206,9 @@ module Property =
           S2 = resources.S2
           Hosts = resources.Hosts
           Faults =
-            { KillHost =
-                fun name ->
-                    async {
-                        match resources.KillHosts |> Map.tryFind name with
-                        | Some kill ->
-                            let! accepted = kill ()
-
-                            faults.Add(nextFault "hostKill" name (Some "SIGKILL") (Some accepted))
-                        | None -> return failwithf "processHost '%s' is not supervised by the verification runner" name
-                    } }
+            { KillHost = fun name -> hostFault "hostKill" "SIGKILL" resources.KillHosts name
+              PauseHost = fun name -> hostFault "hostPause" "SIGSTOP" resources.PauseHosts name
+              ResumeHost = fun name -> hostFault "hostResume" "SIGCONT" resources.ResumeHosts name }
           NextOperationId = nextOperation
           EmitSpan = Reports.emitSpan store }
 
@@ -186,6 +217,7 @@ module Property =
         (propertyName: string)
         (root: string)
         (seed: int)
+        (timeoutMs: int option)
         (positiveWorkload: WorkloadContext -> Async<'result>)
         (propertyResources: ResourceSpec list)
         (traces: TraceStore)
@@ -195,17 +227,21 @@ module Property =
             let trialId = Reports.trialId (propertyName + "-negative")
             let store = Reports.traceStore root trialId
             let faults = ResizeArray<FaultEvent>()
-
-            let! resources = resolveResources store propertyResources
+            let resourcesCell = ref emptyResources
 
             let! result =
                 async {
-                    let ctx = workloadContext trialId seed store resources faults
-                    let work = control.Workload |> Option.defaultValue positiveWorkload
-                    return! runWorkload work ctx
+                    let! setup = Async.Catch(resolveResources store propertyResources resourcesCell)
+
+                    match setup with
+                    | Choice2Of2 error -> return Error("resource setup failed: " + error.Message)
+                    | Choice1Of2() ->
+                        let ctx = workloadContext trialId seed store resourcesCell.Value faults
+                        let work = control.Workload |> Option.defaultValue positiveWorkload
+                        return! runWorkloadBounded timeoutMs work ctx
                 }
 
-            do! releaseResources resources
+            do! releaseResources resourcesCell.Value
 
             let completed =
                 { ProofName = proofName
@@ -269,13 +305,17 @@ module Property =
             let! workloadResult =
                 if List.isEmpty unsupported then
                     async {
-                        let! resources = resolveResources store spec.Resources
+                        let resourcesCell = ref emptyResources
+                        let! setup = Async.Catch(resolveResources store spec.Resources resourcesCell)
 
                         let! result =
-                            workloadContext trialId config.Seed store resources faults
-                            |> runWorkload spec.Workload
+                            match setup with
+                            | Choice2Of2 error -> async { return Error("resource setup failed: " + error.Message) }
+                            | Choice1Of2() ->
+                                workloadContext trialId config.Seed store resourcesCell.Value faults
+                                |> runWorkloadBounded spec.TimeoutMs spec.Workload
 
-                        do! releaseResources resources
+                        do! releaseResources resourcesCell.Value
                         return result
                     }
                 else
@@ -294,7 +334,15 @@ module Property =
             let! negativeControls =
                 spec.NegativeControls
                 |> List.map (
-                    runNegativeControl proofName spec.Name config.Root config.Seed spec.Workload spec.Resources store
+                    runNegativeControl
+                        proofName
+                        spec.Name
+                        config.Root
+                        config.Seed
+                        spec.TimeoutMs
+                        spec.Workload
+                        spec.Resources
+                        store
                 )
                 |> Async.Sequential
 
@@ -382,7 +430,7 @@ module Property =
               Verifiers = state.Verifiers
               ExpectedFailure = state.ExpectedFailure }
 
-    let make name resources workload verifiers negativeControls requiresNegativeControl =
+    let makeWith name resources workload verifiers negativeControls requiresNegativeControl timeoutMs =
         if List.isEmpty verifiers then
             failwithf "property '%s' must declare at least one verifier" name
 
@@ -392,10 +440,14 @@ module Property =
               Workload = workload
               Verifiers = verifiers
               NegativeControls = negativeControls
-              RequiresNegativeControl = requiresNegativeControl }
+              RequiresNegativeControl = requiresNegativeControl
+              TimeoutMs = timeoutMs }
 
         { Name = name
           RunProperty = fun config proofName -> runProperty proofName config spec }
+
+    let make name resources workload verifiers negativeControls requiresNegativeControl =
+        makeWith name resources workload verifiers negativeControls requiresNegativeControl None
 
     let negativeControl<'result> name = NegativeControlBuilder<'result> name
 
@@ -405,7 +457,8 @@ module Property =
               Workload = None
               Verifiers = []
               NegativeControls = []
-              RequiresNegativeControl = false }
+              RequiresNegativeControl = false
+              TimeoutMs = None }
 
         [<CustomOperation("resource")>]
         member _.Resource(state: PropertyDraft<'result>, resource) =
@@ -432,13 +485,17 @@ module Property =
             { state with
                 Resources = state.Resources @ [ ProcessHost host ] }
 
+        [<CustomOperation("timeoutMs")>]
+        member _.TimeoutMs(state: PropertyDraft<'result>, millis: int) = { state with TimeoutMs = Some millis }
+
         [<CustomOperation("workload")>]
         member _.Workload(state: PropertyDraft<'previous>, workload: WorkloadContext -> Async<'result>) =
             { Resources = state.Resources
               Workload = Some workload
               Verifiers = []
               NegativeControls = []
-              RequiresNegativeControl = state.RequiresNegativeControl }
+              RequiresNegativeControl = state.RequiresNegativeControl
+              TimeoutMs = state.TimeoutMs }
 
         [<CustomOperation("verify")>]
         member _.Verify(state: PropertyDraft<'result>, verifiers: Check<'result> list) =
@@ -464,7 +521,14 @@ module Property =
             match state.Workload with
             | None -> failwithf "property '%s' must declare a workload" name
             | Some workload ->
-                make name state.Resources workload state.Verifiers state.NegativeControls state.RequiresNegativeControl
+                makeWith
+                    name
+                    state.Resources
+                    workload
+                    state.Verifiers
+                    state.NegativeControls
+                    state.RequiresNegativeControl
+                    state.TimeoutMs
 
     let property name = PropertyBuilder name
 

@@ -42,12 +42,23 @@ type HostResource =
       ProcessId: int
       ReadinessUrl: string option }
 
-type FaultController = { KillHost: string -> Async<unit> }
+type FaultController =
+    { KillHost: string -> Async<unit>
+      /// SIGSTOP a declared processHost (a "zombie": frozen mid-life, still
+      /// believing whatever it believed). Follows the KillHost pattern:
+      /// lifecycle span, report-level fault event, undeclared-host rejection.
+      PauseHost: string -> Async<unit>
+      /// SIGCONT a paused processHost.
+      ResumeHost: string -> Async<unit> }
 
 module FaultController =
+    let private unsupervised name =
+        async { return failwithf "processHost '%s' is not supervised by the verification runner" name }
+
     let empty =
-        { KillHost =
-            fun name -> async { return failwithf "processHost '%s' is not supervised by the verification runner" name } }
+        { KillHost = unsupervised
+          PauseHost = unsupervised
+          ResumeHost = unsupervised }
 
 type WorkloadContext =
     { TrialId: string
@@ -124,7 +135,10 @@ type PropertySpec<'result> =
       Workload: WorkloadContext -> Async<'result>
       Verifiers: Check<'result> list
       NegativeControls: NegativeControlSpec<'result> list
-      RequiresNegativeControl: bool }
+      RequiresNegativeControl: bool
+      /// Wall-clock bound on the workload (ported from the corpus harness):
+      /// a partially-green surface must fail the LAW, never hang the suite.
+      TimeoutMs: int option }
 
 type CheckReport =
     { Name: string
@@ -173,6 +187,10 @@ type ProofSpec =
     { Name: string
       Description: string option
       Properties: RunnableProperty list }
+
+/// A named ratchet suite (targets-README.md): `proof targets <suite>` runs
+/// exactly this suite's proofs and emits one { id, pass } line per proof.
+type SuiteSpec = { Suite: string; Proofs: ProofSpec list }
 
 type ProofDraft =
     { Description: string option

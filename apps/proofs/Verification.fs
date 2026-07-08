@@ -36,6 +36,52 @@ type HostVerifiers<'result>() =
         TraceExpect.spanExists (sprintf "host '%s' stopped" hostName) "verification.host.stop" [ "host.name", hostName ]
 
 type FaultVerifiers<'result>() =
+    member private _.HostFaultReported
+        (label: string)
+        (kind: string)
+        (signal: string)
+        (hostName: string)
+        : Check<'result> =
+        { Name = label
+          RunCheck =
+            fun trial ->
+                async {
+                    let reported =
+                        trial.Faults
+                        |> List.exists (fun fault ->
+                            fault.Kind = kind
+                            && fault.Target = hostName
+                            && fault.Signal = Some signal
+                            && fault.Accepted = Some true)
+
+                    if reported then
+                        return Ok()
+                    else
+                        return Error(sprintf "%s fault not reported: %s" kind hostName)
+                } }
+
+    member _.HostPaused(hostName: string) : Check<'result> =
+        TraceExpect.spanExists
+            (sprintf "host '%s' was paused" hostName)
+            "verification.host.pause"
+            [ "host.name", hostName
+              "verification.signal", "SIGSTOP"
+              "verification.accepted", "true" ]
+
+    member _.HostResumed(hostName: string) : Check<'result> =
+        TraceExpect.spanExists
+            (sprintf "host '%s' was resumed" hostName)
+            "verification.host.resume"
+            [ "host.name", hostName
+              "verification.signal", "SIGCONT"
+              "verification.accepted", "true" ]
+
+    member this.HostPauseReported(hostName: string) : Check<'result> =
+        this.HostFaultReported (sprintf "host '%s' pause fault was reported" hostName) "hostPause" "SIGSTOP" hostName
+
+    member this.HostResumeReported(hostName: string) : Check<'result> =
+        this.HostFaultReported (sprintf "host '%s' resume fault was reported" hostName) "hostResume" "SIGCONT" hostName
+
     member _.HostKilled(hostName: string) : Check<'result> =
         TraceExpect.spanExists
             (sprintf "host '%s' was killed" hostName)
