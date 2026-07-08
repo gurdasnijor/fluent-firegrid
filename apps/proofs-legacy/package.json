@@ -1,5 +1,5 @@
 {
-  "name": "@firegrid/proofs",
+  "name": "@firegrid/proofs-legacy",
   "version": "0.0.0",
   "description": "Trace-native verification harness for Firegrid distributed-system properties.",
   "license": "Apache-2.0",

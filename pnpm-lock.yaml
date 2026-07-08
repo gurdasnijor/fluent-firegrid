@@ -43,7 +43,7 @@ importers:
         specifier: 4.0.0-beta.87
         version: 4.0.0-beta.87
 
-  apps/proofs:
+  apps/proofs-legacy:
     dependencies:
       '@effect/opentelemetry':
         specifier: 4.0.0-beta.87
