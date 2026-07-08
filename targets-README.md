@@ -47,13 +47,14 @@ A suite is any command that:
    and fails the run.
 
 To register a corpus suite: add its `suites[]` entry plus one `targets[]`
-entry per test, in the same PR that adds the tests. TS corpora live in
-`apps/proofs`; F# corpora (e.g. the T1 `Firegrid.Durable` corpus) compile via
-Fable and register a Node command — a separate entry module (or a
-`--targets` mode) alongside `src/Firegrid.Foundation.Proofs/Program.fs` that
-prints the same JSON lines and exits 0. The suite command must be
-self-sufficient or rely only on what `pnpm run check` has already built
-before `check:targets` runs (Fable build + proofs run first).
+entry per test, in the same PR that adds the tests. F# corpora live in the
+`apps/proofs` harness: proofs register in its suite-tagged `Registry` and
+the suite command is `node apps/proofs/dist/Main.js proof targets <suite>`
+(one `{ "id", "pass" }` line per registered proof, diagnostics on stderr,
+exit 0 when the suite ran — e.g. the T1 `t1-durable` suite of migrated
+`Firegrid.Durable` corpus laws). The suite command must be self-sufficient
+or rely only on what `pnpm run check` has already built before
+`check:targets` runs (Fable build + proofs run first).
 
 ## Strict rules (both ways — any violation exits nonzero)
 

@@ -12,10 +12,10 @@
       "corpus": "t1-durable",
       "command": [
         "node",
-        "src/Firegrid.Durable.Corpus/dist/Program.js",
-        "corpus",
-        "run",
-        "all"
+        "apps/proofs/dist/Main.js",
+        "proof",
+        "targets",
+        "t1-durable"
       ]
     },
     {
