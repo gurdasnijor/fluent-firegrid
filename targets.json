@@ -27,6 +27,16 @@
         "targets",
         "p0-harness"
       ]
+    },
+    {
+      "corpus": "foundation",
+      "command": [
+        "node",
+        "apps/proofs/dist/Main.js",
+        "proof",
+        "targets",
+        "foundation"
+      ]
     }
   ],
   "targets": [
@@ -178,6 +188,174 @@
       "id": "t1.bounded-loop-flat-stack",
       "wp": "T1",
       "corpus": "t1-durable",
+      "status": "green"
+    },
+    {
+      "id": "foundation.subject-history",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "foundation.state-view",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "state.stateview-strong-read",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "session.history-fold",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "session.projection-lag-observable",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "foundation.kv-store",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "state.checkpoint-rebuild-equivalence",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "state.trim-safety",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "state.checkpoint-race",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "foundation.durable-replay",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "foundation.durable-mailbox",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "foundation.durable-processor",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "durable.continue-as-new",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "durable.child-workflow",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "durable.one-way-send",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "durable.parallel-overlap",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "durable.parallel-kill-window",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "durable.parallel-fault-isolation",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "session.turn-attach",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "session.turn-crash-terminal",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "session.turn-idempotent-create",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "session.lifecycle-single-writer",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "session.lifecycle-durable-cancel",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "session.lifecycle-deposed-producer",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "session.resume-artifact-fenced",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "wake.tail-latency",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "wake.single-claim",
+      "wp": "P0",
+      "corpus": "foundation",
+      "status": "green"
+    },
+    {
+      "id": "wake.timer-exactly-once",
+      "wp": "P0",
+      "corpus": "foundation",
       "status": "green"
     }
   ]
