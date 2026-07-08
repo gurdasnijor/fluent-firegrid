@@ -6,7 +6,8 @@
   "packageManager": "pnpm@10.27.0",
   "scripts": {
     "build": "pnpm run fable:build",
-    "check": "pnpm run fable:build && pnpm run proofs",
+    "check": "pnpm run fable:build && pnpm run proofs && pnpm run check:targets",
+    "check:targets": "node scripts/targets/run-targets.mjs",
     "corpus": "pnpm --filter @firegrid/durable-corpus corpus",
     "fable:build": "export NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/.nuget/packages}; dotnet restore Firegrid.Fable.slnx ${NUGET_CONFIG:+--configfile \"$NUGET_CONFIG\"} -v:q && dotnet build Firegrid.Fable.slnx --no-restore -v:q && pnpm --dir src/Firegrid.Log build && pnpm --dir src/Firegrid.Store build && pnpm --dir src/Firegrid.Durable build && pnpm --dir src/Firegrid.Durable.Corpus build",
     "preflight": "pnpm run check",

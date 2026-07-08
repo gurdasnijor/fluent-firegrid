@@ -1,0 +1,49 @@
+{
+  "_comment": "Red/green ratchet manifest (docs/sdds/api-layering-sdd.md, 'Execution: the top-down red/green loop'). Schema and strict rules: targets-README.md. targets[]: { id, wp, corpus, status: 'red' | 'green' }. suites[]: { corpus, command[] } — command runs from the repo root, prints one JSON line { \"id\": \"...\", \"pass\": true|false } per target on stdout, and exits 0.",
+  "suites": [
+    {
+      "corpus": "t0-wiring",
+      "command": ["node", "scripts/targets/t0-wiring-suite.mjs"]
+    },
+    {
+      "corpus": "t1-durable",
+      "command": ["node", "src/Firegrid.Durable.Corpus/dist/Program.js", "corpus", "run", "all"]
+    }
+  ],
+  "targets": [
+    {
+      "id": "t0.wiring-red",
+      "wp": "T0",
+      "corpus": "t0-wiring",
+      "status": "red"
+    },
+    {
+      "id": "t0.wiring-green",
+      "wp": "T0",
+      "corpus": "t0-wiring",
+      "status": "green"
+    },
+    { "id": "t1.replay-determinism-across-kill", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.fanout-and-join", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.tagged-select-race", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.signal-to-parked-across-restart", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.timer-across-restart", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.entity-exclusive-serialization", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.entity-zombie-fenced", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.entity-shared-read-nonblocking", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.typed-step-failure", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.deterministic-currentTime", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.status-and-result-query", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.log-attach-byte-faithful", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.three-read-grades", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.cel-wait", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.saga-compensation-across-kill", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.recoverable-cancellation", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.declare-implement-roundtrip", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.child-spawn", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.andbang-teaching", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.golden-wire-fixtures", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.eternal-continueasnew", "wp": "T1", "corpus": "t1-durable", "status": "red" },
+    { "id": "t1.bounded-loop-flat-stack", "wp": "T1", "corpus": "t1-durable", "status": "red" }
+  ]
+}

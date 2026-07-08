@@ -255,7 +255,10 @@ module StreamLaws =
           Run =
             fun () ->
                 async {
-                    let fixturePath = Node.join [ Node.cwd (); "fixtures"; "golden-wire.fixture.jsonl" ]
+                    // Script-relative (dist/Program.js → ../fixtures): the T0
+                    // ratchet runner invokes suites from the repo root.
+                    let fixturePath =
+                        Node.join [ Node.dirname (Node.scriptPath ()); ".."; "fixtures"; "golden-wire.fixture.jsonl" ]
 
                     if not (Node.exists fixturePath) then
                         failwith ("golden fixture missing: " + fixturePath)

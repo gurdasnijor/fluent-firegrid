@@ -170,7 +170,11 @@ module Harness =
             Node.spawn
                 (Node.nodePath ())
                 [| Node.scriptPath (); "child"; scenario |]
-                (createObj [ "stdio" ==> "inherit"; "env" ==> Node.withProcessEnv childEnv ])
+                // Child stdout is routed to OUR stderr: under the T0 ratchet
+                // runner, this process's stdout is reserved for result lines.
+                (createObj
+                    [ "stdio" ==> [| box "ignore"; box 2; box 2 |]
+                      "env" ==> Node.withProcessEnv childEnv ])
 
         spawned.Add proc
         proc

@@ -35,12 +35,16 @@ module Node =
     [<Emit("$0.join(...$1)")>]
     let private joinWith (_path: obj) (_parts: string array) : string = jsNative
 
+    [<Emit("$0.dirname($1)")>]
+    let private dirnameWith (_path: obj) (_value: string) : string = jsNative
+
     let ensureDir dir = mkdirp fs dir
     let writeFile p content = writeFileWith fs p content
     let readFile p = readFileWith fs p
     let appendFile p content = appendFileWith fs p content
     let exists p = existsWith fs p
     let join (parts: string list) = joinWith path (List.toArray parts)
+    let dirname p = dirnameWith path p
 
     [<Emit("process.argv.slice(2)")>]
     let argv () : string array = jsNative
@@ -91,5 +95,7 @@ module Node =
 
     /// Race a unit of work against a wall-clock deadline. Resolves null on
     /// completion, the marker string on timeout; work rejections propagate.
-    [<Emit("Promise.race([$0.then(() => null), new Promise(resolve => setTimeout(() => resolve('timeout'), $1))])")>]
+    /// The timer is unref'd so a finished run never lingers on pending
+    /// deadlines (the suite must exit promptly for the T0 ratchet).
+    [<Emit("Promise.race([$0.then(() => null), new Promise(resolve => { const t = setTimeout(() => resolve('timeout'), $1); if (t.unref) t.unref(); })])")>]
     let raceTimeout (_work: JS.Promise<unit>) (_millis: int) : JS.Promise<obj> = jsNative
