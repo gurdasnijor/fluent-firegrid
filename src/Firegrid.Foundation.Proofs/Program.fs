@@ -30,6 +30,7 @@ module Program =
           FoundationCheckpointRaceProof.proof
           FoundationDurableKernelProof.proof
           FoundationDurableDebtsProof.proof
+          FoundationParallelActivitiesProof.proof
           FoundationTurnStreamProof.proof
           FoundationSessionLifecycleProof.proof
           FoundationResumeArtifactProof.proof
