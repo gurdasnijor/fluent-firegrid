@@ -161,6 +161,42 @@ Decided:
 6. Retry policies as DUs; eternal orchestrations as returned
    `ContinueAsNew` values.
 
+#### Stress-test findings (2026-07-07 — Restate tutorial + choreography-agent mapping)
+
+Working the Restate SDK tutorial use cases and the choreography-first agent
+substrate (gurdasnijor/firegrid) through the sketch surfaced four surface
+additions and two corpus laws; all are adopted:
+
+1. **Contract/impl split**: `Step.declare` / `Workflow.declare` (name +
+   codecs only — the descriptor a remote client imports) and
+   `Worker.implement declaration impl`; `define` remains the fused
+   convenience. (Restate ifaces; the old fluent `iface`/`implement`.)
+2. **Instance cancel**: `Client.cancel instance` → typed `Cancelled`
+   terminal, observable via attach — generalizes the session kernel's
+   proven durable-cancel machinery; closes what the finish-line SDD had to
+   defer indefinitely.
+3. **Sends**: `Client.send` (one-way, provenance-deduped by the kernel
+   mailbox) and `Client.sendAfter delay` (timer + send intents).
+4. **Sub-orchestrations**: `Workflow.callChild childDef input` over the
+   kernel's send-intent + `ChildTerminal` wake; fan-out spawn via
+   `Step.all` of child calls.
+5. Corpus law — **saga**: compensation via `try/with` + accumulated
+   `Step.call`s; host killed mid-compensation → recovery completes the
+   remaining compensations, none re-run.
+6. Corpus law — **timeout race**: `Step.callWithTimeout` is a library
+   combinator over the kernel's `WhenAny` (activity vs timer), returning
+   `Result` — no new kernel surface.
+
+Deliberately **not** adopted: Restate's hold-a-promise-await-later style —
+arbitrary futures break the no-arbitrary-binds replay discipline; static
+fan-out (`and!`, `Step.all`, `Workflow.any`) is the supported shape (the
+DurableFunctions trade). Restate's *shared* (concurrent read) handlers map
+to `Projections.read` grades instead of entity handlers — reads never
+contend with the writer. HTTP ingress is an L4 transport concern (the old
+`serveFluentS2` precedent), not platform surface. The choreography mapping
+(wait_for/wait_until/spawn/execute → waits/timers/children/steps, with the
+wake path as the coordination bus) feeds the reference app's scenario list.
+
 **Future TS target (dormant until a TS consumer is prioritized):** the
 library's Fable emission plus a thin `@firegrid/durable` wrapper — plain TS
 only (Promise, `AsyncIterable`, tagged unions mirroring the DU errors; an
@@ -267,7 +303,7 @@ Fable-green build gate on L3 is what keeps this layer cheap to open.
 | WP | Deliverable | Gate |
 | --- | --- | --- |
 | T0 | Ratchet: manifest runner + strict target suite in CI, spanning **both** runners (F# corpus project + TS suite) | None (mechanical) |
-| T1 | **`Firegrid.Durable` library skeleton (F#) + red corpus (F# consumer tests) + platform prose companion.** Corpus: replay determinism across a host kill (activities not re-executed); fan-out/fan-in; `any` races; signal to a parked orchestration across restart; durable timer across restart; entity op serialization; typed activity failure; deterministic `currentTime`; status/result query; log attach (prefix/tail/terminal, byte-faithful); **entity table state** (get/set/delete; crash after mutation → no double-apply; deposed writer's state write fenced); **three read grades** (eventual with observable lag, latest linearizable, read-your-writes through an ack version); **CEL table wait** (immediate-if-true; park → mutate → resume; unrelated row does not resume an indexed wait; replay serves the recorded resolution); **`and!`-vs-`let!` teaching test** (sequencing vs fan-out semantics pinned); **typed-descriptor round-trip** (explicit codecs; two-segment `service/handler` name scheme enforced at registration) | **Human ratifies** |
+| T1 | **`Firegrid.Durable` library skeleton (F#) + red corpus (F# consumer tests) + platform prose companion.** Corpus: replay determinism across a host kill (activities not re-executed); fan-out/fan-in; `any` races; signal to a parked orchestration across restart; durable timer across restart; entity op serialization; typed activity failure; deterministic `currentTime`; status/result query; log attach (prefix/tail/terminal, byte-faithful); **entity table state** (get/set/delete; crash after mutation → no double-apply; deposed writer's state write fenced); **three read grades** (eventual with observable lag, latest linearizable, read-your-writes through an ack version); **CEL table wait** (immediate-if-true; park → mutate → resume; unrelated row does not resume an indexed wait; replay serves the recorded resolution); **`and!`-vs-`let!` teaching test** (sequencing vs fan-out semantics pinned); **typed-descriptor round-trip** (explicit codecs; two-segment `service/handler` name scheme enforced at registration); **saga compensation across a mid-compensation host kill**; **instance cancel** (parked orchestration → typed `Cancelled` terminal observed via attach); **step timeout race** (`WhenAny` activity-vs-timer as `Result`); **declare/implement split** (remote client drives a workflow through the declaration only); **child spawn** (`callChild` + `ChildTerminal` completion, incl. fan-out) | **Human ratifies** |
 | T2 | Reference-app red corpus (F#) against `Firegrid.Durable`: start turn / cancel from an unprivileged second client / duplicate-cancel idempotence / single-writer with typed rejection / deposed-writer rejection / attach semantics / history with cause and lag | **Human ratifies** |
 | T3 | Harness-adapter contract as plain TS + red fixture-replay conformance corpus | **Human ratifies** |
 | T4 | **(Dormant — schedule when a TS consumer is prioritized, e.g. agent-ui integration.)** Fable emission seam + `@firegrid/durable` plain-TS wrapper + TS mirror of the T1 corpus | **Human schedules + ratifies** |
