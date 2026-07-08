@@ -51,10 +51,17 @@ module Reports =
         let trialRoot = join [ root; trialId ]
         let tracesRoot = join [ trialRoot; "traces" ]
         ensureDir tracesRoot
+        let spansJsonl = join [ tracesRoot; "spans.jsonl" ]
+
+        // Re-entering a preserved trial (proof replay / fixed --trial-id)
+        // starts fresh span evidence for the new execution — otherwise
+        // replayed trials accumulate spans and exactly-once trace checks
+        // fail spuriously. The trial directory and report stay in place.
+        write spansJsonl ""
 
         { TrialId = trialId
           Root = trialRoot
-          SpansJsonl = join [ tracesRoot; "spans.jsonl" ] }
+          SpansJsonl = spansJsonl }
 
     let emitSpan (store: TraceStore) name attributes =
         async {
