@@ -82,16 +82,28 @@ let checkout = Workflow.define "orders/checkout" (fun (order: Order) -> workflow
     | Ok d when d.Accepted -> return Receipt.confirmed reservation
     | _                    -> return Receipt.rejected order.Id })
 
-// ── Entities: the Decider — initial / evolve / decide ────────────────
+// ── Services: stateless durable request-response (the "start here") ───
+let convert = Service.define "fx/convert" (fun (amt: float, pair: string) -> workflow {
+    let! rate = fetchRate.Call pair
+    return amt * rate })
+// convert.Call client (100.0, "USD/EUR")  ·  CallIdempotent for webhook dedupe
+
+// ── Entities (virtual objects): keyed, exclusive/shared, request-response ─
+// Decide is pure: key in scope, full state access, returns the caller's
+// REPLY + events — committed atomically under the key's fence. Exclusive =
+// one Decide per key across all hosts (inbox admission + epoch fencing);
+// shared = graded reads that never block the writer.
 module Counter =
     type Command = Add of int
     type Event   = Added of int
     let initial = 0
     let evolve state (Added n) = state + n
-    let decide (Add n) _state = [ Added n ]
+    let decide (Key _) (Add n) state = state + n, [ Added n ]   // reply, events
 let counter =
     Entity.define "app/counter"
         { Initial = Counter.initial; Evolve = Counter.evolve; Decide = Counter.decide }
+// counter.Call client "user-1" (Add 5)   → 5 (exclusive, serialized per key)
+// counter.State client "user-1" Eventual → shared read, staleness explicit
 
 // ── Run: registration is data ─────────────────────────────────────────
 let worker = Worker.run basin "prod" [ reg reserve; reg notify; reg checkout; reg counter ]
@@ -107,6 +119,10 @@ let log = client.Logs [ "invoices"; "2026-07" ]           // sealed durable log
 for ev in log.Attach() do observe ev                       // async seq: prefix → tail → terminal
 let! view = client.Read myFold ReadGrade.Eventual          // staleness = data
 ```
+
+The surface's construct triad matches Restate's semantics (service /
+virtual object / workflow — decision log item 12), with the single-writer
+constraint enforced below the API by inbox admission + epoch fencing.
 
 Also in the surface (details frozen by T1's corpus): `Step.declare` /
 `Workflow.declare` + `Worker.implement` (share the contract, not the impl);
