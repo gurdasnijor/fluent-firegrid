@@ -24,6 +24,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="InternalSessions.fs" />
     <Compile Include="Firegrid.Grid.fs" />
     <Compile Include="GridExamples.fs" />
   </ItemGroup>
