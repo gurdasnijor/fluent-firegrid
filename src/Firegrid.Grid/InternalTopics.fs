@@ -35,6 +35,22 @@
 /// journaled client-side reads separated by durable sleeps (each sleep
 /// yields the tick so the pass can drive the entity).
 ///
+/// Fold-poll cadence (CI robustness — the self-feeding drive spin): a due
+/// timer counts as worker progress, so the drive keeps ticking the SAME
+/// workflow while its timers keep coming up due. On a loaded runner a
+/// single tick's wall latency exceeds a short fixed sleep — the poll loop
+/// then re-arms an already-due timer every tick and monopolizes the pass
+/// for the drive's whole tick budget, starving the very entity drive the
+/// poll is waiting on (observed on CI and reproduced under a CPU
+/// throttle: ~100 polls/~100 s before the fold landed). The poll sleeps
+/// therefore ESCALATE — short first (fast machines detect the fold in one
+/// or two passes, unchanged), doubling to a 2 s cap (a loaded tick can no
+/// longer outrun its own timer, so the loop parks Waiting and the pass
+/// moves on to drive the entity) — and every fold-poll is BOUNDED by the
+/// law-timeout headroom (~2 min of cumulative sleep), failing terminal
+/// instead of polling forever, so an execution abandoned by a dead
+/// workload can never outlive its trial as a zombie loop.
+///
 /// Nothing in this file reaches below the L2 contract.
 /// ═══════════════════════════════════════════════════════════════════════
 namespace Firegrid
@@ -101,6 +117,23 @@ type internal SubscribeIn =
 module internal GridTopics =
     [<Emit("Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10)")>]
     let private entropy () : string = jsNative
+
+    // ── Fold-poll cadence (see the header note) ───────────────────────────
+
+    /// The escalating poll-sleep ladder: 0.12 s doubling to a 2 s cap.
+    /// Deterministic in the attempt ordinal, so replays walk the same tree.
+    let pollDelaySeconds (attempt: int) : float =
+        match attempt with
+        | 0 -> 0.12
+        | 1 -> 0.24
+        | 2 -> 0.48
+        | 3 -> 0.96
+        | _ -> 2.0
+
+    /// Attempt bound ≈ the law-timeout headroom: cumulative sleep across
+    /// 64 rungs ≈ 122 s (the harness property budget is 120 s). A fold not
+    /// observed within it is a terminal failure, never an eternal poll.
+    let pollAttemptBudget: int = 64
 
     // ── Match evaluation (pure — runs inside the topic entity's Decide) ──
     //
@@ -252,9 +285,10 @@ module internal GridTopics =
             })
 
     /// The Publish service program: enqueue (FIFO, behind all prior
-    /// subscriptions) → await the fold (journaled poll + durable sleep;
-    /// the sleep yields the tick so the worker pass can drive the topic
-    /// entity) → deliver to the matched subscribers.
+    /// subscriptions) → await the fold (journaled poll + escalating durable
+    /// sleep; the sleep yields the tick so the worker pass can drive the
+    /// topic entity — see the fold-poll cadence note in the header) →
+    /// deliver to the matched subscribers.
     let publishProgram
         (enqueue: Step<PublishIn, unit>)
         (poll: Step<TopicPollIn, TopicPollOut>)
@@ -262,20 +296,33 @@ module internal GridTopics =
         (input: PublishIn)
         : Workflow<unit> =
 
-        let rec awaitFold () : Workflow<TopicSub list> =
+        let rec awaitFold (attempt: int) : Workflow<TopicSub list> =
             workflow {
                 let! polled = poll.Call { PlTopic = input.PubTopic; PlId = input.PubId }
 
                 if polled.PlFound then
                     return polled.PlSubs
+                elif attempt >= pollAttemptBudget then
+                    return
+                        raise (
+                            DurableStepFailed(
+                                StepError.Terminal(
+                                    "Firegrid: publish '"
+                                    + input.PubId
+                                    + "' was not folded by topic '"
+                                    + input.PubTopic
+                                    + "' within the poll budget"
+                                )
+                            )
+                        )
                 else
-                    do! Workflow.sleep (Duration.seconds 0.12)
-                    return! awaitFold ()
+                    do! Workflow.sleep (Duration.seconds (pollDelaySeconds attempt))
+                    return! awaitFold (attempt + 1)
             }
 
         workflow {
             do! enqueue.Call input
-            let! matched = awaitFold ()
+            let! matched = awaitFold 0
 
             do!
                 deliver.Call

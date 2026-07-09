@@ -361,19 +361,31 @@ module internal GridRuntime =
         let observeCancel: Workflow<unit> = Workflow.sleep (Duration.seconds 0.15)
 
         // C4 seam: await the session entity's fold of a wake admission —
-        // journaled client-side polls with durable sleeps between (the
-        // sleep yields the tick so the worker pass can drive the entity).
-        // Returns the entity-assigned turn index, so the wake turn exists
-        // in the session's history BEFORE it can start.
-        let rec awaitWakeAdmission (key: string) (promptId: string) : Workflow<int> =
+        // journaled client-side polls with ESCALATING durable sleeps
+        // between (the sleep yields the tick so the worker pass can drive
+        // the entity; the ladder keeps a loaded tick from being outrun by
+        // its own timer and monopolizing the pass — see the fold-poll
+        // cadence note in InternalTopics.fs), bounded by the law-timeout
+        // headroom. Returns the entity-assigned turn index, so the wake
+        // turn exists in the session's history BEFORE it can start.
+        let rec awaitWakeAdmission (key: string) (promptId: string) (attempt: int) : Workflow<int> =
             workflow {
                 let! polled = choreo.CWakePoll.Call { WpKey = key; WpPromptId = promptId }
 
                 if polled.WpFound then
                     return polled.WpIndex
+                elif attempt >= GridTopics.pollAttemptBudget then
+                    return!
+                        terminal (
+                            "Firegrid: wake admission '"
+                            + promptId
+                            + "' was not folded by session '"
+                            + key
+                            + "' within the poll budget"
+                        )
                 else
-                    do! Workflow.sleep (Duration.seconds 0.12)
-                    return! awaitWakeAdmission key promptId
+                    do! Workflow.sleep (Duration.seconds (GridTopics.pollDelaySeconds attempt))
+                    return! awaitWakeAdmission key promptId (attempt + 1)
             }
 
         // C3 seam: `moveIndex` threads through the move loop so a gated
@@ -453,7 +465,7 @@ module internal GridRuntime =
                               WaPromptId = wakePromptId
                               WaText = wakeText }
 
-                    let! index = awaitWakeAdmission key wakePromptId
+                    let! index = awaitWakeAdmission key wakePromptId 0
 
                     do!
                         choreo.CWakeStart.Call
