@@ -158,6 +158,38 @@ type internal NotifyIn =
       NoTurnId: string
       NoCause: string }
 
+// ── New-turn wake wire types (C4 seam) ────────────────────────────────────
+//
+// The wait_for wake path: a woken turn admits and starts its session's NEXT
+// turn through journaled steps that only APPEND durably (entity Send /
+// workflow Start) — never await an entity reply (a step handler that did
+// would block the sequential worker pass that drives the entity; see the
+// worker-pass discipline note in InternalTopics.fs).
+
+type internal WakeAdmitIn =
+    { WaKey: string
+      WaPromptId: string
+      WaText: string }
+
+type internal WakePollIn = { WpKey: string; WpPromptId: string }
+type internal WakePollOut = { WpFound: bool; WpIndex: int }
+
+type internal WakeStartIn =
+    { WsAgent: string
+      WsSession: string
+      WsPromptId: string
+      WsIndex: int
+      WsText: string }
+
+/// The C4 choreography steps threaded into the turn program (built per
+/// worker, closures over its client — exactly as emit/seal/notify).
+type internal ChoreoSteps =
+    { CSubscribe: Step<SubscribeIn, unit>
+      CPublish: Step<PublishIn, unit>
+      CWakeAdmit: Step<WakeAdmitIn, unit>
+      CWakePoll: Step<WakePollIn, WakePollOut>
+      CWakeStart: Step<WakeStartIn, unit> }
+
 // ── Agent-event wire (the `<turnId>/events` record format) ────────────────
 //
 // Grid-owned wire: unit-separator-joined fields, first field the kind tag.
@@ -287,6 +319,7 @@ module internal GridRuntime =
         (emitStep: Step<EmitIn, unit>)
         (sealStep: Step<SealIn, unit>)
         (notifyStep: Step<NotifyIn, unit>)
+        (choreo: ChoreoSteps)
         (input: TurnInput)
         : Workflow<string> =
 
@@ -327,6 +360,22 @@ module internal GridRuntime =
         // Waiting tick can deliver the pending cancel signal.
         let observeCancel: Workflow<unit> = Workflow.sleep (Duration.seconds 0.15)
 
+        // C4 seam: await the session entity's fold of a wake admission —
+        // journaled client-side polls with durable sleeps between (the
+        // sleep yields the tick so the worker pass can drive the entity).
+        // Returns the entity-assigned turn index, so the wake turn exists
+        // in the session's history BEFORE it can start.
+        let rec awaitWakeAdmission (key: string) (promptId: string) : Workflow<int> =
+            workflow {
+                let! polled = choreo.CWakePoll.Call { WpKey = key; WpPromptId = promptId }
+
+                if polled.WpFound then
+                    return polled.WpIndex
+                else
+                    do! Workflow.sleep (Duration.seconds 0.12)
+                    return! awaitWakeAdmission key promptId
+            }
+
         // C3 seam: `moveIndex` threads through the move loop so a gated
         // tool call can derive its replay-stable approval token.
         let rec runMoves (moveIndex: int) (moves: GridMove list) (lastSaid: string) : Workflow<string> =
@@ -358,11 +407,83 @@ module internal GridRuntime =
                     do! emit [ "tr"; tool; result ]
                     return! runMoves (moveIndex + 1) rest lastSaid
                 }
+            | GCallToolWithInput tool ->
+                // C4 seam: the corpus recording move — the tool receives
+                // THIS TURN'S INPUT text (what the substrate delivered to a
+                // waking turn); otherwise an ordinary journaled tool call.
+                workflow {
+                    do! emit [ "ct"; tool; input.TText ]
+                    let! result = callTool moveIndex tool input.TText
+                    do! emit [ "tr"; tool; result ]
+                    return! runMoves (moveIndex + 1) rest lastSaid
+                }
+            | GWaitFor(topic, matchText, selfPrompt) ->
+                // C4 seam — wait_for lowering (the frozen laws' pin):
+                //   1. SUBSCRIBE durably before the park is visible: the
+                //      topic entity's FIFO inbox orders this subscription
+                //      ahead of any publish admitted after the park is
+                //      observed — no wake can be missed.
+                //   2. PARK on the typed wake signal: one journal record,
+                //      no process pinned (the approval-gate mechanic).
+                //   3. WAKE = a NEW turn on this session carrying the
+                //      published event + the self-prompt as its input:
+                //      durable session admission (FIFO send) → fold-poll
+                //      (the wake turn is in the history before it starts)
+                //      → idempotent start (instance id = the turn id, so
+                //      replays and crash re-runs start it once). This
+                //      parked turn then completes normally.
+                workflow {
+                    do!
+                        choreo.CSubscribe.Call
+                            { SbTopic = topic
+                              SbRun = turnId
+                              SbSignal = GridTopics.wakeSignalName topic
+                              SbMatch = defaultArg matchText "" }
+
+                    do! emit [ "wf"; GridTopics.waitText topic matchText ]
+                    let! wake = (GridTopics.wakeSignal topic).Await()
+
+                    let wakePromptId = "wake-" + input.TPromptId + "-" + string moveIndex
+                    let wakeText = GridTopics.wakeInputText wake selfPrompt
+                    let key = sessionKey input.TAgent input.TSession
+
+                    do!
+                        choreo.CWakeAdmit.Call
+                            { WaKey = key
+                              WaPromptId = wakePromptId
+                              WaText = wakeText }
+
+                    let! index = awaitWakeAdmission key wakePromptId
+
+                    do!
+                        choreo.CWakeStart.Call
+                            { WsAgent = input.TAgent
+                              WsSession = input.TSession
+                              WsPromptId = wakePromptId
+                              WsIndex = index
+                              WsText = wakeText }
+
+                    return! runMoves (moveIndex + 1) rest lastSaid
+                }
+            | GPublish(topic, payload) ->
+                // C4 seam: the model's publish move — one durable admission
+                // of a Publish-service execution (the id derives from the
+                // turn + move position: replay-stable, crash-window-safe).
+                // The publisher never addresses a subscriber.
+                workflow {
+                    do!
+                        choreo.CPublish.Call
+                            { PubId = turnId + "/pub/" + string moveIndex
+                              PubTopic = topic
+                              PubPayload = payload }
+
+                    return! runMoves (moveIndex + 1) rest lastSaid
+                }
             | _ ->
-                // wait_for / wait_until / spawn_all / publish / the corpus
-                // wake-recording moves: later packets' laws. A clean
-                // terminal failure (never a hang): the turn seals Failed
-                // and the law observing it stays red as a law.
+                // wait_until / spawn_all / the remaining corpus moves:
+                // later packets' laws. A clean terminal failure (never a
+                // hang): the turn seals Failed and the law observing it
+                // stays red as a law.
                 terminal ("Firegrid: choreography move not yet lowered in this packet: " + describeMove move)
 
         // The turn's terminal IS the log terminal: the seal reason carries
@@ -468,13 +589,67 @@ module internal GridRuntime =
 
         let modelStep = Step.define "agent/model-turn" modelHandler
 
+        // ── C4: topics, publish, and the new-turn wake path ──────────────
+        //
+        // Wake steps are session machinery (the topic side lives in
+        // InternalTopics.fs). All of them only APPEND durably or read
+        // client-side — never await an entity reply (worker-pass
+        // discipline; see InternalTopics.fs).
+
+        let wakeAdmitStep =
+            Step.define "session/wake-admit" (fun (w: WakeAdmitIn) ->
+                sessionEntity.Send client w.WaKey (SPrompt(w.WaPromptId, w.WaText)))
+
+        let wakePollStep =
+            Step.define "session/wake-poll" (fun (w: WakePollIn) ->
+                async {
+                    let! state = sessionEntity.State client w.WpKey Latest
+
+                    return
+                        match state.Prompts |> List.tryFind (fun r -> r.RecPromptId = w.WpPromptId) with
+                        | Some entry -> { WpFound = true; WpIndex = entry.RecIndex }
+                        | None -> { WpFound = false; WpIndex = 0 }
+                })
+
+        let wakeStartStep =
+            Step.define "session/wake-start" (fun (w: WakeStartIn) ->
+                async {
+                    let turnDecl = Workflow.declare<TurnInput, string> "grid/turn"
+
+                    let! _run =
+                        turnDecl.Start
+                            client
+                            { TAgent = w.WsAgent
+                              TSession = w.WsSession
+                              TPromptId = w.WsPromptId
+                              TTurnIndex = w.WsIndex
+                              TText = w.WsText }
+                            (Id(turnIdOf w.WsAgent w.WsSession w.WsPromptId))
+
+                    return ()
+                })
+
+        let subscribeStep = GridTopics.subscribeStep client
+        let publishMoveStep = GridTopics.publishMoveStep client
+        let enqueueStep = GridTopics.enqueueStep client
+        let topicPollStep = GridTopics.pollStep client
+        let topicDeliverStep = GridTopics.deliverStep client
+        let publishService = GridTopics.publishService enqueueStep topicPollStep topicDeliverStep
+
+        let choreo =
+            { CSubscribe = subscribeStep
+              CPublish = publishMoveStep
+              CWakeAdmit = wakeAdmitStep
+              CWakePoll = wakePollStep
+              CWakeStart = wakeStartStep }
+
         let toolSteps =
             agents
             |> List.collect (fun a -> a.AgentTools)
             |> List.distinctBy (fun t -> t.ToolName)
 
         let turnDef =
-            Workflow.define "grid/turn" (turnProgram agents modelStep emitStep sealStep notifyStep)
+            Workflow.define "grid/turn" (turnProgram agents modelStep emitStep sealStep notifyStep choreo)
 
         let registrations =
             [ reg sessionEntity
@@ -482,7 +657,17 @@ module internal GridRuntime =
               reg modelStep
               reg emitStep
               reg sealStep
-              reg notifyStep ]
+              reg notifyStep
+              reg GridTopics.topicEntity
+              reg publishService
+              reg subscribeStep
+              reg publishMoveStep
+              reg enqueueStep
+              reg topicPollStep
+              reg topicDeliverStep
+              reg wakeAdmitStep
+              reg wakePollStep
+              reg wakeStartStep ]
             @ (toolSteps |> List.map (fun t -> reg t.ToolStep))
 
         Worker.run basin ns registrations

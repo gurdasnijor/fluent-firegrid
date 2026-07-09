@@ -230,7 +230,10 @@ type Session =
     /// Deliver an external event into the grid (webhook, callback, sensor).
     /// Ingress becomes a durable event; whoever wait_for's it, wakes.
     /// [→ Publish service]
-    member _.Deliver (event: Event) : Async<unit> = notYet
+    member session.Deliver (event: Event) : Async<unit> =
+        // The ack is the Publish-service execution's DURABLE ADMISSION —
+        // journaled with no worker involved; a worker fans out later.
+        GridTopics.ingressAuto session.SClient event.Topic event.Payload
 
     /// Resolve a pending human-approval gate. [→ run.Signal on the approval signal]
     member session.Approve (token: string) (approved: bool) : Async<unit> =
@@ -262,7 +265,30 @@ type Session =
 
     /// This session's turn history — status, end causes, timings — at the
     /// staleness you choose. [→ Projection over the session's journal]
-    member _.History (grade: ReadGrade) : Async<TurnSummary list> = notYet
+    member session.History (grade: ReadGrade) : Async<TurnSummary list> =
+        // Forced by the C4 laws (both pin the wake as a NEW turn through
+        // this member): a fold over the session entity's own journal at
+        // the caller's grade. `StartedAt` stays 0.0 for now — no green law
+        // pins turn timings yet; recording real start instants is the ops
+        // packet's law-forced work (t2.live-watch-ops).
+        async {
+            let key = GridRuntime.sessionKey session.SAgent.AgentName session.SSessionId
+            let! state = GridRuntime.sessionEntity.State session.SClient key grade
+
+            return
+                state.Prompts
+                |> List.map (fun entry ->
+                    { TurnId = entry.RecTurnId
+                      Cause =
+                        match entry.RecCause with
+                        | "" -> None
+                        | "completed" -> Some TurnEndCause.Completed
+                        | "cancelled" -> Some TurnEndCause.Cancelled
+                        | "timedout" -> Some TurnEndCause.TimedOut
+                        | "failed" -> Some(TurnEndCause.Failed "")
+                        | other -> Some(TurnEndCause.Failed other)
+                      StartedAt = 0.0 })
+        }
 
 and TurnSummary = { TurnId: string; Cause: TurnEndCause option; StartedAt: Timestamp }
 
@@ -280,7 +306,12 @@ type Grid =
           SSessionId = sessionId }
 
     /// Publish to a topic without a session (system-level ingress).
-    member _.Publish (event: Event) : Async<unit> = notYet
+    member grid.Publish (event: Event) : Async<unit> =
+        // [→ Publish service] The ack means DURABLE: the service execution
+        // is admitted (journaled start) before any worker is involved —
+        // publishable while nothing runs anywhere; whoever wait_for's the
+        // topic wakes when a worker returns.
+        GridTopics.ingressAuto grid.GClient event.Topic event.Payload
 
     /// Fleet view: which sessions are awake, parked (and on what), or idle —
     /// a fold over the grid's journals; the trace IS the schedule.
