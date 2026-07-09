@@ -22,6 +22,7 @@
     <ProjectReference Include="../../src/Firegrid.Log/Firegrid.Log.fsproj" />
     <ProjectReference Include="../../src/Firegrid.Durable/Firegrid.Durable.fsproj" />
     <ProjectReference Include="../../src/Firegrid.Store/Firegrid.Store.fsproj" />
+    <ProjectReference Include="../../src/Firegrid.Grid/Firegrid.Grid.fsproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -46,6 +47,8 @@
     <Compile Include="EntityLawProofs.fs" />
     <Compile Include="StreamLawProofs.fs" />
     <Compile Include="FlowLawProofs.fs" />
+    <Compile Include="GridCorpusSupport.fs" />
+    <Compile Include="GridLawProofs.fs" />
     <Compile Include="HarnessKillDemoProof.fs" />
     <Compile Include="FoundationSubjectHistoryProof.fs" />
     <Compile Include="FoundationDurableKernelProof.fs" />

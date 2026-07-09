@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <AssemblyName>Firegrid.Grid</AssemblyName>
+    <RootNamespace>Firegrid</RootNamespace>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <DefineConstants>$(DefineConstants);FABLE_COMPILER</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Fable.Core" Version="5.1.0" />
+    <PackageReference Include="Fable.Promise" Version="3.2.0" />
+  </ItemGroup>
+
+  <!-- Consumer purity (Phase C / C1 ruling): the firegrid layer consumes the
+       L2 contract ONLY. The single ProjectReference below is the doctrine in
+       build form — no Firegrid.Store, no Firegrid.Log, no kernel internals.
+       (`open Firegrid.Log` in Firegrid.Grid.fs resolves transitively through
+       Firegrid.Durable and is used solely for `S2.Basin`, the connection
+       type L2's own surface trades in: Worker.run / Client.connect.) -->
+  <ItemGroup>
+    <ProjectReference Include="../Firegrid.Durable/Firegrid.Durable.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Firegrid.Grid.fs" />
+    <Compile Include="GridExamples.fs" />
+  </ItemGroup>
+
+</Project>

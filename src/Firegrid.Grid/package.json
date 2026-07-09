@@ -1,0 +1,22 @@
+{
+  "name": "@firegrid/grid",
+  "version": "0.0.0",
+  "description": "Firegrid.Grid — the firegrid agent substrate (L3): the ratified end-user API (Tool/Agent/Session/Grid/TurnHandle + the model's choreography vocabulary), built as a TRUE consumer of the Firegrid.Durable (L2) contract. Surface promoted from examples/firegrid; bodies land via the T2 red corpus.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "files": [
+    "Firegrid.Grid.fsproj",
+    "*.fs",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet tool run fable -- Firegrid.Grid.fsproj -o dist --optimize --noCache --noRestore",
+    "diagnostics": "echo '@firegrid/grid diagnostics are covered by dotnet build'",
+    "lint": "echo '@firegrid/grid lint is covered by F# compile'",
+    "test": "pnpm run typecheck",
+    "typecheck": "NUGET_PACKAGES=${NUGET_PACKAGES:-$PWD/../../.nuget/packages} dotnet build Firegrid.Grid.fsproj -v:q"
+  },
+  "dependencies": {
+    "@firegrid/durable": "workspace:*"
+  }
+}
