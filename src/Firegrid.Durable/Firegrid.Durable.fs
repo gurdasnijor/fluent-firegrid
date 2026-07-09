@@ -280,17 +280,33 @@ module SelectSyntax =
 // effects — and returns a value. (Semantically: a workflow with an
 // auto-generated instance id; named because the semantics deserve a name.)
 
+// (C4 ceremony, the ratified T1 pattern: gained an INTERNAL backing field —
+// the underlying workflow definition plus its registration closure; the
+// public members are unchanged. Lowering in `Wiring`/`ServiceExec`: a call
+// is durably ADMITTED — journaled start, no worker involved — before any
+// execution; the instance id carries the idempotency.)
 type ServiceDef<'input, 'output> =
+    internal
+        { SvcWf: WorkflowDef<'input, 'output>
+          RegisterInto: RegBag -> RegBag }
+
     /// Request-response. Durable: if the caller dies awaiting, the execution
     /// continues regardless; reattach by idempotency key to collect it.
-    member _.Call (client: Client) (input: 'input) : Async<'output> = notYet
+    member service.Call (client: Client) (input: 'input) : Async<'output> = Wiring.serviceCall service.SvcWf client input
     /// Same call, deduplicated: same key ⇒ same execution, one result.
-    member _.CallIdempotent (client: Client) (idempotencyKey: string) (input: 'input) : Async<'output> = notYet
+    member service.CallIdempotent (client: Client) (idempotencyKey: string) (input: 'input) : Async<'output> =
+        Wiring.serviceCallIdempotent service.SvcWf client idempotencyKey input
 
 [<RequireQualifiedAccess>]
 module Service =
-    let define (name: string) (handler: 'input -> Workflow<'output>) : ServiceDef<'input, 'output> = notYet
-    let declare<'input, 'output> (name: string) : ServiceDef<'input, 'output> = notYet
+    // (C4 ceremony: `inline` — Fable erases generics, so the derived-codec
+    // type capture must happen at the call site, exactly as the contract's
+    // `define`/`declare`/`attach`.)
+    let inline define (name: string) (handler: 'input -> Workflow<'output>) : ServiceDef<'input, 'output> =
+        DerivedInternal.mkService name handler typeof<'input> typeof<'output>
+
+    let inline declare<'input, 'output> (name: string) : ServiceDef<'input, 'output> =
+        DerivedInternal.declareService name typeof<'input> typeof<'output>
 
 // ── 6. Entities (virtual objects) — durable keyed state ──────────────────
 //
@@ -837,6 +853,45 @@ module internal Wiring =
           WfFactory = factory
           RegisterInto = register }
 
+    // ── services (C4, the authorized carve-out) ───────────────────────────
+    //
+    // A service call is a workflow execution with a derived instance id
+    // (the contract: "a workflow with an auto-generated instance id").
+    // Admission is durable BEFORE execution — `ServiceExec.admit` journals
+    // the start with no worker involved; a registered worker executes the
+    // handler later. `CallIdempotent` derives the id from the caller's key,
+    // so the kernel's provenance dedupe collapses same-key calls into ONE
+    // execution with one result.
+
+    let private serviceCollect<'i, 'o> (def: WorkflowDef<'i, 'o>) (client: Client) (instanceId: string) : Async<'o> =
+        async {
+            let! body = ServiceExec.collect client.ClientBasin instanceId
+
+            return
+                match decodeOutcome body with
+                | WOk payload -> def.WfDecOut payload
+                | WErr stepError -> raise (DurableStepFailed stepError)
+                | WCancelled -> raise DurableCancelled
+        }
+
+    let serviceCall<'i, 'o> (def: WorkflowDef<'i, 'o>) (client: Client) (input: 'i) : Async<'o> =
+        async {
+            let instanceId = ServiceExec.callId def.WfName
+            do! ServiceExec.admit client.ClientBasin instanceId def.WfName (def.WfEncIn input)
+            return! serviceCollect def client instanceId
+        }
+
+    let serviceCallIdempotent<'i, 'o> (def: WorkflowDef<'i, 'o>) (client: Client) (key: string) (input: 'i) : Async<'o> =
+        async {
+            let instanceId = ServiceExec.idempotentId def.WfName key
+            do! ServiceExec.admit client.ClientBasin instanceId def.WfName (def.WfEncIn input)
+            return! serviceCollect def client instanceId
+        }
+
+    let mkService<'i, 'o> (name: string) (factory: ('i -> Workflow<'o>) option) (codecs: Codecs<'i, 'o>) : ServiceDef<'i, 'o> =
+        let wf = mkWorkflowDef name factory codecs
+        { SvcWf = wf; RegisterInto = wf.RegisterInto }
+
     // ── children & eternal (G4) ───────────────────────────────────────────
     //
     // Lowered onto the K1 kernel primitives: PerformChild (journaled child
@@ -1157,6 +1212,12 @@ module DerivedInternal =
 
     let mkEternal<'s> (name: string) (generation: 's -> Workflow<Eternal<'s>>) (stateTy: System.Type) : WorkflowDef<'s, unit> =
         Wiring.mkEternalDef name generation stateTy
+
+    let mkService<'i, 'o> (name: string) (handler: 'i -> Workflow<'o>) (inTy: System.Type) (outTy: System.Type) : ServiceDef<'i, 'o> =
+        Wiring.mkService name (Some handler) (Wiring.codecsFor inTy outTy)
+
+    let declareService<'i, 'o> (name: string) (inTy: System.Type) (outTy: System.Type) : ServiceDef<'i, 'o> =
+        Wiring.mkService name None (Wiring.codecsFor inTy outTy)
 
     let mkEntity<'c, 'e, 's, 'r>
         (name: string)

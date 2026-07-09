@@ -23,6 +23,7 @@
     <Compile Include="InternalStreams.fs" />
     <Compile Include="InternalEntity.fs" />
     <Compile Include="InternalChildren.fs" />
+    <Compile Include="InternalServices.fs" />
     <Compile Include="Firegrid.Durable.fs" />
     <Compile Include="Examples.fs" />
   </ItemGroup>
