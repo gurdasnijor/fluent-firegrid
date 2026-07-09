@@ -152,23 +152,30 @@ type TurnHandle =
     /// Watch this turn live: recorded prefix → live tail → terminal, from
     /// any process, mid-flight or after the fact. [→ client.Logs(...).Attach]
     member handle.Watch () : AsyncSeq<AgentEvent> =
+        // Lowered through the ratified `AsyncSeq.map` amendment (architect
+        // ruling on this PR). The log's seal reason IS the turn terminal
+        // (one source of truth): chunks decode to the in-flight events; the
+        // attach Terminal maps to TurnEnded; the sequence ends with the
+        // source.
         handle.THSpec.HLog.Attach()
-        |> GridSeqShim.collapse (fun logEvent ->
+        |> AsyncSeq.map (fun logEvent ->
             match logEvent with
-            | Terminal _ -> None
             | Chunk body ->
                 match GridEventWire.decode body with
-                | [ "th"; text ] -> Some(Thinking text)
-                | [ "sa"; text ] -> Some(Said text)
-                | [ "ct"; tool; args ] -> Some(CalledTool(tool, args))
-                | [ "tr"; tool; result ] -> Some(ToolReturned(tool, result))
-                | [ "wf"; what ] -> Some(WaitingFor what)
-                | [ "sp"; agent ] -> Some(SpawnedChild agent)
-                | [ "te"; "Completed"; _ ] -> Some(TurnEnded TurnEndCause.Completed)
-                | [ "te"; "Cancelled"; _ ] -> Some(TurnEnded TurnEndCause.Cancelled)
-                | [ "te"; "TimedOut"; _ ] -> Some(TurnEnded TurnEndCause.TimedOut)
-                | [ "te"; "Failed"; detail ] -> Some(TurnEnded(TurnEndCause.Failed detail))
-                | _ -> failwith ("Firegrid: unrecognized turn event record: " + body))
+                | [ "th"; text ] -> Thinking text
+                | [ "sa"; text ] -> Said text
+                | [ "ct"; tool; args ] -> CalledTool(tool, args)
+                | [ "tr"; tool; result ] -> ToolReturned(tool, result)
+                | [ "wf"; what ] -> WaitingFor what
+                | [ "sp"; agent ] -> SpawnedChild agent
+                | _ -> failwith ("Firegrid: unrecognized turn event record: " + body)
+            | Terminal reason ->
+                match GridEventWire.decode reason with
+                | [ "te"; "Completed"; _ ] -> TurnEnded TurnEndCause.Completed
+                | [ "te"; "Cancelled"; _ ] -> TurnEnded TurnEndCause.Cancelled
+                | [ "te"; "TimedOut"; _ ] -> TurnEnded TurnEndCause.TimedOut
+                | [ "te"; "Failed"; detail ] -> TurnEnded(TurnEndCause.Failed detail)
+                | _ -> failwith ("Firegrid: unrecognized turn terminal: " + reason))
 
     /// The turn's final outcome (waits durably). [→ run.Result]
     member handle.Outcome : Async<Result<string, TurnFailure>> =

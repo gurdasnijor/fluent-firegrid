@@ -29,6 +29,13 @@
 ///   • `Append : Async<Version>` — `Through v` requires the writer to HOLD an ack
 ///   • `Step.terminal`           — `StepError.Terminal` was unreachable from handlers
 ///
+/// Ratified amendment (architect ruling on PR #130 — the first L3 consumer
+/// exposed it):
+///   • `AsyncSeq.map`            — the constructor is internal and the module
+///                                 exposed only consumers (iter/pick), so no
+///                                 consumer could DERIVE a stream (e.g. a
+///                                 turn watch) from a log attach
+///
 /// Implementation ceremony (T1 green-making; no public name, parameter order,
 /// or member type shape changed — every delta is forced by Fable mechanics
 /// and flagged in the promotion PR):
@@ -495,6 +502,23 @@ and AsyncSeq<'t> = internal AsyncSeq of pull: (unit -> Async<'t option>)
 
 [<RequireQualifiedAccess>]
 module AsyncSeq =
+    /// Transform each element; the mapped sequence ends exactly where the
+    /// source ends. (Ratified amendment, architect ruling on PR #130: the
+    /// constructor is internal, so without a public map no consumer could
+    /// derive a stream — e.g. a turn watch — from a log attach.)
+    let map (f: 't -> 'u) (source: AsyncSeq<'t>) : AsyncSeq<'u> =
+        let (AsyncSeq pull) = source
+
+        AsyncSeq(fun () ->
+            async {
+                let! next = pull ()
+
+                return
+                    match next with
+                    | Some item -> Some(f item)
+                    | None -> None
+            })
+
     /// Consume a sequence to its end (for a log: prefix → tail → terminal).
     let iter (f: 't -> unit) (source: AsyncSeq<'t>) : Async<unit> =
         let (AsyncSeq pull) = source

@@ -24,19 +24,18 @@
 ///                      (DurableLog.Append per event via the journaled
 ///                      "turn/emit" step; DurableLog.Seal with the
 ///                      terminal cause via "turn/seal")
-///   watch            → client.Logs(<turnId>/events).Attach — recorded
-///                      prefix → live tail → terminal
+///   watch            → client.Logs(<turnId>/events).Attach, mapped to
+///                      AgentEvents via the ratified `AsyncSeq.map`
+///                      amendment (architect ruling on PR #130) — recorded
+///                      prefix → live tail → terminal, where the log's
+///                      SEAL REASON carries the turn's end cause (one
+///                      source of truth for `TurnEnded`)
 ///   outcome / cancel → run.Result / run.Cancel on the turn's run
 ///
-/// Nothing in this file reaches below the L2 contract. The single flagged
-/// exception is `GridSeqShim` (see its comment): the L2 surface exposes no
-/// public way for a consumer to CONSTRUCT an `AsyncSeq`, which
-/// `TurnHandle.Watch : AsyncSeq<AgentEvent>` requires — a platform surface
-/// gap reported in the C2 promotion PR.
+/// Nothing in this file reaches below the L2 contract.
 /// ═══════════════════════════════════════════════════════════════════════
 namespace Firegrid
 
-open Fable.Core
 open Firegrid.Log
 open Firegrid.Durable
 
@@ -168,54 +167,6 @@ module internal GridEventWire =
 
     let encode (parts: string list) : string = String.concat us parts
     let decode (body: string) : string list = body.Split('\u001F') |> Array.toList
-
-// ── AsyncSeq consumer shim ─────────────────────────────────────────────────
-//
-// DEVIATION, FLAGGED (C2 GATE finding — platform surface gap): the L2
-// contract type `AsyncSeq<'t>` has an internal constructor and its public
-// module exposes only consumers (`iter`, `pick`) — no `map`, no public
-// create. `TurnHandle.Watch : AsyncSeq<AgentEvent>` therefore CANNOT be
-// built from `DurableLog.Attach : AsyncSeq<LogEvent>` through the public
-// surface (FS1093 if attempted). Until the platform grows a public
-// `AsyncSeq.map` (the T3-clean fix, to be ruled by the architect), this
-// shim derives a mapped sequence at the Fable/JS seam: it reads the pull
-// thunk from the compiled union's runtime shape ({ tag: 0, fields: [pull] })
-// and rebuilds an instance with the SOURCE VALUE'S OWN constructor — no
-// import paths, no platform edits, contained here, trivially replaceable
-// by `AsyncSeq.map` once it exists.
-module internal GridSeqShim =
-    [<Emit("$0.fields[0]")>]
-    let private pullOf (_source: obj) : unit -> Async<obj option> = jsNative
-
-    [<Emit("new $0.constructor($1)")>]
-    let private rewrap (_source: obj) (_pull: obj) : obj = jsNative
-
-    /// Map-and-truncate: `decide` returns `Some mapped` to yield, `None`
-    /// to end the derived sequence (used to collapse the log terminal).
-    let collapse (decide: 't -> 'u option) (source: AsyncSeq<'t>) : AsyncSeq<'u> =
-        let pull = pullOf (box source)
-        let mutable ended = false
-
-        let next () : Async<'u option> =
-            async {
-                if ended then
-                    return None
-                else
-                    let! item = pull ()
-
-                    match item with
-                    | None ->
-                        ended <- true
-                        return None
-                    | Some raw ->
-                        match decide (unbox<'t> raw) with
-                        | Some mapped -> return Some mapped
-                        | None ->
-                            ended <- true
-                            return None
-            }
-
-        unbox<AsyncSeq<'u>> (rewrap (box source) (box next))
 
 // ── The session runtime ────────────────────────────────────────────────────
 
@@ -401,16 +352,22 @@ module internal GridRuntime =
                 // and the law observing it stays red as a law.
                 terminal ("Firegrid: choreography move not yet lowered in this packet: " + describeMove move)
 
-        let finish (causeKind: string) (detail: string) (sealReason: string) : Workflow<unit> =
+        // The turn's terminal IS the log terminal: the seal reason carries
+        // the encoded end cause, so `TurnEnded` has one source of truth —
+        // Watch maps the attach Terminal to it, and no separate terminal
+        // record can duplicate in a crash window.
+        let finish (causeKind: string) (detail: string) (notifyCause: string) : Workflow<unit> =
             workflow {
-                do! emit [ "te"; causeKind; detail ]
-                do! sealStep.Call { SlStream = stream; SlReason = sealReason }
+                do!
+                    sealStep.Call
+                        { SlStream = stream
+                          SlReason = GridEventWire.encode [ "te"; causeKind; detail ] }
 
                 do!
                     notifyStep.Call
                         { NoKey = sessionKey input.TAgent input.TSession
                           NoTurnId = turnId
-                          NoCause = sealReason }
+                          NoCause = notifyCause }
             }
 
         workflow {
