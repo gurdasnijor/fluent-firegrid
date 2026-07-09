@@ -557,11 +557,9 @@ module internal CelPredicate =
 // Specs (the fold + predicate closures) are captured at program
 // construction, which runs in the worker process on every drive — so the
 // watcher always has the closures for any wait a live worker can park.
-// NOTE (escalated in the promotion PR): the watcher's proper home is the
-// worker loop (G1's file); until that one-line hook lands post-merge it is
-// seeded from the surface calls that observe a basin (`Client.Logs`,
-// `client.Read`), which co-reside with the worker in every current host
-// process (the corpus runs client and worker in one process).
+// The watcher rides the worker: `Wiring.runWorker` notes the basin at
+// start (architect ruling, PR #121), so any process hosting a worker —
+// including a worker-only process — evaluates CEL waits.
 
 [<RequireQualifiedAccess>]
 module internal CelWatch =

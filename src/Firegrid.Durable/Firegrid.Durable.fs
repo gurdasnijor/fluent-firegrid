@@ -406,8 +406,6 @@ type Client =
 
     /// Everything below hangs off a connected client.
     member client.Logs (address: string list) : DurableLog =
-        CelWatch.noteBasin client.ClientBasin
-
         { LogBasin = client.ClientBasin
           LogStream = String.concat "/" address }
     member client.Read (projection: Projection<'state>) (grade: ReadGrade) : Async<View<'state>> = Wiring.readProjection client projection grade
@@ -964,7 +962,6 @@ module internal Wiring =
         // check-tail barrier); Latest above keeps its stateless fold.
         | Eventual ->
             async {
-                CelWatch.noteBasin client.ClientBasin
                 let streamName = String.concat "/" address
                 let! state, asOf, behind = GradedReads.eventual client.ClientBasin projName streamName initial apply
 
@@ -975,7 +972,6 @@ module internal Wiring =
             }
         | Through(Version version) ->
             async {
-                CelWatch.noteBasin client.ClientBasin
                 let streamName = String.concat "/" address
                 let! state, asOf, behind = GradedReads.through client.ClientBasin projName streamName initial apply version
 
@@ -1001,6 +997,9 @@ module internal Wiring =
                 (RegBag.empty, definitions)
                 ||> List.fold (fun acc (Registration register) -> register acc)
 
+            // The CEL-wait watcher rides the worker: any process that hosts a
+            // worker evaluates CEL waits, including worker-only processes.
+            CelWatch.noteBasin basin
             let stop = WorkerLoop.start basin bag
             return { StopFn = stop }
         }
