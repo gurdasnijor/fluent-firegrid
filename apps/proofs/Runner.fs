@@ -52,6 +52,48 @@ module Runner =
             proof.Name.Contains value
             || proof.Properties |> List.exists (fun property -> property.Name.Contains value)
 
+    /// Bounded worker pool over a queue of jobs (P0.3c ruling 4). Node's
+    /// single-threaded event loop makes the shared index safe: there is no
+    /// await between the read and the increment.
+    let private runPool (concurrency: int) (jobs: (unit -> Async<unit>) list) : Async<unit> =
+        match jobs with
+        | [] -> async { return () }
+        | _ ->
+            let queue = List.toArray jobs
+            let next = ref 0
+
+            let worker (_: int) =
+                let rec loop () =
+                    async {
+                        let index = next.Value
+
+                        if index >= queue.Length then
+                            return ()
+                        else
+                            next.Value <- index + 1
+                            do! queue.[index] ()
+                            return! loop ()
+                    }
+
+                loop ()
+
+            [ 1 .. max 1 (min concurrency queue.Length) ]
+            |> List.map worker
+            |> Async.Parallel
+            |> Async.Ignore
+
+    /// Split a suite into the concurrent pool and the timing-sensitive
+    /// serial tail (registry-tagged; runs AFTER the pool drains, one at a
+    /// time). At concurrency 1 there is no split: everything runs in
+    /// registry order — the serial escape hatch reproduces the pre-pool
+    /// behavior exactly.
+    let private partitionForPool (config: RunnerConfig) (serialTags: string list) (proofs: ProofSpec list) =
+        if config.Concurrency <= 1 then
+            proofs, []
+        else
+            proofs
+            |> List.partition (fun proof -> not (serialTags |> List.contains proof.Name))
+
     let listProofs (proofs: ProofSpec list) =
         for proof in proofs do
             let description = proof.Description |> Option.defaultValue ""
@@ -85,8 +127,10 @@ module Runner =
 
     /// Human/CI mode: run every proof matching the filter; the exit code
     /// carries failures (unlike targets mode, where the ratchet judges the
-    /// emitted result lines).
-    let run (config: RunnerConfig) (proofs: ProofSpec list) : Async<int> =
+    /// emitted result lines). Concurrency > 1 buffers each proof's output
+    /// and flushes it as one block on completion (completion order);
+    /// concurrency 1 streams in registry order exactly as before.
+    let run (config: RunnerConfig) (serialTags: string list) (proofs: ProofSpec list) : Async<int> =
         async {
             let selected = proofs |> List.filter (matchesFilter config.ProofFilter)
 
@@ -100,18 +144,36 @@ module Runner =
                             let mutable passed = 0
                             let mutable failed = 0
 
-                            for proof in selected do
-                                stdout (sprintf "### %s" proof.Name)
+                            let runProof (proof: ProofSpec) =
+                                async {
+                                    let buffer = ResizeArray<string>()
+                                    let log = if config.Concurrency <= 1 then stdout else buffer.Add
 
-                                for property in proof.Properties do
-                                    let! report = property.RunProperty config proof.Name
+                                    log (sprintf "### %s" proof.Name)
 
-                                    if report.Passed then
-                                        passed <- passed + 1
-                                    else
-                                        failed <- failed + 1
+                                    for property in proof.Properties do
+                                        let! report = property.RunProperty config proof.Name
 
-                                    reportProperty stdout report
+                                        if report.Passed then
+                                            passed <- passed + 1
+                                        else
+                                            failed <- failed + 1
+
+                                        reportProperty log report
+
+                                    for line in buffer do
+                                        stdout line
+                                }
+
+                            let pooled, serialTail = partitionForPool config serialTags selected
+
+                            do!
+                                runPool
+                                    config.Concurrency
+                                    (pooled |> List.map (fun proof -> fun () -> runProof proof))
+
+                            for proof in serialTail do
+                                do! runProof proof
 
                             stdout (sprintf "%d properties passed, %d failed" passed failed)
                             return if failed = 0 then 0 else 1
@@ -130,42 +192,69 @@ module Runner =
         stderr (sprintf "replay property: %s trial: %s" spec.PropertyName spec.TrialId)
         stderr (sprintf "recorded replay command: %s" spec.ReplayCommand)
 
+        // A replay selects one recorded property: run it serially (its own
+        // shared s2-lite instance still boots, matching runner semantics).
         run
             { config with
                 Root = root
                 ProofFilter = Some spec.PropertyName
                 TrialId = Some spec.TrialId
-                Preserve = true }
+                Preserve = true
+                Concurrency = 1 }
+            []
             proofs
 
     /// Ratchet targets mode (targets-README.md): one { "id", "pass" } JSON
     /// line per proof on stdout, all diagnostics on stderr, exit 0 when the
     /// suite itself ran to completion — per-proof failures live in the
     /// result lines, not the exit code.
-    let targets (config: RunnerConfig) (proofs: ProofSpec list) : Async<int> =
+    let targets (config: RunnerConfig) (serialTags: string list) (proofs: ProofSpec list) : Async<int> =
         withSharedS2 config (fun config ->
             async {
-                for proof in proofs do
-                    let mutable pass = true
+                // One pool job per proof; a proof's properties (and its
+                // negative-control trials) run sequentially INSIDE its job,
+                // so controls count against the same pool slot. The result
+                // line is printed only here at completion — one atomic
+                // stdout line per proof, completion order (the ratchet is
+                // order-insensitive) — with the proof's buffered
+                // diagnostics flushed to stderr just before it. Concurrency
+                // 1 streams diagnostics live, exactly the pre-pool
+                // behavior.
+                let runProof (proof: ProofSpec) =
+                    async {
+                        let buffer = ResizeArray<string>()
+                        let log = if config.Concurrency <= 1 then stderr else buffer.Add
+                        let mutable pass = true
 
-                    for property in proof.Properties do
-                        // A property that CRASHES the runner (outside the
-                        // workload/check paths, which already catch) still fails
-                        // as a law — the suite must run to completion and emit
-                        // one result line per registered proof.
-                        let! outcome = Async.Catch(property.RunProperty config proof.Name)
+                        for property in proof.Properties do
+                            // A property that CRASHES the runner (outside the
+                            // workload/check paths, which already catch) still fails
+                            // as a law — the suite must run to completion and emit
+                            // one result line per registered proof.
+                            let! outcome = Async.Catch(property.RunProperty config proof.Name)
 
-                        match outcome with
-                        | Choice1Of2 report ->
-                            if not report.Passed then
+                            match outcome with
+                            | Choice1Of2 report ->
+                                if not report.Passed then
+                                    pass <- false
+
+                                reportProperty log report
+                            | Choice2Of2 error ->
                                 pass <- false
+                                log (sprintf "  x property '%s' crashed: %s" property.Name error.Message)
 
-                            reportProperty stderr report
-                        | Choice2Of2 error ->
-                            pass <- false
-                            stderr (sprintf "  x property '%s' crashed: %s" property.Name error.Message)
+                        for line in buffer do
+                            stderr line
 
-                    stdout (sprintf "{ \"id\": \"%s\", \"pass\": %b }" proof.Name pass)
+                        stdout (sprintf "{ \"id\": \"%s\", \"pass\": %b }" proof.Name pass)
+                    }
+
+                let pooled, serialTail = partitionForPool config serialTags proofs
+
+                do! runPool config.Concurrency (pooled |> List.map (fun proof -> fun () -> runProof proof))
+
+                for proof in serialTail do
+                    do! runProof proof
 
                 return 0
             })

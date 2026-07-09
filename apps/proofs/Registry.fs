@@ -68,6 +68,20 @@ module Registry =
     let all: ProofSpec list =
         suites |> List.collect (fun suite -> suite.Proofs)
 
+    /// Timing-sensitive proofs (P0.3c serial tail bucket): excluded from the
+    /// concurrent pool and run AFTER it drains, one at a time. Architect-ruled
+    /// initial set — additions require recorded stress-flake evidence in the
+    /// promoting PR; removals from the initial set are forbidden.
+    ///   wake.tail-latency                 asserts a latency bound
+    ///   t1.andbang-teaching               asserts a fast branch beats a 400ms-slow one
+    ///   durable.parallel-overlap          observes true concurrency mid-flight
+    ///   durable.parallel-fault-isolation  observes true concurrency mid-flight
+    let timingSensitive: string list =
+        [ "wake.tail-latency"
+          "t1.andbang-teaching"
+          "durable.parallel-overlap"
+          "durable.parallel-fault-isolation" ]
+
     /// Child scenario hosts for the kill/zombie laws: this same compiled
     /// binary re-entered as `child <scenario>` (corpus Program.fs dispatch).
     let childScenarios: (string * (unit -> Async<int>)) list =

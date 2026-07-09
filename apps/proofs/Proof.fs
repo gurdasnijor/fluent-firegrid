@@ -187,7 +187,11 @@ type RunnerConfig =
       Seed: int
       /// The runner-scoped shared s2-lite (None until the runner boots it;
       /// `s2Lite` property resources resolve against it).
-      SharedS2: S2Resource option }
+      SharedS2: S2Resource option
+      /// Bounded worker-pool size for proof execution (--concurrency N >
+      /// PROOF_CONCURRENCY env > default 4). 1 = the serial escape hatch:
+      /// registry order, no serial-tail split, streaming diagnostics.
+      Concurrency: int }
 
 type RunnableProperty =
     { Name: string
