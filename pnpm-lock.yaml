@@ -48,6 +48,9 @@ importers:
       '@firegrid/durable':
         specifier: workspace:*
         version: link:../../src/Firegrid.Durable
+      '@firegrid/grid':
+        specifier: workspace:*
+        version: link:../../src/Firegrid.Grid
       '@firegrid/log':
         specifier: workspace:*
         version: link:../../src/Firegrid.Log

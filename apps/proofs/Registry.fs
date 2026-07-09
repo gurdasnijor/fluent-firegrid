@@ -59,10 +59,22 @@ module Registry =
              FoundationWakePathProof.proof ]
            |> List.collect perProperty)
 
+    /// The T2 firegrid corpus (Phase C / C1), in manifest order
+    /// (targets.json t2-firegrid): the eight ratified scenarios of
+    /// GridExamples.fs + two open-semantics pins. ALL RED until the
+    /// green-making packets land; laws freeze at the human ratification
+    /// read (the T1 ceremony).
+    let gridProofs: ProofSpec list =
+        [ GridLawProofs.converseAcrossCrashes
+          GridLawProofs.daysLongApproval
+          GridLawProofs.researcherWriterChoreography
+          GridLawProofs.scheduledSelfPrompts ]
+
     let suites: SuiteSpec list =
         [ { Suite = "p0-harness"
             Proofs = [ HarnessKillDemoProof.proof ] }
           { Suite = "t1-durable"; Proofs = corpusProofs }
+          { Suite = "t2-firegrid"; Proofs = gridProofs }
           { Suite = "foundation"; Proofs = foundationProofs } ]
 
     let all: ProofSpec list =
@@ -87,4 +99,5 @@ module Registry =
     let childScenarios: (string * (unit -> Async<int>)) list =
         [ "replay-host", ReplayScenario.childHost
           "zombie-host", CounterEntity.childHost
-          "saga-host", SagaScenario.childHost ]
+          "saga-host", SagaScenario.childHost
+          "grid-host", ConverseScenario.childHost ]
