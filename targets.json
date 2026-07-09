@@ -294,7 +294,7 @@
       "id": "t2.days-long-approval",
       "wp": "T2",
       "corpus": "t2-firegrid",
-      "status": "red"
+      "status": "green"
     },
     {
       "id": "t2.researcher-writer-choreography",
