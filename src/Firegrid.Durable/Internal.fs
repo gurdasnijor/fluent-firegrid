@@ -305,6 +305,14 @@ module internal Programs =
             | WhenAny(tasks, k) -> WhenAny(tasks, (fun winner -> catch (fun () -> k winner) handler))
             | CurrentTime k -> CurrentTime(fun timestamp -> catch (fun () -> k timestamp) handler)
             | Log(message, k) -> Log(message, (fun () -> catch (fun () -> k ()) handler))
+            // G4 hooks for the K1 nodes (Send / PerformChild / ContinueAsNew):
+            // without these, any workflow containing one crashes the catch
+            // walk with a match failure. Rollover is terminal — nothing runs
+            // after it, so there is nothing to guard.
+            | Send(activity, k) -> Send(activity, (fun () -> catch (fun () -> k ()) handler))
+            | PerformChild(workflow, input, k) ->
+                PerformChild(workflow, input, (fun value -> catch (fun () -> k value) handler))
+            | ContinueAsNew nextInput -> ContinueAsNew nextInput
 
     let rec whileLoop (guard: unit -> bool) (body: unit -> Durable<unit>) : Durable<unit> =
         if guard () then
@@ -724,6 +732,20 @@ module internal OutStream =
 
         wait ()
 
+    /// G4: generation rollover marker — a rolled-over generation's terminal
+    /// on its OWN out stream, pointing at the next generation. The prefix is
+    /// distinct from every derived-codec payload (JSON never starts with
+    /// '@'), so terminal decode and chain-following cannot collide.
+    let private rolloverPrefix = "@rolled:"
+
+    let rolloverPayload (next: string) : string = rolloverPrefix + next
+
+    let tryRolledTo (body: string) : string option =
+        if body.StartsWith rolloverPrefix then
+            Some(body.Substring rolloverPrefix.Length)
+        else
+            None
+
     let writeOnce (basin: S2.Basin) (key: string) (payload: string) : Async<unit> =
         async {
             do! ensure basin key
@@ -803,6 +825,24 @@ module internal WorkerLoop =
                         completion <- Some value
                         // Already-recorded completions are idle, not progress:
                         // a finished instance must not hot-loop the worker.
+                        if not (written.Contains key) then
+                            active <- true
+
+                        keepTicking <- false
+                    | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.ContinuedAsNew _) ->
+                        // G4: rollover is this generation's terminal (K1 debt:
+                        // a History event, no Completed tick). Journal the
+                        // chain link on the out stream so Run.Result /
+                        // Run.Status / attach can follow the generation chain
+                        // from any process. Recovery is the sweep re-observing
+                        // this same tick; writeOnce dedupes.
+                        completion <-
+                            Some(
+                                OutStream.rolloverPayload (
+                                    InstanceId.value (Generation.next (InstanceId.create key))
+                                )
+                            )
+
                         if not (written.Contains key) then
                             active <- true
 

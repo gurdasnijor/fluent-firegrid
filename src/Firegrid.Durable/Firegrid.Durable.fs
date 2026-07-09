@@ -209,12 +209,16 @@ type WorkflowDef<'input, 'output> =
     member def.Start (client: Client) (input: 'input) (id: Id) : Async<Run<'output>> = Wiring.startRun def client input id
     /// Call as a durable child from a parent workflow; the parent waits for
     /// the child's result (journaled; survives both processes dying).
-    member _.CallChild (input: 'input) : Workflow<'output> = notYet
+    member def.CallChild (input: 'input) : Workflow<'output> = Wiring.callChild def input
     /// Fire-and-forget child.
-    member _.SpawnChild (input: 'input) : Workflow<ChildHandle<'output>> = notYet
+    member def.SpawnChild (input: 'input) : Workflow<ChildHandle<'output>> = Wiring.spawnChild def input
 
 and Id = Id of string
-and ChildHandle<'o> = member _.Await () : Workflow<'o> = notYet
+// (T1 ceremony: gained an INTERNAL backing field — the deferred child
+// program; the public member is unchanged.)
+and ChildHandle<'o> =
+    internal { AwaitProgram: Workflow<'o> }
+    member handle.Await () : Workflow<'o> = handle.AwaitProgram
 
 /// What an eternal (unbounded-loop) workflow returns each generation.
 /// `ContinueAsNew` rolls the journal: state carries forward, history resets.
@@ -232,7 +236,11 @@ module Workflow =
         DerivedInternal.declareWorkflow name typeof<'input> typeof<'output>
     /// An unbounded loop as generations: the program runs one generation and
     /// returns `ContinueAsNew state` to roll over with a fresh journal.
-    let defineEternal (name: string) (generation: 'state -> Workflow<Eternal<'state>>) : WorkflowDef<'state, unit> = notYet
+    /// (T1 ceremony: `inline` — Fable erases generics, so the derived
+    /// state-codec type capture must happen at the call site, exactly as
+    /// `define`/`declare`/`attach`.)
+    let inline defineEternal (name: string) (generation: 'state -> Workflow<Eternal<'state>>) : WorkflowDef<'state, unit> =
+        DerivedInternal.mkEternal name generation typeof<'state>
     /// Deterministic local computation (pure; NOT for effects — those are steps).
     let local (name: string) (compute: unit -> 'a) : Workflow<'a> = notYet
     /// Current time, captured deterministically (same value on replay).
@@ -761,14 +769,15 @@ module internal Wiring =
             )
         )
 
-    /// DELTA (documented in the promotion PR): the kernel's only call shape is
-    /// Perform (call + await completion), so Send is journaled dispatch that
-    /// still waits for handler completion before the next bind. True one-way
-    /// delivery is the K1 kernel packet.
+    /// Ruled adoption (G4): a TRUE one-way send over K1's kernel Send
+    /// primitive — journaled dispatch (ActivitySent + SendActivity command),
+    /// the workflow proceeds at the next bind WITHOUT awaiting the handler.
+    /// The adapter executes ack-guarded (exactly-once-effective); handler
+    /// failures are swallowed-and-acked (K1 recorded debt) — they surface in
+    /// ops telemetry, never in the calling workflow.
     let stepSend<'i, 'o> (step: Step<'i, 'o>) (input: 'i) : Workflow<unit> =
         let envelope = StepWire.encodeEnvelope { Pol = policyOf NoRetry; P = step.EncIn input }
-        let activity: Activity = { Name = step.StepName; Input = envelope }
-        Workflow(NProg(Perform(activity, fun _ -> KD.result ())))
+        Workflow(NProg(KD.send { Name = step.StepName; Input = envelope }))
 
     // ── workflow definitions ──────────────────────────────────────────────
 
@@ -803,6 +812,47 @@ module internal Wiring =
           WfDecOut = codecs.DecodeOut
           WfFactory = factory
           RegisterInto = register }
+
+    // ── children & eternal (G4) ───────────────────────────────────────────
+    //
+    // Lowered onto the K1 kernel primitives: PerformChild (journaled child
+    // start + parked await; child ids `<parent>/child/<opId>`) and the
+    // ContinueAsNew rollover (generation ids `<base>/gen/<n>`, fresh journal
+    // per generation). Exactly-once per child / per generation is kernel
+    // machinery (journal replay + mailbox provenance dedupe); fan-out over
+    // children composes as ordinary binds, so declaration order is
+    // preserved by construction.
+
+    /// Decode a child's terminal outcome inside the parent's continuation:
+    /// success resumes with the decoded value; the child's failure or
+    /// cancellation re-raises as the contract's catchable exceptions.
+    let private childTerminal<'o> (decOut: string -> 'o) : string -> Durable<'o> =
+        fun payload ->
+            match decodeOutcome payload with
+            | WOk body -> KD.result (decOut body)
+            | WErr stepError -> raise (DurableStepFailed stepError)
+            | WCancelled -> raise DurableCancelled
+
+    let callChild<'i, 'o> (def: WorkflowDef<'i, 'o>) (input: 'i) : Workflow<'o> =
+        Workflow(ChildFlow.callNode def.WfName (def.WfEncIn input) (childTerminal def.WfDecOut))
+
+    /// DELTA (documented in the promotion PR): the kernel's only child shape
+    /// is PerformChild (journaled start + await), so the spawn is DEFERRED —
+    /// the child's journaled start happens at the first `Await` bind, and an
+    /// un-awaited handle never starts the child.
+    let spawnChild<'i, 'o> (def: WorkflowDef<'i, 'o>) (input: 'i) : Workflow<ChildHandle<'o>> =
+        retW { AwaitProgram = callChild def input }
+
+    let mkEternalDef<'s> (name: string) (generation: 's -> Workflow<Eternal<'s>>) (stateTy: System.Type) : WorkflowDef<'s, unit> =
+        let codecs = codecsFor<'s, unit> stateTy typeof<unit>
+
+        let program (state: 's) : Workflow<unit> =
+            bindW (generation state) (fun outcome ->
+                match outcome with
+                | Eternal.Stop -> retW ()
+                | Eternal.ContinueAsNew next -> Workflow(NProg(KD.continueAsNew (codecs.EncodeIn next))))
+
+        mkWorkflowDef name (Some program) codecs
 
     // ── runs (start, attach, observe) ─────────────────────────────────────
 
@@ -842,7 +892,9 @@ module internal Wiring =
 
     let runResult<'o> (run: Run<'o>) : Async<Result<'o, RunFailure>> =
         async {
-            let! body = OutStream.awaitOutcome run.RunBasin run.RunKey
+            // Follows ContinueAsNew generation chains (rollover markers on
+            // each rolled generation's out stream) to the chain's terminal.
+            let! body = RunFollow.awaitTerminal run.RunBasin run.RunKey
 
             return
                 match decodeOutcome body with
@@ -853,7 +905,9 @@ module internal Wiring =
 
     let runStatus<'o> (run: Run<'o>) : Async<RunStatus> =
         async {
-            let! body = OutStream.readOutcome run.RunBasin run.RunKey
+            // Same chain-following as runResult: a live chain (newest
+            // generation still running) reads as Running.
+            let! body = RunFollow.readTerminal run.RunBasin run.RunKey
 
             return
                 match body with
@@ -1076,6 +1130,9 @@ module DerivedInternal =
 
     let declareWorkflow<'i, 'o> (name: string) (inTy: System.Type) (outTy: System.Type) : WorkflowDef<'i, 'o> =
         Wiring.mkWorkflowDef name None (Wiring.codecsFor inTy outTy)
+
+    let mkEternal<'s> (name: string) (generation: 's -> Workflow<Eternal<'s>>) (stateTy: System.Type) : WorkflowDef<'s, unit> =
+        Wiring.mkEternalDef name generation stateTy
 
     let mkEntity<'c, 'e, 's, 'r>
         (name: string)
