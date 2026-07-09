@@ -126,7 +126,14 @@ type NegativeControlSpec<'result> =
 
 type ResourceSpec =
     | S2LiveFromEnv
+    /// Resolves to the runner's ONE shared s2-lite instance (booted once per
+    /// `proof run` / `proof targets` invocation). Trials are isolated by
+    /// trial-scoped basin names, not by private server instances — verified
+    /// sufficient because no proof faults the s2 server itself.
     | S2Lite of root: string
+    /// Escape hatch for future laws that fault s2 itself: a private per-trial
+    /// s2-lite instance (the pre-0.3c behavior). Used by ZERO proofs today.
+    | S2LiteDedicated of root: string
     | ProcessHost of ProcessHostSpec
 
 type PropertySpec<'result> =
@@ -177,7 +184,10 @@ type RunnerConfig =
       ProofFilter: string option
       TrialId: string option
       Preserve: bool
-      Seed: int }
+      Seed: int
+      /// The runner-scoped shared s2-lite (None until the runner boots it;
+      /// `s2Lite` property resources resolve against it).
+      SharedS2: S2Resource option }
 
 type RunnableProperty =
     { Name: string

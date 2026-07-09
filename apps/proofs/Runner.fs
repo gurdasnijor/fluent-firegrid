@@ -21,6 +21,30 @@ module Runner =
 
     let private parentDir value = dirnameWith path value
 
+    /// One shared s2-lite per runner invocation (P0.3c): boot before the
+    /// first trial, tear down after the last, lifecycle spans at runner
+    /// scope. Trials are isolated by trial-scoped basins, so a single server
+    /// instance is sufficient — no proof faults the s2 server itself.
+    let private withSharedS2 (config: RunnerConfig) (body: RunnerConfig -> Async<int>) : Async<int> =
+        async {
+            let store = Reports.traceStore config.Root (Reports.trialId "s2-shared")
+            let! shared = S2Lite.start store ""
+
+            stderr (
+                sprintf
+                    "s2-lite shared instance up at %s (one boot per runner invocation)"
+                    (shared.Resource.Endpoint |> Option.defaultValue "<unknown>")
+            )
+
+            let! outcome = Async.Catch(body { config with SharedS2 = Some shared.Resource })
+
+            do! shared.Stop()
+
+            match outcome with
+            | Choice1Of2 code -> return code
+            | Choice2Of2 error -> return raise error
+        }
+
     let private matchesFilter (filter: string option) (proof: ProofSpec) =
         match filter with
         | None -> true
@@ -70,24 +94,28 @@ module Runner =
                 stderr "no proofs matched filter"
                 return 1
             else
-                let mutable passed = 0
-                let mutable failed = 0
+                return!
+                    withSharedS2 config (fun config ->
+                        async {
+                            let mutable passed = 0
+                            let mutable failed = 0
 
-                for proof in selected do
-                    stdout (sprintf "### %s" proof.Name)
+                            for proof in selected do
+                                stdout (sprintf "### %s" proof.Name)
 
-                    for property in proof.Properties do
-                        let! report = property.RunProperty config proof.Name
+                                for property in proof.Properties do
+                                    let! report = property.RunProperty config proof.Name
 
-                        if report.Passed then
-                            passed <- passed + 1
-                        else
-                            failed <- failed + 1
+                                    if report.Passed then
+                                        passed <- passed + 1
+                                    else
+                                        failed <- failed + 1
 
-                        reportProperty stdout report
+                                    reportProperty stdout report
 
-                stdout (sprintf "%d properties passed, %d failed" passed failed)
-                return if failed = 0 then 0 else 1
+                            stdout (sprintf "%d properties passed, %d failed" passed failed)
+                            return if failed = 0 then 0 else 1
+                        })
         }
 
     /// Replay a recorded trial: reuse the recorded trial id, preserve the
@@ -115,28 +143,29 @@ module Runner =
     /// suite itself ran to completion — per-proof failures live in the
     /// result lines, not the exit code.
     let targets (config: RunnerConfig) (proofs: ProofSpec list) : Async<int> =
-        async {
-            for proof in proofs do
-                let mutable pass = true
+        withSharedS2 config (fun config ->
+            async {
+                for proof in proofs do
+                    let mutable pass = true
 
-                for property in proof.Properties do
-                    // A property that CRASHES the runner (outside the
-                    // workload/check paths, which already catch) still fails
-                    // as a law — the suite must run to completion and emit
-                    // one result line per registered proof.
-                    let! outcome = Async.Catch(property.RunProperty config proof.Name)
+                    for property in proof.Properties do
+                        // A property that CRASHES the runner (outside the
+                        // workload/check paths, which already catch) still fails
+                        // as a law — the suite must run to completion and emit
+                        // one result line per registered proof.
+                        let! outcome = Async.Catch(property.RunProperty config proof.Name)
 
-                    match outcome with
-                    | Choice1Of2 report ->
-                        if not report.Passed then
+                        match outcome with
+                        | Choice1Of2 report ->
+                            if not report.Passed then
+                                pass <- false
+
+                            reportProperty stderr report
+                        | Choice2Of2 error ->
                             pass <- false
+                            stderr (sprintf "  x property '%s' crashed: %s" property.Name error.Message)
 
-                        reportProperty stderr report
-                    | Choice2Of2 error ->
-                        pass <- false
-                        stderr (sprintf "  x property '%s' crashed: %s" property.Name error.Message)
+                    stdout (sprintf "{ \"id\": \"%s\", \"pass\": %b }" proof.Name pass)
 
-                stdout (sprintf "{ \"id\": \"%s\", \"pass\": %b }" proof.Name pass)
-
-            return 0
-        }
+                return 0
+            })

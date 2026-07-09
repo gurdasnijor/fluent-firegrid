@@ -58,7 +58,8 @@ module Main =
           ProofFilter = filter
           TrialId = argValue "--trial-id" args
           Preserve = true
-          Seed = seed args }
+          Seed = seed args
+          SharedS2 = None }
 
     let private main () =
         async {
@@ -88,7 +89,8 @@ module Main =
                               ProofFilter = None
                               TrialId = None
                               Preserve = true
-                              Seed = 0 }
+                              Seed = 0
+                              SharedS2 = None }
                             spec.Proofs
                 | None ->
                     let known =
