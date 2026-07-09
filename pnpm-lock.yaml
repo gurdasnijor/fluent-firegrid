@@ -229,6 +229,12 @@ importers:
         specifier: 0.24.1
         version: 0.24.1
 
+  src/Firegrid.Grid:
+    dependencies:
+      '@firegrid/durable':
+        specifier: workspace:*
+        version: link:../Firegrid.Durable
+
   src/Firegrid.Log:
     dependencies:
       '@s2-dev/streamstore':
