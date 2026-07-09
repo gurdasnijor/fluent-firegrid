@@ -90,7 +90,11 @@ module GridScripted =
 type internal ToolSpec =
     { ToolName: string
       ToolDescription: string
-      ToolStep: Step<string, string> }
+      ToolStep: Step<string, string>
+      /// C3 seam: `Some prompt` marks a human-gated tool — the turn parks
+      /// on the gate's approval signal before the step may run
+      /// (`GridApproval` in InternalApproval.fs owns the mechanics).
+      ToolGate: string option }
 
 /// Backing of `AgentDef`.
 type internal AgentSpec =
@@ -251,7 +255,8 @@ module internal GridRuntime =
     let mkToolSpec (name: string) (description: string) (run: string -> Async<string>) : ToolSpec =
         { ToolName = name
           ToolDescription = description
-          ToolStep = Step.define ("tool/" + name) run }
+          ToolStep = Step.define ("tool/" + name) run
+          ToolGate = None }
 
     // ── The turn workflow ─────────────────────────────────────────────────
 
@@ -297,9 +302,15 @@ module internal GridRuntime =
         let terminal (message: string) : Workflow<'a> =
             workflow { return raise (DurableStepFailed(StepError.Terminal message)) }
 
-        let callTool (tool: string) (args: string) : Workflow<string> =
+        // C3 seam: the tool-call path branches on gated tools. `moveIndex`
+        // (the move's position in the turn) makes the gate's approval token
+        // deterministic and distinct per gated call.
+        let callTool (moveIndex: int) (tool: string) (args: string) : Workflow<string> =
             match agentSpec |> Option.bind (fun a -> a.AgentTools |> List.tryFind (fun t -> t.ToolName = tool)) with
-            | Some spec -> spec.ToolStep.Call args
+            | Some spec ->
+                match spec.ToolGate with
+                | None -> spec.ToolStep.Call args
+                | Some prompt -> GridApproval.gatedCall emit turnId moveIndex prompt spec.ToolStep args
             | None -> terminal ("Firegrid: agent '" + input.TAgent + "' has no tool '" + tool + "'")
 
         // A durable cancel-observation point. The kernel delivers a durable
@@ -316,34 +327,36 @@ module internal GridRuntime =
         // Waiting tick can deliver the pending cancel signal.
         let observeCancel: Workflow<unit> = Workflow.sleep (Duration.seconds 0.15)
 
-        let rec runMoves (moves: GridMove list) (lastSaid: string) : Workflow<string> =
+        // C3 seam: `moveIndex` threads through the move loop so a gated
+        // tool call can derive its replay-stable approval token.
+        let rec runMoves (moveIndex: int) (moves: GridMove list) (lastSaid: string) : Workflow<string> =
             match moves with
             | [] -> workflow { return lastSaid }
             | move :: rest ->
                 workflow {
                     do! observeCancel
-                    return! runMove move rest lastSaid
+                    return! runMove moveIndex move rest lastSaid
                 }
 
-        and runMove (move: GridMove) (rest: GridMove list) (lastSaid: string) : Workflow<string> =
+        and runMove (moveIndex: int) (move: GridMove) (rest: GridMove list) (lastSaid: string) : Workflow<string> =
             match move with
             | GEndTurn -> workflow { return lastSaid }
             | GSay text ->
                 workflow {
                     do! emit [ "sa"; text ]
-                    return! runMoves rest text
+                    return! runMoves (moveIndex + 1) rest text
                 }
             | GThink text ->
                 workflow {
                     do! emit [ "th"; text ]
-                    return! runMoves rest lastSaid
+                    return! runMoves (moveIndex + 1) rest lastSaid
                 }
             | GCallTool(tool, args) ->
                 workflow {
                     do! emit [ "ct"; tool; args ]
-                    let! result = callTool tool args
+                    let! result = callTool moveIndex tool args
                     do! emit [ "tr"; tool; result ]
-                    return! runMoves rest lastSaid
+                    return! runMoves (moveIndex + 1) rest lastSaid
                 }
             | _ ->
                 // wait_for / wait_until / spawn_all / publish / the corpus
@@ -373,7 +386,7 @@ module internal GridRuntime =
         workflow {
             try
                 let! reply = modelStep.Call input
-                let! outcome = runMoves reply.RMoves ""
+                let! outcome = runMoves 0 reply.RMoves ""
                 do! finish "Completed" "" "completed"
                 return outcome
             with

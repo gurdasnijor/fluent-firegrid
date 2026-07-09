@@ -75,7 +75,9 @@ module Tool =
 
     /// A tool that requires human approval before each execution.
     /// [→ the turn parks on a typed signal; see Session.Approve]
-    let gated (approvalPrompt: string) (tool: Tool) : Tool = notYet
+    let gated (approvalPrompt: string) (tool: Tool) : Tool =
+        let (Tool spec) = tool
+        Tool { spec with ToolGate = Some approvalPrompt }
 
 // ── Agents — a model, its tools, its policies ────────────────────────────
 
@@ -231,7 +233,28 @@ type Session =
     member _.Deliver (event: Event) : Async<unit> = notYet
 
     /// Resolve a pending human-approval gate. [→ run.Signal on the approval signal]
-    member _.Approve (token: string) (approved: bool) : Async<unit> = notYet
+    member session.Approve (token: string) (approved: bool) : Async<unit> =
+        async {
+            // No in-process state: resolve the token through the session
+            // entity's LIVE turn (the `SCancelLive` decide is the entity's
+            // pure live-turn read — no event, no cancel; the caller acts on
+            // the reply), verify the token belongs to that turn, then raise
+            // the gate's approval signal on the turn's run. Works from any
+            // fresh `Grid.connect` — signals address the journal.
+            let key = GridRuntime.sessionKey session.SAgent.AgentName session.SSessionId
+            let! reply = GridRuntime.sessionEntity.Call session.SClient key SCancelLive
+
+            match reply with
+            | SRLive turnId when turnId <> "" && turnId = GridApproval.turnOfToken token ->
+                do! GridApproval.deliver session.SClient turnId token approved
+            | SRLive "" -> return failwith ("Firegrid: no live turn to approve in session '" + key + "'")
+            | SRLive live ->
+                return
+                    failwith (
+                        "Firegrid: approval token '" + token + "' does not belong to the live turn '" + live + "'"
+                    )
+            | other -> return failwith ("Firegrid: unexpected session reply resolving an approval: " + string other)
+        }
 
     /// Cancel the live turn, if any. [→ entity Call → run.Cancel]
     member session.CancelLiveTurn () : Async<unit> =
