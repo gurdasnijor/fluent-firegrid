@@ -346,20 +346,6 @@ module internal GridRuntime =
                 | Some prompt -> GridApproval.gatedCall emit turnId moveIndex prompt spec.ToolStep args
             | None -> terminal ("Firegrid: agent '" + input.TAgent + "' has no tool '" + tool + "'")
 
-        // A durable cancel-observation point. The kernel delivers a durable
-        // cancel at WAIT boundaries (every lowered wait races the reserved
-        // cancel signal, and the host tick delivers a pending signal before
-        // it runs the timer/activity adapters) — a moves-only turn is a
-        // pure step chain and would otherwise never observe it. A short
-        // durable sleep before each move makes "observed at the turn's
-        // next durable operation; no later move ever runs" real: a pending
-        // cancel wins the race and raises DurableCancelled; absent one,
-        // the timer fires and the turn proceeds. The sleep must exceed a
-        // host tick: a due-immediately timer is fired by the adapter pass
-        // of the same tick that commits the race, resolving it before any
-        // Waiting tick can deliver the pending cancel signal.
-        let observeCancel: Workflow<unit> = Workflow.sleep (Duration.seconds 0.15)
-
         // C4 seam: await the session entity's fold of a wake admission —
         // journaled client-side polls with ESCALATING durable sleeps
         // between (the sleep yields the tick so the worker pass can drive
@@ -390,14 +376,14 @@ module internal GridRuntime =
 
         // C3 seam: `moveIndex` threads through the move loop so a gated
         // tool call can derive its replay-stable approval token.
+        // B1: no per-move cancel-observation sleep — the kernel now delivers
+        // a pending cancel at the turn's next bind boundary (the step lane
+        // itself: see Firegrid.Durable's CancelGate), so a moves-only turn
+        // observes it without a timer.
         let rec runMoves (moveIndex: int) (moves: GridMove list) (lastSaid: string) : Workflow<string> =
             match moves with
             | [] -> workflow { return lastSaid }
-            | move :: rest ->
-                workflow {
-                    do! observeCancel
-                    return! runMove moveIndex move rest lastSaid
-                }
+            | move :: rest -> runMove moveIndex move rest lastSaid
 
         and runMove (moveIndex: int) (move: GridMove) (rest: GridMove list) (lastSaid: string) : Workflow<string> =
             match move with
