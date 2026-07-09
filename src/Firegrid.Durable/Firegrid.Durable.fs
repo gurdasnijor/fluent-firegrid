@@ -405,7 +405,9 @@ type Client =
     internal { ClientBasin: S2.Basin }
 
     /// Everything below hangs off a connected client.
-    member _.Logs (address: string list) : DurableLog = notYet
+    member client.Logs (address: string list) : DurableLog =
+        { LogBasin = client.ClientBasin
+          LogStream = String.concat "/" address }
     member client.Read (projection: Projection<'state>) (grade: ReadGrade) : Async<View<'state>> = Wiring.readProjection client projection grade
 
 /// A handle to a running (or finished) workflow instance. Serializable:
@@ -440,27 +442,89 @@ module Client =
 
 /// A sealed durable log: byte-faithful attach — recorded prefix, then live
 /// tail, then the terminal. One loop, no polling.
+/// (T1 ceremony: gained INTERNAL backing fields — basin + derived stream
+/// name; members unchanged.)
 type DurableLog =
-    member _.Attach () : AsyncSeq<LogEvent> = notYet
+    internal
+        { LogBasin: S2.Basin
+          LogStream: string }
+
+    member log.Attach () : AsyncSeq<LogEvent> =
+        let pull = SLog.attach log.LogBasin log.LogStream
+
+        AsyncSeq(fun () ->
+            async {
+                let! next = pull ()
+
+                return
+                    match next with
+                    | Some(true, reason) -> Some(Terminal reason)
+                    | Some(false, data) -> Some(Chunk data)
+                    | None -> None
+            })
+
     /// Append one record. The ack is the version to hand `Through` for
     /// read-your-writes. (Ratified amendment: was `Async<unit>`, which
     /// contradicted the read-grade doctrine — no way to hold an append ack.)
-    member _.Append (data: string) : Async<Version> = notYet
+    member log.Append (data: string) : Async<Version> =
+        async {
+            let! version = SLog.append log.LogBasin log.LogStream data
+            return Version version
+        }
+
     /// Seal the log: every attach — current and future — ends with
     /// `Terminal reason` after the recorded prefix and live tail; further
     /// appends are refused. (Ratified amendment: the terminal was promised
     /// but nothing could seal.)
-    member _.Seal (reason: string) : Async<unit> = notYet
+    member log.Seal (reason: string) : Async<unit> = SLog.seal log.LogBasin log.LogStream reason
 
 and LogEvent = Chunk of data: string | Terminal of reason: string
-and AsyncSeq<'t> = internal AsyncSeq of unit   // async sequence; a JS async iterable under the future TS emission
+// async sequence; a JS-async-iterable-compatible pull. (T1 ceremony: the
+// `unit` placeholder gained the backing pull thunk — a body cannot exist
+// without state; the public members are unchanged.)
+and AsyncSeq<'t> = internal AsyncSeq of pull: (unit -> Async<'t option>)
 
 [<RequireQualifiedAccess>]
 module AsyncSeq =
     /// Consume a sequence to its end (for a log: prefix → tail → terminal).
-    let iter (f: 't -> unit) (source: AsyncSeq<'t>) : Async<unit> = notYet
+    let iter (f: 't -> unit) (source: AsyncSeq<'t>) : Async<unit> =
+        let (AsyncSeq pull) = source
+
+        async {
+            let mutable going = true
+
+            while going do
+                let! next = pull ()
+
+                match next with
+                | Some item -> f item
+                | None -> going <- false
+        }
+
     /// Stop consuming when `f` returns Some; yields that value.
-    let pick (f: 't -> 'r option) (source: AsyncSeq<'t>) : Async<'r> = notYet
+    let pick (f: 't -> 'r option) (source: AsyncSeq<'t>) : Async<'r> =
+        let (AsyncSeq pull) = source
+
+        async {
+            let mutable picked = None
+            let mutable going = true
+
+            while going do
+                let! next = pull ()
+
+                match next with
+                | Some item ->
+                    match f item with
+                    | Some value ->
+                        picked <- Some value
+                        going <- false
+                    | None -> ()
+                | None -> going <- false
+
+            match picked with
+            | Some value -> return value
+            | None -> return failwith "AsyncSeq.pick: the sequence ended without a match"
+        }
 
 /// A named fold over durable records — history views, indexes, dashboards.
 type Projection<'state> =
@@ -488,7 +552,11 @@ module Wait =
     /// Park a workflow until a projection's state satisfies the predicate
     /// (immediately, if it already does). Durable: pins no process; resumes
     /// via the wake path; replay serves the recorded resolution.
-    let state (projection: Projection<'state>) (predicate: Cel) (timeout: Duration) : Workflow<Result<'state, Timeout>> = notYet
+    /// (T1 ceremony: `inline` — Fable erases generics, so the derived
+    /// state-codec type capture must happen at the call site, exactly as
+    /// `define`/`declare`/`attach`.)
+    let inline state (projection: Projection<'state>) (predicate: Cel) (timeout: Duration) : Workflow<Result<'state, Timeout>> =
+        StreamsDerived.waitState projection predicate timeout typeof<'state>
 
 // ── 10. Errors ─────────────────────────────────────────────────────────────
 //
@@ -866,7 +934,7 @@ module internal Wiring =
     // ── projections ───────────────────────────────────────────────────────
 
     let readProjection<'s> (client: Client) (projection: Projection<'s>) (grade: ReadGrade) : Async<View<'s>> =
-        let (Projection(_, address, initial, apply)) = projection
+        let (Projection(projName, address, initial, apply)) = projection
 
         match grade with
         | Latest ->
@@ -890,8 +958,28 @@ module internal Wiring =
                           AsOf = Version(float tail.SeqNum)
                           Behind = 0.0 }
             }
-        | Eventual
-        | Through _ -> notYet // other packets' laws (three-read-grades) pin these
+        // Eventual / Through compose the kernel StateReads (resident fold +
+        // check-tail barrier); Latest above keeps its stateless fold.
+        | Eventual ->
+            async {
+                let streamName = String.concat "/" address
+                let! state, asOf, behind = GradedReads.eventual client.ClientBasin projName streamName initial apply
+
+                return
+                    { State = state
+                      AsOf = Version asOf
+                      Behind = behind }
+            }
+        | Through(Version version) ->
+            async {
+                let streamName = String.concat "/" address
+                let! state, asOf, behind = GradedReads.through client.ClientBasin projName streamName initial apply version
+
+                return
+                    { State = state
+                      AsOf = Version asOf
+                      Behind = behind }
+            }
 
     // ── worker ────────────────────────────────────────────────────────────
 
@@ -909,6 +997,9 @@ module internal Wiring =
                 (RegBag.empty, definitions)
                 ||> List.fold (fun acc (Registration register) -> register acc)
 
+            // The CEL-wait watcher rides the worker: any process that hosts a
+            // worker evaluates CEL waits, including worker-only processes.
+            CelWatch.noteBasin basin
             let stop = WorkerLoop.start basin bag
             return { StopFn = stop }
         }
@@ -945,3 +1036,71 @@ module DerivedInternal =
         Wiring.mkEntity name decider cmdTy evtTy replyTy
 
     let attach<'o> (client: Client) (id: Id) (outTy: System.Type) : Run<'o> = Wiring.attachRun client id outTy
+
+// ── Streams-packet inline-capture plumbing ─────────────────────────────────
+//
+// Same ceremony as `DerivedInternal`, for the streams section: PUBLIC only
+// because `Wait.state` is `inline` (Fable erases generics; the state-codec
+// type capture happens at the call site and lands here). NOT part of the
+// ratified surface — never call directly.
+[<System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)>]
+module StreamsDerived =
+    open Firegrid.Store.Foundation.Durable
+
+    /// Lower `Wait.state` onto the kernel: journal the registration as a
+    /// durable fact (a kernel `Log` op — idempotent under replay), then park
+    /// on a signal⊕timeout race. The wake path (`CelWatch`) folds the
+    /// projection's source, evaluates the SERIALIZABLE predicate on relevant
+    /// change, and resumes the race through the kernel signal mechanism; the
+    /// journaled resolution serves every replay.
+    let waitState<'state>
+        (projection: Projection<'state>)
+        (predicate: Cel)
+        (timeout: Duration)
+        (stateTy: System.Type)
+        : Workflow<Result<'state, Timeout>> =
+        let (Projection(projName, address, initial, apply)) = projection
+        let (Cel predText) = predicate
+        let streamName = String.concat "/" address
+
+        // Registration-time validation: an invalid predicate fails HERE,
+        // never inside a parked wait.
+        let evaluate = CelPredicate.compile predText
+        let signalName = CelWatch.signalName projName predText
+
+        Codec.ensureWireSafe stateTy
+
+        CelWatch.registerSpec
+            { Sig = signalName
+              Stream = streamName
+              Initial = box initial
+              Apply = fun state body -> box (apply (unbox<'state> state) body)
+              Pred = evaluate
+              Enc = fun state -> Codec.encodeWith stateTy state }
+
+        let decodeState (payload: string) : 'state =
+            Codec.decodeWith stateTy payload |> unbox<'state>
+
+        let registration: Workflow<unit> =
+            Workflow(NProg(Log(CelWatch.registrationMessage signalName streamName predText, Return)))
+
+        let wait: Workflow<Result<'state, Timeout>> =
+            Workflow(
+                NWait
+                    { NeedsNow = true
+                      Arity = 2
+                      Tasks =
+                        fun now ->
+                            [ RaceEvent(EventKey.Signal signalName)
+                              RaceEvent(EventKey.Timer(now + int64 timeout.Ms)) ]
+                      Project =
+                        fun baseIndex result ->
+                            match result with
+                            | EventWon(index, EventKey.Signal _, payload) when index = baseIndex ->
+                                Durable.result (Ok(decodeState payload))
+                            | EventWon(index, EventKey.Timer _, _) when index = baseIndex + 1 ->
+                                Durable.result (Error Timeout)
+                            | other -> failwith ("Wait.state: unexpected race winner " + string other) }
+            )
+
+        Wiring.bindW registration (fun () -> wait)

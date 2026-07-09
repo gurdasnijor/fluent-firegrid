@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <Compile Include="Internal.fs" />
+    <Compile Include="InternalStreams.fs" />
     <Compile Include="Firegrid.Durable.fs" />
     <Compile Include="Examples.fs" />
   </ItemGroup>
