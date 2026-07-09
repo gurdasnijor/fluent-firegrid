@@ -47,16 +47,12 @@ module Registry =
               Properties = [ property ] })
 
     let foundationProofs: ProofSpec list =
-        [ FoundationFencingProof.proof ]
+        [ FoundationFencingProof.proof
+          FoundationCrashWindowProof.proof
+          FoundationRebuildProof.proof
+          FoundationReadLagProof.proof ]
         @ ([ FoundationSubjectHistoryProof.proof
-             FoundationStateViewProof.proof
-             FoundationStateReadsProof.proof
-             FoundationSessionHistoryProof.proof
-             FoundationKvStoreProof.proof
-             FoundationCheckpointProof.proof
-             FoundationCheckpointTrimSafetyProof.proof
              FoundationDurableKernelProof.proof
-             FoundationDurableDebtsProof.proof
              FoundationParallelActivitiesProof.proof
              FoundationTurnStreamProof.proof
              FoundationSessionLifecycleProof.proof
