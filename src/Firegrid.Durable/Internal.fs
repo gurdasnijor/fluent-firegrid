@@ -48,6 +48,92 @@ module internal Interop =
     [<Emit("$0 == null")>]
     let isNullish (_value: obj) : bool = jsNative
 
+// ── B1: cancellation rides the inbox ───────────────────────────────────────
+//
+// The kernel delivers the reserved cancel signal only where a lowered wait
+// races it — a turn that never waits (a pure step chain) never observes it.
+// B1 closes the gap inside the lanes that already exist, with no new
+// primitives and no contract change:
+//
+//   consult — the drive loop scans each instance's FIFO inbox delta BEFORE
+//             every tick (the same records the kernel's mailbox fold admits:
+//             the foundation.durable-mailbox ordering) for a raised-but-
+//             unobserved cancel.
+//   refuse  — while one is pending, the step wrapper returns the reserved
+//             cancellation outcome instead of running the step body; the
+//             refusal rides the NORMAL completion lane (publish → inbox →
+//             fold → journal), so the observation lands as an
+//             ActivityCompleted record at exactly the blocked boundary, and
+//             the activity adapter's already-completed dedupe guarantees the
+//             refused body can never execute afterwards.
+//   raise   — decoding the reserved outcome raises the contract's
+//             DurableCancelled at that bind boundary: the same catchable
+//             value and typed terminal as the wait-boundary race, and
+//             replay-stable because every replay decodes the same journaled
+//             record at the same opId (the observation is a journal fact,
+//             not a race).
+//
+// Attribution: concurrently pooled laws interleave their worker loops inside
+// one process, so "which instance is executing this step" rides Node's
+// AsyncLocalStorage (scoped per host tick), never a bare mutable cell — a
+// clobbered cell would cancel an innocent instance's step.
+
+[<RequireQualifiedAccess>]
+module internal CancelGate =
+    [<Import("AsyncLocalStorage", "node:async_hooks")>]
+    let private asyncLocalStorageCtor: obj = jsNative
+
+    [<Emit("new $0()")>]
+    let private construct (_ctor: obj) : obj = jsNative
+
+    [<Emit("$0.run($1, $2)")>]
+    let private alsRun (_als: obj) (_store: string) (_run: unit -> JS.Promise<'a>) : JS.Promise<'a> = jsNative
+
+    [<Emit("$0.getStore()")>]
+    let private alsStore (_als: obj) : obj = jsNative
+
+    let private als: obj = construct asyncLocalStorageCtor
+
+    /// Reserved step outcome text. Encoded step outcomes are JSON, so a bare
+    /// '@'-prefixed token can never collide — the same reservation trick as
+    /// OutStream's rollover payload.
+    [<Literal>]
+    let CancelledOutcome = "@cancelled"
+
+    /// The contract's DurableCancelled, captured as a closure at lower time:
+    /// this file compiles BEFORE the contract (see the file header), and every
+    /// workflow lowers through Node.lower before any replay can decode a
+    /// journaled cancellation observation.
+    let mutable private cancelledFactory: (unit -> exn) option = None
+
+    let capture (cancelled: unit -> exn) = cancelledFactory <- Some cancelled
+
+    let cancelled () : exn =
+        match cancelledFactory with
+        | Some factory -> factory ()
+        | None -> failwith "Firegrid.Durable: cancellation observed before any workflow was lowered"
+
+    /// Instance keys with a raised-but-unobserved cancel, maintained by the
+    /// worker loop from durable state only (inbox + journal + tick reports).
+    let private pendingKeys = System.Collections.Generic.HashSet<string>()
+
+    let setPending (key: string) (pending: bool) =
+        if pending then
+            pendingKeys.Add key |> ignore
+        else
+            pendingKeys.Remove key |> ignore
+
+    /// Run one host tick with the instance key riding the async context.
+    let scoped (key: string) (tick: unit -> Async<'a>) : Async<'a> =
+        alsRun als key (fun () -> Async.StartAsPromise(tick ())) |> Async.AwaitPromise
+
+    /// Consulted at step-execution time (StepWire.wrapHandler): true exactly
+    /// when the tick executing this step belongs to an instance with a
+    /// pending cancel.
+    let executingUnderPendingCancel () : bool =
+        let store = alsStore als
+        not (Interop.isNullish store) && pendingKeys.Contains(unbox<string> store)
+
 // ── Derived serialization: the type-directed codec walker ─────────────────
 //
 // Encode and decode are both driven by a System.Type captured (inline) at the
@@ -249,35 +335,52 @@ module internal StepWire =
 
     let encodeOutcome (outcome: StepOutcome) : string = Codec.encodeWith outcomeTy (box outcome)
 
-    let decodeOutcome (text: string) : StepOutcome = Codec.decodeWith outcomeTy text |> unbox
+    let decodeOutcome (text: string) : StepOutcome =
+        // B1: the journaled cancellation observation raises the contract's
+        // DurableCancelled at the bind boundary that decodes it — the same
+        // catchable value as the wait-boundary race, replay-stable because
+        // every replay decodes the same record at the same opId.
+        if text = CancelGate.CancelledOutcome then
+            raise (CancelGate.cancelled ())
+        else
+            Codec.decodeWith outcomeTy text |> unbox
 
     /// Wrap a payload-typed handler as the registered activity handler:
     /// decode the envelope, run the attempts, never throw.
     let wrapHandler (run: string -> Async<string>) : string -> Async<string> =
         fun raw ->
             async {
-                let envelope = decodeEnvelope raw
-                let attempts = max 1 envelope.Pol.A
+                // B1: a pending durable cancel refuses the step body — the
+                // reserved outcome rides the normal completion lane (publish →
+                // inbox → fold → journal) and becomes the journaled
+                // observation at this bind boundary; the adapter's
+                // already-completed dedupe guarantees the refused body can
+                // never execute afterwards.
+                if CancelGate.executingUnderPendingCancel () then
+                    return CancelGate.CancelledOutcome
+                else
+                    let envelope = decodeEnvelope raw
+                    let attempts = max 1 envelope.Pol.A
 
-                let rec go attempt delay =
-                    async {
-                        let! result = Async.Catch(run envelope.P)
+                    let rec go attempt delay =
+                        async {
+                            let! result = Async.Catch(run envelope.P)
 
-                        match result with
-                        | Choice1Of2 encoded -> return SOk encoded
-                        | Choice2Of2 error ->
-                            match error with
-                            | TerminalStepSignal message -> return STerm message
-                            | _ ->
-                                if attempt >= attempts then
-                                    return SFail error.Message
-                                else
-                                    do! Interop.sleepUnref (int delay)
-                                    return! go (attempt + 1) (delay * envelope.Pol.F)
-                    }
+                            match result with
+                            | Choice1Of2 encoded -> return SOk encoded
+                            | Choice2Of2 error ->
+                                match error with
+                                | TerminalStepSignal message -> return STerm message
+                                | _ ->
+                                    if attempt >= attempts then
+                                        return SFail error.Message
+                                    else
+                                        do! Interop.sleepUnref (int delay)
+                                        return! go (attempt + 1) (delay * envelope.Pol.F)
+                        }
 
-                let! outcome = go 1 (max 0.0 envelope.Pol.Ms)
-                return encodeOutcome outcome
+                    let! outcome = go 1 (max 0.0 envelope.Pol.Ms)
+                    return encodeOutcome outcome
             }
 
 // ── Free-monad combinators over the kernel's Durable<'a> ──────────────────
@@ -425,6 +528,11 @@ module internal Node =
     let currentTimeNode: WfNode<float> = NProg(CurrentTime(fun timestamp -> Return(float timestamp)))
 
     let lower (cancelled: unit -> exn) (node: WfNode<'a>) : Durable<'a> =
+        // B1: capture the contract's cancellation exception for the journaled
+        // bind-boundary observation (CancelGate) — every workflow lowers
+        // through here before any replay can decode one.
+        CancelGate.capture cancelled
+
         match node with
         | NProg program -> program
         | NWait spec ->
@@ -766,6 +874,14 @@ module internal OutStream =
 // and journals terminal outcomes. Liveness: any live worker keeps everything
 // moving; parked work costs one Waiting tick per pass.
 
+/// B1 cancel-observation bookkeeping for one workflow instance. Everything is
+/// (re)derivable from durable state (inbox + journal); this record only
+/// caches what this process has already scanned.
+type internal CancelTrack =
+    { mutable NextInboxSeq: int64
+      mutable CancelSeen: bool
+      mutable Observed: bool }
+
 [<RequireQualifiedAccess>]
 module internal WorkerLoop =
     let start (basin: S2.Basin) (bag: RegBag) : unit -> Async<unit> =
@@ -781,6 +897,142 @@ module internal WorkerLoop =
         let mutable stopRequested = false
         let mutable finished = false
         let written = System.Collections.Generic.HashSet<string>()
+
+        // ── B1: cancellation rides the inbox (see CancelGate) ──────────────
+
+        let cancelTracks = System.Collections.Generic.Dictionary<string, CancelTrack>()
+
+        let trackOf (key: string) =
+            match cancelTracks.TryGetValue key with
+            | true, track -> track
+            | _ ->
+                let track =
+                    { NextInboxSeq = 0L
+                      CancelSeen = false
+                      Observed = false }
+
+                cancelTracks.[key] <- track
+                track
+
+        /// Scan the instance's FIFO inbox delta (the same records the kernel's
+        /// mailbox fold admits) for raised cancels and already-published
+        /// cancellation outcomes. Paginated: one S2 read returns at most one
+        /// batch (1000 records).
+        let scanInboxDelta (track: CancelTrack) (key: string) : Async<unit> =
+            async {
+                let inbox = basin |> S2.stream (key + "/in")
+
+                try
+                    let! tail = inbox |> S2.checkTail
+
+                    let rec page (from: int64) =
+                        async {
+                            if from >= tail.SeqNum then
+                                track.NextInboxSeq <- tail.SeqNum
+                            else
+                                let! records =
+                                    inbox
+                                    |> S2.readWith
+                                        { S2.ReadOptions.empty with
+                                            Start = Some(S2.FromSeqNum from)
+                                            Clamp = true
+                                            IgnoreCommandRecords = true }
+
+                                match List.rev records with
+                                | [] -> track.NextInboxSeq <- tail.SeqNum // only command records remain
+                                | (last: S2.ReadRecord) :: _ ->
+                                    for record in records do
+                                        match MailboxEnvelopeCodec.decode record.Body with
+                                        | Ok envelope ->
+                                            match envelope.Message with
+                                            | RaiseSignal(name, _) when name = Node.cancelSignalName ->
+                                                track.CancelSeen <- true
+                                            | CompleteActivity(_, value) when value = CancelGate.CancelledOutcome ->
+                                                track.Observed <- true
+                                            | _ -> ()
+                                        | Error _ -> ()
+
+                                    return! page (last.SeqNum + 1L)
+                        }
+
+                    do! page track.NextInboxSeq
+                with error ->
+                    match S2Errors.classify error with
+                    | S2Errors.RangeNotSatisfiable _ -> ()
+                    | _ -> return raise error
+            }
+
+        /// While a cancel is pending, also consult the journal: a wait
+        /// boundary may already have observed it (SignalReceived — possibly
+        /// delivered by another worker), and after a restart the journal is
+        /// the only memory of a marker folded before the crash. A second
+        /// observation would poison post-cancel compensation steps.
+        let checkJournalObservation (track: CancelTrack) (key: string) : Async<unit> =
+            async {
+                let! records = EntityRun.readAllRecords (basin |> S2.stream (key + "/log"))
+
+                for record in records do
+                    match StepRecordCodec.decode record.Body with
+                    | Ok(Incoming(HistoryEvent(SignalReceived(_, name, _)))) when name = Node.cancelSignalName ->
+                        track.Observed <- true
+                    | Ok(Incoming(HistoryEvent(ActivityCompleted(_, value)))) when
+                        value = CancelGate.CancelledOutcome
+                        ->
+                        track.Observed <- true
+                    | _ -> ()
+            }
+
+        /// The pre-dispatch consult: runs BEFORE every host tick, so a cancel
+        /// raised before this boundary is pending before the tick can dispatch
+        /// (and execute) the instance's next effect.
+        let refreshCancelState (key: string) : Async<unit> =
+            async {
+                let track = trackOf key
+                do! scanInboxDelta track key
+
+                if track.CancelSeen && not track.Observed then
+                    do! checkJournalObservation track key
+
+                CancelGate.setPending key (track.CancelSeen && not track.Observed)
+            }
+
+        /// Post-tick: the tick report is the cheapest witness of the
+        /// observation — a cancel delivered at a wait (Signals) or a refused
+        /// step body (the reserved outcome in Activities). Flipping pending
+        /// off here is what lets post-cancel compensation steps run.
+        let noteCancelObservation (key: string) (report: DurableHostTickReport<Payload>) =
+            let track = trackOf key
+
+            (match report.Signals with
+             | Some signals ->
+                 match signals.Delivered with
+                 | Some delivery when delivery.Name = Node.cancelSignalName -> track.Observed <- true
+                 | _ -> ()
+             | None -> ())
+
+            (match report.Activities with
+             | Some activities ->
+                 if
+                     activities.Completed
+                     |> List.exists (fun completion -> completion.Value = CancelGate.CancelledOutcome)
+                 then
+                     track.Observed <- true
+             | None -> ())
+
+            if track.Observed then
+                CancelGate.setPending key false
+
+        let noteTickCancelObservation (key: string) (tick: DurableWorkflowHostStatus) =
+            match tick with
+            | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Completed(_, report))
+            | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.ContinuedAsNew(_, report))
+            | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Advanced report)
+            | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Waiting(_, _, report))
+            | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Deposed(_, report))
+            | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Failed(_, report)) ->
+                noteCancelObservation key report
+            | DurableWorkflowHostStatus.Deposed _
+            | DurableWorkflowHostStatus.Failed _ -> ()
 
         // REAL workflow progress only. The kernel's own idle detection counts
         // adapter checkpoints as progress, and the activity/timer adapters
@@ -818,7 +1070,13 @@ module internal WorkerLoop =
 
                 while keepTicking && budget > 0 && not stopRequested do
                     budget <- budget - 1
-                    let! tick = worker.runOnce instanceId
+
+                    // B1: consult the inbox for a pending cancel BEFORE the
+                    // tick can dispatch the next effect, and scope the tick so
+                    // step execution can attribute itself to this instance.
+                    do! refreshCancelState key
+                    let! tick = CancelGate.scoped key (fun () -> worker.runOnce instanceId)
+                    noteTickCancelObservation key tick
 
                     match tick with
                     | DurableWorkflowHostStatus.Ticked(DurableHostTickStatus.Completed(value, _)) ->
