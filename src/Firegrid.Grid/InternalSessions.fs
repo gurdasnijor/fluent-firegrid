@@ -351,28 +351,50 @@ module internal GridRuntime =
             | Some spec -> spec.ToolStep.Call args
             | None -> terminal ("Firegrid: agent '" + input.TAgent + "' has no tool '" + tool + "'")
 
+        // A durable cancel-observation point. The kernel delivers a durable
+        // cancel at WAIT boundaries (every lowered wait races the reserved
+        // cancel signal, and the host tick delivers a pending signal before
+        // it runs the timer/activity adapters) — a moves-only turn is a
+        // pure step chain and would otherwise never observe it. A short
+        // durable sleep before each move makes "observed at the turn's
+        // next durable operation; no later move ever runs" real: a pending
+        // cancel wins the race and raises DurableCancelled; absent one,
+        // the timer fires and the turn proceeds. The sleep must exceed a
+        // host tick: a due-immediately timer is fired by the adapter pass
+        // of the same tick that commits the race, resolving it before any
+        // Waiting tick can deliver the pending cancel signal.
+        let observeCancel: Workflow<unit> = Workflow.sleep (Duration.seconds 0.15)
+
         let rec runMoves (moves: GridMove list) (lastSaid: string) : Workflow<string> =
             match moves with
             | [] -> workflow { return lastSaid }
-            | GEndTurn :: _ -> workflow { return lastSaid }
-            | GSay text :: rest ->
+            | move :: rest ->
+                workflow {
+                    do! observeCancel
+                    return! runMove move rest lastSaid
+                }
+
+        and runMove (move: GridMove) (rest: GridMove list) (lastSaid: string) : Workflow<string> =
+            match move with
+            | GEndTurn -> workflow { return lastSaid }
+            | GSay text ->
                 workflow {
                     do! emit [ "sa"; text ]
                     return! runMoves rest text
                 }
-            | GThink text :: rest ->
+            | GThink text ->
                 workflow {
                     do! emit [ "th"; text ]
                     return! runMoves rest lastSaid
                 }
-            | GCallTool(tool, args) :: rest ->
+            | GCallTool(tool, args) ->
                 workflow {
                     do! emit [ "ct"; tool; args ]
                     let! result = callTool tool args
                     do! emit [ "tr"; tool; result ]
                     return! runMoves rest lastSaid
                 }
-            | move :: _ ->
+            | _ ->
                 // wait_for / wait_until / spawn_all / publish / the corpus
                 // wake-recording moves: later packets' laws. A clean
                 // terminal failure (never a hang): the turn seals Failed

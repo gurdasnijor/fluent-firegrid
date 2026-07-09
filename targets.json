@@ -288,7 +288,7 @@
       "id": "t2.converse-across-crashes",
       "wp": "T2",
       "corpus": "t2-firegrid",
-      "status": "red"
+      "status": "green"
     },
     {
       "id": "t2.days-long-approval",
@@ -336,13 +336,13 @@
       "id": "t2.cancel-live-turn",
       "wp": "T2",
       "corpus": "t2-firegrid",
-      "status": "red"
+      "status": "green"
     },
     {
       "id": "t2.reserved-segment-admission",
       "wp": "T2",
       "corpus": "t2-firegrid",
-      "status": "red"
+      "status": "green"
     }
   ]
 }
