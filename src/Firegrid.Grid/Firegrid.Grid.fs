@@ -23,6 +23,18 @@
 ///   publish         → topic entity + signal fan-out      [→ Entity.Call + Run.Signal]
 ///   watch           → byte-faithful log attach           [→ client.Logs / Attach]
 ///   history         → checkpointed projection            [→ Projection / client.Read]
+///
+/// Implementation ceremony (C2 green-making; no public name, parameter
+/// order, or member type shape changed — the same ratified T1 pattern):
+///   • contract types gained INTERNAL backing fields (records with
+///     `internal` fields; members unchanged) — a body cannot exist without
+///     state (`ToolSpec`/`AgentSpec`/`GridTurnHandle` in InternalSessions.fs)
+///   • `Tool.define` is `inline`: Fable erases generics, so the tool's
+///     model-wire type capture (`typeof<…>`) must happen at the call site —
+///     exactly as the platform's `define`/`declare`/`attach`
+///   • `GridDerived` (below the `Tool` type) is public plumbing for the
+///     inline capture site — F# requires inline-reachable code to be
+///     public; it is NOT part of the ratified surface
 /// ═══════════════════════════════════════════════════════════════════════
 namespace Firegrid
 
@@ -38,12 +50,29 @@ module private Impl =
 /// A tool the model may call. Durable: a tool call is journaled, so a crash
 /// after execution never re-runs it — the model sees the recorded result.
 /// [→ Step.define; calls lower to step.Call inside the turn workflow]
-type Tool = internal Tool of unit
+type Tool = internal Tool of ToolSpec
+
+// Public ONLY because `Tool.define` is inline and F# requires
+// inline-reachable code to be public (the platform's `DerivedInternal`
+// ceremony, ratified with T1). NOT part of the ratified surface — never
+// call directly.
+[<System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)>]
+module GridDerived =
+    let mkTool<'args, 'result>
+        (name: string)
+        (description: string)
+        (run: 'args -> Async<'result>)
+        (argTy: System.Type)
+        (resultTy: System.Type)
+        : Tool =
+        Tool(GridRuntime.mkToolSpec name description (GridRuntime.rawToolRun run argTy resultTy))
 
 [<RequireQualifiedAccess>]
 module Tool =
     /// Name + description (shown to the model) + an ordinary async function.
-    let define (name: string) (description: string) (run: 'args -> Async<'result>) : Tool = notYet
+    let inline define (name: string) (description: string) (run: 'args -> Async<'result>) : Tool =
+        GridDerived.mkTool name description run typeof<'args> typeof<'result>
+
     /// A tool that requires human approval before each execution.
     /// [→ the turn parks on a typed signal; see Session.Approve]
     let gated (approvalPrompt: string) (tool: Tool) : Tool = notYet
@@ -65,14 +94,23 @@ type AgentConfig =
       /// [→ Workflow.defineEternal / ContinueAsNew]
       RolloverEvery: int }
 
-type AgentDef = internal AgentDef of unit
+type AgentDef = internal AgentDef of AgentSpec
 
 [<RequireQualifiedAccess>]
 module Agent =
     /// Define an agent. The model automatically receives the choreography
     /// affordances as tools — wait_for, wait_until, spawn, publish — so THE
     /// MODEL owns control flow; the substrate makes its choices durable.
-    let define (name: string) (harness: Harness) (config: AgentConfig) : AgentDef = notYet
+    let define (name: string) (harness: Harness) (config: AgentConfig) : AgentDef =
+        // The Harness VALUE carries nothing yet: the ratified surface has
+        // no harness constructor (the adapter contract is T3), so the
+        // "agent/model-turn" step binds by agent name — the corpus's
+        // scripted model registers through GridScripted.
+        ignore harness
+
+        AgentDef
+            { AgentName = name
+              AgentTools = config.Tools |> List.map (fun (Tool spec) -> spec) }
 
 // ── The choreography vocabulary (what the model sees as tools) ───────────
 //
@@ -109,14 +147,47 @@ type Event = { Topic: string; Payload: string }
 /// A live handle to one turn. Serializable; reattach from any process.
 /// [→ Run<TurnOutcome> + the turn's output log]
 type TurnHandle =
+    internal { THSpec: GridTurnHandle }
+
     /// Watch this turn live: recorded prefix → live tail → terminal, from
     /// any process, mid-flight or after the fact. [→ client.Logs(...).Attach]
-    member _.Watch () : AsyncSeq<AgentEvent> = notYet
+    member handle.Watch () : AsyncSeq<AgentEvent> =
+        handle.THSpec.HLog.Attach()
+        |> GridSeqShim.collapse (fun logEvent ->
+            match logEvent with
+            | Terminal _ -> None
+            | Chunk body ->
+                match GridEventWire.decode body with
+                | [ "th"; text ] -> Some(Thinking text)
+                | [ "sa"; text ] -> Some(Said text)
+                | [ "ct"; tool; args ] -> Some(CalledTool(tool, args))
+                | [ "tr"; tool; result ] -> Some(ToolReturned(tool, result))
+                | [ "wf"; what ] -> Some(WaitingFor what)
+                | [ "sp"; agent ] -> Some(SpawnedChild agent)
+                | [ "te"; "Completed"; _ ] -> Some(TurnEnded TurnEndCause.Completed)
+                | [ "te"; "Cancelled"; _ ] -> Some(TurnEnded TurnEndCause.Cancelled)
+                | [ "te"; "TimedOut"; _ ] -> Some(TurnEnded TurnEndCause.TimedOut)
+                | [ "te"; "Failed"; detail ] -> Some(TurnEnded(TurnEndCause.Failed detail))
+                | _ -> failwith ("Firegrid: unrecognized turn event record: " + body))
+
     /// The turn's final outcome (waits durably). [→ run.Result]
-    member _.Outcome : Async<Result<string, TurnFailure>> = notYet
+    member handle.Outcome : Async<Result<string, TurnFailure>> =
+        async {
+            let! result = handle.THSpec.HRun.Result
+
+            return
+                match result with
+                | Ok output -> Ok output
+                | Error CancelledRun -> Error CancelledTurn
+                | Error(FailedRun stepError) ->
+                    match stepError with
+                    | StepError.Failed message -> Error(FailedTurn message)
+                    | StepError.Terminal message -> Error(FailedTurn message)
+        }
+
     /// Durable cancel: the turn observes it at its next durable operation,
     /// may compensate, then ends Cancelled. [→ run.Cancel / DurableCancelled]
-    member _.Cancel () : Async<unit> = notYet
+    member handle.Cancel () : Async<unit> = handle.THSpec.HRun.Cancel()
 
 and AgentEvent =
     | Thinking of text: string
@@ -133,18 +204,32 @@ and TurnFailure = FailedTurn of string | CancelledTurn
 /// One agent session: a uniquely-addressed, durable conversation.
 /// [→ the session entity (single live turn policy) + turn workflows]
 type Session =
+    internal
+        { SClient: Client
+          SAgent: AgentSpec
+          SSessionId: string }
+
     /// Send a prompt; returns when the turn is durably accepted (not when it
     /// finishes — attach to the handle for that). Duplicate prompts (same
     /// promptId) are delivered once. [→ session entity .Call → turn .Start]
-    member _.Prompt (promptId: string) (text: string) : Async<TurnHandle> = notYet
+    member session.Prompt (promptId: string) (text: string) : Async<TurnHandle> =
+        async {
+            let! handle = GridRuntime.prompt session.SClient session.SAgent session.SSessionId promptId text
+            return { THSpec = handle }
+        }
+
     /// Deliver an external event into the grid (webhook, callback, sensor).
     /// Ingress becomes a durable event; whoever wait_for's it, wakes.
     /// [→ Publish service]
     member _.Deliver (event: Event) : Async<unit> = notYet
+
     /// Resolve a pending human-approval gate. [→ run.Signal on the approval signal]
     member _.Approve (token: string) (approved: bool) : Async<unit> = notYet
+
     /// Cancel the live turn, if any. [→ entity Call → run.Cancel]
-    member _.CancelLiveTurn () : Async<unit> = notYet
+    member session.CancelLiveTurn () : Async<unit> =
+        GridRuntime.cancelLive session.SClient session.SAgent session.SSessionId
+
     /// This session's turn history — status, end causes, timings — at the
     /// staleness you choose. [→ Projection over the session's journal]
     member _.History (grade: ReadGrade) : Async<TurnSummary list> = notYet
@@ -153,11 +238,20 @@ and TurnSummary = { TurnId: string; Cause: TurnEndCause option; StartedAt: Times
 
 /// The grid client.
 type Grid =
+    internal { GClient: Client }
+
     /// Address a session — creating it durably on first use (addressing is
     /// naming; activation is claiming). [→ entity key]
-    member _.Session (agent: AgentDef) (sessionId: string) : Session = notYet
+    member grid.Session (agent: AgentDef) (sessionId: string) : Session =
+        let (AgentDef spec) = agent
+
+        { SClient = grid.GClient
+          SAgent = spec
+          SSessionId = sessionId }
+
     /// Publish to a topic without a session (system-level ingress).
     member _.Publish (event: Event) : Async<unit> = notYet
+
     /// Fleet view: which sessions are awake, parked (and on what), or idle —
     /// a fold over the grid's journals; the trace IS the schedule.
     /// [→ Projection + client.Read]
@@ -168,8 +262,10 @@ and GridView = { Awake: string list; Parked: (string * string) list; Idle: int }
 [<RequireQualifiedAccess>]
 module Grid =
     /// Connect. [→ Client.connect]
-    let connect (basin: S2.Basin) : Grid = notYet
+    let connect (basin: S2.Basin) : Grid = { GClient = Client.connect basin }
+
     /// Host the grid: agents are definitions; registration is data.
     /// [→ Worker.run with the session entity, turn workflows, tool steps,
     ///    topic entity, and Publish service registered]
-    let serve (basin: S2.Basin) (ns: string) (agents: AgentDef list) : Async<Worker> = notYet
+    let serve (basin: S2.Basin) (ns: string) (agents: AgentDef list) : Async<Worker> =
+        GridRuntime.serve basin ns (agents |> List.map (fun (AgentDef spec) -> spec))

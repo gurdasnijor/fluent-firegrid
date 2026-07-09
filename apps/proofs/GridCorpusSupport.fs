@@ -60,12 +60,29 @@ module ModelSays =
         | true, script -> Some script
         | _ -> None
 
+    /// Translate a scripted move into the product's model-move vocabulary
+    /// (the data the "agent/model-turn" step serves each turn from).
+    let private gridMove (move: Move) : GridMove =
+        match move with
+        | Say text -> GSay text
+        | CallTool(tool, args) -> GCallTool(tool, args)
+        | WaitFor(topic, matchText, selfPrompt) -> GWaitFor(topic, matchText, selfPrompt)
+        | WaitUntil(afterMs, selfPrompt) -> GWaitUntil(afterMs, selfPrompt)
+        | SpawnAll(children, recordTool) -> GSpawnAll(children, recordTool)
+        | Publish(topic, payload) -> GPublish(topic, payload)
+        | RecordInput tool -> GCallToolWithInput tool
+        | EchoInput -> GEchoInput
+        | EndTurn -> GEndTurn
+
     /// A Harness driven by the script (the T2 model step). The ratified
     /// surface exposes no harness constructor (the adapter contract is
-    /// T3), so this registers the script and returns the same stand-in
-    /// value the ratified GridExamples.fs itself uses (`ExampleHarness`).
+    /// T3), so this registers the script — through the product's
+    /// `GridScripted` seam, which the "agent/model-turn" step serves each
+    /// turn's moves from — and returns the same stand-in value the
+    /// ratified GridExamples.fs itself uses (`ExampleHarness`).
     let harness (script: Script) : Harness =
         registry.[script.Agent] <- script
+        GridScripted.bind script.Agent (script.Turns |> List.map (List.map gridMove))
         Unchecked.defaultof<Harness>
 
 /// Grid trial helpers: observation over the PUBLIC Grid surface only.
