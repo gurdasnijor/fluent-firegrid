@@ -149,6 +149,13 @@ module Runner =
                                     let buffer = ResizeArray<string>()
                                     let log = if config.Concurrency <= 1 then stdout else buffer.Add
 
+                                    // Lifecycle markers straight to stderr, unbuffered:
+                                    // pooled output flushes only on completion, so a
+                                    // wedged law would otherwise never appear in the
+                                    // log — the tail must name what was in flight
+                                    // (C4 CI diagnosability ruling; diagnostics-only
+                                    // harness amendment, stderr marker lines only).
+                                    stderr (sprintf "law start: %s" proof.Name)
                                     log (sprintf "### %s" proof.Name)
 
                                     for property in proof.Properties do
@@ -160,6 +167,8 @@ module Runner =
                                             failed <- failed + 1
 
                                         reportProperty log report
+
+                                    stderr (sprintf "law end: %s" proof.Name)
 
                                     for line in buffer do
                                         stdout line
@@ -226,6 +235,14 @@ module Runner =
                         let log = if config.Concurrency <= 1 then stderr else buffer.Add
                         let mutable pass = true
 
+                        // Lifecycle markers straight to stderr, unbuffered:
+                        // pooled output flushes only on completion, so a
+                        // wedged law would otherwise never appear in the
+                        // log — the tail must name what was in flight
+                        // (C4 CI diagnosability ruling; diagnostics-only
+                        // harness amendment, stderr marker lines only).
+                        stderr (sprintf "law start: %s" proof.Name)
+
                         for property in proof.Properties do
                             // A property that CRASHES the runner (outside the
                             // workload/check paths, which already catch) still fails
@@ -242,6 +259,8 @@ module Runner =
                             | Choice2Of2 error ->
                                 pass <- false
                                 log (sprintf "  x property '%s' crashed: %s" property.Name error.Message)
+
+                        stderr (sprintf "law end: %s (%s)" proof.Name (if pass then "ok" else "FAILED"))
 
                         for line in buffer do
                             stderr line

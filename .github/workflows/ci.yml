@@ -52,4 +52,20 @@ jobs:
           echo "$HOME/.s2/bin" >> "$GITHUB_PATH"
 
       - name: Check
-        run: pnpm run check
+        # Diagnosability guard (C4 CI ruling): a wedged check must die fast
+        # WITH flushed logs — the job-level 45-minute timeout kills the run
+        # without surviving output. `timeout` SIGTERMs the check at 25
+        # minutes (a healthy check completes well under it), escalating to
+        # SIGKILL if it ignores the TERM; the step then names the wedge and
+        # fails the job itself, so everything already written to the log
+        # survives.
+        run: |
+          set +e
+          timeout --kill-after=30 1500 pnpm run check
+          code=$?
+          set -e
+          if [ "$code" = "124" ] || [ "$code" = "137" ]; then
+            echo "CHECK WEDGED (25min)"
+            exit 1
+          fi
+          exit "$code"
