@@ -68,7 +68,13 @@ module Registry =
         [ GridLawProofs.converseAcrossCrashes
           GridLawProofs.daysLongApproval
           GridLawProofs.researcherWriterChoreography
-          GridLawProofs.scheduledSelfPrompts ]
+          GridLawProofs.scheduledSelfPrompts
+          GridLawProofs.spawnAllFanout
+          GridLawProofs.spawnAllEagerConcurrent
+          GridLawProofs.webhookIngress
+          GridLawProofs.liveWatchOps
+          GridLawProofs.cancelLiveTurn
+          GridLawProofs.reservedSegmentAdmission ]
 
     let suites: SuiteSpec list =
         [ { Suite = "p0-harness"

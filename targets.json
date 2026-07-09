@@ -19,6 +19,16 @@
       ]
     },
     {
+      "corpus": "t2-firegrid",
+      "command": [
+        "node",
+        "apps/proofs/dist/Main.js",
+        "proof",
+        "targets",
+        "t2-firegrid"
+      ]
+    },
+    {
       "corpus": "p0-harness",
       "command": [
         "node",
@@ -273,6 +283,66 @@
       "wp": "P0",
       "corpus": "foundation",
       "status": "green"
+    },
+    {
+      "id": "t2.converse-across-crashes",
+      "wp": "T2",
+      "corpus": "t2-firegrid",
+      "status": "red"
+    },
+    {
+      "id": "t2.days-long-approval",
+      "wp": "T2",
+      "corpus": "t2-firegrid",
+      "status": "red"
+    },
+    {
+      "id": "t2.researcher-writer-choreography",
+      "wp": "T2",
+      "corpus": "t2-firegrid",
+      "status": "red"
+    },
+    {
+      "id": "t2.scheduled-self-prompts",
+      "wp": "T2",
+      "corpus": "t2-firegrid",
+      "status": "red"
+    },
+    {
+      "id": "t2.spawn-all-fanout",
+      "wp": "T2",
+      "corpus": "t2-firegrid",
+      "status": "red"
+    },
+    {
+      "id": "t2.spawn-all-eager-concurrent",
+      "wp": "T2",
+      "corpus": "t2-firegrid",
+      "status": "red"
+    },
+    {
+      "id": "t2.webhook-ingress",
+      "wp": "T2",
+      "corpus": "t2-firegrid",
+      "status": "red"
+    },
+    {
+      "id": "t2.live-watch-ops",
+      "wp": "T2",
+      "corpus": "t2-firegrid",
+      "status": "red"
+    },
+    {
+      "id": "t2.cancel-live-turn",
+      "wp": "T2",
+      "corpus": "t2-firegrid",
+      "status": "red"
+    },
+    {
+      "id": "t2.reserved-segment-admission",
+      "wp": "T2",
+      "corpus": "t2-firegrid",
+      "status": "red"
     }
   ]
 }
