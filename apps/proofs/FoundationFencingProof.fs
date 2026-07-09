@@ -1178,8 +1178,20 @@ module FoundationFencingProof =
 
     // ---- properties + proof ------------------------------------------------
 
+    /// Negative control (one per template, on this instantiation): the
+    /// known-bad variant skips the supersede, so the "stale" writers are
+    /// allowed to commit — the template's core checks must catch it for the
+    /// expected reason (report.json shows failed-as-expected).
+    let private noSupersedeControl: NegativeControlSpec<FencingLaw.FencingEvidence> =
+        { Name = "no-supersede variant: the stale attempt is allowed to commit"
+          Workload = Some(FencingLaw.workload (turnTakeoverSurface false))
+          Verifiers = FencingLaw.coreChecks ()
+          ExpectedFailure = Some "fencing law: the stale attempt fails typed with the expected fence" }
+
     let private checkpointCommitProperty = FencingLaw.makeProperty checkpointCommitSurface
-    let private turnTakeoverProperty = FencingLaw.makeProperty (turnTakeoverSurface true)
+
+    let private turnTakeoverProperty =
+        FencingLaw.makePropertyWith [ noSupersedeControl ] true (turnTakeoverSurface true)
     let private turnCrashTerminalProperty = FencingLaw.makeProperty turnCrashTerminalSurface
     let private lifecycleSingleWriterProperty = FencingLaw.makeProperty lifecycleSingleWriterSurface
     let private lifecycleDeposedProducerProperty = FencingLaw.makeProperty lifecycleDeposedProducerSurface

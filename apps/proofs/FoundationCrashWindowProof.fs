@@ -1096,10 +1096,23 @@ module FoundationCrashWindowProof =
 
     // ---- properties + proof ------------------------------------------------
 
+    /// Negative control (one per template, on this instantiation): the
+    /// known-bad variant models a recovery that skips the dedup guard and
+    /// re-executes the already-published batch-mate — the template's core
+    /// checks must catch it for the expected reason (report.json shows
+    /// failed-as-expected).
+    let private skipDedupGuardControl: NegativeControlSpec<CrashWindowLaw.CrashWindowEvidence> =
+        { Name = "dedup-guard-skipping recovery: the published batch-mate is re-executed"
+          Workload = Some(CrashWindowLaw.workload (parallelBatchSurface true))
+          Verifiers = CrashWindowLaw.coreChecks ()
+          ExpectedFailure = Some "crash-window law: nothing duplicated — the effect is exactly-once-effective" }
+
     let private continueAsNewProperty = CrashWindowLaw.makeProperty continueAsNewSurface
     let private childResultProperty = CrashWindowLaw.makeProperty childResultSurface
     let private oneWaySendProperty = CrashWindowLaw.makeProperty oneWaySendSurface
-    let private parallelBatchProperty = CrashWindowLaw.makeProperty (parallelBatchSurface false)
+
+    let private parallelBatchProperty =
+        CrashWindowLaw.makePropertyWith [ skipDedupGuardControl ] true (parallelBatchSurface false)
 
     let proof =
         proof "foundation.crash-window" {

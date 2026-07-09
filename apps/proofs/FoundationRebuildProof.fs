@@ -1119,9 +1119,22 @@ module FoundationRebuildProof =
 
     // ---- properties + proof ------------------------------------------------
 
+    /// Negative control (one per template, on this instantiation): the
+    /// known-bad variant's decoder silently swallows the poison record
+    /// instead of failing closed — the template's core checks must catch it
+    /// for the expected reason (report.json shows failed-as-expected).
+    let private poisonSwallowedControl: NegativeControlSpec<RebuildLaw.RebuildEvidence> =
+        { Name = "poison-swallowing decoder: the poisoned decode is silently absorbed"
+          Workload = Some(RebuildLaw.workload (stateViewSurface true))
+          Verifiers = RebuildLaw.coreChecks false false true
+          ExpectedFailure = Some "rebuild law: decode/apply poison fails closed permanently" }
+
     let private checkpointTrimProperty = RebuildLaw.makeProperty checkpointTrimSurface
     let private sessionHistoryProperty = RebuildLaw.makeProperty sessionHistorySurface
-    let private stateViewProperty = RebuildLaw.makeProperty (stateViewSurface false)
+
+    let private stateViewProperty =
+        RebuildLaw.makePropertyWith [ poisonSwallowedControl ] true (stateViewSurface false)
+
     let private kvStoreProperty = RebuildLaw.makeProperty kvStoreSurface
 
     let proof =

@@ -16,7 +16,7 @@ with ~60 records retired or deduplicated under recorded dispositions and
 | Estate | Records | Wired | Disposition summary |
 |---|---|---|---|
 | fluent: `src/Firegrid.Durable.Corpus/` | 22 laws (14 green / 8 red) | yes (ratchet `t1-durable`) | ALL migrate in 0.2 (frozen; re-expression only) |
-| fluent: `src/Firegrid.Foundation.Proofs/` | 28 properties / 15 files | yes (`pnpm run proofs`, not ratcheted) | consolidate → ~13 kernel-tier properties (0.3) |
+| fluent: `src/Firegrid.Foundation.Proofs/` | 28 properties / 15 files | yes (ratcheted `foundation` suite since 0.3a) | DONE (0.3b): consolidated → 14-id `foundation` suite (3 templates + read-lag merge + 10 kept) |
 | fluent: `apps/proofs/` wired TS | 16 | yes (`main.ts`, not ratcheted) | 10 substrate → 5 F# properties; 6 D-lane stay TS for now (0.4) |
 | fluent: `apps/proofs/` dead TS (`store-*`) | 22 | **no** (confirmed unimported) | retire with disposition map (0.4) |
 | eff-firegrid: `src/Proofs/` | 25 (all active) | yes (Registry/Runner) | STAY in eff-firegrid; harness infra + authoring patterns port, proofs don't |
@@ -91,7 +91,12 @@ the product's actual dependency boundary — re-expressed in the F# harness:
 CAS-contention, fence-semantics).
 
 **L3 — Reorganize the 28 foundation proofs by invariant family, not by
-module.** The current estate restates the same invariant per-module (the
+module.** *(EXECUTED by Packet 0.3b, PR #126: `foundation` suite = 14 ids —
+`foundation.fencing` (7 instantiations), `foundation.crash-window` (4),
+`foundation.rebuild-equivalence` (4), `foundation.read-lag` (merge), + 10
+kept singles with `session.turn-attach` SUNSET-annotated. One negative
+control per template, failing-as-expected. Section B carries the per-record
+dispositions.)* The current estate restates the same invariant per-module (the
 same anti-pattern eff-firegrid exhibits at 6 layers). Target ~13
 kernel-tier properties:
 - one parameterized **fencing** property instantiated over {lifecycle,
@@ -195,38 +200,45 @@ Phase D's de-Effect target; migrating them during Phase 0 buys nothing.
 | t1.eternal-continueasnew | FlowLaws.fs | ContinueAsNew fresh-generation journal; result follows chain | red |
 | t1.bounded-loop-flat-stack | CoreLaws.fs | ≥500 guarded recursive iterations, flat stack, replay-convergent | green |
 
-### B. fluent-firegrid — foundation proofs (28 across 15 files; all wired, none ratcheted)
+### B. fluent-firegrid — foundation proofs (28 records; dispositions EXECUTED by Packet 0.3b)
 
-| id | surface | property (short) | consolidation family |
+P0.3b (PR #126) collapsed these 28 records into the 14-id `foundation`
+ratchet suite: 3 invariant-family templates (`foundation.fencing` ×7
+instantiations, `foundation.crash-window` ×4, `foundation.rebuild-equivalence`
+×4), the `foundation.read-lag` merge, and 10 kept singles. Consolidation
+deleted RESTATEMENTS, never ASSERTIONS — the 28-row correspondence table
+lives in the PR body.
+
+| id | surface | property (short) | disposition (P0.3b) |
 |---|---|---|---|
-| foundation.subject-history | SubjectHistory | OCC append guards stale writers; cursor ordered; foldTo = follower fold | rebuild-equivalence |
-| foundation.state-view | StateView | deterministic fold; strong reads latest; decode failure poisons reads | rebuild-equivalence |
-| state.stateview-strong-read | StateReads | strong linearizable; eventual monotonic lagging prefix | read-grades (→ t1.three-read-grades) |
-| session.history-fold | SessionHistory | projection = fold-from-zero across checkpoint/restart | rebuild-equivalence |
-| session.projection-lag-observable | SessionHistory | eventual reads lag-bounded by own strong reads; lag monotonic | read-grades |
-| foundation.kv-store | KvStore | durable commit before local apply; poison-on-apply-failure | rebuild-equivalence |
-| state.checkpoint-rebuild-equivalence | Checkpoint | snapshot+suffix ≡ fold-from-zero, incl. restart | rebuild-equivalence |
-| state.trim-safety | Checkpoint.trim | never trim past committed checkpoint; floor rebuild equivalent | rebuild-equivalence |
-| state.checkpoint-race | Checkpoint.commit | racing checkpointers: exactly one commits; stale → Regressed | fencing |
-| foundation.durable-replay | Durable/Stepper | replay deterministic; stable positional op-ids; command-before-effect | replay-core (keep) |
-| foundation.durable-mailbox | Mailbox | single-scan admission; source-provenance dedupe; cursor advance | replay-core (keep) |
-| foundation.durable-processor | Processor.drive | commit precedes dispatch; provenance unforgeable; deposed never dispatches | replay-core (keep) |
-| durable.continue-as-new | rollover | survives kill between terminal-commit and next-gen dispatch | crash-window |
-| durable.child-workflow | children | child start + terminal delivery survive kill windows | crash-window |
-| durable.one-way-send | send | journaled, non-awaited, exactly-once-effective across restart | crash-window |
-| durable.parallel-overlap | K2 batches | true concurrency; fold by completion order, bind by op-id | keep |
-| durable.parallel-kill-window | K2 batches | kill between publish and checkpoint loses/duplicates nothing | crash-window |
-| durable.parallel-fault-isolation | K2 batches | thrower fails own tick only; retry heals only thrower | keep |
-| session.turn-attach | DurableLog/Turn | byte-faithful prefix+tail+terminal for any attacher | DUPLICATE of t1.log-attach-byte-faithful |
-| session.turn-crash-terminal | Turn recovery | deposed producer can't commit; recovery drives to observed terminal | fencing |
-| session.turn-idempotent-create | Turn identity | same identity re-attaches (never forks); new identity deposes priors | fencing |
-| session.lifecycle-single-writer | SessionLifecycle | one live turn per session; racing start fenced | fencing |
-| session.lifecycle-durable-cancel | SessionLifecycle | cancel = durable mailbox send; resend folds once | delivery |
-| session.lifecycle-deposed-producer | SessionLifecycle | post-takeover appends fail Deposed; recovery terminal observed | fencing |
-| session.resume-artifact-fenced | ResumeArtifactStore | claim-then-read makes stale late store unobservable | fencing |
-| wake.tail-latency | WakeShard/Router | wake reaches claimed handler within bounded latency | keep |
-| wake.single-claim | WakeRouter | racing routers: exactly one advances durable cursor | fencing |
-| wake.timer-exactly-once | TimerIndex | due timer fires once across restart; poison skipped w/o wedging | keep |
+| foundation.subject-history | SubjectHistory | OCC append guards stale writers; cursor ordered; foldTo = follower fold | KEPT single (substrate OCC/cursor primitive) |
+| foundation.state-view | StateView | deterministic fold; strong reads latest; decode failure poisons reads | DONE -> foundation.rebuild-equivalence.state-view (incl. poisoned-decode) |
+| state.stateview-strong-read | StateReads | strong linearizable; eventual monotonic lagging prefix | DONE -> foundation.read-lag (merged) |
+| session.history-fold | SessionHistory | projection = fold-from-zero across checkpoint/restart | DONE -> foundation.rebuild-equivalence.session-history |
+| session.projection-lag-observable | SessionHistory | eventual reads lag-bounded by own strong reads; lag monotonic | DONE -> foundation.read-lag (merged) |
+| foundation.kv-store | KvStore | durable commit before local apply; poison-on-apply-failure | DONE -> foundation.rebuild-equivalence.kv-store (incl. poisoned-apply) |
+| state.checkpoint-rebuild-equivalence | Checkpoint | snapshot+suffix ≡ fold-from-zero, incl. restart | DONE -> foundation.rebuild-equivalence.checkpoint-trim (merged with state.trim-safety) |
+| state.trim-safety | Checkpoint.trim | never trim past committed checkpoint; floor rebuild equivalent | DONE -> foundation.rebuild-equivalence.checkpoint-trim (merged) |
+| state.checkpoint-race | Checkpoint.commit | racing checkpointers: exactly one commits; stale → Regressed | DONE -> foundation.fencing.checkpoint-commit |
+| foundation.durable-replay | Durable/Stepper | replay deterministic; stable positional op-ids; command-before-effect | KEPT single (replay-core) |
+| foundation.durable-mailbox | Mailbox | single-scan admission; source-provenance dedupe; cursor advance | KEPT single (replay-core) |
+| foundation.durable-processor | Processor.drive | commit precedes dispatch; provenance unforgeable; deposed never dispatches | KEPT single (replay-core) |
+| durable.continue-as-new | rollover | survives kill between terminal-commit and next-gen dispatch | DONE -> foundation.crash-window.continue-as-new |
+| durable.child-workflow | children | child start + terminal delivery survive kill windows | DONE -> foundation.crash-window.child-result |
+| durable.one-way-send | send | journaled, non-awaited, exactly-once-effective across restart | DONE -> foundation.crash-window.one-way-send |
+| durable.parallel-overlap | K2 batches | true concurrency; fold by completion order, bind by op-id | KEPT single |
+| durable.parallel-kill-window | K2 batches | kill between publish and checkpoint loses/duplicates nothing | DONE -> foundation.crash-window.parallel-batch |
+| durable.parallel-fault-isolation | K2 batches | thrower fails own tick only; retry heals only thrower | KEPT single |
+| session.turn-attach | DurableLog/Turn | byte-faithful prefix+tail+terminal for any attacher | KEPT single — SUNSET: retire when t1.log-attach-byte-faithful greens (duplicate of that red law; coverage not deleted for a law that is not yet green) |
+| session.turn-crash-terminal | Turn recovery | deposed producer can't commit; recovery drives to observed terminal | DONE -> foundation.fencing.turn-crash-terminal |
+| session.turn-idempotent-create | Turn identity | same identity re-attaches (never forks); new identity deposes priors | DONE -> foundation.fencing.turn-takeover |
+| session.lifecycle-single-writer | SessionLifecycle | one live turn per session; racing start fenced | DONE -> foundation.fencing.lifecycle-single-writer |
+| session.lifecycle-durable-cancel | SessionLifecycle | cancel = durable mailbox send; resend folds once | KEPT single (delivery) |
+| session.lifecycle-deposed-producer | SessionLifecycle | post-takeover appends fail Deposed; recovery terminal observed | DONE -> foundation.fencing.lifecycle-deposed-producer |
+| session.resume-artifact-fenced | ResumeArtifactStore | claim-then-read makes stale late store unobservable | DONE -> foundation.fencing.resume-artifact |
+| wake.tail-latency | WakeShard/Router | wake reaches claimed handler within bounded latency | KEPT single |
+| wake.single-claim | WakeRouter | racing routers: exactly one advances durable cursor | DONE -> foundation.fencing.wake-claim |
+| wake.timer-exactly-once | TimerIndex | due timer fires once across restart; poison skipped w/o wedging | KEPT single |
 
 ### C. fluent-firegrid — apps/proofs wired TS (16)
 
