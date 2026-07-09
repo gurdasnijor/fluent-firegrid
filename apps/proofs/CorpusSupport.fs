@@ -164,10 +164,27 @@ module CorpusSupport =
         until (sprintf "side-channel %s >= %d" name atLeast) deadlineMs (fun () ->
             async { return Counter.read scratch name >= atLeast })
 
+    /// Scope a law's fixed basin name to its trial (P0.3c): trials share ONE
+    /// s2-lite instance, so every harness-created basin is prefixed with a
+    /// deterministic digest of the trial id. The digest (not the sanitized
+    /// trial id itself) keeps the name inside the S2 basin rules the client
+    /// documents — 8-48 chars, lowercase/digits/hyphen — which a full trial
+    /// id (~46 chars) plus law basin name would exceed. Deterministic, so a
+    /// replayed --trial-id resolves the same basins, and IDENTICAL on the
+    /// workload side (ctx.TrialId) and the child side (FIREGRID_TRIAL_ID).
+    let scopedBasin (trialId: string) (basinName: string) : string =
+        let mutable hash = 0x811c9dc5
+
+        for i in 0 .. trialId.Length - 1 do
+            hash <- hash ^^^ int trialId.[i]
+            hash <- hash * 16777619
+
+        sprintf "t%s-%s" (string (uint32 hash)) basinName
+
     /// Idempotent basin bootstrap: the workload AND any child scenario host
-    /// both ensure the (fixed, per-law) basin on the trial's private
-    /// s2-lite; whichever runs first creates it, the other's ensure/create
-    /// is a no-op.
+    /// both ensure the (trial-scoped) basin on the runner's shared s2-lite;
+    /// whichever runs first creates it, the other's ensure/create is a
+    /// no-op. Callers pass the already-scoped name.
     let ensureBasin (endpoint: string) (basinName: string) : Async<S2.Basin> =
         async {
             let client =
@@ -200,14 +217,17 @@ module CorpusSupport =
         let s2 = WorkloadContext.requireS2 ctx
 
         match s2.Endpoint with
-        | Some endpoint -> ensureBasin endpoint basinName
+        | Some endpoint -> ensureBasin endpoint (scopedBasin ctx.TrialId basinName)
         | None -> failwith "corpus law requires an s2Lite resource (an S2 endpoint); declare s2Lite before hosts"
 
     /// Child-side: reconstruct the basin from the env the runner injected
     /// (S2_ENDPOINT from the declared s2 resource, T1C_BASIN from the law's
-    /// host spec).
+    /// host spec, FIREGRID_TRIAL_ID for the same trial scope the workload
+    /// side applies).
     let childBasin () : Async<S2.Basin> =
-        ensureBasin (CorpusNode.env "S2_ENDPOINT") (CorpusNode.env "T1C_BASIN")
+        ensureBasin
+            (CorpusNode.env "S2_ENDPOINT")
+            (scopedBasin (CorpusNode.env "FIREGRID_TRIAL_ID") (CorpusNode.env "T1C_BASIN"))
 
     let childNamespace () : string = CorpusNode.env "T1C_NS"
 

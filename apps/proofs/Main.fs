@@ -25,7 +25,10 @@ module Main =
     let private stderr (_message: string) : unit = jsNative
 
     let private usage =
-        "Usage: node dist/Main.js proof list | proof run <all|filter> [--report-dir <dir>] [--trial-id <id>] [--seed <n>] | proof replay <report.json> | proof targets <suite>"
+        "Usage: node dist/Main.js proof list | proof run <all|filter> [--report-dir <dir>] [--trial-id <id>] [--seed <n>] [--concurrency <n>] | proof replay <report.json> | proof targets <suite> [--concurrency <n>]"
+
+    [<Emit("process.env.PROOF_CONCURRENCY || ''")>]
+    let private concurrencyEnv () : string = jsNative
 
     let private argValue name (args: string list) =
         args
@@ -53,12 +56,28 @@ module Main =
             | false, _ -> None)
         |> Option.defaultValue 0
 
+    /// Pool size: --concurrency flag > PROOF_CONCURRENCY env > default 4
+    /// (P0.3c ruling 4). Values below 1 are rejected back to the default.
+    let private concurrency args =
+        argValue "--concurrency" args
+        |> Option.orElseWith (fun () ->
+            match concurrencyEnv () with
+            | "" -> None
+            | value -> Some value)
+        |> Option.bind (fun text ->
+            match System.Int32.TryParse text with
+            | true, value when value >= 1 -> Some value
+            | _ -> None)
+        |> Option.defaultValue 4
+
     let private config filter args =
         { Root = reportDir args
           ProofFilter = filter
           TrialId = argValue "--trial-id" args
           Preserve = true
-          Seed = seed args }
+          Seed = seed args
+          SharedS2 = None
+          Concurrency = concurrency args }
 
     let private main () =
         async {
@@ -68,7 +87,7 @@ module Main =
                 return 0
             | "proof" :: "run" :: name :: rest ->
                 let filter = if name = "all" then None else Some name
-                return! Runner.run (config filter rest) Registry.all
+                return! Runner.run (config filter rest) Registry.timingSensitive Registry.all
             | "proof" :: "replay" :: reportPath :: rest ->
                 return! Runner.replay (config None rest) reportPath Registry.all
             | [ "child"; scenario ] ->
@@ -77,7 +96,7 @@ module Main =
                 | None ->
                     stderr ("unknown child scenario: " + scenario)
                     return 1
-            | [ "proof"; "targets"; suite ] ->
+            | "proof" :: "targets" :: suite :: rest ->
                 match Registry.suites |> List.tryFind (fun spec -> spec.Suite = suite) with
                 | Some spec ->
                     let root = Reports.join [ cwd (); ".verification-reports"; suite ]
@@ -88,7 +107,10 @@ module Main =
                               ProofFilter = None
                               TrialId = None
                               Preserve = true
-                              Seed = 0 }
+                              Seed = 0
+                              SharedS2 = None
+                              Concurrency = concurrency rest }
+                            Registry.timingSensitive
                             spec.Proofs
                 | None ->
                     let known =

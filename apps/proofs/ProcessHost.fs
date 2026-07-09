@@ -38,18 +38,31 @@ module ProcessHost =
     [<Emit("new Promise(resolve => setTimeout(resolve, $0))")>]
     let private sleep (_millis: int) : JS.Promise<unit> = jsNative
 
-    let private waitUntilReady name url attempts intervalMillis =
+    /// Mutable exit marker for a spawned child: lets the readiness loop fail
+    /// fast when the host dies before becoming ready (the bind-collision
+    /// signature under concurrent trials) instead of burning the readiness
+    /// window.
+    type private ExitWatch =
+        abstract exited: bool
+
+    [<Emit("(p => { const s = { exited: false }; p.once('exit', () => { s.exited = true; }); return s; })($0)")>]
+    let private watchExit (_proc: ChildProcess) : ExitWatch = jsNative
+
+    let private waitUntilReady (watch: ExitWatch) name url attempts intervalMillis =
         let rec loop remaining =
             async {
-                let! ready = fetchOk url |> Async.AwaitPromise
-
-                if ready then
-                    return ()
-                elif remaining <= 0 then
-                    return failwithf "processHost '%s' did not become ready at %s" name url
+                if watch.exited then
+                    return failwithf "processHost '%s' exited before becoming ready at %s (port bind collision?)" name url
                 else
-                    do! sleep intervalMillis |> Async.AwaitPromise
-                    return! loop (remaining - 1)
+                    let! ready = fetchOk url |> Async.AwaitPromise
+
+                    if ready then
+                        return ()
+                    elif remaining <= 0 then
+                        return failwithf "processHost '%s' did not become ready at %s" name url
+                    else
+                        do! sleep intervalMillis |> Async.AwaitPromise
+                        return! loop (remaining - 1)
             }
 
         loop attempts
@@ -78,9 +91,21 @@ module ProcessHost =
               | Some cwd -> "cwd" ==> cwd
               | None -> () ]
 
-    let start (store: TraceStore) (s2: S2Resource option) (spec: ProcessHostSpec) : Async<Instance> =
+    /// One spawn attempt. When the host has a readiness URL and dies before
+    /// readiness (the bind-collision signature — host ports are chosen by
+    /// the law's frozen spec, so a respawn re-races the same port after the
+    /// transient holder is gone), the caller retries up to 5 attempts total
+    /// (P0.3c ruling 7). Alive-but-unready hosts keep today's failure
+    /// semantics.
+    let rec private startAttempt
+        (store: TraceStore)
+        (s2: S2Resource option)
+        (spec: ProcessHostSpec)
+        (attemptsLeft: int)
+        : Async<Instance> =
         async {
             let proc = spawn spec.Command (spec.Args |> List.toArray) (options store s2 spec)
+            let watch = watchExit proc
             let running = ref true
 
             let terminate spanName signal =
@@ -140,16 +165,35 @@ module ProcessHost =
                       "host.pid", string proc.pid
                       "host.command", spec.Command ]
 
-            try
-                match spec.ReadinessUrl with
-                | Some url ->
-                    do!
+            let instance =
+                { Resource =
+                    { Name = spec.Name
+                      ProcessId = proc.pid
+                      ReadinessUrl = spec.ReadinessUrl }
+                  Stop =
+                    fun () ->
+                        async {
+                            let! _ = terminate "verification.host.stop" "SIGTERM"
+                            return ()
+                        }
+                  Kill = fun () -> terminate "verification.host.kill" "SIGKILL"
+                  Pause = fun () -> signalHost "verification.host.pause" "SIGSTOP"
+                  Resume = fun () -> signalHost "verification.host.resume" "SIGCONT" }
+
+            match spec.ReadinessUrl with
+            | Some url ->
+                let! readiness =
+                    Async.Catch(
                         waitUntilReady
+                            watch
                             spec.Name
                             url
                             (spec.ReadinessAttempts |> Option.defaultValue 120)
                             (spec.ReadinessIntervalMillis |> Option.defaultValue 100)
+                    )
 
+                match readiness with
+                | Choice1Of2() ->
                     do!
                         Reports.emitSpan
                             store
@@ -157,24 +201,18 @@ module ProcessHost =
                             [ "host.name", spec.Name
                               "host.pid", string proc.pid
                               "host.readiness_url", url ]
-                | None -> ()
 
-                return
-                    { Resource =
-                        { Name = spec.Name
-                          ProcessId = proc.pid
-                          ReadinessUrl = spec.ReadinessUrl }
-                      Stop =
-                        fun () ->
-                            async {
-                                let! _ = terminate "verification.host.stop" "SIGTERM"
-                                return ()
-                            }
-                      Kill = fun () -> terminate "verification.host.kill" "SIGKILL"
-                      Pause = fun () -> signalHost "verification.host.pause" "SIGSTOP"
-                      Resume = fun () -> signalHost "verification.host.resume" "SIGCONT" }
-            with error ->
-                running.Value <- false
-                proc.kill "SIGKILL" |> ignore
-                return raise error
+                    return instance
+                | Choice2Of2 error ->
+                    running.Value <- false
+                    proc.kill "SIGKILL" |> ignore
+
+                    if watch.exited && attemptsLeft > 1 then
+                        return! startAttempt store s2 spec (attemptsLeft - 1)
+                    else
+                        return raise error
+            | None -> return instance
         }
+
+    let start (store: TraceStore) (s2: S2Resource option) (spec: ProcessHostSpec) : Async<Instance> =
+        startAttempt store s2 spec 5

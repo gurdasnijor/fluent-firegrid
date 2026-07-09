@@ -30,7 +30,8 @@ module Property =
             resources
             |> List.filter (function
                 | S2LiveFromEnv
-                | S2Lite _ -> true
+                | S2Lite _
+                | S2LiteDedicated _ -> true
                 | _ -> false)
             |> List.length
 
@@ -124,7 +125,12 @@ module Property =
     /// a mid-resolution failure leaves the already-started resources visible
     /// for release (a red law must fail as a law, never leak a child process
     /// or crash the suite).
-    let private resolveResources (store: TraceStore) resources (cell: ResolvedResources ref) =
+    let private resolveResources
+        (store: TraceStore)
+        (sharedS2: S2Resource option)
+        resources
+        (cell: ResolvedResources ref)
+        =
         async {
             for resource in resources do
                 let resolved = cell.Value
@@ -140,7 +146,18 @@ module Property =
                     cell.Value <- { resolved with S2 = Some s2 }
 
                     do! Reports.emitSpan store "verification.s2.live.connected" [ "resource.kind", "s2LiveFromEnv" ]
-                | S2Lite localRoot ->
+                | S2Lite _ ->
+                    // The runner boots ONE s2-lite per invocation; trials are
+                    // isolated by trial-scoped basins (CorpusSupport). No
+                    // release: the shared instance outlives every trial (its
+                    // lifecycle spans live at runner scope).
+                    match sharedS2 with
+                    | Some shared -> cell.Value <- { resolved with S2 = Some shared }
+                    | None ->
+                        return
+                            failwith
+                                "s2Lite resolves to the runner's shared s2-lite, but the runner did not boot one (declare s2LiteDedicated for a private instance)"
+                | S2LiteDedicated localRoot ->
                     let! s2Lite = Firegrid.Foundation.Proofs.S2Lite.start store localRoot
 
                     cell.Value <-
@@ -215,8 +232,7 @@ module Property =
     let private runNegativeControl
         (proofName: string)
         (propertyName: string)
-        (root: string)
-        (seed: int)
+        (config: RunnerConfig)
         (timeoutMs: int option)
         (positiveWorkload: WorkloadContext -> Async<'result>)
         (propertyResources: ResourceSpec list)
@@ -225,18 +241,18 @@ module Property =
         =
         async {
             let trialId = Reports.trialId (propertyName + "-negative")
-            let store = Reports.traceStore root trialId
+            let store = Reports.traceStore config.Root trialId
             let faults = ResizeArray<FaultEvent>()
             let resourcesCell = ref emptyResources
 
             let! result =
                 async {
-                    let! setup = Async.Catch(resolveResources store propertyResources resourcesCell)
+                    let! setup = Async.Catch(resolveResources store config.SharedS2 propertyResources resourcesCell)
 
                     match setup with
                     | Choice2Of2 error -> return Error("resource setup failed: " + error.Message)
                     | Choice1Of2() ->
-                        let ctx = workloadContext trialId seed store resourcesCell.Value faults
+                        let ctx = workloadContext trialId config.Seed store resourcesCell.Value faults
                         let work = control.Workload |> Option.defaultValue positiveWorkload
                         return! runWorkloadBounded timeoutMs work ctx
                 }
@@ -306,7 +322,7 @@ module Property =
                 if List.isEmpty unsupported then
                     async {
                         let resourcesCell = ref emptyResources
-                        let! setup = Async.Catch(resolveResources store spec.Resources resourcesCell)
+                        let! setup = Async.Catch(resolveResources store config.SharedS2 spec.Resources resourcesCell)
 
                         let! result =
                             match setup with
@@ -334,15 +350,7 @@ module Property =
             let! negativeControls =
                 spec.NegativeControls
                 |> List.map (
-                    runNegativeControl
-                        proofName
-                        spec.Name
-                        config.Root
-                        config.Seed
-                        spec.TimeoutMs
-                        spec.Workload
-                        spec.Resources
-                        store
+                    runNegativeControl proofName spec.Name config spec.TimeoutMs spec.Workload spec.Resources store
                 )
                 |> Async.Sequential
 
@@ -479,6 +487,11 @@ module Property =
         member _.S2Lite(state: PropertyDraft<'result>, root) =
             { state with
                 Resources = state.Resources @ [ S2Lite root ] }
+
+        [<CustomOperation("s2LiteDedicated")>]
+        member _.S2LiteDedicated(state: PropertyDraft<'result>, root) =
+            { state with
+                Resources = state.Resources @ [ S2LiteDedicated root ] }
 
         [<CustomOperation("processHost")>]
         member _.ProcessHost(state: PropertyDraft<'result>, host) =
