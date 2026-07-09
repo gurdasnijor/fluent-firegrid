@@ -16,13 +16,13 @@ open Firegrid.Store.Foundation.Durable
 ///   the fast one's completion is durably published while the slow one is
 ///   still mid-flight; completions fold in completion order (not declaration
 ///   order) and replay still binds each value to its OpId.
-/// - `durable.parallel-kill-window` — a kill after one batch-mate's completion
-///   is published but before the checkpoint loses nothing and duplicates
-///   nothing: the restarted adapter skips the published mate (not re-executed)
-///   and executes only the unpublished one, then checkpoints.
 /// - `durable.parallel-fault-isolation` — a throwing batch-mate fails the tick
 ///   but its mates' completions are already durable; the checkpoint holds; the
 ///   retry skips the mates and heals only the thrower.
+///
+/// The `durable.parallel-kill-window` obligation moved to the
+/// `foundation.crash-window` invariant family (FoundationCrashWindowProof.fs)
+/// in Packet 0.3b.
 module FoundationParallelActivitiesProof =
 
     // ---- shared helpers over the public surface --------------------------
@@ -303,188 +303,6 @@ module FoundationParallelActivitiesProof =
                           Count = Some 1 }) ])
         }
 
-    // ---- durable.parallel-kill-window --------------------------------------
-
-    type ParallelKillWindowResult =
-        { CheckpointHeldAtKill: bool
-          PublishedMateNotReExecuted: bool
-          UnpublishedMateExecutedOnce: bool
-          CheckpointAdvancedAfterRecovery: bool
-          WorkflowCompletedWithBothValues: bool
-          SingleCompletionEventPerOp: bool }
-
-    let private killWindowWorkload ctx =
-        ProofOperation.run
-            ctx
-            "durable.parallel-kill-window"
-            "durable-parallel-kill-window"
-            { ProofOperationOptions.empty with
-                Key = Some "durable-parallel-kill-window" }
-            (async {
-                let s2 = WorkloadContext.requireS2 ctx
-                let suffix = string (int64 (Reports.nowMillis ()))
-                let basinName = "par-kill-" + suffix
-                let! _ = s2.Client |> S2.createBasin basinName
-                let basin = s2.Client |> S2.basin basinName
-
-                let aExecutions = ref 0
-                let bExecutions = ref 0
-
-                let activities =
-                    ActivityRegistry.empty
-                    |> ActivityRegistry.register "kw/a" (fun input ->
-                        async {
-                            aExecutions.Value <- aExecutions.Value + 1
-                            return "a:" + input
-                        })
-                    |> Result.bind (
-                        ActivityRegistry.register "kw/b" (fun input ->
-                            async {
-                                bExecutions.Value <- bExecutions.Value + 1
-                                return "b:" + input
-                            })
-                    )
-                    |> registered
-
-                let factory (input: Payload) : Durable<Payload> =
-                    durable {
-                        let! values =
-                            Workflow.all
-                                [ Activities.create "kw/a" input; Activities.create "kw/b" input ]
-
-                        match values with
-                        | [ aValue; bValue ] -> return "kw<" + aValue + "|" + bValue + ">"
-                        | other -> return "kw-arity:" + string (List.length other)
-                    }
-
-                let workflows =
-                    WorkflowRegistry.empty
-                    |> WorkflowRegistry.register "kw/flow" factory
-                    |> registered
-
-                let tick = tickInstance basin workflows activities
-                let status = DurableClient.getStatusWith basin workflows
-
-                let instance = InstanceId.create ("kill-window-" + suffix)
-                let! started = DurableClient.startWith basin instance (WorkflowName "kw/flow") "job"
-                startOk started
-
-                // Host A admits the start and commits the fanned journal pair,
-                // then "dies" mid-batch: b's completion is durably published
-                // (fabricated exactly as the concurrent adapter publishes it —
-                // per-command source, provenance seqNum) but a's completion and
-                // the dispatcher checkpoint are not.
-                let key = DurableClient.instanceKey instance
-                do! S2Substrate.ensureStreams basin key
-                let pair = S2Substrate.streams basin key
-                let! ownedA = S2Substrate.claim "khost-a" pair
-                do! admitAndStep ownedA factory "job"
-
-                let! recordsAtKill = journalRecords basin instance
-
-                match callCommandSeq (OpId 1) recordsAtKill with
-                | None -> return failwith "kill-window: no CallActivity command journaled for kw/b"
-                | Some commandSeq ->
-                    let source = ActivityCommandAdapter.completionSourceFor commandSeq
-
-                    let envelope =
-                        { Source = source
-                          SourceSeqNum = commandSeq
-                          Message = CompleteActivity(OpId 1, "b:killed-host") }
-
-                    let! _ =
-                        S2Substrate.appendMailboxText
-                            [ "src", source; "seq", string commandSeq ]
-                            (MailboxEnvelopeCodec.encode envelope)
-                            pair
-
-                    let checkpointHeldAtKill = activityCheckpointCount recordsAtKill = 0
-
-                    // Fresh host B recovers the batch: the published mate is
-                    // skipped without re-execution, the unpublished mate runs,
-                    // and only then does the checkpoint advance.
-                    let! ownedB = S2Substrate.claim "khost-b" pair
-
-                    let! recovered =
-                        ActivityCommandAdapter.runOnce
-                            StepRecordCodec.encode
-                            StepRecordCodec.decode
-                            100
-                            100
-                            activities
-                            ownedB
-
-                    let publishedMateSkipped, unpublishedMateRan, checkpointAdvanced =
-                        match recovered with
-                        | ActivityCommandAdapterStatus.Processed report ->
-                            let completedOps =
-                                report.Completed |> List.map (fun completion -> completion.OpId)
-
-                            report.AlreadyPublished = 1 && bExecutions.Value = 0,
-                            completedOps = [ OpId 0 ] && aExecutions.Value = 1,
-                            (match report.Checkpoint with
-                             | CommandDispatchCheckpointResult.Checkpointed _ -> true
-                             | _ -> false)
-                        | _ -> false, false, false
-
-                    let! value = driveToCompletion tick status "khost-c" instance 20
-
-                    // Redundant restart tick: dedupe must absorb it.
-                    let! _ = tick "khost-d" instance
-
-                    let! recordsFinal = journalRecords basin instance
-
-                    let result =
-                        { CheckpointHeldAtKill = checkpointHeldAtKill
-                          PublishedMateNotReExecuted = publishedMateSkipped && bExecutions.Value = 0
-                          UnpublishedMateExecutedOnce = unpublishedMateRan && aExecutions.Value = 1
-                          CheckpointAdvancedAfterRecovery = checkpointAdvanced
-                          WorkflowCompletedWithBothValues = value = "kw<a:job|b:killed-host>"
-                          SingleCompletionEventPerOp =
-                            completionEventCount (OpId 0) recordsFinal = 1
-                            && completionEventCount (OpId 1) recordsFinal = 1 }
-
-                    do!
-                        ctx.EmitSpan
-                            "proof.durable.parallel-kill-window.completed"
-                            [ "proof.property", "durable.parallel-kill-window"
-                              "kill.value", value
-                              "kill.a_executions", string aExecutions.Value
-                              "kill.b_executions", string bExecutions.Value ]
-
-                    return result
-            })
-
-    let private killWindowProperty =
-        property "durable.parallel-kill-window" {
-            s2Lite ""
-            workload killWindowWorkload
-
-            verify (fun v ->
-                [ v.Expect.Workload
-                      "the dispatcher checkpoint had not advanced at the kill (a completion was published, no checkpoint)"
-                      (fun r -> r.CheckpointHeldAtKill)
-                  v.Expect.Workload
-                      "the batch-mate whose completion was durably published is skipped, never re-executed (no duplicate)"
-                      (fun r -> r.PublishedMateNotReExecuted)
-                  v.Expect.Workload
-                      "the batch-mate whose completion was not yet published executes exactly once (nothing lost)"
-                      (fun r -> r.UnpublishedMateExecutedOnce)
-                  v.Expect.Workload
-                      "the checkpoint advances only after every due command's completion is durably published"
-                      (fun r -> r.CheckpointAdvancedAfterRecovery)
-                  v.Expect.Workload "the workflow completes with both values across the kill" (fun r ->
-                      r.WorkflowCompletedWithBothValues)
-                  v.Expect.Workload "the journal holds exactly one completion event per op" (fun r ->
-                      r.SingleCompletionEventPerOp)
-                  v.Trace.Operation
-                      "parallel-kill-window operation recorded"
-                      ({ TraceOperationMatch.named "durable.parallel-kill-window" with
-                          Status = Some "ok"
-                          OutputContains = [ "PublishedMateNotReExecuted"; "UnpublishedMateExecutedOnce" ]
-                          Count = Some 1 }) ])
-        }
-
     // ---- durable.parallel-fault-isolation -----------------------------------
 
     type ParallelFaultIsolationResult =
@@ -704,9 +522,8 @@ module FoundationParallelActivitiesProof =
     let proof =
         proof "foundation.parallel-activities" {
             describedAs
-                "K2 concurrent activity-batch execution over the public kernel surface: a tick's due activity commands execute concurrently (fast completions durably published while slow batch-mates still run; completions fold in completion order and replay binds by OpId), a kill after a partial batch publication loses nothing and duplicates nothing (provenance dedupe + checkpoint only after every ack is durable), and a throwing batch-mate isolates (mates' completions durable, checkpoint held, retry heals only the thrower)."
+                "K2 concurrent activity-batch execution over the public kernel surface: a tick's due activity commands execute concurrently (fast completions durably published while slow batch-mates still run; completions fold in completion order and replay binds by OpId), and a throwing batch-mate isolates (mates' completions durable, checkpoint held, retry heals only the thrower)."
 
             property overlapProperty
-            property killWindowProperty
             property faultIsolationProperty
         }

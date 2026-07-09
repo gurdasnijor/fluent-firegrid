@@ -38,6 +38,9 @@
     <Compile Include="Property.fs" />
     <Compile Include="ProofBuilder.fs" />
     <Compile Include="Runner.fs" />
+    <Compile Include="FencingLaw.fs" />
+    <Compile Include="CrashWindowLaw.fs" />
+    <Compile Include="RebuildLaw.fs" />
     <Compile Include="CorpusSupport.fs" />
     <Compile Include="CoreLawProofs.fs" />
     <Compile Include="EntityLawProofs.fs" />
@@ -45,20 +48,15 @@
     <Compile Include="FlowLawProofs.fs" />
     <Compile Include="HarnessKillDemoProof.fs" />
     <Compile Include="FoundationSubjectHistoryProof.fs" />
-    <Compile Include="FoundationStateViewProof.fs" />
-    <Compile Include="FoundationStateReadsProof.fs" />
-    <Compile Include="FoundationSessionHistoryProof.fs" />
-    <Compile Include="FoundationKvStoreProof.fs" />
-    <Compile Include="FoundationCheckpointProof.fs" />
-    <Compile Include="FoundationCheckpointTrimSafetyProof.fs" />
-    <Compile Include="FoundationCheckpointRaceProof.fs" />
     <Compile Include="FoundationDurableKernelProof.fs" />
-    <Compile Include="FoundationDurableDebtsProof.fs" />
     <Compile Include="FoundationParallelActivitiesProof.fs" />
     <Compile Include="FoundationTurnStreamProof.fs" />
     <Compile Include="FoundationSessionLifecycleProof.fs" />
-    <Compile Include="FoundationResumeArtifactProof.fs" />
     <Compile Include="FoundationWakePathProof.fs" />
+    <Compile Include="FoundationFencingProof.fs" />
+    <Compile Include="FoundationCrashWindowProof.fs" />
+    <Compile Include="FoundationRebuildProof.fs" />
+    <Compile Include="FoundationReadLagProof.fs" />
     <Compile Include="Registry.fs" />
     <Compile Include="Main.fs" />
   </ItemGroup>

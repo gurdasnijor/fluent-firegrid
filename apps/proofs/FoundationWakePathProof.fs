@@ -12,14 +12,14 @@ open Firegrid.Store.Foundation.Durable
 ///
 /// - `wake.tail-latency` — an appended wake reaches its claimed handler within a
 ///   recorded bound (measured from trace evidence).
-/// - `wake.single-claim` — two routers tailing one shard: exactly one advances the
-///   cursor via `Authority.claim` (FencedOwner); the loser's fenced commit fails
-///   `Deposed`; a redundant idempotent re-drive is harmless (approved Option A).
 /// - `wake.timer-exactly-once` — a due timer fires exactly once across a router
 ///   restart; a not-yet-due timer survives unfired; a poison (undecodable) record
 ///   is consumed and skipped (cursor passes it, later wakes still dispatch, a
 ///   restart does not re-wedge); a wake at the committed cursor survives a restart
 ///   undropped and a poison at that boundary does not wedge recovery.
+///
+/// The `wake.single-claim` obligation moved to the `foundation.fencing`
+/// invariant family (FoundationFencingProof.fs) in Packet 0.3b.
 module FoundationWakePathProof =
 
     // ---- shared helpers over the public surface --------------------------
@@ -160,148 +160,6 @@ module FoundationWakePathProof =
                       ({ TraceOperationMatch.named "wake.tail-latency" with
                           Status = Some "ok"
                           OutputContains = [ "WithinBound"; "LatencyMillis" ]
-                          Count = Some 1 }) ])
-        }
-
-    // ---- wake.single-claim ------------------------------------------------
-
-    type SingleClaimResult =
-        { LoserFencedCommitDeposed: bool
-          WinnerAdvancedCursor: bool
-          ExactlyOneAdvancedCursor: bool
-          BothDroveTheSameWake: bool
-          RedundantReDriveIsIdempotent: bool
-          CursorAdvancedExactlyOnce: bool }
-
-    let private singleClaimWorkload ctx =
-        ProofOperation.run
-            ctx
-            "wake.single-claim"
-            "wake-single-claim"
-            { ProofOperationOptions.empty with
-                Key = Some "wake-single-claim" }
-            (async {
-                let s2 = WorkloadContext.requireS2 ctx
-
-                let endpoint =
-                    match s2.Endpoint with
-                    | Some value -> value
-                    | None -> failwith "single-claim requires an s2 endpoint (declare s2Lite)"
-
-                let suffix = string (int64 (Reports.nowMillis ()))
-                let basinName = "wake-claim-" + suffix
-                let! _ = s2.Client |> S2.createBasin basinName
-                let basinA = s2.Client |> S2.basin basinName
-
-                // A second client over the same durable store: the rival router.
-                let clientB =
-                    S2.connectWith
-                        { S2.ConnectOptions.create "s2-lite-wake-single-claim-b" with
-                            AccountEndpoint = Some endpoint
-                            BasinEndpoint = Some endpoint }
-
-                let basinB = clientB |> S2.basin basinName
-
-                let config: WakeShard.ShardConfig = { Namespace = "claim-" + suffix; Count = 1 }
-                let subject = address [ "sessions"; "claim-" + suffix ]
-                let shard = WakeShard.shardOf config subject
-
-                // One wake both routers will see.
-                match! WakeShard.post basinA config subject WakeReason.MailboxReady with
-                | Error _ -> return failwith "wake-shard: post failed unexpectedly"
-                | Ok() ->
-                    let aDispatched = ResizeArray<ActorAddress * WakeReason>()
-                    let bDispatched = ResizeArray<ActorAddress * WakeReason>()
-                    let mutable bResult: Result<WakeRouter.Cursor, WakeRouter.RouterError> option = None
-                    let mutable bTriggered = false
-
-                    let bDrive = recordingDrive bDispatched
-
-                    // While router A drives the wake (before A commits its cursor),
-                    // router B takes over: it claims (epoch+1), drains the same wake,
-                    // drives it, and commits the cursor. A's own commit then fails
-                    // `Deposed` — A cannot advance the cursor.
-                    let aDrive: WakeRouter.Drive =
-                        fun s r ->
-                            async {
-                                aDispatched.Add(s, r)
-
-                                if not bTriggered then
-                                    bTriggered <- true
-                                    let! b = WakeRouter.tick basinB config shard (Authority.HolderId "router-B") bDrive
-                                    bResult <- Some b
-
-                                return Ok()
-                            }
-
-                    let! aResult = WakeRouter.tick basinA config shard (Authority.HolderId "router-A") aDrive
-
-                    let loserDeposed =
-                        match aResult with
-                        | Error(WakeRouter.RouterError.Deposed _) -> true
-                        | _ -> false
-
-                    let winnerCursor =
-                        match bResult with
-                        | Some(Ok cursor) -> Some cursor
-                        | _ -> None
-
-                    let winnerAdvanced =
-                        match winnerCursor with
-                        | Some cursor -> cursorSeq cursor = 1L
-                        | None -> false
-
-                    let result =
-                        { LoserFencedCommitDeposed = loserDeposed
-                          WinnerAdvancedCursor = winnerAdvanced
-                          // exactly one advanced the cursor: B ok, A deposed.
-                          ExactlyOneAdvancedCursor = (winnerAdvanced && loserDeposed)
-                          BothDroveTheSameWake =
-                            (aDispatched.Count = 1
-                             && bDispatched.Count = 1
-                             && aDispatched.[0] = (subject, WakeReason.MailboxReady)
-                             && bDispatched.[0] = (subject, WakeReason.MailboxReady))
-                          // the redundant re-drive is idempotent: both drove once, no more.
-                          RedundantReDriveIsIdempotent = (aDispatched.Count = 1 && bDispatched.Count = 1)
-                          // the durable authority advanced exactly once (winner to seq 1).
-                          CursorAdvancedExactlyOnce = winnerAdvanced }
-
-                    do!
-                        ctx.EmitSpan
-                            "proof.wake.single-claim.completed"
-                            [ "proof.property", "wake.single-claim"
-                              "wake.loser_deposed", string result.LoserFencedCommitDeposed
-                              "wake.winner_advanced", string result.WinnerAdvancedCursor
-                              "wake.exactly_one_advanced", string result.ExactlyOneAdvancedCursor ]
-
-                    return result
-            })
-
-    let private singleClaimProperty =
-        property "wake.single-claim" {
-            s2Lite ""
-            workload singleClaimWorkload
-
-            verify (fun v ->
-                [ v.Expect.Workload "the loser's fenced cursor commit fails Deposed" (fun r ->
-                      r.LoserFencedCommitDeposed)
-                  v.Expect.Workload "the winner advances the cursor (the single-writer durable authority)" (fun r ->
-                      r.WinnerAdvancedCursor)
-                  v.Expect.Workload "exactly one router advances the cursor" (fun r -> r.ExactlyOneAdvancedCursor)
-                  v.Expect.Workload "both routers drove the same one wake (at-least-once dispatch)" (fun r ->
-                      r.BothDroveTheSameWake)
-                  v.Expect.Workload "the deposed holder's redundant re-drive is idempotent (drove once, no more)" (fun r ->
-                      r.RedundantReDriveIsIdempotent)
-                  v.Expect.Workload "the durable cursor advanced exactly once" (fun r -> r.CursorAdvancedExactlyOnce)
-                  v.Trace.SpanExists
-                      "single-claim completion span emitted"
-                      "proof.wake.single-claim.completed"
-                      [ "proof.property", "wake.single-claim" ]
-                  v.Trace.Operation
-                      "single-claim operation recorded"
-                      ({ TraceOperationMatch.named "wake.single-claim" with
-                          Status = Some "ok"
-                          OutputContains = [ "LoserFencedCommitDeposed"; "ExactlyOneAdvancedCursor" ]
                           Count = Some 1 }) ])
         }
 
@@ -460,9 +318,8 @@ module FoundationWakePathProof =
     let proof =
         proof "wake.path" {
             describedAs
-                "MS-C3 wake path over the public WakeShard/WakeRouter surface + the C2 TimerIndex: tail-latency within a recorded bound, single-claim (exactly one router advances the cursor; loser Deposed; redundant re-drive idempotent), and timer exactly-once across restart with poison tolerance and the last-scanned+1 cursor boundary."
+                "MS-C3 wake path over the public WakeShard/WakeRouter surface + the C2 TimerIndex: tail-latency within a recorded bound, and timer exactly-once across restart with poison tolerance and the last-scanned+1 cursor boundary."
 
             property tailLatencyProperty
-            property singleClaimProperty
             property timerExactlyOnceProperty
         }

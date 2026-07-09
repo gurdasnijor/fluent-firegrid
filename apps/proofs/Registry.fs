@@ -32,13 +32,13 @@ module Registry =
           FlowLawProofs.eternalContinueAsNew
           CoreLawProofs.boundedLoopFlatStack ]
 
-    /// The 28 foundation proofs (Packet 0.3a, migrated 1:1 from
-    /// src/Firegrid.Foundation.Proofs). The source files declare 15
-    /// ProofSpecs whose 28 property names are the ratchet ids
-    /// (docs/proofs-inventory.md section B), so the suite registers one
-    /// single-property ProofSpec per property: `proof targets foundation`
-    /// then emits one { id, pass } line per ratchet id. Proof bodies are
-    /// untouched — this is registry hookup only.
+    /// The foundation suite (Packet 0.3b consolidation over the 0.3a
+    /// migration). Invariant-family proofs (foundation.fencing, …) register
+    /// WHOLE — one ratchet id whose pass is the conjunction of its
+    /// instantiations. The kept singles still register one single-property
+    /// ProofSpec per property name (docs/proofs-inventory.md section B ids):
+    /// `proof targets foundation` emits one { id, pass } line per ratchet id.
+    /// Kept proof bodies are untouched — registry hookup only.
     let private perProperty (spec: ProofSpec) : ProofSpec list =
         spec.Properties
         |> List.map (fun property ->
@@ -47,22 +47,17 @@ module Registry =
               Properties = [ property ] })
 
     let foundationProofs: ProofSpec list =
-        [ FoundationSubjectHistoryProof.proof
-          FoundationStateViewProof.proof
-          FoundationStateReadsProof.proof
-          FoundationSessionHistoryProof.proof
-          FoundationKvStoreProof.proof
-          FoundationCheckpointProof.proof
-          FoundationCheckpointTrimSafetyProof.proof
-          FoundationCheckpointRaceProof.proof
-          FoundationDurableKernelProof.proof
-          FoundationDurableDebtsProof.proof
-          FoundationParallelActivitiesProof.proof
-          FoundationTurnStreamProof.proof
-          FoundationSessionLifecycleProof.proof
-          FoundationResumeArtifactProof.proof
-          FoundationWakePathProof.proof ]
-        |> List.collect perProperty
+        [ FoundationFencingProof.proof
+          FoundationCrashWindowProof.proof
+          FoundationRebuildProof.proof
+          FoundationReadLagProof.proof ]
+        @ ([ FoundationSubjectHistoryProof.proof
+             FoundationDurableKernelProof.proof
+             FoundationParallelActivitiesProof.proof
+             FoundationTurnStreamProof.proof
+             FoundationSessionLifecycleProof.proof
+             FoundationWakePathProof.proof ]
+           |> List.collect perProperty)
 
     let suites: SuiteSpec list =
         [ { Suite = "p0-harness"
