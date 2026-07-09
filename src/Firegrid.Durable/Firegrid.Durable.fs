@@ -338,6 +338,7 @@ type EntityDef<'command, 'event, 'state, 'reply> =
         { EntName: string
           EntEncCmd: 'command -> string
           EntDecReply: string -> 'reply
+          EntSpec: EntityRuntimeSpec
           RegisterInto: RegBag -> RegBag }
 
     /// EXCLUSIVE handler, request-response: serialized per key; the reply is
@@ -345,12 +346,12 @@ type EntityDef<'command, 'event, 'state, 'reply> =
     member entity.Call (client: Client) (key: string) (command: 'command) : Async<'reply> = Wiring.entityCall entity client key command
     /// EXCLUSIVE handler, fire-and-forget (the reply is discarded). Durable,
     /// deduplicated; any process may send — no locks, no ownership needed.
-    member _.Send (client: Client) (key: string) (command: 'command) : Async<unit> = notYet
+    member entity.Send (client: Client) (key: string) (command: 'command) : Async<unit> = Wiring.entitySend entity client key command
     /// Send after a delay (durable: fires even if every process restarts).
-    member _.SendAfter (client: Client) (key: string) (delay: Duration) (command: 'command) : Async<unit> = notYet
+    member entity.SendAfter (client: Client) (key: string) (delay: Duration) (command: 'command) : Async<unit> = Wiring.entitySendAfter entity client key delay command
     /// SHARED handler: concurrent read of a key's state; never blocks the
     /// writer; the consistency grade is explicit.
-    member _.State (client: Client) (key: string) (grade: ReadGrade) : Async<'state> = notYet
+    member entity.State (client: Client) (key: string) (grade: ReadGrade) : Async<'state> = Wiring.entityState entity client key grade
 
 [<RequireQualifiedAccess>]
 module Entity =
@@ -807,6 +808,10 @@ module internal Wiring =
 
     let startRun<'i, 'o> (def: WorkflowDef<'i, 'o>) (client: Client) (input: 'i) (Id key: Id) : Async<Run<'o>> =
         async {
+            // G2 (architect ruling, PR #118): instance ids are user-chosen
+            // identity — reject K1's reserved segments at Start admission.
+            Reserved.check key
+
             let! result =
                 DurableClient.startWith
                     client.ClientBasin
@@ -889,6 +894,11 @@ module internal Wiring =
           SigDec = fun text -> Codec.decodeWith payloadTy text |> unbox<'p> }
 
     // ── entities ──────────────────────────────────────────────────────────
+    //
+    // Lowered onto the G2 entity host (`InternalEntity.fs`): durable FIFO
+    // inbox admission + fence-first fenced commits (EXCLUSIVE), fence-free
+    // journal folds (SHARED). Keys are user-chosen identity → validated
+    // against K1's reserved segments at every admission point.
 
     let mkEntity<'c, 'e, 's, 'r>
         (name: string)
@@ -913,22 +923,63 @@ module internal Wiring =
               Decide =
                 fun key cmdBody state ->
                     let reply, events = decider.Decide (Key key) (decCmd cmdBody) (unbox<'s> state)
-                    encReply reply, events |> List.map encEvt }
+                    encReply reply, events |> List.map encEvt
+              Drive = EntityHost.drive }
 
         { EntName = name
           EntEncCmd = fun (value: 'c) -> Codec.encodeWith cmdTy (box value)
           EntDecReply = fun text -> Codec.decodeWith replyTy text |> unbox<'r>
+          EntSpec = spec
           RegisterInto = fun bag -> { bag with Entities = bag.Entities @ [ spec ] } }
 
     let entityCall<'c, 'e, 's, 'r> (entity: EntityDef<'c, 'e, 's, 'r>) (client: Client) (key: string) (command: 'c) : Async<'r> =
         async {
-            let basin = client.ClientBasin
-            do! basin |> S2.ensureStream (EntityRun.journalName entity.EntName key)
-            do! basin |> S2.ensureStream (EntityRun.inboxName entity.EntName key)
+            Reserved.check key
             let source = "ec/" + Interop.entropy ()
-            do! EntityRun.submitCommand basin entity.EntName key source 0.0 (entity.EntEncCmd command)
-            let! replyBody = EntityRun.awaitReply basin entity.EntName key source 0.0
+            do! EntityHost.submit client.ClientBasin entity.EntName key source 0.0 0.0 (entity.EntEncCmd command)
+            let! replyBody = EntityHost.awaitReply client.ClientBasin entity.EntName key source 0.0
             return entity.EntDecReply replyBody
+        }
+
+    let entitySend<'c, 'e, 's, 'r> (entity: EntityDef<'c, 'e, 's, 'r>) (client: Client) (key: string) (command: 'c) : Async<unit> =
+        async {
+            Reserved.check key
+            let source = "es/" + Interop.entropy ()
+            do! EntityHost.submit client.ClientBasin entity.EntName key source 0.0 0.0 (entity.EntEncCmd command)
+        }
+
+    let entitySendAfter<'c, 'e, 's, 'r>
+        (entity: EntityDef<'c, 'e, 's, 'r>)
+        (client: Client)
+        (key: string)
+        (delay: Duration)
+        (command: 'c)
+        : Async<unit> =
+        async {
+            Reserved.check key
+            let source = "ed/" + Interop.entropy ()
+            let at = EntityInterop.nowMs () + delay.Ms
+            do! EntityHost.submit client.ClientBasin entity.EntName key source 0.0 at (entity.EntEncCmd command)
+        }
+
+    let entityState<'c, 'e, 's, 'r>
+        (entity: EntityDef<'c, 'e, 's, 'r>)
+        (client: Client)
+        (key: string)
+        (grade: ReadGrade)
+        : Async<'s> =
+        async {
+            let! state =
+                match grade with
+                // Both grades are served by the check-tail-barriered fold
+                // (Eventual accepts anything up to Latest; a stronger answer
+                // is within grade). Neither takes the fence or touches the
+                // inbox — a read can never block the exclusive writer.
+                | Eventual
+                | Latest -> EntityHost.readState entity.EntSpec client.ClientBasin key
+                | Through(Version version) -> EntityHost.readStateThrough entity.EntSpec client.ClientBasin key version
+
+            return unbox<'s> state
         }
 
     // ── projections ───────────────────────────────────────────────────────
