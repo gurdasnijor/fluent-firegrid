@@ -94,11 +94,25 @@ module Registry =
     ///   t1.andbang-teaching               asserts a fast branch beats a 400ms-slow one
     ///   durable.parallel-overlap          observes true concurrency mid-flight
     ///   durable.parallel-fault-isolation  observes true concurrency mid-flight
+    ///   t2.researcher-writer-choreography multi-session topic choreography; its
+    ///                                     cross-key wake chain (publish fold →
+    ///                                     signal → session fold → new turn) is
+    ///                                     pool-contention-sensitive. Evidence
+    ///                                     (PR #132, C4 CI ruling): 3 CI reds on
+    ///                                     2-core runners under the pool — 2
+    ///                                     fail-fast (run 28998465635 ×2) + 1
+    ///                                     wedged job (run 29001506543) — vs 5
+    ///                                     local greens incl. two full-pool runs
+    ///                                     under a 20 % CPU throttle.
+    ///   t2.webhook-ingress                same wake machinery and evidence set
+    ///                                     (worker-restart variant).
     let timingSensitive: string list =
         [ "wake.tail-latency"
           "t1.andbang-teaching"
           "durable.parallel-overlap"
-          "durable.parallel-fault-isolation" ]
+          "durable.parallel-fault-isolation"
+          "t2.researcher-writer-choreography"
+          "t2.webhook-ingress" ]
 
     /// Child scenario hosts for the kill/zombie laws: this same compiled
     /// binary re-entered as `child <scenario>` (corpus Program.fs dispatch).

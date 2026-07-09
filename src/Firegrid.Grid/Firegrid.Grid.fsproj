@@ -25,6 +25,7 @@
 
   <ItemGroup>
     <Compile Include="InternalApproval.fs" />
+    <Compile Include="InternalTopics.fs" />
     <Compile Include="InternalSessions.fs" />
     <Compile Include="Firegrid.Grid.fs" />
     <Compile Include="GridExamples.fs" />

@@ -300,7 +300,7 @@
       "id": "t2.researcher-writer-choreography",
       "wp": "T2",
       "corpus": "t2-firegrid",
-      "status": "red"
+      "status": "green"
     },
     {
       "id": "t2.scheduled-self-prompts",
@@ -324,7 +324,7 @@
       "id": "t2.webhook-ingress",
       "wp": "T2",
       "corpus": "t2-firegrid",
-      "status": "red"
+      "status": "green"
     },
     {
       "id": "t2.live-watch-ops",
