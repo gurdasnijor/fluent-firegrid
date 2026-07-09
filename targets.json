@@ -92,19 +92,19 @@
       "id": "t1.entity-exclusive-serialization",
       "wp": "T1",
       "corpus": "t1-durable",
-      "status": "red"
+      "status": "green"
     },
     {
       "id": "t1.entity-zombie-fenced",
       "wp": "T1",
       "corpus": "t1-durable",
-      "status": "red"
+      "status": "green"
     },
     {
       "id": "t1.entity-shared-read-nonblocking",
       "wp": "T1",
       "corpus": "t1-durable",
-      "status": "red"
+      "status": "green"
     },
     {
       "id": "t1.typed-step-failure",
